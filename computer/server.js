@@ -20,6 +20,7 @@ import { validateRelativePath, sanitizeFilename, validateSessionId } from './lib
 import { queryLogs, getLogStats, serverLogger as log } from './lib/logger.js';
 import { initializeUsageTracker, getUsageTracker } from './lib/usage-tracker.js';
 import { getVaultSearchService, ContentType } from './lib/vault-search.js';
+import { getModuleSearchService } from './lib/module-search.js';
 import { getOllamaStatus } from './lib/ollama-service.js';
 import * as generateConfig from './lib/generate-config.js';
 
@@ -2019,6 +2020,206 @@ app.get('/api/vault-search/content/:id', async (req, res) => {
     });
   } catch (error) {
     log.error('Vault search content error', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================================================
+// MODULE SEARCH (Per-module RAG indexes)
+// ============================================================================
+
+/**
+ * GET /api/modules
+ * List all modules and their index status
+ */
+app.get('/api/modules', async (req, res) => {
+  try {
+    const moduleSearch = getModuleSearchService(CONFIG.vaultPath);
+    const modules = moduleSearch.listModules();
+    res.json({ modules });
+  } catch (error) {
+    log.error('Module list error', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * GET /api/modules/stats
+ * Get stats for all modules
+ */
+app.get('/api/modules/stats', async (req, res) => {
+  try {
+    const moduleSearch = getModuleSearchService(CONFIG.vaultPath);
+    const stats = moduleSearch.getStats();
+    res.json(stats);
+  } catch (error) {
+    log.error('Module stats error', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * GET /api/modules/search
+ * Search across all modules
+ * Query params: q (query), limit, modules (comma-separated)
+ */
+app.get('/api/modules/search', async (req, res) => {
+  try {
+    const { q, limit, modules } = req.query;
+
+    if (!q) {
+      return res.status(400).json({ error: 'Query parameter "q" is required' });
+    }
+
+    const moduleSearch = getModuleSearchService(CONFIG.vaultPath);
+    const options = {
+      limit: limit ? parseInt(limit, 10) : 20,
+      modules: modules ? modules.split(',').map(m => m.trim()) : undefined,
+    };
+
+    const results = await moduleSearch.searchAll(q, options);
+    res.json(results);
+  } catch (error) {
+    log.error('Cross-module search error', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * GET /api/modules/:module/search
+ * Search within a specific module
+ * Query params: q (query), limit
+ */
+app.get('/api/modules/:module/search', async (req, res) => {
+  try {
+    const { module } = req.params;
+    const { q, limit } = req.query;
+
+    if (!q) {
+      return res.status(400).json({ error: 'Query parameter "q" is required' });
+    }
+
+    const moduleSearch = getModuleSearchService(CONFIG.vaultPath);
+    const options = {
+      limit: limit ? parseInt(limit, 10) : 20,
+    };
+
+    const results = await moduleSearch.searchModule(module, q, options);
+    res.json(results);
+  } catch (error) {
+    log.error('Module search error', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * GET /api/modules/:module/stats
+ * Get stats for a specific module
+ */
+app.get('/api/modules/:module/stats', async (req, res) => {
+  try {
+    const { module } = req.params;
+    const moduleSearch = getModuleSearchService(CONFIG.vaultPath);
+    const indexer = moduleSearch.getIndexer(module);
+
+    if (!indexer) {
+      return res.status(404).json({
+        error: `Module '${module}' not found or not indexed`
+      });
+    }
+
+    const stats = indexer.getStats();
+    res.json({
+      module,
+      ...stats
+    });
+  } catch (error) {
+    log.error('Module stats error', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * GET /api/modules/:module/recent
+ * List recent content from a module
+ * Query params: limit
+ */
+app.get('/api/modules/:module/recent', async (req, res) => {
+  try {
+    const { module } = req.params;
+    const { limit } = req.query;
+
+    const moduleSearch = getModuleSearchService(CONFIG.vaultPath);
+    const recent = moduleSearch.listRecent(module, {
+      limit: limit ? parseInt(limit, 10) : 20,
+    });
+
+    res.json({
+      module,
+      count: recent.length,
+      items: recent
+    });
+  } catch (error) {
+    log.error('Module recent error', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * GET /api/modules/:module/content/:id
+ * Get specific content from a module
+ */
+app.get('/api/modules/:module/content/:id', async (req, res) => {
+  try {
+    const { module, id } = req.params;
+    const moduleSearch = getModuleSearchService(CONFIG.vaultPath);
+    const content = moduleSearch.getContent(module, id);
+
+    if (!content) {
+      return res.status(404).json({
+        error: `Content '${id}' not found in module '${module}'`
+      });
+    }
+
+    res.json({
+      module,
+      ...content
+    });
+  } catch (error) {
+    log.error('Module content error', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * POST /api/modules/:module/index
+ * Rebuild index for a module
+ * Body: { withEmbeddings?: boolean }
+ */
+app.post('/api/modules/:module/index', async (req, res) => {
+  try {
+    const { module } = req.params;
+    const { withEmbeddings = true } = req.body || {};
+
+    const moduleSearch = getModuleSearchService(CONFIG.vaultPath);
+
+    log.info('Rebuilding module index', { module, withEmbeddings });
+
+    const result = await moduleSearch.rebuildModuleIndex(module, { withEmbeddings });
+
+    log.info('Module index rebuilt', {
+      module,
+      contentCount: result.contentCount,
+      chunkCount: result.chunkCount
+    });
+
+    res.json({
+      success: true,
+      module,
+      ...result
+    });
+  } catch (error) {
+    log.error('Module index rebuild error', error);
     res.status(500).json({ error: error.message });
   }
 });

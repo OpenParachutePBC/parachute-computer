@@ -2,9 +2,8 @@
 /**
  * Vault Search MCP Server
  *
- * Provides search tools over the indexed vault content via MCP protocol.
- * Designed to give agents access to past conversations, journals, and captures
- * with smart context management (returns snippets, truncates large content).
+ * Provides search tools over indexed vault content via MCP protocol.
+ * Uses per-module indexes (Chat/index.db, Daily/index.db, etc.) for search.
  *
  * Search Modes:
  * - Keyword search: Always available, finds exact text matches
@@ -12,10 +11,12 @@
  * - Hybrid search: Combines both for best results (default when Ollama available)
  *
  * Tools:
- * - vault_search: Search across all indexed content (hybrid when available)
+ * - vault_search: Search across all modules (hybrid when available)
+ * - vault_search_module: Search within a specific module
  * - vault_get_content: Get truncated content for a specific item
- * - vault_recent: Get recent content by type
- * - vault_stats: Get index statistics
+ * - vault_recent: Get recent content by module
+ * - vault_stats: Get index statistics per module
+ * - vault_modules: List available modules and their status
  * - vault_semantic_status: Check if semantic search is available
  *
  * Usage:
@@ -25,7 +26,8 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { getVaultSearchService, ContentType } from "./lib/vault-search.js";
+import { getModuleSearchService } from "./lib/module-search.js";
+import { getOllamaStatus } from "./lib/ollama-service.js";
 
 // Get vault path from environment
 const VAULT_PATH = process.env.VAULT_PATH || "./sample-vault";
@@ -33,13 +35,13 @@ const VAULT_PATH = process.env.VAULT_PATH || "./sample-vault";
 // Token limit for content retrieval (roughly 4 chars per token)
 const MAX_CONTENT_CHARS = 16000; // ~4000 tokens
 
-// Initialize the search service
-let searchService;
+// Initialize the module search service
+let moduleSearch;
 try {
-  searchService = getVaultSearchService(VAULT_PATH);
-  if (!searchService.isAvailable()) {
-    console.error(`[MCP-VaultSearch] Search database not found. Run the Flutter app to build the index first.`);
-  }
+  moduleSearch = getModuleSearchService(VAULT_PATH);
+  const modules = moduleSearch.listModules();
+  const available = modules.filter(m => m.hasIndex);
+  console.error(`[MCP-VaultSearch] Initialized with ${available.length} indexed modules`);
 } catch (e) {
   console.error(`[MCP-VaultSearch] Failed to initialize: ${e.message}`);
 }
@@ -47,11 +49,54 @@ try {
 // Create MCP server
 const server = new McpServer({
   name: "vault-search",
-  version: "1.0.0",
+  version: "2.0.0",
 });
 
 /**
- * vault_search - Search across indexed vault content
+ * vault_modules - List available modules and their index status
+ */
+server.tool(
+  "vault_modules",
+  {},
+  async () => {
+    if (!moduleSearch) {
+      return {
+        content: [{
+          type: "text",
+          text: "Module search service not initialized."
+        }]
+      };
+    }
+
+    try {
+      const modules = moduleSearch.listModules();
+
+      const formatted = modules.map(m => {
+        const status = m.hasIndex ? "✅ Indexed" : m.exists ? "⚠️ Not indexed" : "❌ Not found";
+        const canIndex = m.canIndex ? "(server-indexable)" : "(client-indexed)";
+        return `- **${m.name}** (${m.folder}/): ${status} ${canIndex}`;
+      }).join("\n");
+
+      return {
+        content: [{
+          type: "text",
+          text: `## Available Modules\n\n${formatted}\n\n*Use \`vault_search\` to search across modules, or \`vault_search_module\` for a specific module.*`
+        }]
+      };
+    } catch (e) {
+      return {
+        content: [{
+          type: "text",
+          text: `Error listing modules: ${e.message}`
+        }],
+        isError: true
+      };
+    }
+  }
+);
+
+/**
+ * vault_search - Search across all indexed modules
  *
  * Uses hybrid search (keyword + semantic) when Ollama is available.
  * Falls back to keyword-only search otherwise.
@@ -62,16 +107,16 @@ const server = new McpServer({
 server.tool(
   "vault_search",
   {
-    query: z.string().describe("Search query - keywords or natural language to find in journals, chats, and captures"),
-    content_type: z.enum(["all", "journal", "chat", "recording"]).optional().describe("Filter by content type (default: all)"),
-    limit: z.number().min(1).max(20).optional().describe("Max results to return (default: 10, max: 20)"),
+    query: z.string().describe("Search query - keywords or natural language to find across all modules"),
+    modules: z.array(z.string()).optional().describe("Specific modules to search (e.g., ['chat', 'daily']). Default: all"),
+    limit: z.number().min(1).max(30).optional().describe("Max results to return (default: 10, max: 30)"),
   },
-  async ({ query, content_type, limit = 10 }) => {
-    if (!searchService || !searchService.isAvailable()) {
+  async ({ query, modules: targetModules, limit = 10 }) => {
+    if (!moduleSearch) {
       return {
         content: [{
           type: "text",
-          text: "Search index not available. The Flutter app needs to build the search index first (Search tab → Build Index)."
+          text: "Module search service not initialized."
         }]
       };
     }
@@ -79,48 +124,109 @@ server.tool(
     try {
       const options = {
         limit,
-        contentType: content_type === "all" ? null : content_type,
+        modules: targetModules,
       };
 
-      // Use hybrid search (keyword + semantic when available)
-      const { results, searchTypes, semanticAvailable, semanticReason } = await searchService.hybridSearch(query, options);
+      const { combined, byModule, totalCount } = await moduleSearch.searchAll(query, options);
 
-      if (results.length === 0) {
-        let msg = `No results found for "${query}".`;
-        if (!semanticAvailable) {
-          msg += `\n\n*Note: Semantic search unavailable (${semanticReason}). Only keyword matching was used.*`;
-        }
+      if (combined.length === 0) {
         return {
           content: [{
             type: "text",
-            text: msg
+            text: `No results found for "${query}" across any modules.`
           }]
         };
       }
 
-      // Format results with snippets and search type indicators
-      const formatted = results.map((r, i) => {
-        const typeLabel = r.contentType === "journal" ? "📓 Journal"
-                        : r.contentType === "chat" ? "💬 Chat"
-                        : "🎤 Recording";
-        const matchType = r.searchType === "both" ? "🎯"
-                        : r.searchType === "semantic" ? "🔮"
+      // Format results with module indicators
+      const formatted = combined.slice(0, limit).map((r, i) => {
+        const moduleLabel = r.module === 'chat' ? "💬 Chat"
+                          : r.module === 'daily' ? "📓 Daily"
+                          : `📁 ${r.module}`;
+        const matchType = r.matchType === 'both' ? "🎯"
+                        : r.matchType === 'semantic' ? "🔮"
                         : "";
-        return `### ${i + 1}. ${typeLabel} ${matchType}\n**ID:** \`${r.contentId}\`\n**Snippet:** ${r.snippet}\n`;
+        const similarity = r.similarity ? ` (${(r.similarity * 100).toFixed(0)}%)` : "";
+
+        return `### ${i + 1}. ${moduleLabel} ${matchType}${similarity}\n**ID:** \`${r.id}\`\n**Title:** ${r.title || 'Untitled'}\n**Snippet:** ${r.snippet || r.content?.substring(0, 200) || 'No preview'}\n`;
       }).join("\n");
 
-      // Build status note
-      let statusNote = "";
-      if (searchTypes.includes("semantic")) {
-        statusNote = "\n\n*🔮 = semantic match, 🎯 = matched both keyword and meaning*";
-      } else if (!semanticAvailable) {
-        statusNote = `\n\n*Keyword search only. Semantic search unavailable: ${semanticReason}*`;
-      }
+      // Module breakdown
+      const moduleBreakdown = Object.entries(byModule)
+        .filter(([_, data]) => data.count > 0)
+        .map(([mod, data]) => `${mod}: ${data.count}`)
+        .join(", ");
 
       return {
         content: [{
           type: "text",
-          text: `Found ${results.length} results for "${query}":\n\n${formatted}\n\nUse \`vault_get_content\` with an ID to get more detail.${statusNote}`
+          text: `Found ${totalCount} results for "${query}":\n\n${formatted}\n\n**By module:** ${moduleBreakdown}\n\n*🔮 = semantic match, 🎯 = matched both. Use \`vault_get_content\` with an ID for full content.*`
+        }]
+      };
+    } catch (e) {
+      return {
+        content: [{
+          type: "text",
+          text: `Search error: ${e.message}`
+        }],
+        isError: true
+      };
+    }
+  }
+);
+
+/**
+ * vault_search_module - Search within a specific module
+ */
+server.tool(
+  "vault_search_module",
+  {
+    module: z.string().describe("Module to search (e.g., 'chat', 'daily')"),
+    query: z.string().describe("Search query"),
+    limit: z.number().min(1).max(30).optional().describe("Max results (default: 10)"),
+  },
+  async ({ module, query, limit = 10 }) => {
+    if (!moduleSearch) {
+      return {
+        content: [{
+          type: "text",
+          text: "Module search service not initialized."
+        }]
+      };
+    }
+
+    try {
+      const result = await moduleSearch.searchModule(module, query, { limit });
+
+      if (result.error) {
+        return {
+          content: [{
+            type: "text",
+            text: `Error searching ${module}: ${result.error}`
+          }]
+        };
+      }
+
+      if (result.results.length === 0) {
+        return {
+          content: [{
+            type: "text",
+            text: `No results found for "${query}" in ${module}.`
+          }]
+        };
+      }
+
+      const formatted = result.results.map((r, i) => {
+        const matchType = r.matchType === 'both' ? "🎯"
+                        : r.matchType === 'semantic' ? "🔮"
+                        : "";
+        return `${i + 1}. ${matchType} **${r.title || r.id}**\n   ${r.snippet || r.content?.substring(0, 150) || 'No preview'}`;
+      }).join("\n\n");
+
+      return {
+        content: [{
+          type: "text",
+          text: `## ${module} Search Results\n\nFound ${result.count} results for "${query}":\n\n${formatted}`
         }]
       };
     } catch (e) {
@@ -144,39 +250,40 @@ server.tool(
 server.tool(
   "vault_get_content",
   {
-    content_id: z.string().describe("Content ID from search results (e.g., 'chat:abc123' or 'journal:2025-01-15:entry1')"),
+    module: z.string().describe("Module containing the content (e.g., 'chat', 'daily')"),
+    content_id: z.string().describe("Content ID from search results"),
     max_length: z.number().min(500).max(20000).optional().describe("Max characters to return (default: 8000, max: 20000)"),
   },
-  async ({ content_id, max_length = 8000 }) => {
-    if (!searchService || !searchService.isAvailable()) {
+  async ({ module, content_id, max_length = 8000 }) => {
+    if (!moduleSearch) {
       return {
         content: [{
           type: "text",
-          text: "Search index not available."
+          text: "Module search service not initialized."
         }]
       };
     }
 
     try {
-      const content = searchService.getContent(content_id);
+      const content = moduleSearch.getContent(module, content_id);
 
       if (!content) {
         return {
           content: [{
             type: "text",
-            text: `Content not found for ID: ${content_id}`
+            text: `Content not found: ${content_id} in module ${module}`
           }]
         };
       }
 
-      // Combine all fields into readable text
-      let fullText = "";
-      for (const [field, text] of Object.entries(content.fields)) {
-        if (field === "title") {
-          fullText += `# ${text}\n\n`;
-        } else {
-          fullText += `${text}\n\n`;
-        }
+      // Get full text from chunks
+      let fullText = content.title ? `# ${content.title}\n\n` : "";
+
+      if (content.chunks) {
+        fullText += content.chunks
+          .sort((a, b) => a.chunkIndex - b.chunkIndex)
+          .map(c => c.text)
+          .join("\n\n");
       }
 
       // Truncate if needed
@@ -193,14 +300,14 @@ server.tool(
         fullText += "\n\n---\n*[Content truncated. Use a more specific search to find relevant sections.]*";
       }
 
-      const typeLabel = content.contentType === "journal" ? "Journal Entry"
-                      : content.contentType === "chat" ? "Chat Session"
-                      : "Recording";
+      const moduleLabel = module === 'chat' ? "Chat Session"
+                        : module === 'daily' ? "Journal Entry"
+                        : `${module} Content`;
 
       return {
         content: [{
           type: "text",
-          text: `## ${typeLabel}: ${content_id}\n\n${fullText}`
+          text: `## ${moduleLabel}: ${content_id}\n\n${fullText}`
         }]
       };
     } catch (e) {
@@ -216,55 +323,45 @@ server.tool(
 );
 
 /**
- * vault_recent - Get recent content by type
- *
- * Useful for seeing what's been recently indexed without searching.
+ * vault_recent - Get recent content from a module
  */
 server.tool(
   "vault_recent",
   {
-    content_type: z.enum(["all", "journal", "chat", "recording"]).optional().describe("Filter by content type (default: all)"),
-    limit: z.number().min(1).max(20).optional().describe("Max items to return (default: 10)"),
+    module: z.string().describe("Module to get recent content from (e.g., 'chat', 'daily')"),
+    limit: z.number().min(1).max(30).optional().describe("Max items to return (default: 10)"),
   },
-  async ({ content_type, limit = 10 }) => {
-    if (!searchService || !searchService.isAvailable()) {
+  async ({ module, limit = 10 }) => {
+    if (!moduleSearch) {
       return {
         content: [{
           type: "text",
-          text: "Search index not available."
+          text: "Module search service not initialized."
         }]
       };
     }
 
     try {
-      const options = {
-        limit,
-        contentType: content_type === "all" ? null : content_type,
-      };
-
-      const items = searchService.listIndexedContent(options);
+      const items = moduleSearch.listRecent(module, { limit });
 
       if (items.length === 0) {
         return {
           content: [{
             type: "text",
-            text: "No indexed content found."
+            text: `No indexed content found in ${module}.`
           }]
         };
       }
 
       const formatted = items.map((item, i) => {
-        const typeLabel = item.contentType === "journal" ? "📓"
-                        : item.contentType === "chat" ? "💬"
-                        : "🎤";
-        const date = item.indexedAt ? new Date(item.indexedAt).toLocaleDateString() : "unknown";
-        return `${i + 1}. ${typeLabel} \`${item.contentId}\` (${item.chunkCount} chunks, indexed ${date})`;
-      }).join("\n");
+        const date = item.date ? new Date(item.date).toLocaleDateString() : "unknown date";
+        return `${i + 1}. **${item.title || item.id}** (${date})\n   ${item.chunkCount || 0} chunks`;
+      }).join("\n\n");
 
       return {
         content: [{
           type: "text",
-          text: `Recent indexed content:\n\n${formatted}`
+          text: `## Recent ${module} Content\n\n${formatted}`
         }]
       };
     } catch (e) {
@@ -286,35 +383,31 @@ server.tool(
   "vault_stats",
   {},
   async () => {
-    if (!searchService || !searchService.isAvailable()) {
+    if (!moduleSearch) {
       return {
         content: [{
           type: "text",
-          text: "Search index not available. The Flutter app needs to build the search index first."
+          text: "Module search service not initialized."
         }]
       };
     }
 
     try {
-      const stats = searchService.getStats();
+      const stats = moduleSearch.getStats();
 
-      if (!stats) {
-        return {
-          content: [{
-            type: "text",
-            text: "Could not retrieve stats."
-          }]
-        };
-      }
-
-      const byType = Object.entries(stats.byContentType)
-        .map(([type, count]) => `- ${type}: ${count} chunks`)
+      const moduleStats = Object.entries(stats.modules)
+        .map(([mod, s]) => {
+          if (s.error) {
+            return `- **${mod}:** ${s.error}`;
+          }
+          return `- **${mod}:** ${s.contentCount} items, ${s.chunkCount} chunks (${s.embeddedCount} with embeddings)`;
+        })
         .join("\n");
 
       return {
         content: [{
           type: "text",
-          text: `## Vault Search Index Stats\n\n- **Total content items:** ${stats.totalContent}\n- **Total chunks:** ${stats.totalChunks}\n\n**By type:**\n${byType}`
+          text: `## Vault Search Index Stats\n\n**Totals:**\n- Content items: ${stats.total.contentCount}\n- Chunks: ${stats.total.chunkCount}\n- With embeddings: ${stats.total.embeddedCount}\n\n**By Module:**\n${moduleStats}`
         }]
       };
     } catch (e) {
@@ -338,17 +431,8 @@ server.tool(
   "vault_semantic_status",
   {},
   async () => {
-    if (!searchService) {
-      return {
-        content: [{
-          type: "text",
-          text: "Search service not initialized."
-        }]
-      };
-    }
-
     try {
-      const status = await searchService.getSemanticSearchStatus();
+      const status = await getOllamaStatus();
 
       if (status.ready) {
         return {
@@ -376,8 +460,7 @@ server.tool(
         instructions += `### Embedding Model Not Installed\n\n`;
         instructions += `Ollama is running, but the \`${status.modelName}\` model is not installed.\n\n`;
         instructions += `**Install the model:**\n`;
-        instructions += `\`\`\`\nollama pull ${status.modelName}\n\`\`\`\n\n`;
-        instructions += `*This downloads ~200MB. You can also install via the Flutter app (Search tab).*`;
+        instructions += `\`\`\`\nollama pull ${status.modelName}\n\`\`\`\n`;
       }
 
       instructions += `\n\n---\n*Without Ollama, search will still work using keyword matching.*`;
@@ -404,7 +487,7 @@ server.tool(
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("[MCP-VaultSearch] Server started");
+  console.error("[MCP-VaultSearch] Server started (v2.0 - per-module search)");
 }
 
 main().catch((e) => {
