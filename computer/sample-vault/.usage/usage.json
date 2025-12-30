@@ -1,0 +1,14 @@
+{
+  "global": {
+    "inputTokens": 0,
+    "outputTokens": 0,
+    "totalTokens": 0,
+    "requestCount": 0,
+    "cacheCreationInputTokens": 0,
+    "cacheReadInputTokens": 0
+  },
+  "bySession": {},
+  "byAgent": {},
+  "byDay": {},
+  "lastSaved": "2025-12-29T22:54:25.933Z"
+}

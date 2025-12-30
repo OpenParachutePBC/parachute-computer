@@ -1,0 +1,920 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Parachute Agent Dashboard</title>
+  <style>
+    :root {
+      --bg: #1a1a2e;
+      --bg-secondary: #16213e;
+      --bg-tertiary: #0f3460;
+      --accent: #e94560;
+      --accent-dim: #a63446;
+      --text: #eee;
+      --text-dim: #888;
+      --border: #333;
+      --success: #4ade80;
+      --warning: #fbbf24;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 1.5rem;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 1.5rem;
+      padding-bottom: 1rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    header h1 {
+      font-size: 1.4rem;
+      font-weight: 500;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    header h1 span { color: var(--accent); }
+
+    .status-badge {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.85rem;
+      padding: 0.4rem 0.8rem;
+      border-radius: 20px;
+      background: var(--bg-secondary);
+    }
+
+    .status-badge.online { color: var(--success); }
+    .status-badge.offline { color: var(--accent); }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 1.5rem;
+    }
+
+    .card {
+      background: var(--bg-secondary);
+      border-radius: 12px;
+      padding: 1.25rem;
+      border: 1px solid var(--border);
+    }
+
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1rem;
+    }
+
+    .card-title {
+      font-size: 0.85rem;
+      font-weight: 500;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .card-action {
+      font-size: 0.75rem;
+      color: var(--accent);
+      cursor: pointer;
+      text-decoration: none;
+    }
+
+    .card-action:hover { text-decoration: underline; }
+
+    /* Stats Section */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 1rem;
+    }
+
+    .stat-item {
+      background: var(--bg-tertiary);
+      padding: 1rem;
+      border-radius: 8px;
+    }
+
+    .stat-value {
+      font-size: 1.5rem;
+      font-weight: 600;
+      margin-bottom: 0.25rem;
+    }
+
+    .stat-value.cost { color: var(--warning); }
+    .stat-value.tokens { color: var(--success); }
+
+    .stat-label {
+      font-size: 0.75rem;
+      color: var(--text-dim);
+    }
+
+    /* System Info */
+    .info-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 0.6rem 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.85rem;
+    }
+
+    .info-row:last-child { border-bottom: none; }
+
+    .info-label { color: var(--text-dim); }
+    .info-value {
+      color: var(--text);
+      word-break: break-all;
+      text-align: right;
+      max-width: 200px;
+    }
+
+    /* Agent/Session Lists */
+    .list-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0.75rem;
+      background: var(--bg-tertiary);
+      border-radius: 8px;
+      margin-bottom: 0.5rem;
+      font-size: 0.85rem;
+    }
+
+    .list-item:last-child { margin-bottom: 0; }
+
+    .list-item-title {
+      font-weight: 500;
+      margin-bottom: 0.2rem;
+    }
+
+    .list-item-subtitle {
+      font-size: 0.75rem;
+      color: var(--text-dim);
+    }
+
+    .list-item-meta {
+      text-align: right;
+      font-size: 0.75rem;
+      color: var(--text-dim);
+    }
+
+    .badge {
+      display: inline-block;
+      font-size: 0.65rem;
+      padding: 0.15rem 0.4rem;
+      border-radius: 4px;
+      background: var(--accent-dim);
+      margin-left: 0.5rem;
+    }
+
+    /* Empty State */
+    .empty {
+      text-align: center;
+      padding: 2rem;
+      color: var(--text-dim);
+      font-size: 0.85rem;
+    }
+
+    /* Refresh Button */
+    .refresh-btn {
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0.4rem 0.8rem;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 0.75rem;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .refresh-btn:hover {
+      border-color: var(--accent);
+      background: var(--bg-secondary);
+    }
+
+    /* Full Width Cards */
+    .full-width {
+      grid-column: 1 / -1;
+    }
+
+    /* Table */
+    .table {
+      width: 100%;
+      font-size: 0.8rem;
+    }
+
+    .table th {
+      text-align: left;
+      padding: 0.6rem;
+      color: var(--text-dim);
+      font-weight: 500;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .table td {
+      padding: 0.6rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .table tr:last-child td { border-bottom: none; }
+
+    .table .truncate {
+      max-width: 200px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    /* Quick Actions */
+    .quick-actions {
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+
+    .action-btn {
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0.5rem 1rem;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 0.8rem;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .action-btn:hover {
+      border-color: var(--accent);
+      background: var(--bg-secondary);
+    }
+
+    .action-btn.primary {
+      background: var(--accent);
+      border-color: var(--accent);
+    }
+
+    .action-btn.primary:hover {
+      background: var(--accent-dim);
+    }
+
+    /* Loading */
+    .loading {
+      color: var(--text-dim);
+      font-style: italic;
+    }
+
+    /* Logs Panel */
+    .logs-container {
+      max-height: 500px;
+      overflow-y: auto;
+      background: var(--bg);
+      border-radius: 8px;
+      font-size: 0.75rem;
+    }
+
+    .log-entry {
+      display: grid;
+      grid-template-columns: 85px 70px 120px 1fr;
+      gap: 0.5rem;
+      padding: 0.5rem 0.75rem;
+      border-bottom: 1px solid var(--border);
+      align-items: start;
+    }
+
+    .log-entry:hover {
+      background: var(--bg-secondary);
+    }
+
+    .log-time {
+      color: var(--text-dim);
+      font-family: monospace;
+    }
+
+    .log-level {
+      font-weight: 600;
+      font-size: 0.65rem;
+      padding: 0.15rem 0.4rem;
+      border-radius: 4px;
+      text-align: center;
+    }
+
+    .log-level.DEBUG { background: #374151; color: #9ca3af; }
+    .log-level.INFO { background: #1e3a5f; color: #60a5fa; }
+    .log-level.WARN { background: #78350f; color: #fbbf24; }
+    .log-level.ERROR { background: #7f1d1d; color: #f87171; }
+
+    .log-component {
+      color: var(--accent);
+      font-size: 0.7rem;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .log-message {
+      color: var(--text);
+      word-break: break-word;
+    }
+
+    .log-data {
+      grid-column: 1 / -1;
+      margin-top: 0.25rem;
+      padding: 0.5rem;
+      background: var(--bg-tertiary);
+      border-radius: 4px;
+      color: var(--text-dim);
+      font-family: monospace;
+      font-size: 0.7rem;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    .log-filters {
+      display: flex;
+      gap: 0.75rem;
+      margin-bottom: 1rem;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    .log-filters select,
+    .log-filters input {
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0.4rem 0.6rem;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 0.75rem;
+    }
+
+    .log-filters select:focus,
+    .log-filters input:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+
+    .log-filters label {
+      font-size: 0.7rem;
+      color: var(--text-dim);
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+
+    .log-stats {
+      display: flex;
+      gap: 1rem;
+      font-size: 0.7rem;
+      color: var(--text-dim);
+      margin-left: auto;
+    }
+
+    .log-stat {
+      display: flex;
+      align-items: center;
+      gap: 0.3rem;
+    }
+
+    .log-stat-count {
+      font-weight: 600;
+    }
+
+    .log-stat-count.error { color: #f87171; }
+    .log-stat-count.warn { color: #fbbf24; }
+
+    .auto-scroll-indicator {
+      font-size: 0.65rem;
+      color: var(--success);
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1><span>&#x2708;</span> Parachute Agent</h1>
+    <div class="status-badge" id="statusBadge">
+      <div class="status-dot"></div>
+      <span id="statusText">Checking...</span>
+    </div>
+  </header>
+
+  <div class="grid">
+    <!-- Usage Today -->
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Usage Today</span>
+        <button class="refresh-btn" onclick="loadUsage()">Refresh</button>
+      </div>
+      <div class="stats-grid" id="todayStats">
+        <div class="stat-item">
+          <div class="stat-value tokens" id="todayTokens">-</div>
+          <div class="stat-label">Total Tokens</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-value cost" id="todayCost">-</div>
+          <div class="stat-label">Est. Cost</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-value" id="todayRequests">-</div>
+          <div class="stat-label">Requests</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-value" id="cacheHits">-</div>
+          <div class="stat-label">Cache Hits</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- System Info -->
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">System Info</span>
+      </div>
+      <div id="systemInfo">
+        <div class="info-row">
+          <span class="info-label">Vault Path</span>
+          <span class="info-value" id="vaultPath">-</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Server Uptime</span>
+          <span class="info-value" id="uptime">-</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Documents</span>
+          <span class="info-value" id="totalDocs">-</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Active Sessions</span>
+          <span class="info-value" id="activeSessions">-</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Node Version</span>
+          <span class="info-value" id="nodeVersion">-</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Agents -->
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Agents</span>
+        <span class="card-action" onclick="loadAgents()">Reload</span>
+      </div>
+      <div id="agentsList">
+        <div class="empty loading">Loading agents...</div>
+      </div>
+    </div>
+
+    <!-- Recent Sessions -->
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Recent Sessions</span>
+        <span class="card-action" onclick="loadSessions()">Reload</span>
+      </div>
+      <div id="sessionsList">
+        <div class="empty loading">Loading sessions...</div>
+      </div>
+    </div>
+
+    <!-- Usage by Agent -->
+    <div class="card full-width">
+      <div class="card-header">
+        <span class="card-title">Top Agents by Usage</span>
+      </div>
+      <table class="table" id="topAgentsTable">
+        <thead>
+          <tr>
+            <th>Agent</th>
+            <th>Requests</th>
+            <th>Input Tokens</th>
+            <th>Output Tokens</th>
+            <th>Est. Cost</th>
+          </tr>
+        </thead>
+        <tbody id="topAgentsList">
+          <tr><td colspan="5" class="empty loading">Loading...</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Quick Actions -->
+    <div class="card full-width">
+      <div class="card-header">
+        <span class="card-title">Quick Actions</span>
+      </div>
+      <div class="quick-actions">
+        <button class="action-btn" onclick="checkHealth()">Health Check</button>
+        <button class="action-btn" onclick="loadAll()">Refresh All</button>
+        <button class="action-btn" onclick="clearLogs()">Clear Log View</button>
+      </div>
+    </div>
+
+    <!-- Logs Panel -->
+    <div class="card full-width">
+      <div class="card-header">
+        <span class="card-title">Server Logs</span>
+        <span class="card-action" onclick="loadLogs()">Refresh</span>
+      </div>
+      <div class="log-filters">
+        <label>
+          Level:
+          <select id="logLevelFilter" onchange="loadLogs()">
+            <option value="">All</option>
+            <option value="DEBUG">Debug</option>
+            <option value="INFO" selected>Info+</option>
+            <option value="WARN">Warn+</option>
+            <option value="ERROR">Error</option>
+          </select>
+        </label>
+        <label>
+          Component:
+          <select id="logComponentFilter" onchange="loadLogs()">
+            <option value="">All</option>
+          </select>
+        </label>
+        <label>
+          Limit:
+          <select id="logLimitFilter" onchange="loadLogs()">
+            <option value="50">50</option>
+            <option value="100" selected>100</option>
+            <option value="250">250</option>
+            <option value="500">500</option>
+          </select>
+        </label>
+        <label>
+          <input type="checkbox" id="autoScrollLogs" checked>
+          Auto-scroll
+        </label>
+        <label>
+          <input type="checkbox" id="autoRefreshLogs" checked>
+          Auto-refresh (5s)
+        </label>
+        <div class="log-stats" id="logStats">
+          <span class="log-stat">Total: <span class="log-stat-count" id="logStatsTotal">0</span></span>
+          <span class="log-stat">Errors: <span class="log-stat-count error" id="logStatsErrors">0</span></span>
+          <span class="log-stat">Warnings: <span class="log-stat-count warn" id="logStatsWarns">0</span></span>
+        </div>
+      </div>
+      <div class="logs-container" id="logsContainer">
+        <div class="empty loading">Loading logs...</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // API base URL
+    const API = '';
+
+    // Format helpers
+    function formatNumber(n) {
+      if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+      if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+      return n?.toString() || '0';
+    }
+
+    function formatCost(c) {
+      return '$' + (c || 0).toFixed(4);
+    }
+
+    function formatTime(ms) {
+      const s = Math.floor(ms / 1000);
+      const m = Math.floor(s / 60);
+      const h = Math.floor(m / 60);
+      const d = Math.floor(h / 24);
+      if (d > 0) return `${d}d ${h % 24}h`;
+      if (h > 0) return `${h}h ${m % 60}m`;
+      if (m > 0) return `${m}m`;
+      return `${s}s`;
+    }
+
+    function formatDate(dateStr) {
+      const d = new Date(dateStr);
+      const now = new Date();
+      const diff = now - d;
+      if (diff < 60000) return 'Just now';
+      if (diff < 3600000) return Math.floor(diff / 60000) + 'm ago';
+      if (diff < 86400000) return Math.floor(diff / 3600000) + 'h ago';
+      return d.toLocaleDateString();
+    }
+
+    // Check server status
+    async function checkHealth() {
+      try {
+        const res = await fetch(API + '/api/health');
+        const data = await res.json();
+        const badge = document.getElementById('statusBadge');
+        const text = document.getElementById('statusText');
+
+        if (data.status === 'healthy') {
+          badge.className = 'status-badge online';
+          text.textContent = 'Online';
+        } else {
+          badge.className = 'status-badge offline';
+          text.textContent = 'Degraded';
+        }
+        return data;
+      } catch (e) {
+        document.getElementById('statusBadge').className = 'status-badge offline';
+        document.getElementById('statusText').textContent = 'Offline';
+        return null;
+      }
+    }
+
+    // Load usage stats
+    async function loadUsage() {
+      try {
+        const res = await fetch(API + '/api/stats/usage');
+        const data = await res.json();
+
+        // Today stats
+        if (data.today) {
+          document.getElementById('todayTokens').textContent = formatNumber(data.today.totalTokens);
+          document.getElementById('todayCost').textContent = formatCost(data.today.estimatedCost);
+          document.getElementById('todayRequests').textContent = data.today.requestCount || 0;
+          document.getElementById('cacheHits').textContent = formatNumber(data.today.cacheReadInputTokens || 0);
+        }
+
+        // Active sessions
+        document.getElementById('activeSessions').textContent = data.activeSessions || 0;
+
+        // Top agents table
+        const tbody = document.getElementById('topAgentsList');
+        if (data.topAgents && data.topAgents.length > 0) {
+          tbody.innerHTML = data.topAgents.map(a => `
+            <tr>
+              <td class="truncate">${a.agentPath}</td>
+              <td>${a.requestCount}</td>
+              <td>${formatNumber(a.inputTokens)}</td>
+              <td>${formatNumber(a.outputTokens)}</td>
+              <td>${formatCost(a.estimatedCost)}</td>
+            </tr>
+          `).join('');
+        } else {
+          tbody.innerHTML = '<tr><td colspan="5" class="empty">No usage data yet</td></tr>';
+        }
+      } catch (e) {
+        console.error('Failed to load usage:', e);
+      }
+    }
+
+    // Load system info
+    async function loadSystemInfo() {
+      try {
+        const res = await fetch(API + '/api/stats');
+        const data = await res.json();
+
+        document.getElementById('vaultPath').textContent = data.vaultPath || '-';
+        document.getElementById('uptime').textContent = formatTime(data.uptime || 0);
+        document.getElementById('totalDocs').textContent = data.documents || '-';
+        document.getElementById('nodeVersion').textContent = process?.version || data.nodeVersion || '-';
+      } catch (e) {
+        console.error('Failed to load system info:', e);
+      }
+    }
+
+    // Load agents
+    async function loadAgents() {
+      try {
+        const res = await fetch(API + '/api/agents');
+        const agents = await res.json();
+        const container = document.getElementById('agentsList');
+
+        if (!agents || agents.length === 0) {
+          container.innerHTML = '<div class="empty">No agents defined</div>';
+          return;
+        }
+
+        container.innerHTML = agents.map(a => `
+          <div class="list-item">
+            <div>
+              <div class="list-item-title">${a.name || a.path}</div>
+              <div class="list-item-subtitle">${a.description || 'No description'}</div>
+            </div>
+            <div class="list-item-meta">
+              ${a.type ? `<span class="badge">${a.type}</span>` : ''}
+            </div>
+          </div>
+        `).join('');
+      } catch (e) {
+        document.getElementById('agentsList').innerHTML = '<div class="empty">Failed to load agents</div>';
+      }
+    }
+
+    // Load sessions
+    async function loadSessions() {
+      try {
+        const res = await fetch(API + '/api/chat/sessions?limit=5');
+        const data = await res.json();
+        const sessions = data.sessions || data;
+        const container = document.getElementById('sessionsList');
+
+        if (!sessions || sessions.length === 0) {
+          container.innerHTML = '<div class="empty">No sessions yet</div>';
+          return;
+        }
+
+        container.innerHTML = sessions.slice(0, 5).map(s => `
+          <div class="list-item">
+            <div>
+              <div class="list-item-title">${s.title || s.agentPath || 'Untitled'}</div>
+              <div class="list-item-subtitle">${s.agentPath || 'vault-agent'}</div>
+            </div>
+            <div class="list-item-meta">
+              ${s.messageCount || 0} messages<br>
+              ${formatDate(s.lastActivity || s.created)}
+            </div>
+          </div>
+        `).join('');
+      } catch (e) {
+        document.getElementById('sessionsList').innerHTML = '<div class="empty">Failed to load sessions</div>';
+      }
+    }
+
+    // Log tracking
+    let lastLogTimestamp = null;
+    let logRefreshInterval = null;
+    let knownComponents = new Set();
+
+    // Load logs
+    async function loadLogs() {
+      try {
+        const level = document.getElementById('logLevelFilter').value;
+        const component = document.getElementById('logComponentFilter').value;
+        const limit = document.getElementById('logLimitFilter').value;
+
+        const params = new URLSearchParams();
+        if (level) params.append('level', level);
+        if (component) params.append('component', component);
+        params.append('limit', limit);
+
+        const res = await fetch(API + '/api/logs?' + params.toString());
+        const data = await res.json();
+        const logs = data.logs || data;
+
+        renderLogs(logs);
+
+        // Update stats
+        await loadLogStats();
+      } catch (e) {
+        console.error('Failed to load logs:', e);
+        document.getElementById('logsContainer').innerHTML = '<div class="empty">Failed to load logs</div>';
+      }
+    }
+
+    // Load log statistics
+    async function loadLogStats() {
+      try {
+        const res = await fetch(API + '/api/logs/stats');
+        const stats = await res.json();
+
+        document.getElementById('logStatsTotal').textContent = stats.total || 0;
+        document.getElementById('logStatsErrors').textContent = stats.byLevel?.ERROR || 0;
+        document.getElementById('logStatsWarns').textContent = stats.byLevel?.WARN || 0;
+
+        // Update component filter options
+        if (stats.byComponent) {
+          const newComponents = Object.keys(stats.byComponent);
+          const hasNewComponents = newComponents.some(c => !knownComponents.has(c));
+
+          if (hasNewComponents) {
+            knownComponents = new Set(newComponents);
+            const select = document.getElementById('logComponentFilter');
+            const currentValue = select.value;
+
+            select.innerHTML = '<option value="">All</option>' +
+              newComponents.sort().map(c =>
+                `<option value="${c}" ${c === currentValue ? 'selected' : ''}>${c} (${stats.byComponent[c]})</option>`
+              ).join('');
+          }
+        }
+      } catch (e) {
+        console.error('Failed to load log stats:', e);
+      }
+    }
+
+    // Render logs to container
+    function renderLogs(logs) {
+      const container = document.getElementById('logsContainer');
+
+      if (!logs || logs.length === 0) {
+        container.innerHTML = '<div class="empty">No logs match the current filters</div>';
+        return;
+      }
+
+      container.innerHTML = logs.map(log => {
+        const time = new Date(log.timestamp).toLocaleTimeString('en-US', {
+          hour12: false,
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+          fractionalSecondDigits: 3
+        });
+
+        const dataHtml = log.data ?
+          `<div class="log-data">${escapeHtml(JSON.stringify(log.data, null, 2))}</div>` : '';
+
+        return `
+          <div class="log-entry">
+            <span class="log-time">${time}</span>
+            <span class="log-level ${log.levelName}">${log.levelName}</span>
+            <span class="log-component" title="${escapeHtml(log.component)}">${escapeHtml(log.component)}</span>
+            <span class="log-message">${escapeHtml(log.message)}</span>
+            ${dataHtml}
+          </div>
+        `;
+      }).join('');
+
+      // Auto-scroll to bottom
+      if (document.getElementById('autoScrollLogs').checked) {
+        container.scrollTop = container.scrollHeight;
+      }
+
+      // Track last timestamp for polling
+      if (logs.length > 0) {
+        lastLogTimestamp = logs[logs.length - 1].timestamp;
+      }
+    }
+
+    // Escape HTML to prevent XSS
+    function escapeHtml(text) {
+      if (typeof text !== 'string') return text;
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    // Clear log view
+    function clearLogs() {
+      document.getElementById('logsContainer').innerHTML = '<div class="empty">Logs cleared from view (server buffer unchanged)</div>';
+    }
+
+    // Start/stop auto-refresh for logs
+    function setupLogAutoRefresh() {
+      const checkbox = document.getElementById('autoRefreshLogs');
+
+      if (logRefreshInterval) {
+        clearInterval(logRefreshInterval);
+        logRefreshInterval = null;
+      }
+
+      if (checkbox.checked) {
+        logRefreshInterval = setInterval(loadLogs, 5000);
+      }
+    }
+
+    // Add event listener for auto-refresh toggle
+    document.addEventListener('DOMContentLoaded', () => {
+      document.getElementById('autoRefreshLogs').addEventListener('change', setupLogAutoRefresh);
+      setupLogAutoRefresh();
+    });
+
+    // Load all data
+    async function loadAll() {
+      await Promise.all([
+        checkHealth(),
+        loadUsage(),
+        loadSystemInfo(),
+        loadAgents(),
+        loadSessions(),
+        loadLogs()
+      ]);
+    }
+
+    // Initialize
+    loadAll();
+
+    // Auto-refresh stats every 30 seconds (logs have their own 5s refresh)
+    setInterval(() => {
+      checkHealth();
+      loadUsage();
+      loadSystemInfo();
+      loadAgents();
+      loadSessions();
+    }, 30000);
+  </script>
+</body>
+</html>
