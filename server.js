@@ -474,6 +474,9 @@ app.get('/api/modules/:mod/stats', async (req, res) => {
 // ============================================================================
 
 const server = app.listen(CONFIG.port, CONFIG.host, async () => {
+  // Initialize orchestrator (session manager, para ID service, etc.)
+  await orchestrator.initialize();
+
   log.info('Server started', { host: CONFIG.host, port: CONFIG.port, vault: CONFIG.vaultPath });
 
   console.log(`
