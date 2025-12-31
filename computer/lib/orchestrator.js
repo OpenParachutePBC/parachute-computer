@@ -162,13 +162,6 @@ export class Orchestrator extends EventEmitter {
         const mcpServerName = mcpParts[1];
         const mcpToolName = mcpParts[2] || 'unknown';
 
-        // Built-in MCPs are always auto-approved (safe, local operations)
-        const builtInMcps = ['vault-search', 'para-generate'];
-        if (builtInMcps.includes(mcpServerName)) {
-          console.log(`[Orchestrator] MCP auto-allow (built-in): ${toolName}`);
-          return { behavior: 'allow', updatedInput: input };
-        }
-
         // Check if this MCP server is pre-approved for this session
         if (approvedMcpsThisSession.has(mcpServerName)) {
           console.log(`[Orchestrator] MCP auto-allow (session-approved): ${toolName}`);

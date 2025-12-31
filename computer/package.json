@@ -10,7 +10,6 @@
     "test": "node --test lib/*.test.js",
     "test:e2e": "node test/e2e-session-tests.js",
     "test:e2e:isolated": "node test/e2e-session-tests.js --isolated",
-    "mcp:vault-search": "node mcp-vault-search.js",
     "install-service": "bash deploy/install.sh",
     "uninstall-service": "launchctl unload ~/Library/LaunchAgents/xyz.openparachute.agent.plist",
     "logs": "tail -f logs/stdout.log",
