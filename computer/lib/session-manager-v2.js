@@ -61,11 +61,9 @@ export class SessionResumeInfo {
 export class SessionManager {
   constructor(vaultPath) {
     this.vaultPath = vaultPath;
-    // Sessions stored in Chat module folder
-    this.sessionsPath = path.join(vaultPath, 'Chat', 'sessions');
 
     // Index by SDK session ID
-    // sdkSessionId -> { filePath, agentPath, title, ... }
+    // sdkSessionId -> { filePath, agentPath, title, module, ... }
     this.sessionIndex = new Map();
 
     // Full sessions loaded on-demand
@@ -81,6 +79,16 @@ export class SessionManager {
     // Write locks to prevent concurrent writes to same session
     // sdkSessionId -> Promise (resolves when write completes)
     this.writeLocks = new Map();
+  }
+
+  /**
+   * Get the sessions directory for a specific module
+   * @param {string} module - Module name ('chat', 'build', 'daily', etc.)
+   * @returns {string} Path to sessions directory
+   */
+  getSessionsPath(module = 'chat') {
+    const moduleName = module.charAt(0).toUpperCase() + module.slice(1);
+    return path.join(this.vaultPath, moduleName, 'sessions');
   }
 
   /**
@@ -132,7 +140,12 @@ export class SessionManager {
    * Initialize session manager
    */
   async initialize() {
-    await fs.mkdir(this.sessionsPath, { recursive: true });
+    // Ensure all module session directories exist
+    const modules = ['chat', 'build', 'daily'];
+    for (const module of modules) {
+      await fs.mkdir(this.getSessionsPath(module), { recursive: true });
+    }
+
     await this.paraIdService.initialize();
     await this.buildSessionIndex();
 
@@ -172,7 +185,16 @@ export class SessionManager {
    * Build session index from markdown files
    */
   async buildSessionIndex() {
-    await this.indexSessionsFromDir(this.sessionsPath);
+    // Index all module directories
+    const modules = ['chat', 'build', 'daily'];
+    for (const module of modules) {
+      const modulePath = this.getSessionsPath(module);
+      try {
+        await this.indexSessionsFromDir(modulePath);
+      } catch (e) {
+        // Module directory may not exist yet
+      }
+    }
 
     // Also index legacy paths
     const legacyPaths = [
@@ -227,6 +249,7 @@ export class SessionManager {
         filePath,
         agentPath: matter.data.agent || 'vault-agent',
         agentName: matter.data.agent_name,
+        module: matter.data.module || 'chat',
         title: matter.data.title || null,
         createdAt: matter.data.created_at,
         lastAccessed: matter.data.last_accessed,
@@ -245,10 +268,11 @@ export class SessionManager {
    *
    * @param {string|null} sdkSessionId - SDK session ID if resuming, null for new
    * @param {string} agentPath - Agent path
-   * @param {object} options - { workingDirectory, continuedFrom }
+   * @param {object} options - { workingDirectory, continuedFrom, module }
    * @returns {{ session, resumeInfo, isNew }}
    */
   async getSession(sdkSessionId, agentPath, options = {}) {
+    const module = options.module || 'chat';
     const resumeInfo = new SessionResumeInfo();
 
     // Resuming existing session
@@ -289,6 +313,7 @@ export class SessionManager {
     const session = {
       sdkSessionId: null, // Will be set after SDK response
       agentPath: agentPath || 'vault-agent',
+      module, // Store module for correct file path
       title: null,
       messages: [],
       filePath: null, // Will be set when we get SDK ID
@@ -300,7 +325,7 @@ export class SessionManager {
     };
 
     resumeInfo.isNewSession = true;
-    console.log(`[SessionManager] New session (pending SDK ID)`);
+    console.log(`[SessionManager] New session for module '${module}' (pending SDK ID)`);
     return { session, resumeInfo, isNew: true };
   }
 
@@ -334,11 +359,13 @@ export class SessionManager {
 
       session.sdkSessionId = sdkSessionId;
 
-      // Generate file path using SDK ID
+      // Generate file path using SDK ID and module
+      const module = session.module || 'chat';
+      const sessionsPath = this.getSessionsPath(module);
       const agentName = (session.agentPath || 'vault-agent').replace('agents/', '').replace('.md', '');
       const today = new Date().toISOString().split('T')[0];
       const shortId = sdkSessionId.slice(0, 8);
-      session.filePath = path.join(this.sessionsPath, agentName, `${today}-${shortId}.md`);
+      session.filePath = path.join(sessionsPath, agentName, `${today}-${shortId}.md`);
 
       // Ensure directory exists
       await fs.mkdir(path.dirname(session.filePath), { recursive: true });
@@ -350,6 +377,7 @@ export class SessionManager {
         filePath: session.filePath,
         agentPath: session.agentPath,
         agentName,
+        module,
         title: session.title,
         createdAt: session.createdAt,
         lastAccessed: session.lastAccessed,
@@ -398,6 +426,7 @@ export class SessionManager {
     return {
       sdkSessionId,
       agentPath: matter.data.agent || 'vault-agent',
+      module: matter.data.module || 'chat',
       title: matter.data.title || null,
       messages: this.parseMessages(matter.body),
       filePath,
@@ -589,6 +618,7 @@ export class SessionManager {
 
     frontmatterLines.push(
       `type: chat`,
+      `module: "${session.module || 'chat'}"`,
       `created_at: "${session.createdAt}"`,
       `last_accessed: "${session.lastAccessed}"`,
       `archived: ${session.archived || false}`

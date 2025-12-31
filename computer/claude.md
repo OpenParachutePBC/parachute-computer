@@ -62,7 +62,7 @@ VAULT_PATH=/path/to/vault npm start # Custom vault
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/api/modules/:mod/prompt` | GET | Get module's system prompt |
-| `/api/modules/:mod/prompt` | PUT | Update module's AGENTS.md |
+| `/api/modules/:mod/prompt` | PUT | Update module's CLAUDE.md |
 | `/api/modules/:mod/search` | GET | Search module content |
 | `/api/modules/:mod/index` | POST | Rebuild module index |
 
@@ -96,7 +96,7 @@ data: {"type": "done", "sessionId": "...", "title": "..."}
 Each module has its own:
 - Session folder: `{Module}/sessions/`
 - RAG index: `{Module}/index.db`
-- System prompt: `{Module}/AGENTS.md` (optional, falls back to default)
+- System prompt: `{Module}/CLAUDE.md` (optional, falls back to default)
 
 **Supported modules**: `chat`, `daily`, `build`
 

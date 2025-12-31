@@ -308,13 +308,13 @@ app.delete('/api/chat/:id', async (req, res) => {
 
 /**
  * GET /api/modules/:mod/prompt
- * Get system prompt for a module (e.g., Chat/AGENTS.md)
+ * Get system prompt for a module (e.g., Chat/CLAUDE.md)
  */
 app.get('/api/modules/:mod/prompt', async (req, res) => {
   try {
     const { mod } = req.params;
     const moduleName = mod.charAt(0).toUpperCase() + mod.slice(1).toLowerCase();
-    const promptPath = path.join(CONFIG.vaultPath, moduleName, 'AGENTS.md');
+    const promptPath = path.join(CONFIG.vaultPath, moduleName, 'CLAUDE.md');
 
     let content = null;
     let exists = false;
@@ -328,7 +328,7 @@ app.get('/api/modules/:mod/prompt', async (req, res) => {
 
     res.json({
       module: mod,
-      path: `${moduleName}/AGENTS.md`,
+      path: `${moduleName}/CLAUDE.md`,
       exists,
       content,
       defaultPrompt: PARACHUTE_DEFAULT_PROMPT
@@ -350,7 +350,7 @@ app.put('/api/modules/:mod/prompt', async (req, res) => {
     const { content, reset } = req.body;
 
     const moduleName = mod.charAt(0).toUpperCase() + mod.slice(1).toLowerCase();
-    const promptPath = path.join(CONFIG.vaultPath, moduleName, 'AGENTS.md');
+    const promptPath = path.join(CONFIG.vaultPath, moduleName, 'CLAUDE.md');
 
     if (reset) {
       // Delete the file to use default
@@ -364,7 +364,7 @@ app.put('/api/modules/:mod/prompt', async (req, res) => {
       // Ensure module directory exists
       await fs.mkdir(path.dirname(promptPath), { recursive: true });
       await fs.writeFile(promptPath, content, 'utf-8');
-      res.json({ success: true, path: `${moduleName}/AGENTS.md` });
+      res.json({ success: true, path: `${moduleName}/CLAUDE.md` });
     } else {
       res.status(400).json({ error: 'content or reset required' });
     }

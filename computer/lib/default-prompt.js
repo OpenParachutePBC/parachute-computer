@@ -1,10 +1,10 @@
 /**
  * Built-in Parachute System Prompt
  *
- * This is the default system prompt used when no AGENTS.md exists in the vault.
+ * This is the default system prompt used when no CLAUDE.md exists in the vault.
  * It defines the core identity and behavior of the Parachute agent.
  *
- * Users can override this by creating {Module}/AGENTS.md in their vault.
+ * Users can override this by creating {Module}/CLAUDE.md in their vault.
  */
 
 export const PARACHUTE_DEFAULT_PROMPT = `# Parachute Agent

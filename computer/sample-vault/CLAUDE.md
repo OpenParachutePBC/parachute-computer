@@ -35,7 +35,7 @@ Chat/                   # Parachute Chat - AI assistant
 .agents/                # Shared agent definitions
   {agent-name}.md       # Specialized agents for specific tasks
 
-AGENTS.md               # Shared system prompt override (optional)
+CLAUDE.md               # Shared system prompt override (optional)
 ```
 
 ## Your Context

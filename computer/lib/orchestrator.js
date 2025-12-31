@@ -24,6 +24,20 @@ import { orchestratorLogger as log } from './logger.js';
 import { PARACHUTE_DEFAULT_PROMPT } from './default-prompt.js';
 
 /**
+ * Get environment variables for SDK subprocess
+ * Ensures PATH includes common node installation locations
+ * This fixes "spawn node ENOENT" when cwd is set to a custom working directory
+ */
+function getSdkEnv() {
+  const env = { ...process.env };
+  // Ensure /opt/homebrew/bin is in PATH for macOS Homebrew node installations
+  if (env.PATH && !env.PATH.includes('/opt/homebrew/bin')) {
+    env.PATH = `/opt/homebrew/bin:${env.PATH}`;
+  }
+  return env;
+}
+
+/**
  * Default orchestrator configuration
  */
 const DEFAULT_CONFIG = {
@@ -678,12 +692,25 @@ export class Orchestrator extends EventEmitter {
       effectivePath,
       {
         workingDirectory: context.workingDirectory,
-        continuedFrom: context.continuedFrom
+        continuedFrom: context.continuedFrom,
+        module: context.module || 'chat'
       }
     );
 
     // Determine the working directory for this session
-    const effectiveCwd = session.workingDirectory || this.vaultPath;
+    // Resolve relative paths against vault path
+    let effectiveCwd = this.vaultPath;
+    if (session.workingDirectory) {
+      effectiveCwd = path.isAbsolute(session.workingDirectory)
+        ? session.workingDirectory
+        : path.join(this.vaultPath, session.workingDirectory);
+    }
+
+    // Add working directory info to system prompt if different from vault root
+    let effectiveSystemPrompt = systemPrompt;
+    if (effectiveCwd !== this.vaultPath) {
+      effectiveSystemPrompt += `\n\nWorking directory: ${effectiveCwd}`;
+    }
 
     log.info('Streaming chat session', {
       sdkSessionId: session.sdkSessionId ? session.sdkSessionId.slice(0, 8) + '...' : 'pending',
@@ -747,8 +774,9 @@ export class Orchestrator extends EventEmitter {
       const resolvedMcpServers = resolveMcpServers(agent.mcpServers, globalMcpServers);
 
       const queryOptions = {
-        systemPrompt,
+        systemPrompt: effectiveSystemPrompt,
         cwd: effectiveCwd,
+        env: getSdkEnv(),
         permissionMode: 'default',
         canUseTool: this.createPermissionHandler(agent, session.sdkSessionId || 'new', (denial) => {
           requestPermissionDenials.push(denial);
@@ -1015,11 +1043,25 @@ export class Orchestrator extends EventEmitter {
       effectivePath,
       {
         workingDirectory: context.workingDirectory,
-        continuedFrom: context.continuedFrom
+        continuedFrom: context.continuedFrom,
+        module: context.module || 'chat'
       }
     );
 
-    const effectiveCwd = session.workingDirectory || this.vaultPath;
+    // Determine the working directory for this session
+    // Resolve relative paths against vault path
+    let effectiveCwd = this.vaultPath;
+    if (session.workingDirectory) {
+      effectiveCwd = path.isAbsolute(session.workingDirectory)
+        ? session.workingDirectory
+        : path.join(this.vaultPath, session.workingDirectory);
+    }
+
+    // Add working directory info to system prompt if different from vault root
+    let effectiveSystemPrompt = systemPrompt;
+    if (effectiveCwd !== this.vaultPath) {
+      effectiveSystemPrompt += `\n\nWorking directory: ${effectiveCwd}`;
+    }
 
     log.info('Chat session', {
       sdkSessionId: session.sdkSessionId ? session.sdkSessionId.slice(0, 8) + '...' : 'pending',
@@ -1055,8 +1097,9 @@ export class Orchestrator extends EventEmitter {
       const resolvedMcpServers = resolveMcpServers(agent.mcpServers, globalMcpServers);
 
       const queryOptions = {
-        systemPrompt,
+        systemPrompt: effectiveSystemPrompt,
         cwd: effectiveCwd,
+        env: getSdkEnv(),
         permissionMode: 'default',
         canUseTool: this.createPermissionHandler(agent, session.sdkSessionId || 'new', (denial) => {
           requestPermissionDenials.push(denial);
@@ -1419,42 +1462,39 @@ export class Orchestrator extends EventEmitter {
   }
 
   /**
-   * Load AGENTS.md from vault root if it exists
-   * @returns {Promise<string|null>} Content of AGENTS.md or null
+   * Load CLAUDE.md from vault root if it exists
+   * @returns {Promise<string|null>} Content of CLAUDE.md or null
+   * @deprecated The SDK now handles CLAUDE.md loading automatically via settingSources: ['project']
    */
   async loadAgentsMd() {
-    const agentsMdPath = path.join(this.vaultPath, 'AGENTS.md');
+    const agentsMdPath = path.join(this.vaultPath, 'CLAUDE.md');
     try {
       const content = await fs.readFile(agentsMdPath, 'utf-8');
-      log.info('Loaded AGENTS.md', { path: agentsMdPath, length: content.length });
+      log.info('Loaded CLAUDE.md', { path: agentsMdPath, length: content.length });
       return content;
     } catch (e) {
       if (e.code === 'ENOENT') {
-        log.debug('No AGENTS.md found', { path: agentsMdPath });
+        log.debug('No CLAUDE.md found', { path: agentsMdPath });
         return null;
       }
-      log.error('Error loading AGENTS.md', { error: e.message });
+      log.error('Error loading CLAUDE.md', { error: e.message });
       return null;
     }
   }
 
   /**
    * Build system prompt for vault agent
-   * Uses AGENTS.md if present, otherwise falls back to default prompt
-   * Also loads context files from Chat/contexts/ folder
+   *
+   * Uses the default vault prompt as the base. The Claude SDK automatically
+   * merges in CLAUDE.md from the working directory when settingSources: ['project']
+   * is set in query options.
+   *
+   * Also loads context files from Chat/contexts/ folder.
    */
   async buildVaultSystemPrompt(context = {}) {
-    // Try to load AGENTS.md first - this is the preferred source
-    const agentsMd = await this.loadAgentsMd();
-
-    let prompt;
-    if (agentsMd) {
-      // AGENTS.md is the system prompt
-      prompt = agentsMd;
-    } else {
-      // Fallback: default prompt when no AGENTS.md exists
-      prompt = await this.buildDefaultVaultPrompt(context);
-    }
+    // Always use default vault prompt as base
+    // The SDK merges cwd's CLAUDE.md automatically via settingSources: ['project']
+    let prompt = await this.buildDefaultVaultPrompt(context);
 
     // Determine which context files to load
     // If context.contexts is provided, use those
@@ -1513,10 +1553,10 @@ The user is now continuing this conversation with you. Respond naturally as if y
   }
 
   /**
-   * Build default vault prompt (fallback when no AGENTS.md)
+   * Build default vault prompt (fallback when no CLAUDE.md)
    *
    * Uses the built-in Parachute default prompt constant.
-   * Users can override this entirely by creating AGENTS.md in their vault.
+   * Users can override this entirely by creating CLAUDE.md in their vault.
    */
   async buildDefaultVaultPrompt(context = {}) {
     let prompt = PARACHUTE_DEFAULT_PROMPT;
@@ -1552,6 +1592,7 @@ The user is now continuing this conversation with you. Respond naturally as if y
       const queryOptions = {
         systemPrompt,
         cwd: this.vaultPath,
+        env: getSdkEnv(),
         allowedTools: agent.permissions?.tools || agent.tools,
         permissionMode: 'acceptEdits'
       };
@@ -1844,6 +1885,7 @@ The user is now continuing this conversation with you. Respond naturally as if y
       const queryOptions = {
         systemPrompt,
         cwd: this.vaultPath,
+        env: getSdkEnv(),
         allowedTools: agent.permissions?.tools || agent.tools,
         permissionMode: 'acceptEdits',
         // Enable skills from the vault's .claude/skills directory
