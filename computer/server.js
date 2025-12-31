@@ -789,6 +789,64 @@ app.get('/api/read', async (req, res) => {
   }
 });
 
+/**
+ * PUT /api/write
+ * Write content to a file in the vault
+ *
+ * Body: { path: string, content: string }
+ * Security: Only allows writing to certain directories (Chat/contexts/, etc.)
+ *
+ * Returns: { path, size, lastModified }
+ */
+app.put('/api/write', async (req, res) => {
+  try {
+    const { path: relativePath, content } = req.body;
+
+    if (!relativePath) {
+      return res.status(400).json({ error: 'path is required' });
+    }
+
+    if (content === undefined || content === null) {
+      return res.status(400).json({ error: 'content is required' });
+    }
+
+    // Prevent path traversal
+    if (relativePath.includes('..')) {
+      return res.status(400).json({ error: 'Invalid path' });
+    }
+
+    // Security: Only allow writing to certain directories
+    const allowedPrefixes = ['Chat/contexts/'];
+    const isAllowed = allowedPrefixes.some(prefix => relativePath.startsWith(prefix));
+    if (!isAllowed) {
+      return res.status(403).json({
+        error: 'Write access denied - can only write to: ' + allowedPrefixes.join(', ')
+      });
+    }
+
+    const filePath = path.join(CONFIG.vaultPath, relativePath);
+
+    // Ensure parent directory exists
+    const parentDir = path.dirname(filePath);
+    await fs.mkdir(parentDir, { recursive: true });
+
+    // Write file
+    await fs.writeFile(filePath, content, 'utf-8');
+
+    // Get updated stat
+    const stat = await fs.stat(filePath);
+
+    res.json({
+      path: relativePath,
+      size: stat.size,
+      lastModified: stat.mtime.toISOString()
+    });
+  } catch (error) {
+    log.error('Write file error', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // ============================================================================
 // ASSET SERVING
 // ============================================================================
