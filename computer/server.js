@@ -790,6 +790,96 @@ app.get('/api/read', async (req, res) => {
 });
 
 // ============================================================================
+// ASSET SERVING
+// ============================================================================
+
+/**
+ * GET /api/assets/*
+ * Serve asset files from the vault
+ * Path examples:
+ *   /api/assets/Chat/assets/2025-12/photo.png
+ *   /api/assets/Daily/assets/2025-12/recording.opus
+ *
+ * Security: Only serves files from known asset directories (assets/, artifacts/)
+ */
+app.get('/api/assets/*', async (req, res) => {
+  try {
+    // Get the path after /api/assets/
+    const assetPath = req.params[0];
+
+    if (!assetPath) {
+      return res.status(400).json({ error: 'Asset path is required' });
+    }
+
+    // Prevent path traversal
+    if (assetPath.includes('..')) {
+      return res.status(400).json({ error: 'Invalid path' });
+    }
+
+    // Only allow serving from asset directories for security
+    const allowedDirs = ['assets', 'artifacts'];
+    const pathParts = assetPath.split('/');
+
+    // Check if path contains an allowed directory
+    const hasAllowedDir = pathParts.some(part => allowedDirs.includes(part));
+    if (!hasAllowedDir) {
+      return res.status(403).json({
+        error: 'Access denied - can only serve from assets/ or artifacts/ directories'
+      });
+    }
+
+    const fullPath = path.join(CONFIG.vaultPath, assetPath);
+
+    // Verify the file exists and is a file
+    const stat = await fs.stat(fullPath);
+    if (stat.isDirectory()) {
+      return res.status(400).json({ error: 'Path is a directory' });
+    }
+
+    // Determine content type based on extension
+    const ext = path.extname(fullPath).toLowerCase();
+    const contentTypes = {
+      '.png': 'image/png',
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.gif': 'image/gif',
+      '.webp': 'image/webp',
+      '.svg': 'image/svg+xml',
+      '.mp3': 'audio/mpeg',
+      '.wav': 'audio/wav',
+      '.opus': 'audio/opus',
+      '.ogg': 'audio/ogg',
+      '.m4a': 'audio/mp4',
+      '.mp4': 'video/mp4',
+      '.webm': 'video/webm',
+      '.pdf': 'application/pdf',
+      '.json': 'application/json',
+      '.txt': 'text/plain',
+      '.md': 'text/markdown',
+    };
+
+    const contentType = contentTypes[ext] || 'application/octet-stream';
+
+    // Set headers
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Length', stat.size);
+    res.setHeader('Cache-Control', 'public, max-age=86400'); // Cache for 1 day
+
+    // Stream the file
+    const { createReadStream } = await import('fs');
+    const stream = createReadStream(fullPath);
+    stream.pipe(res);
+
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      return res.status(404).json({ error: 'Asset not found' });
+    }
+    log.error('Asset serving error', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================================================
 // SERVER STARTUP
 // ============================================================================
 
