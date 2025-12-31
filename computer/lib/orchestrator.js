@@ -12,6 +12,7 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import path from 'path';
 import fs from 'fs/promises';
+import os from 'os';
 import { loadAgent, buildSystemPrompt, hasPermission, matchesPatterns, loadAllAgents, AgentType } from './agent-loader.js';
 import { AgentQueue, Status, Priority } from './queue.js';
 import { DocumentScanner, AgentStatus, parseTrigger, shouldTriggerFire } from './document-scanner.js';
@@ -1291,6 +1292,75 @@ export class Orchestrator extends EventEmitter {
    */
   async reloadSessionIndex() {
     return this.sessionManager.reloadSessionIndex();
+  }
+
+  /**
+   * Get the SDK transcript path for a session
+   * @param {object} session - Session object with sdkSessionId and workingDirectory
+   * @returns {string|null} Path to SDK's JSONL transcript
+   */
+  getSdkTranscriptPath(session) {
+    if (!session || !session.sdkSessionId) {
+      return null;
+    }
+
+    // Determine the cwd that was used for this session
+    let effectiveCwd = this.vaultPath;
+    if (session.workingDirectory) {
+      effectiveCwd = path.isAbsolute(session.workingDirectory)
+        ? session.workingDirectory
+        : path.join(this.vaultPath, session.workingDirectory);
+    }
+
+    // SDK encodes path by replacing / with -
+    const encodedPath = effectiveCwd.replace(/\//g, '-');
+    const claudeDir = path.join(os.homedir(), '.claude', 'projects', encodedPath);
+    return path.join(claudeDir, `${session.sdkSessionId}.jsonl`);
+  }
+
+  /**
+   * Read events from SDK transcript
+   * @param {string} transcriptPath - Path to the JSONL file
+   * @param {object} options - Filter options (types, limit, offset)
+   * @returns {Promise<object[]>} Array of events
+   */
+  async readSdkTranscript(transcriptPath, options = {}) {
+    const { types, limit, offset = 0 } = options;
+
+    try {
+      const content = await fs.readFile(transcriptPath, 'utf-8');
+      const lines = content.trim().split('\n').filter(Boolean);
+
+      let events = lines.map((line, index) => {
+        try {
+          const event = JSON.parse(line);
+          event._lineNumber = index;
+          return event;
+        } catch (e) {
+          return null;
+        }
+      }).filter(Boolean);
+
+      // Filter by types if specified
+      if (types && types.length > 0) {
+        events = events.filter(e => types.includes(e.type));
+      }
+
+      // Apply offset and limit
+      if (offset > 0) {
+        events = events.slice(offset);
+      }
+      if (limit) {
+        events = events.slice(0, limit);
+      }
+
+      return events;
+    } catch (e) {
+      if (e.code === 'ENOENT') {
+        return []; // File doesn't exist yet
+      }
+      throw e;
+    }
   }
 
   // ============================================================================

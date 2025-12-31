@@ -308,6 +308,68 @@ app.delete('/api/chat/:id', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/chat/:id/transcript
+ * Get the full SDK transcript (JSONL events) for a session
+ * Query params:
+ *   - types: comma-separated event types to filter (e.g., "user,assistant,tool_use")
+ *   - limit: max events to return
+ *   - offset: skip first N events
+ */
+app.get('/api/chat/:id/transcript', async (req, res) => {
+  try {
+    const { types, limit, offset } = req.query;
+
+    const session = await orchestrator.getSessionById(req.params.id);
+    if (!session) {
+      return res.status(404).json({ error: 'Session not found' });
+    }
+
+    // Get the transcript path for this session
+    const transcriptPath = orchestrator.getSdkTranscriptPath(session);
+    if (!transcriptPath) {
+      return res.status(404).json({
+        error: 'Transcript not available',
+        reason: 'Session does not have SDK transcript path'
+      });
+    }
+
+    // Check if file exists
+    try {
+      await fs.access(transcriptPath);
+    } catch {
+      return res.status(404).json({
+        error: 'Transcript file not found',
+        path: transcriptPath
+      });
+    }
+
+    // Read and filter events
+    const options = {};
+    if (types) {
+      options.types = types.split(',').map(t => t.trim());
+    }
+    if (limit) {
+      options.limit = parseInt(limit, 10);
+    }
+    if (offset) {
+      options.offset = parseInt(offset, 10);
+    }
+
+    const events = await orchestrator.readSdkTranscript(transcriptPath, options);
+
+    res.json({
+      sessionId: req.params.id,
+      transcriptPath,
+      eventCount: events.length,
+      events
+    });
+  } catch (error) {
+    log.error('Get transcript error', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // ============================================================================
 // MODULE RESOURCES
 // ============================================================================

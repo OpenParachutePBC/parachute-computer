@@ -15,8 +15,73 @@
 import fs from 'fs/promises';
 import fsSync from 'fs';
 import path from 'path';
+import os from 'os';
 import { generateSessionTitle } from './title-generator.js';
 import { ParaIdService, ParaIdType, getParaIdService } from './para-id-service.js';
+
+/**
+ * Get the path to Claude SDK's transcript JSONL for a session
+ * SDK stores transcripts in ~/.claude/projects/{encoded-cwd}/{session_id}.jsonl
+ *
+ * @param {string} cwd - The working directory used for the session
+ * @param {string} sessionId - The SDK session ID
+ * @returns {string} Path to the SDK's JSONL transcript file
+ */
+export function getSdkTranscriptPath(cwd, sessionId) {
+  // SDK encodes path by replacing / with -
+  const encodedPath = cwd.replace(/\//g, '-');
+  const claudeDir = path.join(os.homedir(), '.claude', 'projects', encodedPath);
+  return path.join(claudeDir, `${sessionId}.jsonl`);
+}
+
+/**
+ * Read events from SDK's transcript JSONL
+ *
+ * @param {string} transcriptPath - Path to the JSONL file
+ * @param {object} options - Filter options
+ * @param {string[]} options.types - Event types to include (e.g., ['tool_use', 'thinking'])
+ * @param {number} options.limit - Max events to return
+ * @param {number} options.offset - Skip first N events
+ * @returns {Promise<object[]>} Array of events
+ */
+export async function readSdkTranscript(transcriptPath, options = {}) {
+  const { types, limit, offset = 0 } = options;
+
+  try {
+    const content = await fs.readFile(transcriptPath, 'utf-8');
+    const lines = content.trim().split('\n').filter(Boolean);
+
+    let events = lines.map((line, index) => {
+      try {
+        const event = JSON.parse(line);
+        event._lineNumber = index;
+        return event;
+      } catch (e) {
+        return null;
+      }
+    }).filter(Boolean);
+
+    // Filter by types if specified
+    if (types && types.length > 0) {
+      events = events.filter(e => types.includes(e.type));
+    }
+
+    // Apply offset and limit
+    if (offset > 0) {
+      events = events.slice(offset);
+    }
+    if (limit) {
+      events = events.slice(0, limit);
+    }
+
+    return events;
+  } catch (e) {
+    if (e.code === 'ENOENT') {
+      return []; // File doesn't exist yet
+    }
+    throw e;
+  }
+}
 
 /**
  * Session resumption info for debugging/visibility
