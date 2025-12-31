@@ -7,6 +7,8 @@
 set -e
 
 PLIST="$HOME/Library/LaunchAgents/xyz.openparachute.agent.plist"
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+BASE_DIR="$( cd "$SCRIPT_DIR/.." && pwd )"
 
 echo "Stopping Parachute Agent..."
 
@@ -36,6 +38,6 @@ if curl -s http://localhost:3333/api/health | grep -q '"status":"ok"'; then
     echo "✅ Server restarted successfully"
 else
     echo "❌ Server may not have started correctly"
-    echo "Check logs: tail -50 $(dirname "$PLIST")/../Symbols/Codes/parachute/agent/logs/stdout.log"
+    echo "Check logs: tail -50 $BASE_DIR/logs/stdout.log"
     exit 1
 fi
