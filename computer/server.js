@@ -470,6 +470,258 @@ app.get('/api/modules/:mod/stats', async (req, res) => {
 });
 
 // ============================================================================
+// FILESYSTEM NAVIGATION (Generic for all modules)
+// ============================================================================
+
+/**
+ * GET /api/ls
+ * List directory contents with metadata
+ * Query: path (relative to vault, e.g., "Build/repos" or "Chat/contexts")
+ * Returns: { entries: [{ name, type, path, isSymlink, hasClaudeMd, isGitRepo, lastModified }] }
+ */
+app.get('/api/ls', async (req, res) => {
+  try {
+    const relativePath = req.query.path || '';
+
+    // Prevent path traversal attacks
+    if (relativePath.includes('..')) {
+      return res.status(400).json({ error: 'Invalid path' });
+    }
+
+    const targetPath = path.join(CONFIG.vaultPath, relativePath);
+
+    // Ensure directory exists
+    try {
+      await fs.mkdir(targetPath, { recursive: true });
+    } catch {
+      // May already exist
+    }
+
+    const dirEntries = await fs.readdir(targetPath, { withFileTypes: true });
+    const entries = [];
+
+    for (const entry of dirEntries) {
+      if (entry.name.startsWith('.')) continue; // Skip hidden
+
+      const entryPath = path.join(targetPath, entry.name);
+      const isDir = entry.isDirectory();
+
+      // Check if symlink
+      let isSymlink = false;
+      let symlinkTarget = null;
+      try {
+        const lstat = await fs.lstat(entryPath);
+        isSymlink = lstat.isSymbolicLink();
+        if (isSymlink) {
+          symlinkTarget = await fs.readlink(entryPath);
+        }
+      } catch {
+        // Can't lstat
+      }
+
+      // Get metadata for directories
+      let hasClaudeMd = false;
+      let isGitRepo = false;
+
+      if (isDir) {
+        try {
+          await fs.access(path.join(entryPath, 'CLAUDE.md'));
+          hasClaudeMd = true;
+        } catch {}
+
+        try {
+          await fs.access(path.join(entryPath, '.git'));
+          isGitRepo = true;
+        } catch {}
+      }
+
+      // Get timestamps
+      let lastModified = null;
+      let size = null;
+      try {
+        const stat = await fs.stat(entryPath);
+        lastModified = stat.mtime.toISOString();
+        if (!isDir) size = stat.size;
+      } catch {}
+
+      entries.push({
+        name: entry.name,
+        type: isDir ? 'directory' : 'file',
+        path: entryPath,
+        relativePath: path.join(relativePath, entry.name),
+        isSymlink,
+        symlinkTarget,
+        hasClaudeMd,
+        isGitRepo,
+        lastModified,
+        size
+      });
+    }
+
+    // Sort: directories first, then by last modified
+    entries.sort((a, b) => {
+      if (a.type !== b.type) return a.type === 'directory' ? -1 : 1;
+      if (!a.lastModified) return 1;
+      if (!b.lastModified) return -1;
+      return new Date(b.lastModified) - new Date(a.lastModified);
+    });
+
+    res.json({
+      path: relativePath || '/',
+      fullPath: targetPath,
+      entries
+    });
+  } catch (error) {
+    log.error('List directory error', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * POST /api/symlink
+ * Create a symlink within the vault
+ * Body: { target: "/absolute/external/path", link: "Build/repos/myproject" }
+ */
+app.post('/api/symlink', async (req, res) => {
+  try {
+    const { target, link } = req.body;
+
+    if (!target || !link) {
+      return res.status(400).json({ error: 'target and link are required' });
+    }
+
+    // Prevent path traversal
+    if (link.includes('..')) {
+      return res.status(400).json({ error: 'Invalid link path' });
+    }
+
+    // Verify target exists
+    try {
+      await fs.access(target);
+    } catch {
+      return res.status(400).json({ error: 'Target path does not exist' });
+    }
+
+    const linkPath = path.join(CONFIG.vaultPath, link);
+    const linkDir = path.dirname(linkPath);
+
+    // Ensure parent directory exists
+    await fs.mkdir(linkDir, { recursive: true });
+
+    // Check if already exists
+    try {
+      await fs.access(linkPath);
+      return res.status(409).json({ error: 'Path already exists' });
+    } catch {
+      // Good - doesn't exist
+    }
+
+    // Create symlink
+    await fs.symlink(target, linkPath, 'dir');
+
+    log.info('Symlink created', { target, link: linkPath });
+
+    res.json({
+      success: true,
+      symlink: {
+        target,
+        link,
+        fullPath: linkPath
+      }
+    });
+  } catch (error) {
+    log.error('Create symlink error', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * DELETE /api/symlink
+ * Remove a symlink (only symlinks, not regular files/dirs)
+ * Query: path (relative to vault)
+ */
+app.delete('/api/symlink', async (req, res) => {
+  try {
+    const relativePath = req.query.path;
+
+    if (!relativePath) {
+      return res.status(400).json({ error: 'path is required' });
+    }
+
+    // Prevent path traversal
+    if (relativePath.includes('..')) {
+      return res.status(400).json({ error: 'Invalid path' });
+    }
+
+    const linkPath = path.join(CONFIG.vaultPath, relativePath);
+
+    // Check if it's a symlink
+    const stat = await fs.lstat(linkPath);
+    if (!stat.isSymbolicLink()) {
+      return res.status(400).json({ error: 'Not a symlink - manual deletion required for safety' });
+    }
+
+    await fs.unlink(linkPath);
+
+    log.info('Symlink removed', { path: relativePath });
+
+    res.json({ success: true, removed: relativePath });
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      return res.status(404).json({ error: 'Path not found' });
+    }
+    log.error('Remove symlink error', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * GET /api/read
+ * Read file contents
+ * Query: path (relative to vault)
+ * Returns: { path, content, size, lastModified }
+ */
+app.get('/api/read', async (req, res) => {
+  try {
+    const relativePath = req.query.path;
+
+    if (!relativePath) {
+      return res.status(400).json({ error: 'path is required' });
+    }
+
+    // Prevent path traversal
+    if (relativePath.includes('..')) {
+      return res.status(400).json({ error: 'Invalid path' });
+    }
+
+    const filePath = path.join(CONFIG.vaultPath, relativePath);
+
+    // Check if file exists and is a file (not directory)
+    const stat = await fs.stat(filePath);
+    if (stat.isDirectory()) {
+      return res.status(400).json({ error: 'Path is a directory, not a file' });
+    }
+
+    // Read file content
+    const content = await fs.readFile(filePath, 'utf-8');
+
+    res.json({
+      path: relativePath,
+      fullPath: filePath,
+      content,
+      size: stat.size,
+      lastModified: stat.mtime.toISOString()
+    });
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      return res.status(404).json({ error: 'File not found' });
+    }
+    log.error('Read file error', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================================================
 // SERVER STARTUP
 // ============================================================================
 
