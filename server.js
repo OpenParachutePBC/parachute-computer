@@ -215,12 +215,18 @@ app.post('/api/chat', async (req, res) => {
       context
     );
 
+    // IMPORTANT: Don't break on disconnect - let the orchestrator complete
+    // so Claude finishes its work and the session gets saved properly.
+    // This enables multi-device: start on tablet, pick up on phone.
     for await (const event of stream) {
-      if (clientDisconnected) {
-        log.info('Stopping stream - client disconnected');
-        break;
+      if (!clientDisconnected) {
+        res.write(`data: ${JSON.stringify(event)}\n\n`);
       }
-      res.write(`data: ${JSON.stringify(event)}\n\n`);
+      // If client disconnected, we still consume events to let orchestrator finish
+    }
+
+    if (clientDisconnected) {
+      log.info('Stream completed after client disconnect - session saved');
     }
   } catch (error) {
     log.error('Stream error', error);
