@@ -27,6 +27,8 @@ import { PARACHUTE_DEFAULT_PROMPT } from './lib/default-prompt.js';
 import { serverLogger as log } from './lib/logger.js';
 import { getModuleSearchService } from './lib/module-search.js';
 import { getOllamaStatus } from './lib/ollama-service.js';
+import { loadMcpServers, listMcpServers, addMcpServer, removeMcpServer } from './lib/mcp-loader.js';
+import { discoverSkills, loadSkill, createSkill, deleteSkill } from './lib/skills-loader.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -533,6 +535,177 @@ app.get('/api/modules/:mod/stats', async (req, res) => {
     }
   } catch (error) {
     log.error('Module stats error', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================================================
+// MCP MANAGEMENT
+// ============================================================================
+
+/**
+ * GET /api/mcps
+ * List all configured MCP servers
+ */
+app.get('/api/mcps', async (req, res) => {
+  try {
+    const servers = await listMcpServers(CONFIG.vaultPath);
+    res.json({ servers });
+  } catch (error) {
+    log.error('MCP list error', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * POST /api/mcps
+ * Add or update an MCP server configuration
+ * Body: { name: string, config: { command, args, env, ... } }
+ */
+app.post('/api/mcps', async (req, res) => {
+  try {
+    const { name, config } = req.body;
+
+    if (!name || typeof name !== 'string') {
+      return res.status(400).json({ error: 'Server name is required' });
+    }
+
+    if (!config || typeof config !== 'object') {
+      return res.status(400).json({ error: 'Server config is required' });
+    }
+
+    // Validate basic structure
+    if (!config.command && !config.url) {
+      return res.status(400).json({ error: 'Config must have command (stdio) or url (http)' });
+    }
+
+    const servers = await addMcpServer(CONFIG.vaultPath, name, config);
+    res.json({ success: true, server: { name, ...config }, total: Object.keys(servers).length });
+  } catch (error) {
+    log.error('MCP add error', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * DELETE /api/mcps/:name
+ * Remove an MCP server configuration
+ */
+app.delete('/api/mcps/:name', async (req, res) => {
+  try {
+    const { name } = req.params;
+    const servers = await removeMcpServer(CONFIG.vaultPath, name);
+    res.json({ success: true, remaining: Object.keys(servers).length });
+  } catch (error) {
+    log.error('MCP remove error', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * GET /api/mcps/:name
+ * Get a specific MCP server configuration
+ */
+app.get('/api/mcps/:name', async (req, res) => {
+  try {
+    const { name } = req.params;
+    const servers = await loadMcpServers(CONFIG.vaultPath);
+
+    if (servers[name]) {
+      res.json({ name, ...servers[name] });
+    } else {
+      res.status(404).json({ error: `MCP server '${name}' not found` });
+    }
+  } catch (error) {
+    log.error('MCP get error', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================================================
+// SKILLS MANAGEMENT
+// ============================================================================
+
+/**
+ * GET /api/skills
+ * List all available agent skills
+ */
+app.get('/api/skills', async (req, res) => {
+  try {
+    const skills = await discoverSkills(CONFIG.vaultPath);
+    res.json({ skills });
+  } catch (error) {
+    log.error('Skills list error', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * GET /api/skills/:name
+ * Get full content of a specific skill
+ */
+app.get('/api/skills/:name', async (req, res) => {
+  try {
+    const { name } = req.params;
+    const skill = await loadSkill(CONFIG.vaultPath, name);
+
+    if (skill) {
+      res.json(skill);
+    } else {
+      res.status(404).json({ error: `Skill '${name}' not found` });
+    }
+  } catch (error) {
+    log.error('Skill get error', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * POST /api/skills
+ * Create a new skill
+ * Body: { name: string, description?: string, content?: string, allowedTools?: string[] }
+ */
+app.post('/api/skills', async (req, res) => {
+  try {
+    const { name, description, content, allowedTools } = req.body;
+
+    if (!name || typeof name !== 'string') {
+      return res.status(400).json({ error: 'Skill name is required' });
+    }
+
+    // Sanitize name for directory
+    const dirName = name.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+
+    const skill = await createSkill(CONFIG.vaultPath, dirName, {
+      name,
+      description,
+      content,
+      allowedTools
+    });
+
+    res.json({ success: true, skill });
+  } catch (error) {
+    log.error('Skill create error', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * DELETE /api/skills/:name
+ * Delete a skill
+ */
+app.delete('/api/skills/:name', async (req, res) => {
+  try {
+    const { name } = req.params;
+    const deleted = await deleteSkill(CONFIG.vaultPath, name);
+
+    if (deleted) {
+      res.json({ success: true, deleted: name });
+    } else {
+      res.status(404).json({ error: `Skill '${name}' not found or could not be deleted` });
+    }
+  } catch (error) {
+    log.error('Skill delete error', error);
     res.status(500).json({ error: error.message });
   }
 });

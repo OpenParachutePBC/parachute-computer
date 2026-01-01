@@ -9,16 +9,81 @@
  * - User MCPs: Additional tools like image generation, browser automation
  *
  * Configuration is stored in {vault}/.mcp.json
+ *
+ * Environment variable substitution:
+ * - ${VAULT_PATH} - Replaced with actual vault path
+ * - ${PARACHUTE_BASE} - Replaced with parachute-base installation path
+ * - ${VAR_NAME} - Replaced from process.env
  */
 
 import fs from 'fs/promises';
 import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const PARACHUTE_BASE = path.resolve(__dirname, '..');
 
 /**
  * MCP Server configuration cache
  */
 let mcpServersCache = null;
 let mcpServersPath = null;
+let mcpVaultPath = null;
+
+/**
+ * Substitute environment variables in a string
+ *
+ * Replaces ${VAR_NAME} with corresponding environment variable.
+ * Special variables:
+ * - ${VAULT_PATH} - Current vault path
+ * - ${PARACHUTE_BASE} - parachute-base installation directory
+ *
+ * @param {string} str - String with ${VAR} placeholders
+ * @param {string} vaultPath - Current vault path
+ * @returns {string} String with substitutions applied
+ */
+function substituteEnvVars(str, vaultPath) {
+  if (typeof str !== 'string') return str;
+
+  return str.replace(/\$\{([^}]+)\}/g, (match, varName) => {
+    // Special built-in variables
+    if (varName === 'VAULT_PATH') return vaultPath;
+    if (varName === 'PARACHUTE_BASE') return PARACHUTE_BASE;
+
+    // Environment variable
+    return process.env[varName] || match;
+  });
+}
+
+/**
+ * Deep substitute environment variables in an object
+ *
+ * @param {any} obj - Object/array/string to process
+ * @param {string} vaultPath - Current vault path
+ * @returns {any} Object with substitutions applied
+ */
+function deepSubstituteEnvVars(obj, vaultPath) {
+  if (typeof obj === 'string') {
+    return substituteEnvVars(obj, vaultPath);
+  }
+  if (Array.isArray(obj)) {
+    return obj.map(item => deepSubstituteEnvVars(item, vaultPath));
+  }
+  if (obj && typeof obj === 'object') {
+    const result = {};
+    for (const [key, value] of Object.entries(obj)) {
+      // Skip description fields (metadata only)
+      if (key.startsWith('_')) {
+        result[key] = value;
+      } else {
+        result[key] = deepSubstituteEnvVars(value, vaultPath);
+      }
+    }
+    return result;
+  }
+  return obj;
+}
 
 /**
  * Load MCP servers from .mcp.json
@@ -31,7 +96,7 @@ export async function loadMcpServers(vaultPath, forceReload = false) {
   const configPath = path.join(vaultPath, '.mcp.json');
 
   // Return cached if available and path matches
-  if (!forceReload && mcpServersCache && mcpServersPath === configPath) {
+  if (!forceReload && mcpServersCache && mcpServersPath === configPath && mcpVaultPath === vaultPath) {
     return mcpServersCache;
   }
 
@@ -45,7 +110,8 @@ export async function loadMcpServers(vaultPath, forceReload = false) {
     if (typeof config !== 'object' || config === null) {
       console.warn('[MCP] Invalid .mcp.json structure - expected object');
     } else {
-      servers = config;
+      // Apply environment variable substitution
+      servers = deepSubstituteEnvVars(config, vaultPath);
     }
   } catch (e) {
     if (e.code !== 'ENOENT') {
@@ -57,6 +123,7 @@ export async function loadMcpServers(vaultPath, forceReload = false) {
   // Cache and return
   mcpServersCache = servers;
   mcpServersPath = configPath;
+  mcpVaultPath = vaultPath;
 
   const serverNames = Object.keys(servers);
   if (serverNames.length > 0) {
