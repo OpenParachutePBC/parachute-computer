@@ -683,8 +683,9 @@ export class Orchestrator extends EventEmitter {
    * SIMPLIFIED: Uses SDK session ID as the only session identifier.
    * - If context.sessionId is provided, it's the SDK session ID to resume
    * - If not provided, this is a new session and we get SDK ID from response
+   * @param {AbortController} [abortController] - Optional controller to abort the query
    */
-  async *executeChatbotAgentStreaming(agent, agentPath, message, systemPrompt, context) {
+  async *executeChatbotAgentStreaming(agent, agentPath, message, systemPrompt, context, abortController = null) {
     const effectivePath = agentPath || 'vault-agent';
 
     // Get or create session using SDK session ID as primary key
@@ -785,6 +786,8 @@ export class Orchestrator extends EventEmitter {
         tools: agentTools.length > 0 ? agentTools : undefined,
         settingSources: ['project'],
         mcpServers: resolvedMcpServers
+        // Note: We use query.interrupt() instead of abortController in options
+        // This enables graceful shutdown that preserves session for continuation
       };
 
       // SIMPLIFIED: If we have an SDK session ID, just pass resume option
@@ -806,7 +809,22 @@ export class Orchestrator extends EventEmitter {
         options: queryOptions
       });
 
+      // If an abortController was provided, set up interrupt on abort signal
+      // The SDK's query.interrupt() is preferred over AbortController for graceful shutdown
+      // This allows the session to be properly saved and resumed later
+      if (abortController) {
+        abortController.signal.addEventListener('abort', () => {
+          if (response.interrupt) {
+            console.log('[Orchestrator] Calling query.interrupt() for graceful shutdown');
+            response.interrupt().catch(err => {
+              console.warn('[Orchestrator] Error during interrupt:', err.message);
+            });
+          }
+        }, { once: true });
+      }
+
       let capturedSessionId = null;
+      let capturedModel = null;
       let currentText = '';
       let lastTextBlockIndex = -1; // Track which text block we're updating
 
@@ -826,6 +844,17 @@ export class Orchestrator extends EventEmitter {
 
         if (msg.session_id) {
           capturedSessionId = msg.session_id;
+        }
+
+        // Capture model from assistant message (first one that has it)
+        if (!capturedModel && msg.type === 'assistant' && msg.message?.model) {
+          capturedModel = msg.message.model;
+          console.log(`[Orchestrator] Using model: ${capturedModel}`);
+          // Emit model info as a separate event so UI can display it
+          yield {
+            type: 'model',
+            model: capturedModel
+          };
         }
 
         if (msg.type === 'system' && msg.subtype === 'init') {
@@ -977,6 +1006,11 @@ export class Orchestrator extends EventEmitter {
         }
       }
 
+      // Update session with model info if we captured it
+      if (capturedModel) {
+        session.model = capturedModel;
+      }
+
       // Yield final completion event - now includes the SDK session ID for the app to store
       yield {
         type: 'done',
@@ -986,12 +1020,44 @@ export class Orchestrator extends EventEmitter {
         sessionId: session.sdkSessionId, // THE session ID for future requests
         workingDirectory: session.workingDirectory || null,
         messageCount: session.messages.length,
+        model: capturedModel, // The actual model used (from SDK response)
         toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
         permissionDenials: requestPermissionDenials.length > 0 ? requestPermissionDenials : undefined,
         sessionResume: resumeInfo.toJSON()
       };
 
     } catch (error) {
+      // Check if this was an interrupt/abort - handle gracefully
+      const isInterrupt = error.name === 'AbortError' ||
+                          error.message?.includes('aborted') ||
+                          error.message?.includes('interrupt') ||
+                          error.message?.includes('cancelled');
+
+      if (isInterrupt) {
+        log.info('Stream interrupted by user', {
+          agentPath: effectivePath,
+          sessionId: session.sdkSessionId?.slice(0, 8) + '...'
+        });
+
+        // Try to save partial progress
+        if (result) {
+          try {
+            await this.sessionManager.addMessage(session, 'user', actualMessage);
+            await this.sessionManager.addMessage(session, 'assistant', result + '\n\n[Response interrupted]');
+          } catch (saveErr) {
+            console.warn('[Orchestrator] Could not save partial progress:', saveErr.message);
+          }
+        }
+
+        yield {
+          type: 'aborted',
+          message: 'Stream interrupted by user',
+          sessionId: session.sdkSessionId,
+          partialResponse: result || null
+        };
+        return;
+      }
+
       // Check if this is a session-not-found error (SDK can't find the JSONL file)
       const isSessionNotFound = error.message?.includes('ENOENT') ||
                                  error.message?.includes('no such file') ||
@@ -1435,8 +1501,12 @@ export class Orchestrator extends EventEmitter {
   /**
    * Run an agent with streaming (yields SSE events)
    * Use this for real-time UI updates
+   * @param {string|null} agentPath - Path to agent definition or null for vault-agent
+   * @param {string} message - User message
+   * @param {object} additionalContext - Additional context options
+   * @param {AbortController} [abortController] - Optional controller to abort the query
    */
-  async *runImmediateStreaming(agentPath, message, additionalContext = {}) {
+  async *runImmediateStreaming(agentPath, message, additionalContext = {}, abortController = null) {
     let agent;
     let systemPrompt;
 
@@ -1471,7 +1541,7 @@ export class Orchestrator extends EventEmitter {
     // Use streaming execution for chatbot and doc agents
     // Standalone agents may have different requirements
     if (agentType === AgentType.CHATBOT || agentType === AgentType.DOC) {
-      yield* this.executeChatbotAgentStreaming(agent, agentPath, message, systemPrompt, additionalContext);
+      yield* this.executeChatbotAgentStreaming(agent, agentPath, message, systemPrompt, additionalContext, abortController);
     } else {
       // For other agent types (e.g., standalone), fall back to non-streaming execution
       const result = await this.runImmediate(agentPath, message, additionalContext);
@@ -1506,7 +1576,7 @@ export class Orchestrator extends EventEmitter {
     return {
       name: 'vault-agent',
       description: 'General vault assistant',
-      model: 'sonnet',
+      model: null, // Use account default - actual model shown in UI from SDK response
       tools: fullToolSet,
       // Load all MCP servers from .mcp.json by default
       mcpServers: 'all',

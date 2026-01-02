@@ -1,7 +1,7 @@
 /**
  * Parachute Base Server
  *
- * Clean 8-endpoint API for AI agent execution.
+ * AI agent execution with session management.
  *
  * Core API:
  *   GET  /api/health           - Health check
@@ -9,12 +9,21 @@
  *   GET  /api/chat             - List sessions
  *   GET  /api/chat/:id         - Get session
  *   DELETE /api/chat/:id       - Delete session
+ *   POST /api/chat/:id/abort   - Abort active stream
  *
  * Module Resources:
  *   GET  /api/modules/:mod/prompt   - Get module prompt
  *   PUT  /api/modules/:mod/prompt   - Update module prompt
  *   GET  /api/modules/:mod/search   - Search module content
  *   POST /api/modules/:mod/index    - Rebuild module index
+ *
+ * Claude Code Session Import:
+ *   GET  /api/claude-code/recent        - List recent sessions (all projects)
+ *   GET  /api/claude-code/projects      - List Claude Code projects
+ *   GET  /api/claude-code/sessions      - List sessions in a project
+ *   GET  /api/claude-code/sessions/:id  - Get session details
+ *   POST /api/claude-code/adopt/:id     - Adopt session into Parachute
+ *   POST /api/claude-code/migrate/:id   - Migrate session to new path
  */
 
 import express from 'express';
@@ -34,8 +43,13 @@ import { getModuleSearchService } from './lib/module-search.js';
 import { getOllamaStatus } from './lib/ollama-service.js';
 import { loadMcpServers, listMcpServers, addMcpServer, removeMcpServer } from './lib/mcp-loader.js';
 import { discoverSkills, loadSkill, createSkill, deleteSkill } from './lib/skills-loader.js';
+import { listProjects, listSessions, getSession, findSession, getSessionFilePath, listRecentSessions, migrateSessionPath } from './lib/claude-code-sessions.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// Track active streams for abort functionality
+// Map of sessionId -> AbortController
+const activeStreams = new Map();
 
 // Configuration
 const CONFIG = {
@@ -215,17 +229,30 @@ app.post('/api/chat', async (req, res) => {
   if (priorConversation) context.priorConversation = priorConversation;
   if (continuedFrom) context.continuedFrom = continuedFrom;
 
+  // Create abort controller for this stream
+  const abortController = new AbortController();
+  let streamSessionId = sessionId; // Will be updated when we get session event
+
   try {
     const stream = orchestrator.runImmediateStreaming(
       agentPath || null,
       message,
-      context
+      context,
+      abortController
     );
 
     // IMPORTANT: Don't break on disconnect - let the orchestrator complete
     // so Claude finishes its work and the session gets saved properly.
     // This enables multi-device: start on tablet, pick up on phone.
     for await (const event of stream) {
+      // Track session ID from session event for abort mapping
+      if (event.type === 'session' && event.sessionId) {
+        streamSessionId = event.sessionId;
+        // Register abort controller for this session
+        activeStreams.set(streamSessionId, abortController);
+        log.info('Registered abort controller for session', { sessionId: streamSessionId });
+      }
+
       if (!clientDisconnected) {
         res.write(`data: ${JSON.stringify(event)}\n\n`);
       }
@@ -236,12 +263,24 @@ app.post('/api/chat', async (req, res) => {
       log.info('Stream completed after client disconnect - session saved');
     }
   } catch (error) {
-    log.error('Stream error', error);
-    if (!clientDisconnected) {
-      res.write(`data: ${JSON.stringify({ type: 'error', error: error.message })}\n\n`);
+    // Check if this was an abort
+    if (error.name === 'AbortError' || abortController.signal.aborted) {
+      log.info('Stream aborted by user', { sessionId: streamSessionId });
+      if (!clientDisconnected) {
+        res.write(`data: ${JSON.stringify({ type: 'aborted', message: 'Stream stopped by user' })}\n\n`);
+      }
+    } else {
+      log.error('Stream error', error);
+      if (!clientDisconnected) {
+        res.write(`data: ${JSON.stringify({ type: 'error', error: error.message })}\n\n`);
+      }
     }
   } finally {
     clearInterval(heartbeatInterval);
+    // Clean up abort controller tracking
+    if (streamSessionId) {
+      activeStreams.delete(streamSessionId);
+    }
   }
 
   if (!clientDisconnected) {
@@ -311,6 +350,34 @@ app.delete('/api/chat/:id', async (req, res) => {
     res.json({ success: true, deleted: req.params.id });
   } catch (error) {
     log.error('Delete session error', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * POST /api/chat/:id/abort
+ * Abort an active streaming session
+ * Returns success if stream was aborted, or 404 if no active stream found
+ */
+app.post('/api/chat/:id/abort', (req, res) => {
+  const sessionId = req.params.id;
+  const abortController = activeStreams.get(sessionId);
+
+  if (!abortController) {
+    // No active stream - could be already completed or invalid session
+    return res.status(404).json({
+      error: 'No active stream found for this session',
+      sessionId
+    });
+  }
+
+  try {
+    log.info('Aborting stream', { sessionId });
+    abortController.abort();
+    // The abort controller will be cleaned up by the stream's finally block
+    res.json({ success: true, message: 'Stream abort signal sent', sessionId });
+  } catch (error) {
+    log.error('Abort error', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -1082,6 +1149,211 @@ app.post('/api/skills/upload', skillUpload.single('file'), async (req, res) => {
     res.json({ success: true, skill });
   } catch (error) {
     log.error('Skill upload error', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================================================
+// CLAUDE CODE SESSION IMPORT
+// ============================================================================
+
+/**
+ * GET /api/claude-code/projects
+ * List all Claude Code projects (working directories)
+ * Returns: { projects: [{ encodedName, path, sessionCount }] }
+ */
+app.get('/api/claude-code/projects', async (req, res) => {
+  try {
+    const projects = await listProjects();
+    res.json({ projects });
+  } catch (error) {
+    log.error('Error listing Claude Code projects', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * GET /api/claude-code/recent
+ * List recent sessions across ALL projects, sorted by last activity
+ * Query: limit (default 100)
+ * Returns: { sessions: [{ sessionId, title, firstMessage, messageCount, createdAt, lastTimestamp, model, projectPath, projectDisplayName }] }
+ */
+app.get('/api/claude-code/recent', async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit || '100');
+    const sessions = await listRecentSessions(limit);
+    res.json({ sessions });
+  } catch (error) {
+    log.error('Error listing recent Claude Code sessions', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * GET /api/claude-code/sessions
+ * List sessions for a specific project path
+ * Query: path (the decoded project path, e.g., "/Users/unforced/Parachute/Build/repos/parachute")
+ * Returns: { sessions: [{ sessionId, title, firstMessage, messageCount, createdAt, lastTimestamp, model }] }
+ */
+app.get('/api/claude-code/sessions', async (req, res) => {
+  try {
+    const projectPath = req.query.path;
+    if (!projectPath) {
+      return res.status(400).json({ error: 'Project path required' });
+    }
+
+    const sessions = await listSessions(projectPath);
+    res.json({ sessions });
+  } catch (error) {
+    log.error('Error listing Claude Code sessions', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * GET /api/claude-code/sessions/:id
+ * Get full session details including messages
+ * Query: path (project path)
+ * Returns: { sessionId, title, messages: [...], cwd, model, createdAt }
+ */
+app.get('/api/claude-code/sessions/:id', async (req, res) => {
+  try {
+    const sessionId = req.params.id;
+    let projectPath = req.query.path;
+
+    // If no path provided, try to find the session
+    if (!projectPath) {
+      const found = await findSession(sessionId);
+      if (!found.found) {
+        return res.status(404).json({ error: 'Session not found' });
+      }
+      projectPath = found.projectPath;
+    }
+
+    const session = await getSession(sessionId, projectPath);
+    res.json(session);
+  } catch (error) {
+    log.error('Error getting Claude Code session', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * POST /api/claude-code/adopt/:id
+ * Adopt a Claude Code session into Parachute
+ * This creates a Parachute markdown mirror and allows resuming via the SDK
+ * Query: path (project path)
+ * Body: { workingDirectory?: string } - optional override for cwd
+ * Returns: { success, parachuteSessionId, message }
+ */
+app.post('/api/claude-code/adopt/:id', async (req, res) => {
+  try {
+    const sessionId = req.params.id;
+    let projectPath = req.query.path;
+    const { workingDirectory } = req.body || {};
+
+    // Find the session if path not provided
+    if (!projectPath) {
+      const found = await findSession(sessionId);
+      if (!found.found) {
+        return res.status(404).json({ error: 'Session not found' });
+      }
+      projectPath = found.projectPath;
+    }
+
+    // Get full session details
+    const ccSession = await getSession(sessionId, projectPath);
+
+    // Determine effective cwd - either from request, session, or vault
+    const effectiveCwd = workingDirectory || ccSession.cwd || CONFIG.vaultPath;
+
+    // Create a lightweight pointer file in flat sessions folder
+    const sessionsDir = path.join(CONFIG.vaultPath, 'Chat', 'sessions');
+    await fs.mkdir(sessionsDir, { recursive: true });
+
+    // Generate filename
+    const createdDate = ccSession.createdAt
+      ? new Date(ccSession.createdAt).toISOString().split('T')[0]
+      : new Date().toISOString().split('T')[0];
+    const shortId = sessionId.slice(0, 8);
+    const filename = `${createdDate}-${shortId}.md`;
+    const filePath = path.join(sessionsDir, filename);
+
+    // Check if already adopted
+    try {
+      await fs.access(filePath);
+      return res.json({
+        success: true,
+        alreadyAdopted: true,
+        parachuteSessionId: sessionId,
+        message: 'Session already adopted into Parachute'
+      });
+    } catch {
+      // File doesn't exist, continue with adoption
+    }
+
+    // Build lightweight pointer - NO message content, just metadata
+    const title = ccSession.title ||
+      (ccSession.messages[0]?.content?.slice(0, 50) + '...' || 'Imported Session');
+
+    const markdown = `---
+sdk_session_id: "${sessionId}"
+title: "${title.replace(/"/g, '\\"')}"
+created_at: "${ccSession.createdAt || new Date().toISOString()}"
+last_accessed: "${new Date().toISOString()}"
+archived: false
+working_directory: "${effectiveCwd}"
+model: "${ccSession.model || 'unknown'}"
+source: "claude-code"
+message_count: ${ccSession.messages.length}
+---
+`;
+
+    // Write the lightweight pointer file
+    await fs.writeFile(filePath, markdown, 'utf8');
+
+    // Add to session index so it shows up immediately
+    await orchestrator.sessionManager.indexSessionFromFile(filePath);
+
+    log.info('Adopted Claude Code session (lightweight pointer)', {
+      sessionId,
+      filePath,
+      messageCount: ccSession.messages.length
+    });
+
+    res.json({
+      success: true,
+      parachuteSessionId: sessionId,
+      filePath,
+      messageCount: ccSession.messages.length,
+      message: `Session adopted with ${ccSession.messages.length} messages.`
+    });
+  } catch (error) {
+    log.error('Error adopting Claude Code session', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * POST /api/claude-code/migrate/:id
+ * Migrate a session to be accessible from a new project path
+ * Creates a symlink so the SDK can find the session from the new location
+ * Body: { originalPath, newPath }
+ * Returns: { success, message }
+ */
+app.post('/api/claude-code/migrate/:id', async (req, res) => {
+  try {
+    const sessionId = req.params.id;
+    const { originalPath, newPath } = req.body || {};
+
+    if (!originalPath || !newPath) {
+      return res.status(400).json({ error: 'Both originalPath and newPath required' });
+    }
+
+    const result = await migrateSessionPath(sessionId, originalPath, newPath);
+    res.json(result);
+  } catch (error) {
+    log.error('Error migrating Claude Code session', error);
     res.status(500).json({ error: error.message });
   }
 });

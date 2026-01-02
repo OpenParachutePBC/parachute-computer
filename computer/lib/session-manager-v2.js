@@ -309,6 +309,15 @@ export class SessionManager {
         return;
       }
 
+      // Get message count from frontmatter (lightweight pointer) or parse from content (legacy)
+      let messageCount = 0;
+      if (matter.data.message_count !== undefined) {
+        messageCount = parseInt(matter.data.message_count, 10) || 0;
+      } else {
+        // Legacy: count message headers in content
+        messageCount = (content.match(/### (Human|User|Assistant|System) \|/g) || []).length;
+      }
+
       this.sessionIndex.set(sdkSessionId, {
         sdkSessionId,
         filePath,
@@ -321,7 +330,9 @@ export class SessionManager {
         archived: matter.data.archived === 'true' || matter.data.archived === true,
         workingDirectory: matter.data.working_directory || null,
         continuedFrom: matter.data.continued_from || null,
-        messageCount: (content.match(/### (Human|User|Assistant|System) \|/g) || []).length
+        source: matter.data.source || null,
+        model: matter.data.model || null,
+        messageCount
       });
     } catch (e) {
       console.error(`[SessionManager] Error indexing ${filePath}:`, e.message);
@@ -424,16 +435,15 @@ export class SessionManager {
 
       session.sdkSessionId = sdkSessionId;
 
-      // Generate file path using SDK ID and module
+      // Generate file path in flat sessions folder
       const module = session.module || 'chat';
       const sessionsPath = this.getSessionsPath(module);
-      const agentName = (session.agentPath || 'vault-agent').replace('agents/', '').replace('.md', '');
       const today = new Date().toISOString().split('T')[0];
       const shortId = sdkSessionId.slice(0, 8);
-      session.filePath = path.join(sessionsPath, agentName, `${today}-${shortId}.md`);
+      session.filePath = path.join(sessionsPath, `${today}-${shortId}.md`);
 
       // Ensure directory exists
-      await fs.mkdir(path.dirname(session.filePath), { recursive: true });
+      await fs.mkdir(sessionsPath, { recursive: true });
 
       // Add to cache and index
       this.loadedSessions.set(sdkSessionId, session);
@@ -644,19 +654,20 @@ export class SessionManager {
       console.log(`[SessionManager] Successfully wrote session file`);
 
       // Update index
-      const agentName = (session.agentPath || 'vault-agent').replace('agents/', '').replace('.md', '');
       this.sessionIndex.set(session.sdkSessionId, {
         sdkSessionId: session.sdkSessionId,
         filePath: session.filePath,
-        agentPath: session.agentPath,
-        agentName,
+        agentPath: session.agentPath || 'vault-agent',
+        agentName: (session.agentPath || 'vault-agent').replace('agents/', '').replace('.md', ''),
         title: session.title,
         createdAt: session.createdAt,
         lastAccessed: session.lastAccessed,
         archived: session.archived,
         workingDirectory: session.workingDirectory,
         continuedFrom: session.continuedFrom,
-        messageCount: session.messages.length
+        source: 'parachute',
+        model: session.model,
+        messageCount: session.messages?.length || 0
       });
     } catch (e) {
       console.error(`[SessionManager] Failed to save session:`, e.message);
@@ -664,30 +675,20 @@ export class SessionManager {
   }
 
   /**
-   * Convert session to markdown format
+   * Convert session to lightweight markdown pointer format
+   * Messages are NOT stored in markdown - SDK JSONL is the source of truth
    */
   sessionToMarkdown(session) {
-    const agentName = (session.agentPath || 'vault-agent').replace('agents/', '').replace('.md', '');
-    const heading = session.title || `Chat with ${agentName}`;
-
-    // Build frontmatter
+    // Build lightweight frontmatter - NO message content
     const frontmatterLines = [
       `sdk_session_id: "${session.sdkSessionId}"`,
-      `agent: "${session.agentPath}"`,
-      `agent_name: "${agentName}"`,
-    ];
-
-    if (session.title) {
-      frontmatterLines.push(`title: "${session.title}"`);
-    }
-
-    frontmatterLines.push(
-      `type: chat`,
-      `module: "${session.module || 'chat'}"`,
+      `title: "${(session.title || 'Untitled Chat').replace(/"/g, '\\"')}"`,
       `created_at: "${session.createdAt}"`,
       `last_accessed: "${session.lastAccessed}"`,
-      `archived: ${session.archived || false}`
-    );
+      `archived: ${session.archived || false}`,
+      `message_count: ${session.messages?.length || 0}`,
+      `source: "parachute"`
+    ];
 
     if (session.workingDirectory) {
       frontmatterLines.push(`working_directory: "${session.workingDirectory}"`);
@@ -697,20 +698,12 @@ export class SessionManager {
       frontmatterLines.push(`continued_from: "${session.continuedFrom}"`);
     }
 
-    let md = `---\n${frontmatterLines.join('\n')}\n---\n\n# ${heading}\n\n## Conversation\n\n`;
-
-    for (const msg of session.messages) {
-      const role = msg.role === 'user' ? 'Human' : 'Assistant';
-      const timestamp = msg.timestamp || new Date().toISOString();
-
-      if (msg.paraId) {
-        md += `### para:${msg.paraId} ${role} | ${timestamp}\n\n${msg.content}\n\n`;
-      } else {
-        md += `### ${role} | ${timestamp}\n\n${msg.content}\n\n`;
-      }
+    if (session.model) {
+      frontmatterLines.push(`model: "${session.model}"`);
     }
 
-    return md;
+    // Lightweight pointer - just frontmatter, no message content
+    return `---\n${frontmatterLines.join('\n')}\n---\n`;
   }
 
   /**
@@ -731,7 +724,9 @@ export class SessionManager {
         filePath: s.filePath ? s.filePath.replace(this.vaultPath + '/', '') : null,
         archived: s.archived || false,
         workingDirectory: s.workingDirectory || null,
-        continuedFrom: s.continuedFrom || null
+        continuedFrom: s.continuedFrom || null,
+        source: s.source || null,
+        model: s.model || null
       }));
   }
 

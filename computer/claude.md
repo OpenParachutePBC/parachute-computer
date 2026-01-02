@@ -85,10 +85,14 @@ POST /api/chat
 
 // SSE Events
 data: {"type": "session", "sessionId": "...", "title": "..."}
+data: {"type": "model", "model": "claude-opus-4-5-20250514"}
 data: {"type": "text", "content": "Hello! How can I..."}
+data: {"type": "thinking", "content": "Let me think about..."}
 data: {"type": "tool_use", "name": "Read", "input": {...}}
 data: {"type": "tool_result", "id": "...", "content": "..."}
-data: {"type": "done", "sessionId": "...", "title": "..."}
+data: {"type": "done", "sessionId": "...", "title": "...", "model": "..."}
+data: {"type": "aborted", "message": "Stream stopped by user"}
+data: {"type": "session_unavailable", "reason": "...", "hasMarkdownHistory": true}
 ```
 
 ## Module System
@@ -102,22 +106,23 @@ Each module has its own:
 
 ## Session Storage
 
-Sessions stored as markdown in `{Module}/sessions/*.md`:
+Sessions use **lightweight pointer architecture**—markdown files contain only frontmatter metadata, with SDK JSONL files as the source of truth for messages.
+
+Stored in `{Module}/sessions/*.md`:
 
 ```markdown
 ---
-session_id: abc-123-def
+sdk_session_id: "abc-123-def"
 title: "Project Discussion"
-created_at: 2025-12-20T10:30:00Z
-sdk_session_id: claude-session-xyz
+created_at: "2025-12-20T10:30:00Z"
+last_accessed: "2025-12-20T11:00:00Z"
+archived: false
+message_count: 12
+source: "parachute"
 ---
-
-### User | 10:30 AM
-First message from user
-
-### Assistant | 10:30 AM
-Response from assistant
 ```
+
+For imported Claude Code sessions, includes `working_directory` and `model` fields.
 
 ## Environment Variables
 
@@ -139,4 +144,4 @@ claude login
 
 ---
 
-**Last Updated**: December 30, 2025
+**Last Updated**: January 2, 2026
