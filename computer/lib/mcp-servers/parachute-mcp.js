@@ -271,7 +271,7 @@ async function handleListRecentJournals(searchService, args) {
   }
 
   const formatted = results
-    .map((r, i) => `${i + 1}. [${r.date}] ${r.title || 'Untitled'}\n   ID: ${r.content_id}`)
+    .map((r, i) => `${i + 1}. [${r.date}] ${r.title || 'Untitled'}\n   ID: ${r.id}`)
     .join('\n\n');
 
   return {
@@ -300,7 +300,7 @@ async function handleGetJournalEntry(searchService, args) {
     content: [
       {
         type: 'text',
-        text: `# ${content.title || 'Journal Entry'}\n\nDate: ${content.date}\nID: ${content.content_id}\n\n---\n\n${content.chunks?.map(c => c.text).join('\n\n') || 'No content'}`,
+        text: `# ${content.title || 'Journal Entry'}\n\nDate: ${content.date}\nID: ${content.id}\n\n---\n\n${content.content || 'No content'}`,
       },
     ],
   };
@@ -348,7 +348,7 @@ async function handleListRecentChats(searchService, args) {
   }
 
   const formatted = results
-    .map((r, i) => `${i + 1}. [${r.date}] ${r.title || 'Untitled Session'}\n   Agent: ${r.metadata?.agent || 'unknown'}\n   ID: ${r.content_id}`)
+    .map((r, i) => `${i + 1}. [${r.date}] ${r.title || 'Untitled Session'}\n   Agent: ${r.metadata?.agent || 'unknown'}\n   ID: ${r.id}`)
     .join('\n\n');
 
   return {
@@ -377,7 +377,7 @@ async function handleGetChatSession(searchService, args) {
     content: [
       {
         type: 'text',
-        text: `# ${content.title || 'Chat Session'}\n\nDate: ${content.date}\nAgent: ${content.metadata?.agent || 'unknown'}\nID: ${content.content_id}\n\n---\n\n${content.chunks?.map(c => c.text).join('\n\n') || 'No content'}`,
+        text: `# ${content.title || 'Chat Session'}\n\nDate: ${content.date}\nAgent: ${content.metadata?.agent || 'unknown'}\nID: ${content.id}\n\n---\n\n${content.content || 'No content'}`,
       },
     ],
   };
@@ -414,8 +414,9 @@ function formatSearchResults(results, type) {
     .map((r, i) => {
       const matchInfo = r.matchType === 'both' ? ' [keyword+semantic]' : r.matchType === 'semantic' ? ` [semantic: ${(r.similarity * 100).toFixed(0)}%]` : ' [keyword]';
       const snippet = r.snippet || r.chunks?.[0]?.text?.substring(0, 200) || '';
+      const contentId = r.id || r.content_id;
 
-      return `${i + 1}. [${r.date}] ${r.title || 'Untitled'}${matchInfo}\n   ID: ${r.content_id}\n   ${snippet}${snippet.length >= 200 ? '...' : ''}`;
+      return `${i + 1}. [${r.date}] ${r.title || 'Untitled'}${matchInfo}\n   ID: ${contentId}\n   ${snippet}${snippet.length >= 200 ? '...' : ''}`;
     })
     .join('\n\n');
 }
