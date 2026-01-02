@@ -21,6 +21,11 @@ import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs/promises';
+import multer from 'multer';
+import { createReadStream } from 'fs';
+import { createUnzip } from 'zlib';
+import { pipeline } from 'stream/promises';
+import { Extract } from 'unzipper';
 
 import { Orchestrator } from './lib/orchestrator.js';
 import { PARACHUTE_DEFAULT_PROMPT } from './lib/default-prompt.js';
@@ -622,6 +627,313 @@ app.get('/api/mcps/:name', async (req, res) => {
   }
 });
 
+/**
+ * POST /api/mcps/:name/test
+ * Test if an MCP server can start successfully
+ * Spawns the process briefly and checks for errors
+ */
+app.post('/api/mcps/:name/test', async (req, res) => {
+  const { spawn } = await import('child_process');
+
+  try {
+    const { name } = req.params;
+    const servers = await loadMcpServers(CONFIG.vaultPath);
+
+    if (!servers[name]) {
+      return res.status(404).json({ error: `MCP server '${name}' not found` });
+    }
+
+    const config = servers[name];
+
+    if (!config.command) {
+      return res.status(400).json({
+        error: 'Only stdio MCP servers can be tested',
+        status: 'unknown'
+      });
+    }
+
+    // Check for unresolved environment variables (from raw config)
+    const rawServers = await loadMcpServers(CONFIG.vaultPath, true);
+    const rawConfig = rawServers[name];
+    const configStr = JSON.stringify(rawConfig || config);
+    const unresolvedMatch = configStr.match(/\$\{([^}]+)\}/);
+    if (unresolvedMatch) {
+      return res.json({
+        name,
+        status: 'error',
+        error: `Missing environment variable: ${unresolvedMatch[1]}`,
+        hint: 'Set this variable in the MCP server settings'
+      });
+    }
+
+    // Try to spawn the process
+    const testProcess = spawn(config.command, config.args || [], {
+      env: { ...process.env, ...(config.env || {}) },
+      stdio: ['pipe', 'pipe', 'pipe']
+    });
+
+    let stdout = '';
+    let stderr = '';
+    let resolved = false;
+
+    const cleanup = () => {
+      if (!resolved) {
+        resolved = true;
+        testProcess.kill('SIGTERM');
+      }
+    };
+
+    testProcess.stdout.on('data', (data) => {
+      stdout += data.toString();
+    });
+
+    testProcess.stderr.on('data', (data) => {
+      stderr += data.toString();
+    });
+
+    // Wait a short time to see if the process starts and stays running
+    const timeout = setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        testProcess.kill('SIGTERM');
+        res.json({
+          name,
+          status: 'ok',
+          message: 'MCP server started successfully'
+        });
+      }
+    }, 2000);
+
+    testProcess.on('error', (err) => {
+      if (!resolved) {
+        resolved = true;
+        clearTimeout(timeout);
+        res.json({
+          name,
+          status: 'error',
+          error: `Failed to start: ${err.message}`,
+          hint: config.command === 'npx' ? 'Make sure npm/npx is installed' : undefined
+        });
+      }
+    });
+
+    testProcess.on('exit', (code, signal) => {
+      if (!resolved) {
+        resolved = true;
+        clearTimeout(timeout);
+        if (code !== null && code !== 0) {
+          res.json({
+            name,
+            status: 'error',
+            error: `Process exited with code ${code}`,
+            stderr: stderr.slice(0, 500) || undefined,
+            hint: stderr.includes('API') ? 'Check if your API key is valid' : undefined
+          });
+        } else if (signal) {
+          // Process was killed by us or something else
+          res.json({
+            name,
+            status: 'ok',
+            message: 'MCP server starts correctly'
+          });
+        }
+      }
+    });
+
+  } catch (error) {
+    log.error('MCP test error', error);
+    res.status(500).json({ error: error.message, status: 'error' });
+  }
+});
+
+/**
+ * GET /api/mcps/:name/tools
+ * Get the list of tools provided by an MCP server
+ * Spawns the MCP server and performs proper MCP handshake to get tools list
+ */
+app.get('/api/mcps/:name/tools', async (req, res) => {
+  const { spawn } = await import('child_process');
+
+  try {
+    const { name } = req.params;
+    const servers = await loadMcpServers(CONFIG.vaultPath);
+
+    if (!servers[name]) {
+      return res.status(404).json({ error: `MCP server '${name}' not found` });
+    }
+
+    const config = servers[name];
+
+    if (!config.command) {
+      return res.status(400).json({
+        error: 'Only stdio MCP servers can be queried for tools',
+      });
+    }
+
+    // Check for unresolved environment variables
+    const configStr = JSON.stringify(config);
+    const unresolvedMatch = configStr.match(/\$\{([^}]+)\}/);
+    if (unresolvedMatch) {
+      return res.json({
+        name,
+        error: `Missing environment variable: ${unresolvedMatch[1]}`,
+        tools: []
+      });
+    }
+
+    // Spawn the MCP process
+    const mcpProcess = spawn(config.command, config.args || [], {
+      env: { ...process.env, ...(config.env || {}) },
+      stdio: ['pipe', 'pipe', 'pipe']
+    });
+
+    let stdout = '';
+    let stderr = '';
+    let resolved = false;
+    let handshakeState = 'init'; // init -> initialized -> ready
+    let requestId = 1;
+
+    const cleanup = () => {
+      if (!resolved) {
+        resolved = true;
+        mcpProcess.kill('SIGTERM');
+      }
+    };
+
+    const sendRequest = (method, params = {}) => {
+      const id = requestId++;
+      const request = JSON.stringify({
+        jsonrpc: '2.0',
+        id,
+        method,
+        params
+      }) + '\n';
+      mcpProcess.stdin.write(request);
+      return id;
+    };
+
+    const sendNotification = (method, params = {}) => {
+      const notification = JSON.stringify({
+        jsonrpc: '2.0',
+        method,
+        params
+      }) + '\n';
+      mcpProcess.stdin.write(notification);
+    };
+
+    mcpProcess.stdout.on('data', (data) => {
+      stdout += data.toString();
+
+      // Process each complete JSON line
+      const lines = stdout.split('\n');
+      // Keep incomplete last line in buffer
+      stdout = lines.pop() || '';
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+
+        try {
+          const response = JSON.parse(line);
+
+          // Handle initialize response
+          if (handshakeState === 'init' && response.result && response.result.capabilities) {
+            handshakeState = 'initialized';
+            // Send initialized notification
+            sendNotification('notifications/initialized');
+            // Now request tools
+            handshakeState = 'ready';
+            sendRequest('tools/list');
+          }
+          // Handle tools/list response
+          else if (handshakeState === 'ready' && response.result && response.result.tools) {
+            cleanup();
+            res.json({
+              name,
+              tools: response.result.tools.map(t => ({
+                name: t.name,
+                description: t.description,
+                inputSchema: t.inputSchema
+              }))
+            });
+            return;
+          }
+          // Handle error response
+          else if (response.error) {
+            cleanup();
+            res.json({
+              name,
+              error: response.error.message || 'Unknown MCP error',
+              tools: []
+            });
+            return;
+          }
+        } catch (e) {
+          // Not valid JSON, skip
+        }
+      }
+    });
+
+    mcpProcess.stderr.on('data', (data) => {
+      stderr += data.toString();
+    });
+
+    // Start MCP handshake after a brief delay for process startup
+    setTimeout(() => {
+      if (!resolved && handshakeState === 'init') {
+        // Send initialize request (required by MCP protocol)
+        sendRequest('initialize', {
+          protocolVersion: '2024-11-05',
+          capabilities: {},
+          clientInfo: {
+            name: 'parachute-base',
+            version: '1.0.0'
+          }
+        });
+      }
+    }, 100);
+
+    // Timeout after 10 seconds
+    const timeout = setTimeout(() => {
+      if (!resolved) {
+        cleanup();
+        res.json({
+          name,
+          error: `Timeout waiting for tools list (state: ${handshakeState})`,
+          tools: []
+        });
+      }
+    }, 10000);
+
+    mcpProcess.on('error', (err) => {
+      if (!resolved) {
+        resolved = true;
+        clearTimeout(timeout);
+        res.json({
+          name,
+          error: `Failed to start: ${err.message}`,
+          tools: []
+        });
+      }
+    });
+
+    mcpProcess.on('exit', (code) => {
+      if (!resolved) {
+        resolved = true;
+        clearTimeout(timeout);
+        res.json({
+          name,
+          error: code !== 0 ? `Process exited with code ${code}` : 'Process ended unexpectedly',
+          tools: []
+        });
+      }
+    });
+
+  } catch (error) {
+    log.error('MCP tools error', error);
+    res.status(500).json({ error: error.message, tools: [] });
+  }
+});
+
 // ============================================================================
 // SKILLS MANAGEMENT
 // ============================================================================
@@ -706,6 +1018,70 @@ app.delete('/api/skills/:name', async (req, res) => {
     }
   } catch (error) {
     log.error('Skill delete error', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * POST /api/skills/upload
+ * Upload a .skill file (ZIP format) and extract it to the skills directory
+ * Accepts multipart/form-data with a 'file' field
+ */
+const skillUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB limit
+  fileFilter: (req, file, cb) => {
+    // Accept .skill or .zip files
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (ext === '.skill' || ext === '.zip') {
+      cb(null, true);
+    } else {
+      cb(new Error('Only .skill or .zip files are allowed'));
+    }
+  }
+});
+
+app.post('/api/skills/upload', skillUpload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    const skillsDir = path.join(CONFIG.vaultPath, '.claude', 'skills');
+    await fs.mkdir(skillsDir, { recursive: true });
+
+    // Get skill name from filename (without extension)
+    const originalName = path.basename(req.file.originalname, path.extname(req.file.originalname));
+    const sanitizedName = originalName.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+    const skillDir = path.join(skillsDir, sanitizedName);
+
+    // Check if skill already exists
+    try {
+      await fs.access(skillDir);
+      return res.status(409).json({ error: `Skill '${sanitizedName}' already exists. Delete it first to replace.` });
+    } catch {
+      // Skill doesn't exist, good to proceed
+    }
+
+    // Create the skill directory
+    await fs.mkdir(skillDir, { recursive: true });
+
+    // Extract the ZIP file
+    const { Readable } = await import('stream');
+    const bufferStream = Readable.from(req.file.buffer);
+
+    await pipeline(
+      bufferStream,
+      Extract({ path: skillDir })
+    );
+
+    log.info(`Uploaded skill: ${sanitizedName}`);
+
+    // Reload and return the skill
+    const skill = await loadSkill(CONFIG.vaultPath, sanitizedName);
+    res.json({ success: true, skill });
+  } catch (error) {
+    log.error('Skill upload error', error);
     res.status(500).json({ error: error.message });
   }
 });
