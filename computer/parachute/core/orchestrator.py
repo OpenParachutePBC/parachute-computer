@@ -242,6 +242,9 @@ class Orchestrator:
             # Run query
             current_text = ""
 
+            # Use bypassPermissions mode to auto-approve ALL tool operations
+            # MCP tools are trusted since they're user-configured in .mcp.json
+            # File operations are trusted since we're operating within the vault
             async for event in query_streaming(
                 prompt=actual_message,
                 system_prompt=effective_prompt,
@@ -249,6 +252,7 @@ class Orchestrator:
                 resume=resume_id,
                 tools=agent.tools if agent.tools else None,
                 mcp_servers=resolved_mcps,
+                permission_mode="bypassPermissions",
             ):
                 # Check for interrupt
                 if interrupt.is_interrupted:

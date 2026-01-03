@@ -109,6 +109,52 @@ class PermissionHandler:
         self.max_pending = 100
         self.timeout_seconds = 120
 
+    def create_sdk_callback(self):
+        """
+        Create an SDK-compatible can_use_tool callback.
+
+        Returns a function that can be passed to ClaudeCodeOptions.can_use_tool.
+        The SDK expects a function with signature:
+            async (tool_name: str, input_data: dict, context: ToolPermissionContext) -> PermissionResultAllow | PermissionResultDeny
+        """
+        # Import SDK types upfront
+        try:
+            from claude_code_sdk.types import PermissionResultAllow, PermissionResultDeny
+        except ImportError:
+            logger.warning("SDK types not available, permissions will use defaults")
+            PermissionResultAllow = None
+            PermissionResultDeny = None
+
+        async def sdk_can_use_tool(
+            tool_name: str,
+            input_data: dict[str, Any],
+            context: Any,  # ToolPermissionContext from SDK
+        ):
+            logger.debug(f"can_use_tool called: {tool_name}")
+
+            # Check our permission handler
+            decision = await self.check_permission(tool_name, input_data)
+
+            logger.info(f"Permission decision for {tool_name}: {decision.behavior}")
+
+            if PermissionResultAllow is None or PermissionResultDeny is None:
+                # SDK types not available - return simple dict
+                # The SDK may accept this as a fallback
+                if decision.behavior == "allow":
+                    return {"behavior": "allow", "updated_input": decision.updated_input}
+                else:
+                    return {"behavior": "deny", "message": decision.message or "Permission denied"}
+
+            if decision.behavior == "allow":
+                return PermissionResultAllow(updated_input=decision.updated_input)
+            else:
+                return PermissionResultDeny(
+                    message=decision.message or "Permission denied",
+                    interrupt=decision.interrupt,
+                )
+
+        return sdk_can_use_tool
+
     async def check_permission(
         self,
         tool_name: str,

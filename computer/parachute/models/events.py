@@ -124,6 +124,29 @@ class ErrorEvent(BaseModel):
     model_config = {"populate_by_name": True}
 
 
+class PermissionRequestEvent(BaseModel):
+    """Permission request event - agent needs user approval for an operation."""
+
+    type: Literal["permission_request"] = "permission_request"
+    id: str
+    tool_name: str = Field(alias="toolName")
+    agent_name: str = Field(alias="agentName")
+    timestamp: int
+
+    # For write tools
+    file_path: Optional[str] = Field(alias="filePath", default=None)
+    allowed_patterns: list[str] = Field(alias="allowedPatterns", default_factory=list)
+
+    # For MCP tools
+    mcp_server: Optional[str] = Field(alias="mcpServer", default=None)
+    mcp_tool: Optional[str] = Field(alias="mcpTool", default=None)
+
+    # Tool input for context
+    input_data: Optional[dict[str, Any]] = Field(alias="input", default=None)
+
+    model_config = {"populate_by_name": True}
+
+
 # Union type for all SSE events
 SSEEvent = Union[
     SessionEvent,
@@ -137,4 +160,5 @@ SSEEvent = Union[
     AbortedEvent,
     SessionUnavailableEvent,
     ErrorEvent,
+    PermissionRequestEvent,
 ]
