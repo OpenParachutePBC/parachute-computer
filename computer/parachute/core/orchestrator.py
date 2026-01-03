@@ -175,12 +175,16 @@ class Orchestrator:
         )
 
         # Determine working directory
+        # Priority: explicit param > session's stored value > vault path
         effective_cwd = self.vault_path
         if working_directory:
             if Path(working_directory).is_absolute():
                 effective_cwd = Path(working_directory)
             else:
                 effective_cwd = self.vault_path / working_directory
+        elif session.working_directory:
+            # Use session's stored working directory (important for imported sessions)
+            effective_cwd = Path(session.working_directory)
 
         # Add cwd to prompt if different from vault
         if str(effective_cwd) != str(self.vault_path):
