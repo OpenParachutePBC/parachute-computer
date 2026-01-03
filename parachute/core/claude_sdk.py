@@ -17,14 +17,23 @@ def get_sdk_env() -> dict[str, str]:
     """
     Get environment variables for SDK subprocess.
 
-    Ensures PATH includes common node installation locations.
+    Ensures PATH includes common node and Claude installation locations.
     """
     env = dict(os.environ)
+    path = env.get("PATH", "")
 
-    # Ensure /opt/homebrew/bin is in PATH for macOS Homebrew
-    if "PATH" in env and "/opt/homebrew/bin" not in env["PATH"]:
-        env["PATH"] = f"/opt/homebrew/bin:{env['PATH']}"
+    # Add common paths for Claude Code CLI and Node.js
+    paths_to_add = [
+        os.path.expanduser("~/.claude/local"),  # Claude Code local install
+        "/opt/homebrew/bin",  # macOS Homebrew
+        os.path.expanduser("~/node_modules/.bin"),  # Local npm
+    ]
 
+    for p in paths_to_add:
+        if p not in path:
+            path = f"{p}:{path}"
+
+    env["PATH"] = path
     return env
 
 
