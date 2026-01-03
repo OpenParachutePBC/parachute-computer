@@ -8,9 +8,22 @@ import asyncio
 import logging
 import os
 from pathlib import Path
-from typing import Any, AsyncGenerator, Optional
+from typing import Any, AsyncGenerator, Awaitable, Callable, Optional
 
 logger = logging.getLogger(__name__)
+
+# Ensure Claude CLI is in PATH before SDK is imported
+# The SDK looks for 'claude' binary at import time
+_claude_paths = [
+    os.path.expanduser("~/.claude/local"),  # Claude Code local install
+    "/opt/homebrew/bin",  # macOS Homebrew
+    os.path.expanduser("~/node_modules/.bin"),  # Local npm
+]
+_current_path = os.environ.get("PATH", "")
+for _p in _claude_paths:
+    if _p not in _current_path:
+        _current_path = f"{_p}:{_current_path}"
+os.environ["PATH"] = _current_path
 
 
 def get_sdk_env() -> dict[str, str]:
@@ -37,6 +50,12 @@ def get_sdk_env() -> dict[str, str]:
     return env
 
 
+# Type alias for permission callback
+CanUseToolCallback = Optional[
+    Callable[[str, dict[str, Any], Any], Awaitable[Any]]
+]
+
+
 async def query_streaming(
     prompt: str,
     system_prompt: Optional[str] = None,
@@ -45,6 +64,7 @@ async def query_streaming(
     tools: Optional[list[str]] = None,
     mcp_servers: Optional[dict[str, Any]] = None,
     permission_mode: str = "default",
+    can_use_tool: CanUseToolCallback = None,
 ) -> AsyncGenerator[dict[str, Any], None]:
     """
     Run a Claude SDK query with streaming response.
@@ -57,6 +77,7 @@ async def query_streaming(
         tools: List of allowed tools
         mcp_servers: MCP server configurations
         permission_mode: Permission mode for tools
+        can_use_tool: Optional callback for permission checking
 
     Yields:
         SDK events as dictionaries
@@ -94,6 +115,9 @@ async def query_streaming(
 
         if mcp_servers:
             options_kwargs["mcp_servers"] = mcp_servers
+
+        if can_use_tool:
+            options_kwargs["can_use_tool"] = can_use_tool
 
         options = ClaudeCodeOptions(**options_kwargs)
 
