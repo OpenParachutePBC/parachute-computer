@@ -37,7 +37,7 @@ from parachute.models.events import (
     ToolResultEvent,
     ToolUseEvent,
 )
-from parachute.models.session import ResumeInfo
+from parachute.models.session import ResumeInfo, SessionSource
 
 logger = logging.getLogger(__name__)
 
@@ -146,19 +146,32 @@ class Orchestrator:
         else:
             agent = create_vault_agent()
 
-        # Build system prompt
-        effective_prompt = await self._build_system_prompt(
-            agent=agent,
-            custom_prompt=system_prompt,
-            contexts=contexts,
-            prior_conversation=prior_conversation,
-        )
-
-        # Get or create session
+        # Get or create session (before building prompt so we can load prior conversation)
         session, resume_info, is_new = await self.session_manager.get_or_create_session(
             session_id=session_id,
             module=module,
             working_directory=working_directory,
+        )
+
+        # For imported sessions, auto-load prior conversation for context continuity
+        # This makes imported sessions "resumable" by injecting their history as context
+        # Supports: Claude Code, Claude Web, ChatGPT
+        effective_prior_conversation = prior_conversation
+        imported_sources = (SessionSource.CLAUDE_CODE, SessionSource.CLAUDE_WEB, SessionSource.CHATGPT)
+        if not prior_conversation and session.source in imported_sources:
+            loaded_prior = await self.session_manager.get_prior_conversation(session)
+            if loaded_prior:
+                effective_prior_conversation = loaded_prior
+                logger.info(f"Loaded prior conversation for {session.source.value} session: {session.id[:8]}...")
+                # Force new SDK session since we're injecting context, not resuming
+                is_new = True
+
+        # Build system prompt (after loading prior conversation)
+        effective_prompt = await self._build_system_prompt(
+            agent=agent,
+            custom_prompt=system_prompt,
+            contexts=contexts,
+            prior_conversation=effective_prior_conversation,
         )
 
         # Determine working directory

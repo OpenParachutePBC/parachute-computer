@@ -16,6 +16,8 @@ class SessionSource(str, Enum):
 
     PARACHUTE = "parachute"
     CLAUDE_CODE = "claude-code"
+    CLAUDE_WEB = "claude"  # Imported from Claude.ai web app
+    CHATGPT = "chatgpt"  # Imported from ChatGPT
 
 
 class Session(BaseModel):

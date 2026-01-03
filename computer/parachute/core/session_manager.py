@@ -349,3 +349,174 @@ class SessionManager:
                 return "\n".join(text_parts)
 
         return None
+
+    async def get_prior_conversation(self, session: Session) -> Optional[str]:
+        """
+        Get prior conversation text for continuing an imported session.
+
+        This formats all messages from the original session as text that can be
+        injected into the system prompt for context continuity.
+
+        Supports:
+        - Claude Code sessions (from ~/.claude/projects JSONL files)
+        - Claude Web imports (from markdown files in Chat/sessions/imported/)
+        - ChatGPT imports (from markdown files in Chat/sessions/imported/)
+
+        Returns None if session is not an import or has no messages.
+        """
+        messages = []
+
+        if session.source == SessionSource.CLAUDE_CODE:
+            messages = await self._load_claude_code_messages(session)
+        elif session.source in (SessionSource.CLAUDE_WEB, SessionSource.CHATGPT):
+            messages = await self._load_imported_markdown_messages(session)
+
+        if not messages:
+            return None
+
+        return self._format_as_prior_conversation(messages)
+
+    async def _load_claude_code_messages(self, session: Session) -> list[dict[str, Any]]:
+        """Load messages from a Claude Code session's JSONL file."""
+        # Claude Code sessions use the original session ID to find the file
+        # The file is in ~/.claude/projects/{encoded-cwd}/{session_id}.jsonl
+
+        projects_dir = Path.home() / ".claude" / "projects"
+        if not projects_dir.exists():
+            return []
+
+        # Search all project directories for this session
+        session_file = None
+        for project_dir in projects_dir.iterdir():
+            if project_dir.is_dir():
+                candidate = project_dir / f"{session.id}.jsonl"
+                if candidate.exists():
+                    session_file = candidate
+                    break
+
+        if not session_file:
+            # Also try using the working directory if set
+            if session.working_directory:
+                encoded = session.working_directory.replace("/", "-")
+                if session.working_directory.startswith("/"):
+                    encoded = "-" + session.working_directory[1:].replace("/", "-")
+                session_file = projects_dir / encoded / f"{session.id}.jsonl"
+
+        if not session_file or not session_file.exists():
+            return []
+
+        messages = []
+        try:
+            with open(session_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        event = json.loads(line)
+                        event_type = event.get("type")
+
+                        if event_type == "user":
+                            content = self._extract_message_content(event.get("message", {}))
+                            if content:
+                                messages.append({
+                                    "role": "user",
+                                    "content": content,
+                                })
+                        elif event_type == "assistant":
+                            content = self._extract_message_content(event.get("message", {}))
+                            if content:
+                                messages.append({
+                                    "role": "assistant",
+                                    "content": content,
+                                })
+                        elif event_type == "result" and event.get("result"):
+                            messages.append({
+                                "role": "assistant",
+                                "content": event["result"],
+                            })
+                    except json.JSONDecodeError:
+                        continue
+        except Exception as e:
+            logger.error(f"Error loading Claude Code messages: {e}")
+
+        return messages
+
+    async def _load_imported_markdown_messages(self, session: Session) -> list[dict[str, Any]]:
+        """Load messages from an imported markdown session file.
+
+        The markdown format uses headers like:
+        ### Human | 2025-12-20T10:30:00Z
+        Message content here
+
+        ### Assistant | 2025-12-20T10:31:00Z
+        Response here
+        """
+        import re
+
+        # Find the markdown file in Chat/sessions/imported/
+        imported_dir = self.vault_path / "Chat" / "sessions" / "imported"
+        if not imported_dir.exists():
+            return []
+
+        # Try to find the file by session ID (could be claude-{uuid}.md or chatgpt-{id}.md)
+        session_file = None
+        for pattern in [f"claude-{session.id}.md", f"chatgpt-{session.id}.md"]:
+            candidate = imported_dir / pattern
+            if candidate.exists():
+                session_file = candidate
+                break
+
+        if not session_file:
+            # Try to find by scanning the directory
+            for f in imported_dir.iterdir():
+                if f.is_file() and f.suffix == ".md":
+                    content = f.read_text(encoding="utf-8")
+                    if f"original_id: {session.id}" in content or f"sdk_session_id: {session.id}" in content:
+                        session_file = f
+                        break
+
+        if not session_file:
+            logger.warning(f"Could not find imported markdown for session {session.id}")
+            return []
+
+        messages = []
+        try:
+            content = session_file.read_text(encoding="utf-8")
+
+            # Skip frontmatter
+            if content.startswith("---"):
+                parts = content.split("---", 2)
+                if len(parts) >= 3:
+                    content = parts[2]
+
+            # Parse messages - format: ### Human | timestamp or ### Assistant | timestamp
+            # The message content follows until the next ### header
+            message_pattern = re.compile(
+                r"###\s+(Human|Assistant)\s*\|\s*[\d\-T:Z]+\s*\n(.*?)(?=###\s+(?:Human|Assistant)\s*\||$)",
+                re.DOTALL | re.IGNORECASE
+            )
+
+            for match in message_pattern.finditer(content):
+                role = match.group(1).lower()
+                text = match.group(2).strip()
+
+                if text:
+                    messages.append({
+                        "role": "user" if role == "human" else "assistant",
+                        "content": text,
+                    })
+
+        except Exception as e:
+            logger.error(f"Error loading imported markdown messages: {e}")
+
+        return messages
+
+    def _format_as_prior_conversation(self, messages: list[dict[str, Any]]) -> str:
+        """Format messages as prior conversation text."""
+        lines = []
+        for msg in messages:
+            role = msg["role"].upper()
+            content = msg["content"]
+            lines.append(f"**{role}:**\n{content}")
+        return "\n\n---\n\n".join(lines)
