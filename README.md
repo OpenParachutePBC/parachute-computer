@@ -1,134 +1,198 @@
-# Parachute Agent
+# Parachute Base Server (Python)
 
-AI agent backend for Parachute - define agents in markdown, chat with your knowledge graph.
+A FastAPI-based backend server for the Parachute ecosystem, providing AI agent orchestration, session management, and vault operations.
 
-## Overview
+## Features
 
-Parachute Agent is a simple backend that:
-- **Reads agent definitions from markdown files** - No config files, just edit markdown
-- **Chats via Claude Agent SDK** - Direct integration, no subprocess complexity
-- **Persists sessions as markdown** - Human-readable, syncs across devices
-- **Works with any markdown folder** - Obsidian vault, plain files, whatever
+- **Claude SDK Integration** - Native Python SDK for AI interactions
+- **SQLite Session Storage** - Fast, reliable session management
+- **SSE Streaming** - Real-time streaming responses
+- **Supervisor Service** - Health monitoring and auto-restart
+- **MCP Support** - Model Context Protocol for extended tools
 
 ## Quick Start
 
-```bash
-npm install
+### Prerequisites
 
-# Point to your markdown folder
-VAULT_PATH=/path/to/your/vault npm start
+- Python 3.10+
+- Claude Code CLI (`npm install -g @anthropic-ai/claude-code`)
+- Anthropic API key (`export ANTHROPIC_API_KEY=...`)
 
-# Server runs on http://localhost:3333
-```
-
-## Agent Definitions
-
-Create agents in an `agents/` folder as markdown files:
-
-```markdown
----
-name: Daily Reflection
-description: Process daily journal entries
-model: claude-sonnet-4-20250514
-system_prompt: |
-  You are a thoughtful reflection partner.
-  Help the user process their daily notes.
----
-
-# Daily Reflection Agent
-
-Additional context for the agent goes here.
-```
-
-## API
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/agents` | GET | List all agents |
-| `/api/chat` | POST | Send message to agent |
-| `/api/chat/sessions` | GET | List chat sessions |
-| `/api/chat/session` | DELETE | Clear a session |
-
-### Chat Request
+### Installation
 
 ```bash
-curl -X POST http://localhost:3333/api/chat \
-  -H "Content-Type: application/json" \
-  -d '{"agentPath": "agents/daily-reflection.md", "message": "Hello!"}'
+# Create virtual environment
+python3 -m venv venv
+source venv/bin/activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# For development
+pip install -r requirements-dev.txt
 ```
+
+### Running the Server
+
+```bash
+# Simple start
+python -m parachute.server
+
+# With custom vault path
+VAULT_PATH=/path/to/vault python -m parachute.server
+
+# With supervisor (recommended for production)
+python -m supervisor.main
+```
+
+## Configuration
+
+Environment variables:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `VAULT_PATH` | `./sample-vault` | Path to knowledge vault |
+| `PORT` | `3333` | Server port |
+| `HOST` | `0.0.0.0` | Bind address |
+| `LOG_LEVEL` | `INFO` | Logging level |
+| `API_KEY` | - | Optional API key for authentication |
+| `CORS_ORIGINS` | `*` | Comma-separated allowed origins |
+
+## API Endpoints
+
+### Chat
+
+- `POST /api/chat` - Send message, get streaming response (SSE)
+- `POST /api/chat/{id}/abort` - Abort active stream
+
+### Sessions
+
+- `GET /api/sessions` - List sessions
+- `GET /api/sessions/{id}` - Get session with messages
+- `DELETE /api/sessions/{id}` - Delete session
+- `POST /api/sessions/{id}/archive` - Archive session
+- `POST /api/sessions/{id}/unarchive` - Unarchive session
+
+### Modules
+
+- `GET /api/modules` - List modules
+- `GET /api/modules/{mod}/prompt` - Get module prompt
+- `PUT /api/modules/{mod}/prompt` - Update module prompt
+- `DELETE /api/modules/{mod}/prompt` - Reset to default
+- `GET /api/modules/{mod}/search` - Search module content
+- `GET /api/modules/{mod}/stats` - Get module statistics
+
+### Health
+
+- `GET /api/health` - Health check
+- `GET /` - Server info
 
 ## Architecture
 
 ```
-┌─────────────────┐     ┌─────────────────┐
-│ Parachute App   │     │ Obsidian Plugin │
-└────────┬────────┘     └────────┬────────┘
-         │                       │
-         └───────────┬───────────┘
-                     ▼
-         ┌───────────────────────┐
-         │   Parachute Agent     │
-         │   (this backend)      │
-         │                       │
-         │  - Load agent .md     │
-         │  - Chat via Claude SDK│
-         │  - Session persistence│
-         └───────────────────────┘
-                     │
-                     ▼
-              Claude Agent SDK
+parachute/
+├── api/           # FastAPI route handlers
+├── core/          # Business logic
+│   ├── orchestrator.py    # Agent execution controller
+│   ├── session_manager.py # Session lifecycle
+│   ├── claude_sdk.py      # SDK wrapper
+│   └── permission_handler.py
+├── db/            # SQLite database layer
+├── lib/           # Utilities
+│   ├── agent_loader.py
+│   ├── context_loader.py
+│   ├── mcp_loader.py
+│   └── vault_utils.py
+├── models/        # Pydantic models
+├── config.py      # Settings management
+└── server.py      # FastAPI application
+
+supervisor/        # Separate supervisor service
+├── main.py        # Supervisor app with web UI
+└── process_manager.py
 ```
 
-## Project Structure
-
-```
-agent/                     # You are here (within parachute monorepo)
-├── server.js              # Express API
-├── lib/
-│   ├── orchestrator.js    # Agent execution via Claude SDK
-│   ├── session-manager.js # Session persistence (markdown)
-│   ├── agent-loader.js    # Load agent definitions
-│   └── ...
-├── obsidian-plugin/       # Optional Obsidian integration
-└── sample-vault/          # Example agents
-```
-
-## Obsidian Plugin
-
-An optional Obsidian plugin is included for in-editor agent interaction.
+## Testing
 
 ```bash
-cd obsidian-plugin
-npm install && npm run build
+# Run all tests
+pytest
+
+# Unit tests only
+pytest tests/unit/
+
+# Integration tests (no API key needed)
+pytest tests/integration/
+
+# E2E tests (requires ANTHROPIC_API_KEY)
+pytest tests/e2e/
+
+# With coverage
+pytest --cov=parachute --cov-report=html
 ```
 
-Copy to your vault's `.obsidian/plugins/parachute-agent/` folder.
-
-## Authentication
-
-This project uses **Claude Agent SDK authentication** via `claude login`. No API keys needed!
+## Development
 
 ```bash
-# One-time setup
-npm install -g @anthropic-ai/claude-code
-claude login
+# Install dev dependencies
+pip install -r requirements-dev.txt
+
+# Type checking
+mypy parachute
+
+# Linting
+ruff check parachute
+
+# Format code
+ruff format parachute
 ```
 
-## Environment Variables
+## Supervisor Service
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `VAULT_PATH` | `./sample-vault` | Path to markdown folder |
-| `PORT` | `3333` | Server port |
+The supervisor runs as a separate process to monitor and manage the main server:
 
-## Part of Parachute
+```bash
+# Default: supervisor on 3330, server on 3333
+python -m supervisor.main
 
-This is the agent backend within the [Parachute monorepo](../README.md) — an open-source "second brain" powered by AI.
+# Custom ports
+SUPERVISOR_PORT=3330 SERVER_PORT=3333 python -m supervisor.main
+```
 
-- **[agent/](.)** - Agent backend (you are here)
-- **[app/](../app/)** - Flutter mobile/desktop app
-- **[Root README](../README.md)** - Monorepo overview and quick start
+The supervisor provides:
+- Web UI at `http://localhost:3330`
+- Health monitoring with auto-restart
+- Start/stop/restart controls
+- Configuration display
 
----
+## SSE Event Types
 
-**Last Updated:** December 22, 2025
+Chat streaming returns these event types:
+
+| Event | Description |
+|-------|-------------|
+| `session` | Session info with ID |
+| `init` | Available tools and permissions |
+| `model` | Model being used |
+| `text` | Text content (with delta) |
+| `thinking` | Agent thinking content |
+| `tool_use` | Tool being invoked |
+| `tool_result` | Tool result |
+| `done` | Final response with stats |
+| `aborted` | Stream was interrupted |
+| `error` | Error occurred |
+| `session_unavailable` | Session couldn't be loaded |
+
+## Migration from Node.js
+
+This Python implementation is a rewrite of the original Node.js base server. Key differences:
+
+- **SQLite** instead of markdown files for session storage
+- **Native Python SDK** instead of subprocess calls
+- **FastAPI** instead of Express for better async support
+- **Supervisor service** for improved reliability
+
+To migrate:
+1. Stop the Node.js server
+2. Start the Python server
+3. Existing sessions will be created fresh (markdown sessions not migrated)
