@@ -1,0 +1,166 @@
+"""
+Parachute Base Server
+
+Main FastAPI application entry point.
+"""
+
+import logging
+from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Optional
+
+import uvicorn
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
+
+from parachute.api import api_router
+from parachute.config import get_settings, Settings
+from parachute.core.orchestrator import Orchestrator
+from parachute.db.database import Database, init_database, close_database
+from parachute.lib.logger import setup_logging, get_logger
+
+logger = get_logger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifespan manager."""
+    settings = get_settings()
+
+    # Set up logging
+    setup_logging(level=settings.log_level)
+
+    logger.info(f"Starting Parachute server...")
+    logger.info(f"Vault path: {settings.vault_path}")
+
+    # Ensure vault directories exist
+    settings.vault_path.mkdir(parents=True, exist_ok=True)
+    (settings.vault_path / ".parachute").mkdir(exist_ok=True)
+
+    # Initialize database
+    db = await init_database(settings.database_path)
+    logger.info(f"Database initialized: {settings.database_path}")
+
+    # Initialize orchestrator and store in app.state
+    orchestrator = Orchestrator(
+        vault_path=settings.vault_path,
+        database=db,
+        settings=settings,
+    )
+    app.state.orchestrator = orchestrator
+    app.state.database = db
+
+    logger.info("Server ready")
+
+    yield
+
+    # Shutdown
+    logger.info("Shutting down...")
+    await close_database()
+    app.state.orchestrator = None
+    app.state.database = None
+
+
+def get_orchestrator() -> Orchestrator:
+    """Get the orchestrator from app state. For use in route handlers."""
+    # This is a convenience function that will be called from request context
+    # We'll need to use request.app.state.orchestrator in actual routes
+    raise RuntimeError(
+        "get_orchestrator() should not be called directly. "
+        "Use request.app.state.orchestrator instead."
+    )
+
+
+# Create FastAPI application
+app = FastAPI(
+    title="Parachute Base Server",
+    description="Backend server for Parachute ecosystem - AI agents, session management, and vault operations",
+    version="0.1.0",
+    lifespan=lifespan,
+)
+
+# CORS middleware - allow all origins by default
+# Configure via CORS_ORIGINS environment variable
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# Optional API key authentication
+@app.middleware("http")
+async def api_key_middleware(request: Request, call_next):
+    settings = get_settings()
+
+    # Skip auth for health check and static files
+    if request.url.path in ["/api/health", "/"] or not request.url.path.startswith("/api"):
+        return await call_next(request)
+
+    # Check API key if configured
+    if settings.api_key:
+        provided_key = (
+            request.headers.get("x-api-key")
+            or request.headers.get("authorization", "").replace("Bearer ", "")
+        )
+        if provided_key != settings.api_key:
+            return JSONResponse(
+                status_code=401,
+                content={"error": "Unauthorized"},
+            )
+
+    return await call_next(request)
+
+
+# Include API routes
+app.include_router(api_router)
+
+
+# Root endpoint
+@app.get("/")
+async def root():
+    """Root endpoint - returns server info."""
+    return {
+        "name": "Parachute Base Server",
+        "version": "0.1.0",
+        "status": "running",
+    }
+
+
+def main():
+    """Main entry point."""
+    settings = get_settings()
+
+    print(f"""
+╔═══════════════════════════════════════════════════════════════╗
+║           🪂 Parachute Base Server (Python)                   ║
+╠═══════════════════════════════════════════════════════════════╣
+║  Server:  http://{settings.host}:{settings.port:<37}║
+║  Vault:   {str(settings.vault_path)[:45]:<45}║
+╠═══════════════════════════════════════════════════════════════╣
+║  API Endpoints:                                               ║
+║    POST /api/chat             - Run agent (streaming)         ║
+║    GET  /api/chat             - List sessions                 ║
+║    GET  /api/chat/:id         - Get session                   ║
+║    DELETE /api/chat/:id       - Delete session                ║
+║    GET  /api/modules/:mod/prompt   - Get module prompt        ║
+║    PUT  /api/modules/:mod/prompt   - Update module prompt     ║
+║    GET  /api/modules/:mod/search   - Search module            ║
+╚═══════════════════════════════════════════════════════════════╝
+    """)
+
+    uvicorn.run(
+        app,
+        host=settings.host,
+        port=settings.port,
+        reload=settings.reload,
+        log_level=settings.log_level.lower(),
+    )
+
+
+if __name__ == "__main__":
+    main()

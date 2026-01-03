@@ -1,35 +1,23 @@
-# Dependencies
-node_modules/
+# Python
+venv/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+.eggs/
+dist/
+build/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 
-# Environment
+# Node.js (in node/ subdirectory)
+node/node_modules/
+node/logs/
+node/.env
+
+# General
 .env
-.env.local
-
-# Runtime data
-sample-vault/.queue/
-sample-vault/.sessions/
-sample-vault/agent-chats/
-sample-vault/agent-logs/
-
-# OS files
 .DS_Store
-Thumbs.db
-
-# Claude context
-.claude/
-
-# Editor files
-*.swp
-*.swo
-*~
-.idea/
-.vscode/
-
-# Logs
-*.log
-logs/
-npm-debug.log*
-
-# Obsidian plugin build
-obsidian-plugin/main.js
-obsidian-plugin/main.js.map
