@@ -177,6 +177,15 @@ cmd_start() {
     return 1
 }
 
+# Run server in foreground (for launchd/systemd)
+cmd_run() {
+    # Ensure venv is set up
+    ensure_venv
+
+    cd "$SCRIPT_DIR"
+    exec python -m parachute.server
+}
+
 # Stop server
 cmd_stop() {
     echo -e "${BLUE}Stopping Parachute server...${NC}"
@@ -362,6 +371,106 @@ cmd_supervisor_stop() {
     fi
 }
 
+# Service management (for development - uses launchctl directly)
+PLIST_PATH="$HOME/Library/LaunchAgents/homebrew.mxcl.parachute.plist"
+
+# Detect Homebrew prefix (Apple Silicon vs Intel)
+if [[ -d "/opt/homebrew" ]]; then
+    BREW_PREFIX="/opt/homebrew"
+elif [[ -d "/usr/local/Homebrew" ]]; then
+    BREW_PREFIX="/usr/local"
+else
+    BREW_PREFIX="/opt/homebrew"  # Default fallback
+fi
+LOG_PATH="$BREW_PREFIX/var/log/parachute.log"
+
+DEV_PLIST_CONTENT='<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOST</key>
+        <string>0.0.0.0</string>
+        <key>PORT</key>
+        <string>3333</string>
+        <key>VAULT_PATH</key>
+        <string>'"$HOME"'/Parachute</string>
+    </dict>
+    <key>KeepAlive</key>
+    <true/>
+    <key>Label</key>
+    <string>homebrew.mxcl.parachute</string>
+    <key>LimitLoadToSessionType</key>
+    <array>
+        <string>Aqua</string>
+        <string>Background</string>
+        <string>LoginWindow</string>
+        <string>StandardIO</string>
+        <string>System</string>
+    </array>
+    <key>ProgramArguments</key>
+    <array>
+        <string>'"$SCRIPT_DIR"'/parachute.sh</string>
+        <string>run</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StandardErrorPath</key>
+    <string>'"$LOG_PATH"'</string>
+    <key>StandardOutPath</key>
+    <string>'"$LOG_PATH"'</string>
+    <key>WorkingDirectory</key>
+    <string>'"$SCRIPT_DIR"'</string>
+</dict>
+</plist>'
+
+cmd_service_install() {
+    echo -e "${BLUE}Installing Parachute as a service (dev mode)...${NC}"
+
+    # Stop existing service if running
+    launchctl unload "$PLIST_PATH" 2>/dev/null || true
+
+    # Ensure log directory exists
+    mkdir -p "$(dirname "$LOG_PATH")"
+
+    # Write dev plist
+    echo "$DEV_PLIST_CONTENT" > "$PLIST_PATH"
+
+    # Load the service
+    launchctl load "$PLIST_PATH"
+
+    echo -e "${GREEN}✓ Service installed and started${NC}"
+    echo -e "  Running from: $SCRIPT_DIR"
+    echo -e "  Logs: /opt/homebrew/var/log/parachute.log"
+    echo ""
+    echo -e "Use ${CYAN}parachute service-restart${NC} to restart after code changes"
+}
+
+cmd_service_restart() {
+    echo -e "${BLUE}Restarting Parachute service...${NC}"
+
+    launchctl unload "$PLIST_PATH" 2>/dev/null || true
+    sleep 1
+    launchctl load "$PLIST_PATH"
+
+    # Wait for it to start
+    sleep 2
+    if is_running; then
+        echo -e "${GREEN}✓ Service restarted${NC}"
+        echo -e "  PID: $(get_pid)"
+    else
+        echo -e "${RED}✗ Service failed to start${NC}"
+        echo "Check logs: tail /opt/homebrew/var/log/parachute.log"
+    fi
+}
+
+cmd_service_stop() {
+    echo -e "${BLUE}Stopping Parachute service...${NC}"
+    launchctl unload "$PLIST_PATH" 2>/dev/null || true
+    echo -e "${GREEN}✓ Service stopped${NC}"
+}
+
 # Show help
 cmd_help() {
     banner
@@ -369,6 +478,7 @@ cmd_help() {
     echo ""
     echo "Commands:"
     echo "  start         Start the server (background, no supervisor)"
+    echo "  run           Run server in foreground (for launchd/systemd)"
     echo "  stop          Stop the server"
     echo "  restart       Restart the server"
     echo "  status        Show server and supervisor status"
@@ -377,6 +487,12 @@ cmd_help() {
     echo "  supervisor-bg Start with supervisor in background"
     echo "  sup-stop      Stop supervisor and server"
     echo "  setup         Set up virtual environment and install dependencies"
+    echo ""
+    echo "Service Commands (for development - uses launchctl):"
+    echo "  service-install  Install as launchd service running local dev code"
+    echo "  service-restart  Restart service (use after code changes)"
+    echo "  service-stop     Stop the launchd service"
+    echo ""
     echo "  help          Show this help"
     echo ""
     echo "Environment Variables:"
@@ -398,6 +514,9 @@ main() {
         start)
             cmd_start
             ;;
+        run)
+            cmd_run
+            ;;
         stop)
             cmd_stop
             ;;
@@ -418,6 +537,15 @@ main() {
             ;;
         sup-stop)
             cmd_supervisor_stop
+            ;;
+        service-install)
+            cmd_service_install
+            ;;
+        service-restart)
+            cmd_service_restart
+            ;;
+        service-stop)
+            cmd_service_stop
             ;;
         setup|install)
             cmd_setup

@@ -147,6 +147,57 @@ ruff check parachute
 ruff format parachute
 ```
 
+## CLI & Service Management
+
+The `parachute.sh` script provides easy server management:
+
+```bash
+# One-time setup (creates venv, installs deps)
+./parachute.sh setup
+
+# Start/stop/restart
+./parachute.sh start      # Background
+./parachute.sh stop
+./parachute.sh restart
+./parachute.sh status     # Check if running
+
+# View logs
+./parachute.sh logs
+```
+
+### Running as a macOS Service (Development)
+
+For active development, you can run your local code as a launchd service that autostarts at login:
+
+```bash
+# Install service pointing to your local dev code
+./parachute.sh service-install
+
+# After making code changes, restart
+./parachute.sh service-restart
+
+# Stop the service
+./parachute.sh service-stop
+```
+
+This gives you:
+- **Autostart at login** - Server runs automatically when you log in
+- **Auto-restart on crash** - `KeepAlive` restarts the server if it dies
+- **Local dev code** - Runs from your cloned repo, not a Homebrew install
+- **Standard logging** - Logs to `$(brew --prefix)/var/log/parachute.log`
+
+> **Note:** Don't use `brew services restart parachute` if you've used `service-install` - it will overwrite your dev plist. Use `./parachute.sh service-restart` instead.
+
+### Homebrew Installation (End Users)
+
+For end users who just want to run Parachute:
+
+```bash
+brew tap openparachutepbc/parachute
+brew install parachute
+brew services start parachute
+```
+
 ## Supervisor Service
 
 The supervisor runs as a separate process to monitor and manage the main server:
