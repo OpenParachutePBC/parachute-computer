@@ -75,7 +75,9 @@ async def load_mcp_servers(
         with open(mcp_path, "r", encoding="utf-8") as f:
             data = json.load(f)
 
-        servers = data.get("mcpServers", {})
+        # .mcp.json has servers as top-level keys (not under mcpServers)
+        # Filter out any non-dict entries that might be metadata
+        servers = {k: v for k, v in data.items() if isinstance(v, dict)}
 
         if raw:
             return servers
