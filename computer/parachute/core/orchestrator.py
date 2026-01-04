@@ -467,6 +467,14 @@ class Orchestrator:
             return True
         return False
 
+    def has_active_stream(self, session_id: str) -> bool:
+        """Check if a session has an active stream."""
+        return session_id in self.active_streams
+
+    def get_active_stream_ids(self) -> list[str]:
+        """Get all session IDs with active streams."""
+        return list(self.active_streams.keys())
+
     async def _build_system_prompt(
         self,
         agent: AgentDefinition,

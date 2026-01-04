@@ -122,3 +122,35 @@ async def abort_stream(request: Request, session_id: str) -> dict[str, Any]:
         "message": "Stream abort signal sent",
         "sessionId": session_id,
     }
+
+
+@router.get("/chat/{session_id}/stream-status")
+async def get_stream_status(request: Request, session_id: str) -> dict[str, Any]:
+    """
+    Check if a session has an active stream.
+
+    Returns:
+        - active: True if the session has an active stream
+        - sessionId: The session ID checked
+    """
+    orchestrator = get_orchestrator(request)
+
+    return {
+        "active": orchestrator.has_active_stream(session_id),
+        "sessionId": session_id,
+    }
+
+
+@router.get("/chat/active-streams")
+async def get_active_streams(request: Request) -> dict[str, Any]:
+    """
+    Get all sessions with active streams.
+
+    Returns:
+        - streams: List of session IDs with active streams
+    """
+    orchestrator = get_orchestrator(request)
+
+    return {
+        "streams": orchestrator.get_active_stream_ids(),
+    }
