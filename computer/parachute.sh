@@ -150,7 +150,7 @@ cmd_start() {
 
     # Start server in background
     cd "$SCRIPT_DIR"
-    VAULT_PATH="$VAULT_PATH" nohup python -m parachute.server > "$LOG_FILE" 2>&1 &
+    VAULT_PATH="$VAULT_PATH" nohup "$SCRIPT_DIR/venv/bin/python" -m parachute.server > "$LOG_FILE" 2>&1 &
     local pid=$!
     echo $pid > "$PID_FILE"
 
