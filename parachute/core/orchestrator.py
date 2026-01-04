@@ -585,11 +585,26 @@ The user is now continuing this conversation with you. Respond naturally as if y
         """Get session statistics."""
         return await self.session_manager.get_stats()
 
-    async def get_session_transcript(self, session_id: str) -> Optional[dict[str, Any]]:
+    async def get_session_transcript(
+        self,
+        session_id: str,
+        after_compact: bool = False,
+        segment_index: Optional[int] = None,
+        include_segment_metadata: bool = True,
+    ) -> Optional[dict[str, Any]]:
         """
-        Get the full SDK transcript for a session.
+        Get the SDK transcript for a session with optional segmentation.
 
         Reads the JSONL file from ~/.claude/projects/ to get rich event history.
+
+        Args:
+            session_id: The session ID
+            after_compact: If True, only return events after the last compact boundary
+            segment_index: If provided, only return events for that segment
+            include_segment_metadata: If True, include metadata about all segments
+
+        Returns:
+            Dictionary with events and optional segment metadata
         """
         import json
         from pathlib import Path
@@ -612,8 +627,8 @@ The user is now continuing this conversation with you. Respond naturally as if y
         if not session_file:
             return None
 
-        # Parse the JSONL file
-        events: list[dict[str, Any]] = []
+        # Parse the JSONL file and identify segments
+        all_events: list[dict[str, Any]] = []
         model = None
         cwd = None
 
@@ -625,7 +640,7 @@ The user is now continuing this conversation with you. Respond naturally as if y
                         continue
                     try:
                         event = json.loads(line)
-                        events.append(event)
+                        all_events.append(event)
 
                         # Extract metadata
                         if not model and event.get("model"):
@@ -639,10 +654,156 @@ The user is now continuing this conversation with you. Respond naturally as if y
             logger.error(f"Error reading transcript {session_id}: {e}")
             return None
 
-        return {
+        # Identify segments based on compact boundaries
+        segments = self._identify_transcript_segments(all_events)
+
+        # Determine which events to return
+        if after_compact and segments:
+            # Return only events from the last segment (after last compact)
+            last_segment = segments[-1]
+            events = all_events[last_segment["start_index"]:last_segment["end_index"]]
+        elif segment_index is not None and 0 <= segment_index < len(segments):
+            # Return events for a specific segment
+            segment = segments[segment_index]
+            events = all_events[segment["start_index"]:segment["end_index"]]
+        else:
+            # Return all events
+            events = all_events
+
+        result: dict[str, Any] = {
             "sessionId": session_id,
             "events": events,
             "model": model,
             "cwd": cwd,
             "eventCount": len(events),
+            "totalEventCount": len(all_events),
         }
+
+        if include_segment_metadata:
+            # Build segment metadata (without full event data for unloaded segments)
+            segment_metadata = []
+            for i, seg in enumerate(segments):
+                is_loaded = (
+                    (not after_compact and segment_index is None) or  # Full load
+                    (after_compact and i == len(segments) - 1) or     # Last segment
+                    (segment_index == i)                               # Specific segment
+                )
+                segment_metadata.append({
+                    "index": i,
+                    "isCompacted": seg["is_compacted"],
+                    "messageCount": seg["message_count"],
+                    "eventCount": seg["event_count"],
+                    "startTime": seg["start_time"],
+                    "endTime": seg["end_time"],
+                    "preview": seg["preview"],
+                    "loaded": is_loaded,
+                })
+
+            result["segments"] = segment_metadata
+            result["segmentCount"] = len(segments)
+            result["loadedSegmentIndex"] = (
+                len(segments) - 1 if after_compact else
+                segment_index if segment_index is not None else
+                None  # All loaded
+            )
+
+        return result
+
+    def _identify_transcript_segments(
+        self, events: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """
+        Identify segments in a transcript based on compact boundaries.
+
+        A segment is a group of events between compact_boundary markers.
+        The last segment (after the last compact) is the "current" segment.
+
+        Returns list of segment metadata dictionaries.
+        """
+        segments: list[dict[str, Any]] = []
+        current_start = 0
+        current_messages = 0
+        current_first_user_message = None
+        current_start_time = None
+        current_end_time = None
+
+        for i, event in enumerate(events):
+            event_type = event.get("type")
+            subtype = event.get("subtype")
+            timestamp = event.get("timestamp")
+
+            # Track timestamps
+            if timestamp:
+                if current_start_time is None:
+                    current_start_time = timestamp
+                current_end_time = timestamp
+
+            # Count user messages for message_count
+            if event_type == "user":
+                content = event.get("message", {}).get("content")
+                # Only count actual user messages, not tool results
+                if content and isinstance(content, (str, list)):
+                    has_text = isinstance(content, str) or any(
+                        block.get("type") == "text" for block in content if isinstance(block, dict)
+                    )
+                    if has_text:
+                        current_messages += 1
+                        if current_first_user_message is None:
+                            current_first_user_message = self._extract_preview(event)
+
+            # Check for compact boundary
+            if event_type == "system" and subtype == "compact_boundary":
+                # End current segment
+                if current_start < i:
+                    segments.append({
+                        "start_index": current_start,
+                        "end_index": i,  # Exclusive, doesn't include the boundary
+                        "is_compacted": True,
+                        "message_count": current_messages,
+                        "event_count": i - current_start,
+                        "start_time": current_start_time,
+                        "end_time": current_end_time,
+                        "preview": current_first_user_message or "",
+                    })
+
+                # Start new segment after the boundary
+                current_start = i + 1
+                current_messages = 0
+                current_first_user_message = None
+                current_start_time = None
+                current_end_time = None
+
+        # Add final segment (everything after last compact or all events if no compact)
+        if current_start < len(events):
+            segments.append({
+                "start_index": current_start,
+                "end_index": len(events),
+                "is_compacted": False,  # Current segment, not yet compacted
+                "message_count": current_messages,
+                "event_count": len(events) - current_start,
+                "start_time": current_start_time,
+                "end_time": current_end_time,
+                "preview": current_first_user_message or "",
+            })
+
+        return segments
+
+    def _extract_preview(self, event: dict[str, Any], max_length: int = 100) -> str:
+        """Extract a preview string from a user message event."""
+        content = event.get("message", {}).get("content")
+        if isinstance(content, str):
+            text = content
+        elif isinstance(content, list):
+            text_parts = []
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    text_parts.append(block.get("text", ""))
+            text = " ".join(text_parts)
+        else:
+            return ""
+
+        # Clean and truncate
+        text = " ".join(text.split())  # Normalize whitespace
+        if len(text) > max_length:
+            return text[:max_length - 3] + "..."
+        return text
