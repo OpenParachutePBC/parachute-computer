@@ -153,18 +153,30 @@ class Orchestrator:
             working_directory=working_directory,
         )
 
-        # For imported sessions, auto-load prior conversation for context continuity
-        # This makes imported sessions "resumable" by injecting their history as context
-        # Supports: Claude Code, Claude Web, ChatGPT
+        # For imported sessions, handle context continuity
+        # - Claude Code sessions with existing JSONL: use SDK resume directly
+        # - Other imports (Claude Web, ChatGPT): inject history as context
         effective_prior_conversation = prior_conversation
         imported_sources = (SessionSource.CLAUDE_CODE, SessionSource.CLAUDE_WEB, SessionSource.CHATGPT)
         if not prior_conversation and session.source in imported_sources:
-            loaded_prior = await self.session_manager.get_prior_conversation(session)
-            if loaded_prior:
-                effective_prior_conversation = loaded_prior
-                logger.info(f"Loaded prior conversation for {session.source.value} session: {session.id[:8]}...")
-                # Force new SDK session since we're injecting context, not resuming
-                is_new = True
+            # Check if SDK can resume this session directly
+            sdk_can_resume = self.session_manager._check_sdk_session_exists(
+                session.id, session.working_directory
+            )
+
+            if session.source == SessionSource.CLAUDE_CODE and sdk_can_resume:
+                # Claude Code session with existing JSONL - let SDK resume directly
+                logger.info(f"Claude Code session has JSONL, using SDK resume: {session.id[:8]}...")
+                # Don't inject prior conversation, don't force is_new
+                # SDK will load the full history automatically
+            else:
+                # No SDK file or non-Claude-Code import - inject as context
+                loaded_prior = await self.session_manager.get_prior_conversation(session)
+                if loaded_prior:
+                    effective_prior_conversation = loaded_prior
+                    logger.info(f"Loaded prior conversation for {session.source.value} session: {session.id[:8]}...")
+                    # Force new SDK session since we're injecting context, not resuming
+                    is_new = True
 
         # Build system prompt (after loading prior conversation)
         effective_prompt = await self._build_system_prompt(

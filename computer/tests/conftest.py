@@ -70,7 +70,7 @@ async def test_database(test_vault: Path):
     """Create a test database."""
     from parachute.db.database import Database
 
-    db_path = test_vault / ".parachute" / "sessions.db"
+    db_path = test_vault / "Chat" / "sessions.db"
     db = Database(db_path)
     await db.connect()
 

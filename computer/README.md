@@ -97,7 +97,7 @@ parachute/
 │   ├── session_manager.py # Session lifecycle
 │   ├── claude_sdk.py      # SDK wrapper
 │   └── permission_handler.py
-├── db/            # SQLite database layer
+├── db/            # SQLite database layer (sessions.db)
 ├── lib/           # Utilities
 │   ├── agent_loader.py
 │   ├── context_loader.py
@@ -238,7 +238,7 @@ Chat streaming returns these event types:
 
 This Python implementation is a rewrite of the original Node.js base server. Key differences:
 
-- **SQLite** instead of markdown files for session storage
+- **SQLite** instead of markdown files for session storage (`Chat/sessions.db`)
 - **Native Python SDK** instead of subprocess calls
 - **FastAPI** instead of Express for better async support
 - **Supervisor service** for improved reliability

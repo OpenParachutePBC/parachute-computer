@@ -307,6 +307,9 @@ async def _query_subprocess(
 
             try:
                 event = json.loads(line)
+                # Normalize camelCase to snake_case for session_id
+                if "sessionId" in event:
+                    event["session_id"] = event["sessionId"]
                 yield event
             except json.JSONDecodeError:
                 logger.debug(f"Non-JSON line from Claude: {line[:100]}")
