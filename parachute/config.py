@@ -41,7 +41,7 @@ class Settings(BaseSettings):
     # Database
     db_path: Optional[Path] = Field(
         default=None,
-        description="Path to SQLite database (defaults to vault/.parachute/sessions.db)",
+        description="Path to SQLite database (defaults to vault/Chat/sessions.db)",
     )
 
     # Logging
@@ -64,10 +64,10 @@ class Settings(BaseSettings):
 
     @property
     def database_path(self) -> Path:
-        """Get the database path, defaulting to vault/.parachute/sessions.db"""
+        """Get the database path, defaulting to vault/Chat/sessions.db"""
         if self.db_path:
             return self.db_path
-        return self.vault_path / ".parachute" / "sessions.db"
+        return self.vault_path / "Chat" / "sessions.db"
 
     @property
     def cors_origins_list(self) -> list[str] | None:
