@@ -183,7 +183,8 @@ cmd_run() {
     ensure_venv
 
     cd "$SCRIPT_DIR"
-    exec python -m parachute.server
+    # Use explicit path to venv python (needed for launchd)
+    exec "$SCRIPT_DIR/venv/bin/python" -m parachute.server
 }
 
 # Stop server
