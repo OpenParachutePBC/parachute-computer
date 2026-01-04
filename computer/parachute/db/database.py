@@ -8,7 +8,7 @@ import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 import aiosqlite
 
@@ -141,10 +141,27 @@ class Database:
     # Session CRUD
     # =========================================================================
 
-    async def create_session(self, session: SessionCreate) -> Session:
-        """Create a new session."""
-        now = datetime.now(timezone.utc).isoformat()
+    async def create_session(self, session: Union[Session, SessionCreate]) -> Session:
+        """Create a new session.
+
+        Accepts either a full Session or SessionCreate. When a full Session is
+        provided (e.g., from imports), uses the provided timestamps. Otherwise,
+        uses the current time.
+        """
+        now = datetime.now(timezone.utc)
         metadata_json = json.dumps(session.metadata) if session.metadata else None
+
+        # Use provided timestamps if available (for imports), otherwise use now
+        if isinstance(session, Session):
+            created_at = session.created_at.isoformat()
+            last_accessed = session.last_accessed.isoformat()
+            message_count = session.message_count
+            archived = 1 if session.archived else 0
+        else:
+            created_at = now.isoformat()
+            last_accessed = now.isoformat()
+            message_count = 0
+            archived = 0
 
         await self.connection.execute(
             """
@@ -161,10 +178,10 @@ class Database:
                 session.source.value,
                 session.working_directory,
                 session.model,
-                0,  # message_count starts at 0
-                0,  # not archived
-                now,
-                now,
+                message_count,
+                archived,
+                created_at,
+                last_accessed,
                 session.continued_from,
                 metadata_json,
             ),
