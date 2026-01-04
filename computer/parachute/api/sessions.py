@@ -138,15 +138,48 @@ async def abort_session(request: Request, session_id: str) -> dict[str, Any]:
 
 
 @router.get("/chat/{session_id}/transcript")
-async def get_session_transcript(request: Request, session_id: str) -> dict[str, Any]:
+async def get_session_transcript(
+    request: Request,
+    session_id: str,
+    after_compact: bool = Query(
+        True,
+        description="Only return events after the last compact boundary (default for fast initial load)",
+    ),
+    segment: Optional[int] = Query(
+        None,
+        description="Load a specific segment by index (0-based)",
+    ),
+    full: bool = Query(
+        False,
+        description="Load all events (overrides after_compact and segment)",
+    ),
+) -> dict[str, Any]:
     """
-    Get the full SDK transcript for a session.
+    Get the SDK transcript for a session with optional segmentation.
 
-    Returns rich event history including tool calls, thinking blocks, etc.
+    By default, only returns events after the last compact boundary for fast loading.
+    Use the segment parameter to load specific older segments on demand.
+    Use full=true to load everything (for export, search, etc.).
+
+    Returns:
+    - events: The transcript events (filtered based on parameters)
+    - segments: Metadata about all segments (for UI to show collapsed headers)
+    - segmentCount: Total number of segments
+    - loadedSegmentIndex: Which segment is currently loaded (null if all)
     """
     orchestrator = get_orchestrator(request)
 
-    transcript = await orchestrator.get_session_transcript(session_id)
+    # full=true overrides everything
+    if full:
+        after_compact = False
+        segment = None
+
+    transcript = await orchestrator.get_session_transcript(
+        session_id,
+        after_compact=after_compact and segment is None,  # Don't use after_compact if specific segment requested
+        segment_index=segment,
+        include_segment_metadata=True,
+    )
     if not transcript:
         raise HTTPException(status_code=404, detail="Transcript not found")
 
