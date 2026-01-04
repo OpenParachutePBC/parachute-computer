@@ -1,17 +1,52 @@
 """
 MCP (Model Context Protocol) server configuration loader.
 
-Loads MCP server definitions from .mcp.json in the vault.
+Built-in MCPs (like the Parachute vault search) are configured in code.
+User MCPs are loaded from .mcp.json in the vault.
 """
 
 import json
 import logging
 import os
 import re
+import sys
 from pathlib import Path
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
+
+
+def _get_builtin_mcp_servers(vault_path: Path) -> dict[str, dict[str, Any]]:
+    """
+    Get built-in MCP server configurations.
+
+    These are configured in code using paths relative to the server installation,
+    making them portable across different machines/vaults.
+    """
+    # Find the base directory (where this code lives)
+    # This file is at: base/parachute/lib/mcp_loader.py
+    # Base dir is: base/
+    base_dir = Path(__file__).parent.parent.parent
+
+    # Find the Python executable (prefer venv if it exists)
+    venv_python = base_dir / "venv" / "bin" / "python"
+    if venv_python.exists():
+        python_path = str(venv_python)
+    else:
+        # Fall back to current Python
+        python_path = sys.executable
+
+    return {
+        "parachute": {
+            "command": python_path,
+            "args": ["-m", "parachute.mcp_server"],
+            "env": {
+                "PARACHUTE_VAULT_PATH": str(vault_path),
+                "PYTHONPATH": str(base_dir),
+            },
+            "_builtin": True,  # Marker to identify built-in servers
+        }
+    }
 
 # Cache for loaded MCP servers
 _mcp_cache: dict[str, dict[str, Any]] = {}
@@ -51,7 +86,10 @@ async def load_mcp_servers(
     vault_path: Path, raw: bool = False
 ) -> dict[str, dict[str, Any]]:
     """
-    Load MCP server configurations from .mcp.json.
+    Load MCP server configurations.
+
+    Built-in servers (like 'parachute') are always included.
+    User servers from .mcp.json can override built-ins or add new ones.
 
     Args:
         vault_path: Path to the vault
@@ -68,38 +106,43 @@ async def load_mcp_servers(
     if not raw and _mcp_cache_path == mcp_path and _mcp_cache:
         return _mcp_cache
 
-    if not mcp_path.exists():
-        return {}
+    # Start with built-in servers
+    servers = _get_builtin_mcp_servers(vault_path)
 
-    try:
-        with open(mcp_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
+    # Load user servers from .mcp.json (can override built-ins)
+    if mcp_path.exists():
+        try:
+            with open(mcp_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
 
-        # .mcp.json has servers as top-level keys (not under mcpServers)
-        # Filter out any non-dict entries that might be metadata
-        servers = {k: v for k, v in data.items() if isinstance(v, dict)}
+            # .mcp.json has servers as top-level keys (not under mcpServers)
+            # Filter out any non-dict entries that might be metadata
+            user_servers = {k: v for k, v in data.items() if isinstance(v, dict)}
 
-        if raw:
-            return servers
+            # User servers override built-ins
+            servers.update(user_servers)
 
-        # Process each server config
-        processed = {}
-        for name, config in servers.items():
-            processed[name] = _process_config(config)
+            logger.debug(f"Loaded {len(user_servers)} user MCP servers from {mcp_path}")
 
-        # Update cache
-        _mcp_cache = processed
-        _mcp_cache_path = mcp_path
+        except json.JSONDecodeError as e:
+            logger.error(f"Invalid JSON in {mcp_path}: {e}")
+        except Exception as e:
+            logger.error(f"Error loading user MCP servers: {e}")
 
-        logger.debug(f"Loaded {len(processed)} MCP servers from {mcp_path}")
-        return processed
+    if raw:
+        return servers
 
-    except json.JSONDecodeError as e:
-        logger.error(f"Invalid JSON in {mcp_path}: {e}")
-        return {}
-    except Exception as e:
-        logger.error(f"Error loading MCP servers: {e}")
-        return {}
+    # Process each server config (substitute env vars)
+    processed = {}
+    for name, config in servers.items():
+        processed[name] = _process_config(config)
+
+    # Update cache
+    _mcp_cache = processed
+    _mcp_cache_path = mcp_path
+
+    logger.debug(f"Total MCP servers available: {len(processed)}")
+    return processed
 
 
 async def list_mcp_servers(vault_path: Path) -> list[dict[str, Any]]:
@@ -111,7 +154,8 @@ async def list_mcp_servers(vault_path: Path) -> list[dict[str, Any]]:
         server_info = {
             "name": name,
             "type": "stdio" if "command" in config else "http" if "url" in config else "unknown",
-            **config,
+            "builtin": config.get("_builtin", False),
+            **{k: v for k, v in config.items() if k != "_builtin"},
         }
         result.append(server_info)
 

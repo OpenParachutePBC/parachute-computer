@@ -2,15 +2,18 @@
 MCP (Model Context Protocol) server management API endpoints.
 """
 
+import asyncio
 import json
 import logging
+import os
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from parachute.config import get_settings
+from parachute.lib.mcp_loader import load_mcp_servers, invalidate_mcp_cache
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -77,10 +80,13 @@ def config_to_server_response(name: str, config: dict[str, Any]) -> dict[str, An
     args = config.get("args", [])
     display_command = f"{command} {' '.join(args)}" if command else config.get("url", "N/A")
 
+    is_builtin = config.get("_builtin", False)
+
     return {
         "name": name,
-        # Include all config fields
-        **{k: v for k, v in config.items()},
+        "builtin": is_builtin,
+        # Include all config fields except internal markers
+        **{k: v for k, v in config.items() if not k.startswith("_")},
         # Add display info (same as Node.js)
         "displayType": "stdio" if command else config.get("type", "unknown"),
         "displayCommand": display_command.strip(),
@@ -88,14 +94,17 @@ def config_to_server_response(name: str, config: dict[str, Any]) -> dict[str, An
 
 
 @router.get("/mcps")
-async def list_mcp_servers(request: Request) -> dict[str, Any]:
+async def list_mcp_servers_endpoint(request: Request) -> dict[str, Any]:
     """
     List all configured MCP servers.
+
+    Returns both built-in servers (like 'parachute') and user-configured ones.
     """
-    config = load_mcp_config()
+    settings = get_settings()
+    all_servers = await load_mcp_servers(settings.vault_path)
     servers = []
 
-    for name, server_config in config.get("mcpServers", {}).items():
+    for name, server_config in all_servers.items():
         servers.append(config_to_server_response(name, server_config))
 
     return {"servers": servers}
@@ -106,8 +115,9 @@ async def get_mcp_server(request: Request, name: str) -> dict[str, Any]:
     """
     Get a specific MCP server configuration.
     """
-    config = load_mcp_config()
-    server_config = config.get("mcpServers", {}).get(name)
+    settings = get_settings()
+    all_servers = await load_mcp_servers(settings.vault_path)
+    server_config = all_servers.get(name)
 
     if not server_config:
         raise HTTPException(status_code=404, detail=f"MCP server '{name}' not found")
@@ -119,6 +129,8 @@ async def get_mcp_server(request: Request, name: str) -> dict[str, Any]:
 async def add_mcp_server(request: Request, body: McpServerConfig) -> dict[str, Any]:
     """
     Add or update an MCP server configuration.
+
+    Note: Cannot modify built-in servers - they must be overridden via .mcp.json.
     """
     config = load_mcp_config()
 
@@ -127,6 +139,7 @@ async def add_mcp_server(request: Request, body: McpServerConfig) -> dict[str, A
 
     config["mcpServers"][body.name] = body.config
     save_mcp_config(config)
+    invalidate_mcp_cache()  # Clear cache so changes are picked up
 
     logger.info(f"Added/updated MCP server: {body.name}")
 
@@ -140,14 +153,26 @@ async def add_mcp_server(request: Request, body: McpServerConfig) -> dict[str, A
 async def remove_mcp_server(request: Request, name: str) -> dict[str, Any]:
     """
     Remove an MCP server configuration.
-    """
-    config = load_mcp_config()
 
-    if name not in config.get("mcpServers", {}):
+    Note: Cannot remove built-in servers, only user-configured ones.
+    """
+    settings = get_settings()
+    all_servers = await load_mcp_servers(settings.vault_path)
+
+    if name not in all_servers:
         raise HTTPException(status_code=404, detail=f"MCP server '{name}' not found")
 
-    del config["mcpServers"][name]
-    save_mcp_config(config)
+    if all_servers[name].get("_builtin"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot remove built-in server '{name}'. You can override it in .mcp.json instead.",
+        )
+
+    config = load_mcp_config()
+    if name in config.get("mcpServers", {}):
+        del config["mcpServers"][name]
+        save_mcp_config(config)
+        invalidate_mcp_cache()
 
     logger.info(f"Removed MCP server: {name}")
 
@@ -158,21 +183,110 @@ async def remove_mcp_server(request: Request, name: str) -> dict[str, Any]:
 async def test_mcp_server(request: Request, name: str) -> dict[str, Any]:
     """
     Test if an MCP server can start successfully.
+
+    Attempts to start the MCP server and check if it responds.
     """
-    config = load_mcp_config()
-    server_config = config.get("mcpServers", {}).get(name)
+    import shutil
+    import subprocess
+
+    settings = get_settings()
+    all_servers = await load_mcp_servers(settings.vault_path)
+    server_config = all_servers.get(name)
 
     if not server_config:
         raise HTTPException(status_code=404, detail=f"MCP server '{name}' not found")
 
-    # For now, just return that we can't test yet
-    # Full implementation would need to actually start the server
-    return {
-        "name": name,
-        "status": "unknown",
-        "message": "Server test not yet implemented in Python backend",
-        "hint": "Ensure the command or URL is accessible",
-    }
+    is_builtin = server_config.get("_builtin", False)
+    command = server_config.get("command")
+
+    if not command:
+        return {
+            "name": name,
+            "builtin": is_builtin,
+            "status": "error",
+            "error": "No command configured",
+        }
+
+    # Check if the command exists
+    # For absolute paths, check file exists; for commands, use shutil.which
+    if command.startswith("/"):
+        from pathlib import Path
+
+        if not Path(command).exists():
+            return {
+                "name": name,
+                "builtin": is_builtin,
+                "status": "error",
+                "error": f"Command not found: {command}",
+                "hint": "Check that the path exists and is executable",
+            }
+    else:
+        if not shutil.which(command):
+            return {
+                "name": name,
+                "builtin": is_builtin,
+                "status": "error",
+                "error": f"Command not found: {command}",
+                "hint": "Make sure the command is installed and in your PATH",
+            }
+
+    # Try to actually start the server briefly
+    try:
+        args = server_config.get("args", [])
+        env = {**dict(os.environ), **server_config.get("env", {})}
+
+        # Start the process
+        proc = subprocess.Popen(
+            [command] + args,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            stdin=subprocess.PIPE,
+        )
+
+        # Give it a moment to start (or fail)
+        try:
+            # Wait briefly for it to either start or fail
+            proc.wait(timeout=2)
+            # If it exited, check if it was an error
+            if proc.returncode != 0:
+                stderr = proc.stderr.read().decode("utf-8", errors="replace")[:500]
+                return {
+                    "name": name,
+                    "builtin": is_builtin,
+                    "status": "error",
+                    "error": f"Server exited with code {proc.returncode}",
+                    "hint": stderr if stderr else "Check server logs for details",
+                }
+        except subprocess.TimeoutExpired:
+            # Server is still running after 2 seconds - that's good!
+            proc.terminate()
+            try:
+                proc.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+
+        return {
+            "name": name,
+            "builtin": is_builtin,
+            "status": "ok",
+            "message": "Server started successfully",
+        }
+
+    except FileNotFoundError as e:
+        return {
+            "name": name,
+            "builtin": is_builtin,
+            "status": "error",
+            "error": f"Command not found: {e}",
+        }
+    except Exception as e:
+        return {
+            "name": name,
+            "builtin": is_builtin,
+            "status": "error",
+            "error": str(e),
+        }
 
 
 @router.get("/mcps/{name}/tools")
@@ -180,8 +294,9 @@ async def get_mcp_server_tools(request: Request, name: str) -> dict[str, Any]:
     """
     Get the list of tools provided by an MCP server.
     """
-    config = load_mcp_config()
-    server_config = config.get("mcpServers", {}).get(name)
+    settings = get_settings()
+    all_servers = await load_mcp_servers(settings.vault_path)
+    server_config = all_servers.get(name)
 
     if not server_config:
         raise HTTPException(status_code=404, detail=f"MCP server '{name}' not found")
