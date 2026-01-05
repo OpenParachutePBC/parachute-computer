@@ -32,6 +32,7 @@ from parachute.models.events import (
     ModelEvent,
     PermissionDeniedEvent,
     PermissionRequestEvent,
+    PromptMetadataEvent,
     SessionEvent,
     SessionUnavailableEvent,
     TextEvent,
@@ -206,29 +207,29 @@ class Orchestrator:
                     # Force new SDK session since we're injecting context, not resuming
                     is_new = True
 
-        # Build system prompt (after loading prior conversation)
-        effective_prompt = await self._build_system_prompt(
-            agent=agent,
-            custom_prompt=system_prompt,
-            contexts=contexts,
-            prior_conversation=effective_prior_conversation,
-        )
-
-        # Determine working directory
+        # Determine working directory first (needed for prompt building)
         # Priority: explicit param > session's stored value > vault path
         effective_cwd = self.vault_path
+        effective_working_dir: Optional[str] = None
         if working_directory:
+            effective_working_dir = working_directory
             if Path(working_directory).is_absolute():
                 effective_cwd = Path(working_directory)
             else:
                 effective_cwd = self.vault_path / working_directory
         elif session.working_directory:
             # Use session's stored working directory (important for imported sessions)
+            effective_working_dir = session.working_directory
             effective_cwd = Path(session.working_directory)
 
-        # Add cwd to prompt if different from vault
-        if str(effective_cwd) != str(self.vault_path):
-            effective_prompt += f"\n\nWorking directory: {effective_cwd}"
+        # Build system prompt (after loading prior conversation, with working dir)
+        effective_prompt, prompt_metadata = await self._build_system_prompt(
+            agent=agent,
+            custom_prompt=system_prompt,
+            contexts=contexts,
+            prior_conversation=effective_prior_conversation,
+            working_directory=effective_working_dir,
+        )
 
         logger.info(
             f"Streaming session: sdk={session.id[:8] if session.id != 'pending' else 'new'}... "
@@ -240,6 +241,21 @@ class Orchestrator:
             session_id=session.id if session.id != "pending" else None,
             working_directory=working_directory,
             resume_info=resume_info.model_dump(),
+        ).model_dump(by_alias=True)
+
+        # Yield prompt metadata event for UI transparency
+        yield PromptMetadataEvent(
+            prompt_source=prompt_metadata["prompt_source"],
+            prompt_source_path=prompt_metadata["prompt_source_path"],
+            context_files=prompt_metadata["context_files"],
+            context_tokens=prompt_metadata["context_tokens"],
+            context_truncated=prompt_metadata["context_truncated"],
+            agent_name=prompt_metadata["agent_name"],
+            available_agents=prompt_metadata["available_agents"],
+            base_prompt_tokens=prompt_metadata["base_prompt_tokens"],
+            total_prompt_tokens=prompt_metadata["total_prompt_tokens"],
+            trust_mode=session.permissions.trust_mode,
+            working_directory_claude_md=prompt_metadata.get("working_directory_claude_md"),
         ).model_dump(by_alias=True)
 
         # Handle initial context
@@ -559,15 +575,51 @@ class Orchestrator:
         custom_prompt: Optional[str] = None,
         contexts: Optional[list[str]] = None,
         prior_conversation: Optional[str] = None,
-    ) -> str:
-        """Build the complete system prompt for an agent."""
+        working_directory: Optional[str] = None,
+    ) -> tuple[str, dict[str, Any]]:
+        """
+        Build the complete system prompt for an agent.
+
+        Returns:
+            Tuple of (prompt_string, metadata_dict) for transparency
+        """
+        # Track metadata for transparency
+        metadata: dict[str, Any] = {
+            "prompt_source": "default",
+            "prompt_source_path": None,
+            "context_files": [],
+            "context_tokens": 0,
+            "context_truncated": False,
+            "agent_name": agent.name,
+            "available_agents": [],
+            "base_prompt_tokens": 0,
+            "working_directory_claude_md": None,  # Track if working dir has CLAUDE.md
+        }
+
         # Start with custom or agent prompt
         if custom_prompt:
             prompt = custom_prompt
-        elif agent.system_prompt:
+            metadata["prompt_source"] = "custom"
+        elif agent.system_prompt and agent.name != "vault-agent":
             prompt = agent.system_prompt
+            metadata["prompt_source"] = "agent"
+            metadata["prompt_source_path"] = agent.path
         else:
-            prompt = DEFAULT_VAULT_PROMPT
+            # Check for module-level CLAUDE.md override
+            module_prompt_path = self.vault_path / "Chat" / "CLAUDE.md"
+            if module_prompt_path.exists():
+                try:
+                    prompt = module_prompt_path.read_text(encoding="utf-8")
+                    metadata["prompt_source"] = "module"
+                    metadata["prompt_source_path"] = "Chat/CLAUDE.md"
+                except Exception as e:
+                    logger.warning(f"Failed to read module prompt: {e}")
+                    prompt = DEFAULT_VAULT_PROMPT
+            else:
+                prompt = DEFAULT_VAULT_PROMPT
+
+        # Estimate base prompt tokens
+        metadata["base_prompt_tokens"] = len(prompt) // 4  # Rough estimate
 
         # Load specialized agents if vault agent
         if agent.name == "vault-agent":
@@ -577,12 +629,14 @@ class Orchestrator:
                 prompt += "You can suggest these agents for specific tasks:\n"
                 for a in agents:
                     prompt += f"- {a.path}: {a.description or a.name}\n"
+                    metadata["available_agents"].append(a.name)
 
         # Load context files
         context_paths = contexts or ["Chat/contexts/general-context.md"]
         if agent.context:
             context_paths = agent.context.include or context_paths
 
+        context_result: dict[str, Any] = {}
         try:
             context_result = await load_agent_context(
                 {"include": context_paths, "max_tokens": 50000},
@@ -590,11 +644,43 @@ class Orchestrator:
             )
             if context_result.get("content"):
                 prompt += format_context_for_prompt(context_result)
+                metadata["context_files"] = context_result.get("files", [])
+                metadata["context_tokens"] = context_result.get("totalTokens", 0)
+                metadata["context_truncated"] = context_result.get("truncated", False)
         except Exception as e:
             logger.warning(f"Failed to load context: {e}")
 
+        # Check for working directory CLAUDE.md
+        if working_directory:
+            working_dir_path = Path(working_directory)
+            # Handle both absolute paths and vault-relative paths
+            if not working_dir_path.is_absolute():
+                working_dir_path = self.vault_path / working_directory
+
+            claude_md_path = working_dir_path / "CLAUDE.md"
+            if claude_md_path.exists():
+                try:
+                    claude_md_content = claude_md_path.read_text(encoding="utf-8")
+                    # Make path relative for display
+                    try:
+                        relative_path = claude_md_path.relative_to(self.vault_path)
+                        display_path = str(relative_path)
+                    except ValueError:
+                        display_path = str(claude_md_path)
+
+                    prompt += f"\n\n---\n\n## Project Context ({display_path})\n\n{claude_md_content}"
+                    metadata["working_directory_claude_md"] = display_path
+                    # Add tokens from CLAUDE.md to context tokens
+                    claude_md_tokens = len(claude_md_content) // 4
+                    metadata["context_tokens"] += claude_md_tokens
+                    logger.info(f"Loaded working directory CLAUDE.md: {display_path} ({claude_md_tokens} tokens)")
+                except Exception as e:
+                    logger.warning(f"Failed to read working directory CLAUDE.md: {e}")
+
         # Add vault location
         prompt += f"\n\n---\n\n## Environment\n\nVault location: {self.vault_path}"
+        if working_directory:
+            prompt += f"\n\nWorking directory: {working_directory}"
 
         # Add prior conversation
         if prior_conversation:
@@ -614,7 +700,10 @@ The messages below are from that earlier session. Treat them as if they happened
 The user is now continuing this conversation with you. Respond naturally as if you remember the above exchange.
 """
 
-        return prompt
+        # Calculate total prompt tokens
+        metadata["total_prompt_tokens"] = len(prompt) // 4
+
+        return prompt, metadata
 
     # =========================================================================
     # Session Management (delegated to SessionManager)

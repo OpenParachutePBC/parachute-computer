@@ -363,8 +363,11 @@ async def get_session(
         # Load messages from SDK JSONL file
         from parachute.core.session_manager import SessionManager
         sm = SessionManager(Path(_vault_path), db)
-        messages = await sm.load_session_messages(session)
-        result["messages"] = messages
+        session_with_messages = await sm.get_session_with_messages(session_id)
+        if session_with_messages:
+            result["messages"] = session_with_messages.messages
+        else:
+            result["messages"] = []
 
     return result
 

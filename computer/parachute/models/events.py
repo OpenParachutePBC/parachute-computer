@@ -124,6 +124,80 @@ class ErrorEvent(BaseModel):
     model_config = {"populate_by_name": True}
 
 
+class PromptMetadataEvent(BaseModel):
+    """Prompt composition metadata - sent after session event for transparency."""
+
+    type: Literal["prompt_metadata"] = "prompt_metadata"
+
+    # Prompt source info
+    prompt_source: str = Field(
+        alias="promptSource",
+        description="Source of base prompt: 'default', 'module', 'agent', 'custom'",
+    )
+    prompt_source_path: Optional[str] = Field(
+        alias="promptSourcePath",
+        default=None,
+        description="Path to prompt file if from module/agent (e.g., 'Chat/CLAUDE.md')",
+    )
+
+    # Context files info
+    context_files: list[str] = Field(
+        alias="contextFiles",
+        default_factory=list,
+        description="List of context files loaded",
+    )
+    context_tokens: int = Field(
+        alias="contextTokens",
+        default=0,
+        description="Estimated tokens from context files",
+    )
+    context_truncated: bool = Field(
+        alias="contextTruncated",
+        default=False,
+        description="Whether context was truncated due to token limit",
+    )
+
+    # Agent info
+    agent_name: Optional[str] = Field(
+        alias="agentName",
+        default=None,
+        description="Name of agent being used",
+    )
+    available_agents: list[str] = Field(
+        alias="availableAgents",
+        default_factory=list,
+        description="List of specialized agents available",
+    )
+
+    # Token estimates
+    base_prompt_tokens: int = Field(
+        alias="basePromptTokens",
+        default=0,
+        description="Estimated tokens in base prompt",
+    )
+    total_prompt_tokens: int = Field(
+        alias="totalPromptTokens",
+        default=0,
+        description="Total estimated tokens in system prompt",
+    )
+
+    # Trust mode
+    trust_mode: bool = Field(
+        alias="trustMode",
+        default=True,
+        description="Whether trust mode is enabled for this session",
+    )
+
+    # Working directory CLAUDE.md
+    working_directory_claude_md: Optional[str] = Field(
+        alias="workingDirectoryClaudeMd",
+        default=None,
+        description="Path to CLAUDE.md in working directory (if found)",
+    )
+
+    model_config = {"populate_by_name": True}
+
+
 class PermissionRequestEvent(BaseModel):
     """Permission request event - agent needs user approval for an operation."""
 
@@ -168,6 +242,7 @@ SSEEvent = Union[
     SessionEvent,
     ModelEvent,
     InitEvent,
+    PromptMetadataEvent,
     TextEvent,
     ThinkingEvent,
     ToolUseEvent,
