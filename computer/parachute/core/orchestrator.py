@@ -30,6 +30,8 @@ from parachute.models.events import (
     ErrorEvent,
     InitEvent,
     ModelEvent,
+    PermissionDeniedEvent,
+    PermissionRequestEvent,
     SessionEvent,
     SessionUnavailableEvent,
     TextEvent,
@@ -275,13 +277,19 @@ class Orchestrator:
             global_mcps = await load_mcp_servers(self.vault_path)
             resolved_mcps = resolve_mcp_servers(agent.mcp_servers, global_mcps)
 
-            # Set up permission handler
+            # Set up permission handler with event callbacks
+            def on_permission_denial(denial: dict) -> None:
+                """Track permission denials for reporting in done event."""
+                permission_denials.append(denial)
+
             permission_handler = PermissionHandler(
-                agent=agent,
-                session_id=session.id,
+                session=session,
                 vault_path=str(self.vault_path),
-                on_denial=lambda d: permission_denials.append(d),
+                on_denial=on_permission_denial,
             )
+
+            # Store handler for potential API grant/deny calls
+            self.pending_permissions[session.id] = permission_handler
 
             # Determine resume session ID
             # Only resume if:
@@ -297,9 +305,15 @@ class Orchestrator:
             # Run query
             current_text = ""
 
-            # Use bypassPermissions mode to auto-approve ALL tool operations
-            # MCP tools are trusted since they're user-configured in .mcp.json
-            # File operations are trusted since we're operating within the vault
+            # Use session-based permission handler for tool access control
+            # Trust mode (default): Use bypassPermissions for backwards compatibility
+            # Restricted mode: Would use can_use_tool callback (not yet supported - SDK requires AsyncIterable prompt)
+            trust_mode = session.permissions.trust_mode
+            logger.debug(f"Session trust_mode={trust_mode}: {session.id}")
+
+            # TODO: Implement restricted mode with can_use_tool callback
+            # Currently always using bypassPermissions regardless of trust_mode
+            # Deny list enforcement would need to be added via SDK callback
             async for event in query_streaming(
                 prompt=actual_message,
                 system_prompt=effective_prompt,
@@ -457,6 +471,8 @@ class Orchestrator:
             # Clean up
             if stream_session_id and stream_session_id in self.active_streams:
                 del self.active_streams[stream_session_id]
+            if session.id in self.pending_permissions:
+                del self.pending_permissions[session.id]
 
     async def abort_stream(self, session_id: str) -> bool:
         """Abort an active streaming session."""
@@ -474,6 +490,68 @@ class Orchestrator:
     def get_active_stream_ids(self) -> list[str]:
         """Get all session IDs with active streams."""
         return list(self.active_streams.keys())
+
+    # =========================================================================
+    # Permission Management
+    # =========================================================================
+
+    def grant_permission(
+        self, session_id: str, request_id: str, pattern: Optional[str] = None
+    ) -> bool:
+        """
+        Grant a pending permission request.
+
+        Args:
+            session_id: The session ID
+            request_id: The permission request ID
+            pattern: Optional glob pattern for the grant (e.g., "Blogs/**/*")
+
+        Returns:
+            True if granted successfully
+        """
+        handler = self.pending_permissions.get(session_id)
+        if handler:
+            return handler.grant(request_id, pattern)
+        return False
+
+    def deny_permission(self, session_id: str, request_id: str) -> bool:
+        """
+        Deny a pending permission request.
+
+        Args:
+            session_id: The session ID
+            request_id: The permission request ID
+
+        Returns:
+            True if denied successfully
+        """
+        handler = self.pending_permissions.get(session_id)
+        if handler:
+            return handler.deny(request_id)
+        return False
+
+    def get_pending_permissions(self, session_id: str) -> list[dict]:
+        """
+        Get pending permission requests for a session.
+
+        Args:
+            session_id: The session ID
+
+        Returns:
+            List of pending permission request dictionaries
+        """
+        handler = self.pending_permissions.get(session_id)
+        if handler:
+            return [
+                {
+                    "id": r.id,
+                    "tool_name": r.tool_name,
+                    "file_path": r.file_path,
+                    "timestamp": r.timestamp.isoformat(),
+                }
+                for r in handler.get_pending()
+            ]
+        return []
 
     async def _build_system_prompt(
         self,
