@@ -30,46 +30,7 @@ from parachute.models.session import SessionUpdate
 logger = logging.getLogger(__name__)
 
 
-# Curator system prompt - instructs the agent on its role
-CURATOR_SYSTEM_PROMPT = """You are a Session Curator - a background agent that helps maintain and improve a user's knowledge base.
-
-Your responsibilities:
-1. **Title Generation**: Create concise, descriptive titles for chat sessions based on their content
-2. **Context Updates**: Update personal context files with new information learned from conversations
-
-## Working Style
-- Be concise and efficient - you're running in the background
-- Make small, incremental updates rather than large rewrites
-- Preserve existing information in context files, only add or refine
-- Generate titles that are specific and useful for finding conversations later
-
-## Title Guidelines
-- 2-6 words, capturing the main topic or question
-- Be specific (not "Coding Help" but "Fix React useState Loop")
-- Use the user's terminology when appropriate
-- If continuing an existing conversation, keep related titles
-
-## Context Update Guidelines
-- Only update when there's genuinely new, persistent information
-- Examples of what to add:
-  - User preferences discovered ("prefers TypeScript over JavaScript")
-  - Project details ("working on Parachute app")
-  - Technical context ("uses Flutter for mobile, Python for backend")
-  - Personal context the user shared
-- Do NOT add:
-  - Temporary or one-off information
-  - Things the user explicitly said to forget
-  - Conversation-specific details that won't matter later
-
-## Tools Available
-You have access to file editing tools. Context files are in the Chat/contexts/ folder.
-The main one is usually `general-context.md`.
-
-When you receive conversation context, analyze it and:
-1. Decide if the title needs updating (respond with the new title)
-2. Decide if any context files need updates (make the edits)
-3. Be brief in your responses - just state what you did
-"""
+# Note: CURATOR_SYSTEM_PROMPT is now in curator_tools.py with the restricted tools
 
 
 @dataclass
@@ -504,29 +465,211 @@ class CuratorService:
         parent_session: Any,
     ) -> dict[str, Any]:
         """
-        Invoke the curator agent using Claude SDK.
+        Invoke the curator agent using Claude SDK with restricted tools.
 
-        Uses Haiku for speed and cost. Continues existing curator session
-        if available, otherwise starts fresh.
+        The curator evaluates both title and context updates with appropriate
+        conservatism levels. It has access ONLY to curator-specific tools
+        with no general file access or shell commands.
         """
-        # For now, implement a simplified version without full SDK integration
-        # This will be enhanced to use the actual Claude SDK
+        from parachute.core.curator_tools import (
+            CURATOR_TITLE_PROMPT,
+            CURATOR_SYSTEM_PROMPT,
+        )
 
-        # TODO: Full Claude SDK integration
-        # For now, use a simple heuristic for title generation
+        result: dict[str, Any] = {
+            "title_updated": False,
+            "context_updated": False,
+            "actions": [],
+            "sdk_session_id": curator_session.sdk_session_id,
+        }
 
+        # Determine what kind of curation is needed
+        is_untitled = not parent_session.title or parent_session.title == "(untitled)"
+
+        # Only use simple title generation for truly untitled sessions
+        # Once a session has a title (even from the first message), use conservative evaluation
+        use_simple_title_gen = is_untitled
+
+        try:
+            from claude_code_sdk import query as sdk_query, ClaudeCodeOptions
+
+            if use_simple_title_gen:
+                # Simple title generation for new sessions
+                result = await self._generate_title_simple(
+                    context, parent_session, result
+                )
+            else:
+                # Full curator evaluation for established sessions
+                result = await self._run_full_curator(
+                    curator_session, context, parent_session, result
+                )
+
+        except ImportError as e:
+            logger.warning(f"Claude SDK not available, falling back to heuristic: {e}")
+            result = await self._invoke_curator_fallback(curator_session, context, parent_session)
+
+        except Exception as e:
+            logger.error(f"Curator agent error: {e}", exc_info=True)
+            result["error"] = str(e)
+            # Fall back to heuristic for title if needed
+            if not parent_session.title or parent_session.title == "(untitled)":
+                fallback = await self._invoke_curator_fallback(curator_session, context, parent_session)
+                result.update(fallback)
+
+        return result
+
+    async def _generate_title_simple(
+        self,
+        context: str,
+        parent_session: Any,
+        result: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Simple title generation for new sessions."""
+        from claude_code_sdk import query as sdk_query, ClaudeCodeOptions
+        from parachute.core.curator_tools import CURATOR_TITLE_PROMPT
+
+        options = ClaudeCodeOptions(
+            system_prompt=CURATOR_TITLE_PROMPT,
+            max_turns=1,
+            allowed_tools=[],
+        )
+
+        prompt = f"Generate a title for this conversation:\n\n{context}"
+        logger.info(f"Running simple title generation for session {parent_session.id}")
+
+        generated_title = ""
+        async for event in sdk_query(prompt=prompt, options=options):
+            if hasattr(event, "content"):
+                for block in event.content:
+                    if hasattr(block, "text"):
+                        generated_title += block.text
+            if hasattr(event, "session_id") and event.session_id:
+                result["sdk_session_id"] = event.session_id
+
+        # Clean up and save
+        generated_title = generated_title.strip().strip('"').strip("'")
+        if generated_title and len(generated_title) < 200:
+            await self.db.update_session(
+                parent_session.id,
+                SessionUpdate(title=generated_title),
+            )
+            result["title_updated"] = True
+            result["new_title"] = generated_title
+            result["actions"].append(f"Updated title to: {generated_title}")
+            logger.info(f"Curator set title for {parent_session.id}: {generated_title}")
+        else:
+            logger.warning(f"Generated title invalid: {generated_title[:100] if generated_title else 'empty'}")
+
+        return result
+
+    async def _run_full_curator(
+        self,
+        curator_session: CuratorSession,
+        context: str,
+        parent_session: Any,
+        result: dict[str, Any],
+    ) -> dict[str, Any]:
+        """
+        Run full curator evaluation with tools for title and context updates.
+
+        This is used for established sessions where we want the curator to
+        evaluate whether updates are needed, not just generate a title.
+        """
+        from claude_code_sdk import query as sdk_query, ClaudeCodeOptions
+        from parachute.core.curator_tools import CURATOR_SYSTEM_PROMPT
+
+        # Build a richer prompt with current state
+        current_title = parent_session.title or "(untitled)"
+        context_files_str = ", ".join(curator_session.context_files) if curator_session.context_files else "none loaded"
+
+        prompt = f"""## Current State
+- **Current Title**: {current_title}
+- **Message Count**: {parent_session.message_count}
+- **Context Files Loaded**: {context_files_str}
+
+## Recent Conversation
+{context}
+
+## Your Task
+Evaluate whether the title or context files need updating based on the conversation above.
+Remember: Be conservative with title changes (only if direction meaningfully shifted), moderately conservative with context (save genuinely new persistent info about the user).
+"""
+
+        logger.info(f"Running full curator evaluation for session {parent_session.id}")
+
+        options = ClaudeCodeOptions(
+            system_prompt=CURATOR_SYSTEM_PROMPT,
+            max_turns=2,  # Allow a turn to use tools + respond
+            allowed_tools=[],  # For now, no tools - just evaluation
+            # TODO: Enable MCP tools once SDK issues resolved
+            # mcp_servers={"curator": server_config},
+            # allowed_tools=["mcp__curator__update_title", "mcp__curator__update_context"],
+        )
+
+        response_text = ""
+        async for event in sdk_query(prompt=prompt, options=options):
+            if hasattr(event, "content"):
+                for block in event.content:
+                    if hasattr(block, "text"):
+                        response_text += block.text
+            if hasattr(event, "session_id") and event.session_id:
+                result["sdk_session_id"] = event.session_id
+
+        # Parse the response to see if curator recommended updates
+        # For now, we just log what the curator said
+        # In future, we'll enable tools for actual updates
+        response_lower = response_text.lower()
+        if "no updates needed" in response_lower or "no changes" in response_lower:
+            logger.info(f"Curator: No updates needed for {parent_session.id}")
+        else:
+            logger.info(f"Curator evaluation for {parent_session.id}: {response_text[:200]}...")
+            # TODO: When tools are enabled, track actual updates here
+            result["curator_response"] = response_text[:500]
+
+        return result
+
+    def _process_curator_event(self, event: Any, result: dict[str, Any]) -> dict[str, Any]:
+        """Process SDK event and update result tracking."""
+        event_dict: dict[str, Any] = {}
+
+        # Check for tool use in assistant messages
+        if hasattr(event, "content"):
+            for block in event.content:
+                if hasattr(block, "name"):
+                    tool_name = block.name
+                    if "update_title" in tool_name:
+                        result["title_updated"] = True
+                        if hasattr(block, "input"):
+                            new_title = block.input.get("new_title", "")
+                            result["actions"].append(f"Updated title to: {new_title}")
+                    elif "update_context" in tool_name:
+                        result["context_updated"] = True
+                        if hasattr(block, "input"):
+                            file_name = block.input.get("file_name", "")
+                            result["actions"].append(f"Updated context file: {file_name}")
+
+        return event_dict
+
+    async def _invoke_curator_fallback(
+        self,
+        curator_session: CuratorSession,
+        context: str,
+        parent_session: Any,
+    ) -> dict[str, Any]:
+        """
+        Fallback curator using simple heuristics when SDK is unavailable.
+        """
         result = {
             "title_updated": False,
             "context_updated": False,
             "actions": [],
+            "fallback": True,
         }
 
         # Simple title generation heuristic
         if not parent_session.title or parent_session.title == "(untitled)":
-            # Generate title from first user message
-            new_title = await self._generate_simple_title(context)
+            new_title = self._generate_simple_title(context)
             if new_title:
-                # Update the session title
                 await self.db.update_session(
                     parent_session.id,
                     SessionUpdate(title=new_title),
@@ -537,21 +680,15 @@ class CuratorService:
 
         return result
 
-    async def _generate_simple_title(self, context: str) -> Optional[str]:
+    def _generate_simple_title(self, context: str) -> Optional[str]:
         """
-        Generate a simple title from context.
-
-        This is a placeholder - will be replaced with actual Claude call.
-        For now, extract from first user message.
+        Generate a simple title from context using heuristics.
         """
-        # Look for user message content
         import re
         match = re.search(r'\*\*User\*\*:\s*(.+?)(?:\n|$)', context)
         if match:
             first_message = match.group(1).strip()
-            # Truncate to reasonable title length
             if len(first_message) > 60:
-                # Try to find a good break point
                 words = first_message[:60].split()
                 if len(words) > 3:
                     first_message = " ".join(words[:-1]) + "..."

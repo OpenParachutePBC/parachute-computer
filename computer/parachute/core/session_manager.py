@@ -275,6 +275,13 @@ class SessionManager:
         else:
             effective_cwd = str(self.vault_path)
 
+        # Resolve symlinks (e.g., /tmp -> /private/tmp on macOS)
+        # The SDK uses the resolved path for storage
+        try:
+            effective_cwd = str(Path(effective_cwd).resolve())
+        except Exception:
+            pass  # If resolution fails, use the original path
+
         # SDK encodes path by replacing / with -
         encoded_path = effective_cwd.replace("/", "-")
         claude_dir = Path.home() / ".claude" / "projects" / encoded_path
