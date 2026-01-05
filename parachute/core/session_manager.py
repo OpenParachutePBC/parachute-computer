@@ -520,3 +520,32 @@ class SessionManager:
             content = msg["content"]
             lines.append(f"**{role}:**\n{content}")
         return "\n\n---\n\n".join(lines)
+
+    async def get_session_messages(
+        self, session_id: str, after_index: int = 0
+    ) -> list[dict[str, Any]]:
+        """
+        Get messages from a session, optionally after a certain index.
+
+        Used by the curator to get only new messages since last curation.
+
+        Args:
+            session_id: The session to get messages from
+            after_index: Only return messages after this index (0-based)
+
+        Returns:
+            List of message dicts with role, content, timestamp
+        """
+        session = await self.db.get_session(session_id)
+        if not session:
+            return []
+
+        all_messages = await self._load_sdk_messages(session)
+
+        # Return messages after the given index
+        if after_index > 0 and after_index < len(all_messages):
+            return all_messages[after_index:]
+        elif after_index >= len(all_messages):
+            return []  # No new messages
+        else:
+            return all_messages

@@ -89,15 +89,46 @@ CREATE TABLE IF NOT EXISTS metadata (
     updated_at TEXT NOT NULL
 );
 
+-- Curator sessions (companion agents that curate chat sessions)
+CREATE TABLE IF NOT EXISTS curator_sessions (
+    id TEXT PRIMARY KEY,
+    parent_session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    sdk_session_id TEXT,
+    last_run_at TEXT,
+    last_message_index INTEGER DEFAULT 0,
+    context_files TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_curator_sessions_parent ON curator_sessions(parent_session_id);
+
+-- Curator task queue (one runs at a time to avoid conflicts)
+CREATE TABLE IF NOT EXISTS curator_queue (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    parent_session_id TEXT NOT NULL,
+    curator_session_id TEXT REFERENCES curator_sessions(id),
+    trigger_type TEXT NOT NULL,
+    message_count INTEGER,
+    queued_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    started_at TEXT,
+    completed_at TEXT,
+    status TEXT DEFAULT 'pending',
+    result TEXT,
+    error TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_curator_queue_status ON curator_queue(status);
+CREATE INDEX IF NOT EXISTS idx_curator_queue_parent ON curator_queue(parent_session_id);
+
 -- Schema version tracking
 CREATE TABLE IF NOT EXISTS schema_version (
     version INTEGER PRIMARY KEY,
     applied_at TEXT NOT NULL
 );
 
--- Insert schema version 2 (unified schema)
+-- Insert schema version 3 (curator support)
 INSERT OR IGNORE INTO schema_version (version, applied_at)
-VALUES (2, datetime('now'));
+VALUES (3, datetime('now'));
 """
 
 

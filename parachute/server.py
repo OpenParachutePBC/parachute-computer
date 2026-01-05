@@ -18,6 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from parachute.api import api_router
 from parachute.config import get_settings, Settings
 from parachute.core.orchestrator import Orchestrator
+from parachute.core.curator_service import init_curator_service, stop_curator_service
 from parachute.db.database import Database, init_database, close_database
 from parachute.lib.logger import setup_logging, get_logger
 
@@ -52,15 +53,22 @@ async def lifespan(app: FastAPI):
     app.state.orchestrator = orchestrator
     app.state.database = db
 
+    # Initialize curator service for background title/context updates
+    curator = await init_curator_service(db, settings.vault_path)
+    app.state.curator = curator
+    logger.info("Curator service initialized")
+
     logger.info("Server ready")
 
     yield
 
     # Shutdown
     logger.info("Shutting down...")
+    await stop_curator_service()
     await close_database()
     app.state.orchestrator = None
     app.state.database = None
+    app.state.curator = None
 
 
 def get_orchestrator() -> Orchestrator:

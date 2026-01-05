@@ -37,6 +37,12 @@ SUPERVISOR_PORT="${SUPERVISOR_PORT:-3330}"
 PID_FILE="/tmp/parachute-server.pid"
 LOG_FILE="/tmp/parachute-server.log"
 
+# Test server configuration (separate from main server)
+TEST_SERVER_PORT="${TEST_SERVER_PORT:-3334}"
+TEST_VAULT_PATH="${TEST_VAULT_PATH:-/tmp/parachute-test}"
+TEST_PID_FILE="/tmp/parachute-test-server.pid"
+TEST_LOG_FILE="/tmp/parachute-test-server.log"
+
 # Print banner
 banner() {
     echo -e "${CYAN}"
@@ -472,6 +478,180 @@ cmd_service_stop() {
     echo -e "${GREEN}✓ Service stopped${NC}"
 }
 
+# =========================================================================
+# Test Server Commands (isolated instance for automated testing)
+# =========================================================================
+
+# Check if test server is running
+is_test_running() {
+    if lsof -ti:$TEST_SERVER_PORT > /dev/null 2>&1; then
+        return 0
+    fi
+    return 1
+}
+
+# Get test server PID
+get_test_pid() {
+    lsof -ti:$TEST_SERVER_PORT 2>/dev/null || echo ""
+}
+
+# Start test server (isolated vault, different port)
+cmd_test_start() {
+    echo -e "${BLUE}Starting Parachute TEST server...${NC}"
+
+    if is_test_running; then
+        local pid=$(get_test_pid)
+        echo -e "${YELLOW}Test server already running (PID: $pid)${NC}"
+        echo -e "  Port: $TEST_SERVER_PORT"
+        echo -e "  URL:  http://localhost:$TEST_SERVER_PORT"
+        return 0
+    fi
+
+    # Ensure venv is set up
+    ensure_venv
+
+    # Create test vault directory
+    mkdir -p "$TEST_VAULT_PATH"
+    mkdir -p "$TEST_VAULT_PATH/.parachute"
+    mkdir -p "$TEST_VAULT_PATH/Chat/contexts"
+
+    # Start test server in background with isolated config
+    cd "$SCRIPT_DIR"
+    VAULT_PATH="$TEST_VAULT_PATH" \
+    PORT="$TEST_SERVER_PORT" \
+    nohup "$SCRIPT_DIR/venv/bin/python" -m parachute.server > "$TEST_LOG_FILE" 2>&1 &
+    local pid=$!
+    echo $pid > "$TEST_PID_FILE"
+
+    # Wait for test server to start
+    echo -n "Waiting for test server"
+    for i in {1..30}; do
+        if is_test_running; then
+            echo ""
+            echo -e "${GREEN}✓ Test server started successfully${NC}"
+            echo -e "  PID:   $(get_test_pid)"
+            echo -e "  Port:  ${CYAN}$TEST_SERVER_PORT${NC}"
+            echo -e "  Vault: $TEST_VAULT_PATH"
+            echo -e "  URL:   ${CYAN}http://localhost:$TEST_SERVER_PORT${NC}"
+            echo -e "  Logs:  $TEST_LOG_FILE"
+            echo ""
+            echo -e "  ${YELLOW}Note: Test server uses isolated vault - data won't affect your main vault${NC}"
+            return 0
+        fi
+        echo -n "."
+        sleep 0.5
+    done
+
+    echo ""
+    echo -e "${RED}✗ Failed to start test server${NC}"
+    echo "Check logs: tail -f $TEST_LOG_FILE"
+    return 1
+}
+
+# Stop test server
+cmd_test_stop() {
+    echo -e "${BLUE}Stopping Parachute TEST server...${NC}"
+
+    if ! is_test_running; then
+        echo -e "${YELLOW}Test server is not running${NC}"
+        return 0
+    fi
+
+    local pid=$(get_test_pid)
+    echo "Stopping process $pid..."
+
+    # Try graceful shutdown first
+    kill $pid 2>/dev/null || true
+
+    # Wait for it to stop
+    for i in {1..10}; do
+        if ! is_test_running; then
+            echo -e "${GREEN}✓ Test server stopped${NC}"
+            rm -f "$TEST_PID_FILE"
+            return 0
+        fi
+        sleep 0.5
+    done
+
+    # Force kill if still running
+    echo "Force killing..."
+    kill -9 $pid 2>/dev/null || true
+    lsof -ti:$TEST_SERVER_PORT | xargs kill -9 2>/dev/null || true
+
+    rm -f "$TEST_PID_FILE"
+    echo -e "${GREEN}✓ Test server stopped${NC}"
+}
+
+# Restart test server
+cmd_test_restart() {
+    echo -e "${BLUE}Restarting Parachute TEST server...${NC}"
+    cmd_test_stop
+    sleep 1
+    cmd_test_start
+}
+
+# Test server status
+cmd_test_status() {
+    echo -e "${BLUE}Parachute Test Server Status${NC}"
+    echo "────────────────────────────────────────"
+
+    if is_test_running; then
+        local pid=$(get_test_pid)
+        echo -e "  Test Server: ${GREEN}● Running${NC}"
+        echo -e "  PID:         $pid"
+        echo -e "  Port:        $TEST_SERVER_PORT"
+        echo -e "  URL:         http://localhost:$TEST_SERVER_PORT"
+        echo -e "  Vault:       $TEST_VAULT_PATH"
+
+        # Try to get health info
+        if command -v curl &> /dev/null; then
+            local health=$(curl -s "http://localhost:$TEST_SERVER_PORT/api/health" 2>/dev/null || echo "")
+            if [[ -n "$health" ]]; then
+                echo -e "  Health:      ${GREEN}OK${NC}"
+            fi
+        fi
+    else
+        echo -e "  Test Server: ${RED}○ Stopped${NC}"
+    fi
+
+    echo ""
+    echo -e "  Logs:        $TEST_LOG_FILE"
+    echo "────────────────────────────────────────"
+}
+
+# View test server logs
+cmd_test_logs() {
+    if [[ -f "$TEST_LOG_FILE" ]]; then
+        echo -e "${BLUE}Tailing test server logs (Ctrl+C to exit)...${NC}"
+        tail -f "$TEST_LOG_FILE"
+    else
+        echo -e "${YELLOW}No test log file found at $TEST_LOG_FILE${NC}"
+        echo "Start the test server first: ./parachute.sh test-start"
+    fi
+}
+
+# Clean test vault (remove all test data)
+cmd_test_clean() {
+    echo -e "${BLUE}Cleaning test vault...${NC}"
+
+    # Stop test server if running
+    if is_test_running; then
+        cmd_test_stop
+    fi
+
+    # Remove test vault
+    if [[ -d "$TEST_VAULT_PATH" ]]; then
+        rm -rf "$TEST_VAULT_PATH"
+        echo -e "${GREEN}✓ Test vault cleaned${NC}"
+    else
+        echo -e "${YELLOW}Test vault doesn't exist${NC}"
+    fi
+
+    # Remove test logs
+    rm -f "$TEST_LOG_FILE"
+    rm -f "$TEST_PID_FILE"
+}
+
 # Show help
 cmd_help() {
     banner
@@ -489,6 +669,14 @@ cmd_help() {
     echo "  sup-stop      Stop supervisor and server"
     echo "  setup         Set up virtual environment and install dependencies"
     echo ""
+    echo "Test Server Commands (isolated instance for development/testing):"
+    echo "  test-start    Start test server (port 3334, isolated vault)"
+    echo "  test-stop     Stop test server"
+    echo "  test-restart  Restart test server"
+    echo "  test-status   Show test server status"
+    echo "  test-logs     Tail test server logs"
+    echo "  test-clean    Stop and remove all test data"
+    echo ""
     echo "Service Commands (for development - uses launchctl):"
     echo "  service-install  Install as launchd service running local dev code"
     echo "  service-restart  Restart service (use after code changes)"
@@ -497,14 +685,17 @@ cmd_help() {
     echo "  help          Show this help"
     echo ""
     echo "Environment Variables:"
-    echo "  VAULT_PATH       Path to vault (default: ~/Parachute)"
-    echo "  SERVER_PORT      Server port (default: 3333)"
-    echo "  SUPERVISOR_PORT  Supervisor port (default: 3330)"
+    echo "  VAULT_PATH         Path to vault (default: ~/Parachute)"
+    echo "  SERVER_PORT        Server port (default: 3333)"
+    echo "  SUPERVISOR_PORT    Supervisor port (default: 3330)"
+    echo "  TEST_SERVER_PORT   Test server port (default: 3334)"
+    echo "  TEST_VAULT_PATH    Test vault path (default: /tmp/parachute-test)"
     echo ""
     echo "Examples:"
     echo "  ./parachute.sh setup                    # First-time setup"
     echo "  ./parachute.sh start                    # Start server"
     echo "  ./parachute.sh status                   # Check status"
+    echo "  ./parachute.sh test-start               # Start isolated test server"
     echo "  VAULT_PATH=/my/vault ./parachute.sh start  # Custom vault"
     echo ""
 }
@@ -547,6 +738,24 @@ main() {
             ;;
         service-stop)
             cmd_service_stop
+            ;;
+        test-start)
+            cmd_test_start
+            ;;
+        test-stop)
+            cmd_test_stop
+            ;;
+        test-restart)
+            cmd_test_restart
+            ;;
+        test-status)
+            cmd_test_status
+            ;;
+        test-logs)
+            cmd_test_logs
+            ;;
+        test-clean)
+            cmd_test_clean
             ;;
         setup|install)
             cmd_setup
