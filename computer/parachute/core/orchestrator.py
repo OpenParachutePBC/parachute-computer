@@ -115,6 +115,15 @@ Your primary tools for understanding the user's context:
 - **WebSearch** - Look up current information online
 - **WebFetch** - Read content from URLs
 
+## Handling Attachments
+
+When the user attaches files to their message:
+- **Images**: ALWAYS use the Read tool to view the image and describe/analyze what you see. Don't just acknowledge the attachment - actually look at it!
+- **PDFs**: Use the Read tool to read the PDF content
+- **Code/Text files**: The content is included inline, so you can read it directly from the message
+
+The user expects you to engage with their attachments, not just confirm they were received.
+
 ### Other MCP Tools
 Additional tools may be available depending on which modules are connected.
 Check the tool list for mcp__* tools from other servers.
@@ -155,6 +164,7 @@ class Orchestrator:
         prior_conversation: Optional[str] = None,
         contexts: Optional[list[str]] = None,
         recovery_mode: Optional[str] = None,
+        attachments: Optional[list[dict[str, Any]]] = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         """
         Run an agent with streaming response.
@@ -265,6 +275,68 @@ class Orchestrator:
                 actual_message = initial_context
             else:
                 actual_message = f"## Context\n\n{initial_context}\n\n---\n\n## Request\n\n{message}"
+
+        # Handle attachments
+        # For now, we save attachments to the vault and reference them in the message
+        if attachments:
+            attachment_parts = []
+            for att in attachments:
+                att_type = att.get("type", "unknown")
+                file_name = att.get("fileName", "file")
+                base64_data = att.get("base64Data")
+                mime_type = att.get("mimeType", "application/octet-stream")
+
+                if base64_data:
+                    import base64
+                    from datetime import datetime
+
+                    # Save to Chat/assets/YYYY-MM/
+                    now = datetime.now()
+                    asset_dir = self.vault_path / "Chat" / "assets" / now.strftime("%Y-%m")
+                    asset_dir.mkdir(parents=True, exist_ok=True)
+
+                    # Generate unique filename
+                    timestamp = now.strftime("%Y-%m-%d_%H-%M-%S")
+                    ext = Path(file_name).suffix or ".bin"
+                    safe_name = Path(file_name).stem[:30]  # Truncate long names
+                    unique_name = f"{timestamp}_{safe_name}{ext}"
+                    file_path = asset_dir / unique_name
+
+                    # Decode and save
+                    try:
+                        file_bytes = base64.b64decode(base64_data)
+                        file_path.write_bytes(file_bytes)
+                        logger.info(f"Saved attachment: {file_path}")
+
+                        # Use vault-relative path for display (enables UI asset fetching)
+                        relative_path = f"Chat/assets/{now.strftime('%Y-%m')}/{unique_name}"
+
+                        # Build reference for the message
+                        if att_type == "image":
+                            # For images, use markdown image syntax with relative path
+                            # Also include absolute path for Claude to read
+                            attachment_parts.append(f"![{file_name}]({relative_path})\n*(Absolute path for reading: {file_path})*")
+                        elif att_type in ("text", "code"):
+                            # For text/code, include content inline
+                            try:
+                                content = file_bytes.decode("utf-8")
+                                if len(content) > 10000:
+                                    content = content[:10000] + "\n...(truncated)"
+                                attachment_parts.append(f"**{file_name}** ([{relative_path}]({relative_path}))\n```\n{content}\n```")
+                            except UnicodeDecodeError:
+                                attachment_parts.append(f"[Attached binary file: {relative_path}]({relative_path})")
+                        elif att_type == "pdf":
+                            # For PDFs, reference with both paths
+                            attachment_parts.append(f"**{file_name}** ([{relative_path}]({relative_path}))\n*(Absolute path for reading: {file_path})*")
+                        else:
+                            attachment_parts.append(f"[{file_name}]({relative_path})")
+                    except Exception as e:
+                        logger.error(f"Failed to save attachment {file_name}: {e}")
+                        attachment_parts.append(f"[Failed to attach: {file_name}]")
+
+            if attachment_parts:
+                attachment_text = "\n\n".join(attachment_parts)
+                actual_message = f"{actual_message}\n\n## Attachments\n\n{attachment_text}"
 
         # Handle recovery mode
         force_new = False

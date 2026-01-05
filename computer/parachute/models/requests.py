@@ -7,6 +7,20 @@ from typing import Any, Optional
 from pydantic import BaseModel, Field
 
 
+class Attachment(BaseModel):
+    """File attachment for chat messages."""
+
+    id: str = Field(description="Unique ID for the attachment")
+    fileName: str = Field(alias="fileName", description="Original file name")
+    filePath: str = Field(alias="filePath", description="File path")
+    mimeType: str = Field(alias="mimeType", description="MIME type")
+    sizeBytes: int = Field(alias="sizeBytes", description="Size in bytes")
+    type: str = Field(description="Attachment type (image, pdf, text, code)")
+    base64Data: Optional[str] = Field(alias="base64Data", default=None, description="Base64 encoded data")
+
+    model_config = {"populate_by_name": True}
+
+
 class ChatRequest(BaseModel):
     """Request body for POST /api/chat."""
 
@@ -50,6 +64,10 @@ class ChatRequest(BaseModel):
         alias="recoveryMode",
         default=None,
         description="Recovery mode: 'inject_context' or 'fresh_start'",
+    )
+    attachments: Optional[list[Attachment]] = Field(
+        default=None,
+        description="File attachments (images, PDFs, text files)",
     )
 
     # Legacy fields for compatibility

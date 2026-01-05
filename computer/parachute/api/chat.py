@@ -68,6 +68,11 @@ async def event_generator(request: Request, chat_request: ChatRequest):
 
     try:
         # Create the event generator from orchestrator
+        # Convert attachments to dicts if present
+        attachments_data = None
+        if chat_request.attachments:
+            attachments_data = [att.model_dump() for att in chat_request.attachments]
+
         orchestrator_gen = orchestrator.run_streaming(
             message=chat_request.message,
             session_id=chat_request.session_id,
@@ -79,6 +84,7 @@ async def event_generator(request: Request, chat_request: ChatRequest):
             prior_conversation=chat_request.prior_conversation,
             contexts=chat_request.contexts,
             recovery_mode=chat_request.recovery_mode,
+            attachments=attachments_data,
         )
 
         # Start the stream in background via StreamManager
