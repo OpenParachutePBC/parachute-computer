@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException, Request, UploadFile, File, Query
 from pydantic import BaseModel
 
 from ..core.import_service import ImportService
+from ..core.import_curator import ImportCurator
 from ..models.session import Session, SessionSource
 
 router = APIRouter()
@@ -315,4 +316,135 @@ async def sync_sdk_sessions(
         updated=updated,
         skipped=skipped,
         errors=errors
+    )
+
+
+class CurateExportRequest(BaseModel):
+    """Request to curate a Claude export."""
+    export_path: str  # Path to extracted export directory
+
+
+class CurateExportResponse(BaseModel):
+    """Response from export curation."""
+    success: bool
+    context_files_created: list[str]
+    context_files_updated: list[str]
+    general_context_summary: Optional[str] = None
+    project_contexts: list[dict[str, Any]] = []
+    error: Optional[str] = None
+
+
+@router.post("/import/curate")
+async def curate_claude_export(
+    request: Request,
+    body: CurateExportRequest,
+) -> CurateExportResponse:
+    """
+    Process a Claude export with the Import Curator.
+
+    This intelligently parses memories.json and projects.json to create
+    structured context files in the Parachute-native format:
+    - general-context.md for personal info
+    - Project-specific files for each Claude project with memories
+
+    The curator extracts:
+    - Facts (updateable)
+    - Current Focus
+    - History (from original export content)
+
+    Call this AFTER extracting the export zip, passing the path to the
+    extracted directory containing memories.json.
+    """
+    orchestrator = request.app.state.orchestrator
+    if not orchestrator:
+        raise HTTPException(status_code=503, detail="Server not ready")
+
+    vault_path = Path(orchestrator.vault_path)
+    export_path = Path(body.export_path).expanduser()
+
+    if not export_path.exists():
+        raise HTTPException(status_code=404, detail=f"Export path not found: {body.export_path}")
+
+    # Check for memories.json
+    memories_file = export_path / "memories.json"
+    if not memories_file.exists():
+        raise HTTPException(
+            status_code=400,
+            detail="memories.json not found in export. This endpoint requires a Claude export."
+        )
+
+    try:
+        curator = ImportCurator(vault_path)
+        result = curator.process_export(export_path)
+
+        return CurateExportResponse(
+            success=True,
+            context_files_created=result.get("created", []),
+            context_files_updated=result.get("updated", []),
+            general_context_summary=result.get("general_summary"),
+            project_contexts=result.get("projects", []),
+        )
+    except Exception as e:
+        logger.error(f"Export curation failed: {e}", exc_info=True)
+        return CurateExportResponse(
+            success=False,
+            context_files_created=[],
+            context_files_updated=[],
+            error=str(e)
+        )
+
+
+class ContextFilesResponse(BaseModel):
+    """Response listing context files."""
+    files: list[dict[str, Any]]
+    total_facts: int
+    total_history_entries: int
+
+
+@router.get("/import/contexts")
+async def list_context_files(request: Request) -> ContextFilesResponse:
+    """
+    List all context files with their metadata.
+
+    Returns structured info about each context file including:
+    - Name and description
+    - Number of facts
+    - Number of history entries
+    - Last modified time
+    - Whether it's in Parachute-native format
+    """
+    orchestrator = request.app.state.orchestrator
+    if not orchestrator:
+        raise HTTPException(status_code=503, detail="Server not ready")
+
+    vault_path = Path(orchestrator.vault_path)
+
+    from ..core.context_parser import ContextParser
+    parser = ContextParser(vault_path)
+
+    files = parser.list_context_files()
+
+    total_facts = 0
+    total_history = 0
+
+    file_list = []
+    for ctx in files:
+        total_facts += len(ctx.facts)
+        total_history += len(ctx.history)
+
+        file_list.append({
+            "path": str(ctx.path.relative_to(vault_path)),
+            "name": ctx.name,
+            "description": ctx.description,
+            "facts_count": len(ctx.facts),
+            "focus_count": len(ctx.current_focus),
+            "history_count": len(ctx.history),
+            "is_native_format": ctx.is_parachute_native,
+            "last_modified": ctx.last_modified.isoformat() if ctx.last_modified else None,
+        })
+
+    return ContextFilesResponse(
+        files=file_list,
+        total_facts=total_facts,
+        total_history_entries=total_history,
     )
