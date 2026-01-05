@@ -58,7 +58,7 @@ async def event_generator(request: Request, chat_request: ChatRequest):
 
     logger.info(
         f"Chat request: session={chat_request.session_id or 'new'} "
-        f"module={chat_request.module}"
+        f"module={chat_request.module} contexts={chat_request.contexts}"
     )
 
     # Get the session ID - we need this for stream management

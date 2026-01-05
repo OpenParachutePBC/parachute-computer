@@ -715,9 +715,15 @@ class Orchestrator:
                     metadata["available_agents"].append(a.name)
 
         # Load context files
-        context_paths = contexts or ["Chat/contexts/general-context.md"]
-        if agent.context:
-            context_paths = agent.context.include or context_paths
+        # Note: contexts=[] means "no contexts" (explicit choice), contexts=None means "use default"
+        if contexts is not None:
+            context_paths = contexts  # Use what was provided, even if empty
+        elif agent.context and agent.context.include:
+            context_paths = agent.context.include  # Use agent's configured contexts
+        else:
+            context_paths = ["Chat/contexts/general-context.md"]  # Default fallback
+
+        logger.info(f"Context paths to load: {context_paths}")
 
         context_result: dict[str, Any] = {}
         try:
