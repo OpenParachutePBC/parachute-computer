@@ -161,3 +161,96 @@ async def get_curator_task(request: Request, task_id: int) -> dict:
         "result": task.result,
         "error": task.error,
     }
+
+
+class RecentActivityResponse(BaseModel):
+    """Recent curator activity across all sessions."""
+    recent_updates: list[dict[str, Any]]
+    context_files_modified: list[str]
+    last_activity_at: Optional[str]
+
+
+@router.get("/activity/recent")
+async def get_recent_curator_activity(
+    request: Request,
+    limit: int = 10,
+) -> RecentActivityResponse:
+    """
+    Get recent curator activity across all sessions.
+
+    Returns recent context file updates and title changes
+    to show users what the curator has been learning.
+    """
+    from parachute.core.curator_service import get_curator_service
+
+    try:
+        curator = await get_curator_service()
+    except RuntimeError:
+        raise HTTPException(status_code=503, detail="Curator service not available")
+
+    db = request.app.state.database
+
+    # Query recent completed tasks that made updates
+    async with db.connection.execute(
+        """
+        SELECT * FROM curator_queue
+        WHERE status = 'completed' AND result IS NOT NULL
+        ORDER BY completed_at DESC
+        LIMIT ?
+        """,
+        (limit * 2,),  # Get more to filter
+    ) as cursor:
+        rows = await cursor.fetchall()
+
+    recent_updates = []
+    context_files_modified = set()
+    last_activity_at = None
+
+    for row in rows:
+        result = row["result"]
+        if not result:
+            continue
+
+        try:
+            import json
+            result_data = json.loads(result)
+        except:
+            continue
+
+        # Skip tasks that made no updates
+        if not result_data.get("title_updated") and not result_data.get("context_updated"):
+            continue
+
+        completed_at = row["completed_at"]
+        if last_activity_at is None:
+            last_activity_at = completed_at
+
+        update_entry = {
+            "task_id": row["id"],
+            "session_id": row["parent_session_id"],
+            "completed_at": completed_at,
+            "actions": result_data.get("actions", []),
+            "reasoning": result_data.get("reasoning"),
+        }
+
+        if result_data.get("new_title"):
+            update_entry["new_title"] = result_data["new_title"]
+
+        recent_updates.append(update_entry)
+
+        # Track modified context files
+        for action in result_data.get("actions", []):
+            if ":" in action and not action.startswith("Updated title"):
+                # Extract filename from "update_facts: general-context.md"
+                parts = action.split(": ", 1)
+                if len(parts) == 2:
+                    context_files_modified.add(parts[1])
+
+        if len(recent_updates) >= limit:
+            break
+
+    return RecentActivityResponse(
+        recent_updates=recent_updates,
+        context_files_modified=list(context_files_modified),
+        last_activity_at=last_activity_at,
+    )

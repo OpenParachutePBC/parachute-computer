@@ -577,22 +577,50 @@ class CuratorService:
         """
         from claude_code_sdk import query as sdk_query, ClaudeCodeOptions
         from parachute.core.curator_tools import CURATOR_SYSTEM_PROMPT
+        from parachute.core.context_parser import ContextParser
 
-        # Build a richer prompt with current state
+        # Build a richer prompt with current state and context file info
         current_title = parent_session.title or "(untitled)"
-        context_files_str = ", ".join(curator_session.context_files) if curator_session.context_files else "none loaded"
+
+        # Get summary of all available context files
+        parser = ContextParser(self.vault_path)
+        context_summary = parser.get_context_summary()
+
+        # Get details of loaded context files (facts, etc.)
+        loaded_files_detail = ""
+        if curator_session.context_files:
+            loaded_details = []
+            for file_path_str in curator_session.context_files:
+                # Extract just the filename
+                file_name = file_path_str.split("/")[-1] if "/" in file_path_str else file_path_str
+                file_path = self.vault_path / "Chat" / "contexts" / file_name
+                if file_path.exists():
+                    ctx = parser.parse_file(file_path)
+                    if ctx.facts:
+                        facts_str = "\n".join(f"  - {f}" for f in ctx.facts[:5])
+                        loaded_details.append(f"**{ctx.name}** facts:\n{facts_str}")
+            if loaded_details:
+                loaded_files_detail = "\n".join(loaded_details)
 
         prompt = f"""## Current State
 - **Current Title**: {current_title}
 - **Message Count**: {parent_session.message_count}
-- **Context Files Loaded**: {context_files_str}
+
+## {context_summary}
+
+{f"## Loaded Context Details (subset)\n{loaded_files_detail}" if loaded_files_detail else ""}
 
 ## Recent Conversation
 {context}
 
 ## Your Task
 Evaluate whether the title or context files need updating based on the conversation above.
-Remember: Be conservative with title changes (only if direction meaningfully shifted), moderately conservative with context (save genuinely new persistent info about the user).
+
+Guidelines:
+- Be conservative with title changes (only if direction meaningfully shifted)
+- Route context updates to the most specific file
+- Use `update_facts` to modify existing facts, `append_history` for events
+- Create new files only for significant new projects/topics
 
 Respond with ONLY a JSON object as specified in your instructions.
 """
@@ -630,8 +658,11 @@ Respond with ONLY a JSON object as specified in your instructions.
     ) -> dict[str, Any]:
         """
         Parse the curator's JSON response and execute any requested actions.
+
+        Supports both old format (update_context) and new format (context_actions).
         """
         import re
+        from parachute.core.context_parser import ContextParser
 
         # Try to extract JSON from the response
         # Handle cases where it might be wrapped in ```json ... ```
@@ -649,19 +680,19 @@ Respond with ONLY a JSON object as specified in your instructions.
                 return result
 
         try:
-            actions = json.loads(json_str)
+            response = json.loads(json_str)
         except json.JSONDecodeError as e:
             logger.warning(f"Failed to parse curator JSON: {e}, response: {json_str[:200]}")
             result["error"] = f"JSON parse error: {e}"
             return result
 
         # Log reasoning
-        reasoning = actions.get("reasoning", "No reasoning provided")
+        reasoning = response.get("reasoning", "No reasoning provided")
         logger.info(f"Curator reasoning for {parent_session.id}: {reasoning}")
         result["reasoning"] = reasoning
 
         # Execute title update if requested
-        new_title = actions.get("update_title")
+        new_title = response.get("update_title")
         if new_title and isinstance(new_title, str):
             new_title = new_title.strip()
             if new_title and len(new_title) < 200:
@@ -674,9 +705,21 @@ Respond with ONLY a JSON object as specified in your instructions.
                 result["actions"].append(f"Updated title to: {new_title}")
                 logger.info(f"Curator updated title for {parent_session.id}: {new_title}")
 
-        # Execute context update if requested
-        context_update = actions.get("update_context")
-        if context_update and isinstance(context_update, dict):
+        # Handle new format: context_actions array
+        context_actions = response.get("context_actions", [])
+        if context_actions:
+            parser = ContextParser(self.vault_path)
+            for action_obj in context_actions:
+                success = await self._execute_single_context_action(action_obj, parser)
+                if success:
+                    result["context_updated"] = True
+                    action_type = action_obj.get("action", "unknown")
+                    file_name = action_obj.get("file", "unknown")
+                    result["actions"].append(f"{action_type}: {file_name}")
+
+        # Handle old format: update_context object (backwards compatibility)
+        context_update = response.get("update_context")
+        if context_update and isinstance(context_update, dict) and not context_actions:
             file_name = context_update.get("file", "").strip()
             content = context_update.get("content", "").strip()
 
@@ -694,6 +737,124 @@ Respond with ONLY a JSON object as specified in your instructions.
             logger.info(f"Curator: No updates needed for {parent_session.id}")
 
         return result
+
+    async def _execute_single_context_action(
+        self,
+        action_obj: dict[str, Any],
+        parser: "ContextParser",
+    ) -> bool:
+        """
+        Execute a single context action from the curator.
+
+        Supports:
+        - update_facts: Replace facts section
+        - update_focus: Replace current focus section
+        - append_history: Append to history section
+        - create_file: Create a new context file
+        """
+        from parachute.core.context_parser import ContextParser
+
+        action_type = action_obj.get("action", "")
+        file_name = action_obj.get("file", "").strip()
+
+        if not action_type or not file_name:
+            logger.warning(f"Invalid context action: missing action or file")
+            return False
+
+        # Security: validate file_name has no path components
+        if "/" in file_name or "\\" in file_name or ".." in file_name:
+            logger.warning(f"Invalid context file name (path chars): {file_name}")
+            return False
+
+        # Ensure .md extension
+        if not file_name.endswith(".md"):
+            file_name = file_name + ".md"
+
+        contexts_dir = self.vault_path / "Chat" / "contexts"
+        contexts_dir.mkdir(parents=True, exist_ok=True)
+        file_path = contexts_dir / file_name
+
+        # Verify it resolves to within contexts_dir
+        try:
+            resolved = file_path.resolve()
+            if not str(resolved).startswith(str(contexts_dir.resolve())):
+                logger.warning(f"Context file path escapes contexts dir: {file_name}")
+                return False
+        except Exception:
+            logger.warning(f"Invalid context file path: {file_name}")
+            return False
+
+        try:
+            if action_type == "update_facts":
+                facts = action_obj.get("facts", [])
+                if not isinstance(facts, list):
+                    logger.warning(f"update_facts: facts must be a list")
+                    return False
+
+                if not file_path.exists():
+                    # Create minimal file first
+                    name = file_name.replace(".md", "").replace("-", " ").title()
+                    file_path.write_text(f"# {name}\n\n---\n\n## Facts\n", encoding="utf-8")
+
+                return parser.update_facts(file_path, facts)
+
+            elif action_type == "update_focus":
+                focus = action_obj.get("focus", [])
+                if not isinstance(focus, list):
+                    logger.warning(f"update_focus: focus must be a list")
+                    return False
+
+                if not file_path.exists():
+                    logger.warning(f"update_focus: file doesn't exist: {file_name}")
+                    return False
+
+                return parser.update_current_focus(file_path, focus)
+
+            elif action_type == "append_history":
+                entry = action_obj.get("entry", "").strip()
+                if not entry:
+                    logger.warning(f"append_history: empty entry")
+                    return False
+
+                if not file_path.exists():
+                    logger.warning(f"append_history: file doesn't exist: {file_name}")
+                    return False
+
+                return parser.append_history(file_path, entry)
+
+            elif action_type == "create_file":
+                if file_path.exists():
+                    logger.warning(f"create_file: file already exists: {file_name}")
+                    return False
+
+                name = action_obj.get("name", file_name.replace(".md", ""))
+                description = action_obj.get("description", "")
+                facts = action_obj.get("facts", [])
+
+                # Build new file content
+                content_parts = [f"# {name}"]
+                if description:
+                    content_parts.append(f"\n> {description}")
+                content_parts.append("\n\n---\n")
+
+                if facts:
+                    content_parts.append("\n## Facts\n")
+                    for fact in facts:
+                        content_parts.append(f"- {fact}\n")
+
+                content_parts.append("\n## History\n")
+
+                file_path.write_text("".join(content_parts), encoding="utf-8")
+                logger.info(f"Curator created new context file: {file_name}")
+                return True
+
+            else:
+                logger.warning(f"Unknown context action type: {action_type}")
+                return False
+
+        except Exception as e:
+            logger.error(f"Error executing context action {action_type}: {e}")
+            return False
 
     async def _append_to_context_file(self, file_name: str, content: str) -> bool:
         """
