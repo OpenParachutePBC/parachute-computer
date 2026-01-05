@@ -570,10 +570,10 @@ class CuratorService:
         result: dict[str, Any],
     ) -> dict[str, Any]:
         """
-        Run full curator evaluation with tools for title and context updates.
+        Run full curator evaluation for title and context updates.
 
-        This is used for established sessions where we want the curator to
-        evaluate whether updates are needed, not just generate a title.
+        The curator responds with a JSON object specifying what updates to make,
+        and we execute those updates directly.
         """
         from claude_code_sdk import query as sdk_query, ClaudeCodeOptions
         from parachute.core.curator_tools import CURATOR_SYSTEM_PROMPT
@@ -593,17 +593,16 @@ class CuratorService:
 ## Your Task
 Evaluate whether the title or context files need updating based on the conversation above.
 Remember: Be conservative with title changes (only if direction meaningfully shifted), moderately conservative with context (save genuinely new persistent info about the user).
+
+Respond with ONLY a JSON object as specified in your instructions.
 """
 
         logger.info(f"Running full curator evaluation for session {parent_session.id}")
 
         options = ClaudeCodeOptions(
             system_prompt=CURATOR_SYSTEM_PROMPT,
-            max_turns=2,  # Allow a turn to use tools + respond
-            allowed_tools=[],  # For now, no tools - just evaluation
-            # TODO: Enable MCP tools once SDK issues resolved
-            # mcp_servers={"curator": server_config},
-            # allowed_tools=["mcp__curator__update_title", "mcp__curator__update_context"],
+            max_turns=1,  # Single turn - just get the JSON response
+            allowed_tools=[],  # No tools needed - we execute based on JSON
         )
 
         response_text = ""
@@ -615,18 +614,134 @@ Remember: Be conservative with title changes (only if direction meaningfully shi
             if hasattr(event, "session_id") and event.session_id:
                 result["sdk_session_id"] = event.session_id
 
-        # Parse the response to see if curator recommended updates
-        # For now, we just log what the curator said
-        # In future, we'll enable tools for actual updates
-        response_lower = response_text.lower()
-        if "no updates needed" in response_lower or "no changes" in response_lower:
-            logger.info(f"Curator: No updates needed for {parent_session.id}")
-        else:
-            logger.info(f"Curator evaluation for {parent_session.id}: {response_text[:200]}...")
-            # TODO: When tools are enabled, track actual updates here
-            result["curator_response"] = response_text[:500]
+        # Parse the JSON response and execute actions
+        result = await self._execute_curator_actions(
+            response_text, parent_session, curator_session, result
+        )
 
         return result
+
+    async def _execute_curator_actions(
+        self,
+        response_text: str,
+        parent_session: Any,
+        curator_session: CuratorSession,
+        result: dict[str, Any],
+    ) -> dict[str, Any]:
+        """
+        Parse the curator's JSON response and execute any requested actions.
+        """
+        import re
+
+        # Try to extract JSON from the response
+        # Handle cases where it might be wrapped in ```json ... ```
+        json_match = re.search(r'```json\s*(.*?)\s*```', response_text, re.DOTALL)
+        if json_match:
+            json_str = json_match.group(1)
+        else:
+            # Try to find a raw JSON object
+            json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(0)
+            else:
+                logger.warning(f"Curator response not valid JSON: {response_text[:200]}")
+                result["error"] = "Invalid JSON response from curator"
+                return result
+
+        try:
+            actions = json.loads(json_str)
+        except json.JSONDecodeError as e:
+            logger.warning(f"Failed to parse curator JSON: {e}, response: {json_str[:200]}")
+            result["error"] = f"JSON parse error: {e}"
+            return result
+
+        # Log reasoning
+        reasoning = actions.get("reasoning", "No reasoning provided")
+        logger.info(f"Curator reasoning for {parent_session.id}: {reasoning}")
+        result["reasoning"] = reasoning
+
+        # Execute title update if requested
+        new_title = actions.get("update_title")
+        if new_title and isinstance(new_title, str):
+            new_title = new_title.strip()
+            if new_title and len(new_title) < 200:
+                await self.db.update_session(
+                    parent_session.id,
+                    SessionUpdate(title=new_title),
+                )
+                result["title_updated"] = True
+                result["new_title"] = new_title
+                result["actions"].append(f"Updated title to: {new_title}")
+                logger.info(f"Curator updated title for {parent_session.id}: {new_title}")
+
+        # Execute context update if requested
+        context_update = actions.get("update_context")
+        if context_update and isinstance(context_update, dict):
+            file_name = context_update.get("file", "").strip()
+            content = context_update.get("content", "").strip()
+
+            if file_name and content:
+                success = await self._append_to_context_file(file_name, content)
+                if success:
+                    result["context_updated"] = True
+                    result["actions"].append(f"Updated context file: {file_name}")
+                    logger.info(f"Curator updated context file {file_name} for {parent_session.id}")
+                else:
+                    logger.warning(f"Failed to update context file {file_name}")
+
+        # If no updates were made
+        if not result.get("title_updated") and not result.get("context_updated"):
+            logger.info(f"Curator: No updates needed for {parent_session.id}")
+
+        return result
+
+    async def _append_to_context_file(self, file_name: str, content: str) -> bool:
+        """
+        Safely append content to a context file.
+
+        Security checks:
+        - File must be in Chat/contexts/ directory
+        - No path traversal allowed
+        - Append-only (no overwrite)
+        """
+        from datetime import datetime, timezone
+
+        # Security: validate file_name has no path components
+        if "/" in file_name or "\\" in file_name or ".." in file_name:
+            logger.warning(f"Invalid context file name (path chars): {file_name}")
+            return False
+
+        # Ensure .md extension
+        if not file_name.endswith(".md"):
+            file_name = file_name + ".md"
+
+        # Build safe path
+        contexts_dir = self.vault_path / "Chat" / "contexts"
+        contexts_dir.mkdir(parents=True, exist_ok=True)
+        target_path = contexts_dir / file_name
+
+        # Verify it resolves to within contexts_dir (prevent symlink attacks)
+        try:
+            resolved = target_path.resolve()
+            if not str(resolved).startswith(str(contexts_dir.resolve())):
+                logger.warning(f"Context file path escapes contexts dir: {file_name}")
+                return False
+        except Exception:
+            logger.warning(f"Invalid context file path: {file_name}")
+            return False
+
+        try:
+            # Append-only operation with timestamp
+            timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+            formatted_addition = f"\n\n<!-- Added by curator on {timestamp} -->\n{content}"
+
+            with open(target_path, "a", encoding="utf-8") as f:
+                f.write(formatted_addition)
+
+            return True
+        except Exception as e:
+            logger.error(f"Failed to write context file: {e}")
+            return False
 
     def _process_curator_event(self, event: Any, result: dict[str, Any]) -> dict[str, Any]:
         """Process SDK event and update result tracking."""
