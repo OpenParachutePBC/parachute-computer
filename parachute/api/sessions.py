@@ -6,9 +6,29 @@ import logging
 from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from pydantic import BaseModel, Field
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+class PermissionGrantRequest(BaseModel):
+    """Request body for granting a permission."""
+
+    request_id: str = Field(alias="requestId", description="The permission request ID")
+    pattern: Optional[str] = Field(
+        None, description="Glob pattern for the grant (e.g., 'Blogs/**/*')"
+    )
+
+    model_config = {"populate_by_name": True}
+
+
+class PermissionDenyRequest(BaseModel):
+    """Request body for denying a permission."""
+
+    request_id: str = Field(alias="requestId", description="The permission request ID")
+
+    model_config = {"populate_by_name": True}
 
 
 def get_orchestrator(request: Request):
@@ -184,3 +204,86 @@ async def get_session_transcript(
         raise HTTPException(status_code=404, detail="Transcript not found")
 
     return transcript
+
+
+# =========================================================================
+# Permission Management
+# =========================================================================
+
+
+@router.get("/chat/{session_id}/permissions")
+async def get_pending_permissions(
+    request: Request, session_id: str
+) -> dict[str, Any]:
+    """
+    Get pending permission requests for a session.
+
+    Returns a list of pending permission requests that need user approval.
+    This is only relevant when trust mode is disabled for a session.
+    """
+    orchestrator = get_orchestrator(request)
+
+    pending = orchestrator.get_pending_permissions(session_id)
+    return {"pending": pending, "sessionId": session_id}
+
+
+@router.post("/chat/{session_id}/permissions/grant")
+async def grant_permission(
+    request: Request, session_id: str, body: PermissionGrantRequest
+) -> dict[str, Any]:
+    """
+    Grant a pending permission request.
+
+    Args:
+        session_id: The session ID
+        body: Grant request with request_id and optional pattern
+
+    The pattern parameter allows granting broader access:
+    - If not provided, only the specific file is granted
+    - If provided, the pattern is added to session permissions
+      (e.g., "Blogs/**/*" to grant access to all files in Blogs/)
+    """
+    orchestrator = get_orchestrator(request)
+
+    success = orchestrator.grant_permission(
+        session_id, body.request_id, body.pattern
+    )
+
+    if not success:
+        raise HTTPException(
+            status_code=404,
+            detail="Permission request not found or already resolved",
+        )
+
+    return {
+        "success": True,
+        "sessionId": session_id,
+        "requestId": body.request_id,
+        "pattern": body.pattern,
+    }
+
+
+@router.post("/chat/{session_id}/permissions/deny")
+async def deny_permission(
+    request: Request, session_id: str, body: PermissionDenyRequest
+) -> dict[str, Any]:
+    """
+    Deny a pending permission request.
+
+    This will cause the tool use to fail with a permission denied error.
+    """
+    orchestrator = get_orchestrator(request)
+
+    success = orchestrator.deny_permission(session_id, body.request_id)
+
+    if not success:
+        raise HTTPException(
+            status_code=404,
+            detail="Permission request not found or already resolved",
+        )
+
+    return {
+        "success": True,
+        "sessionId": session_id,
+        "requestId": body.request_id,
+    }

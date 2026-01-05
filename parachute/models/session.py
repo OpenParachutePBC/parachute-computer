@@ -11,6 +11,81 @@ from typing import Any, Optional
 from pydantic import BaseModel, Field
 
 
+class SessionPermissions(BaseModel):
+    """
+    Permissions granted for a session.
+
+    Controls what file operations and tools the agent can use.
+    Stored in session metadata and checked at runtime.
+    """
+
+    # File access patterns (glob-style, relative to vault)
+    read: list[str] = Field(
+        default_factory=list,
+        description="Glob patterns for allowed read paths (e.g., 'Blogs/**/*')",
+    )
+    write: list[str] = Field(
+        default_factory=lambda: ["Chat/artifacts/*"],
+        description="Glob patterns for allowed write paths",
+    )
+
+    # Bash command access
+    bash: list[str] | bool = Field(
+        default_factory=lambda: ["ls", "pwd", "tree"],
+        description="Allowed bash commands, or True for all, or False for none",
+    )
+
+    # Trust mode bypasses all permission checks (except deny list)
+    # Default to True so existing sessions continue to work without prompts
+    trust_mode: bool = Field(
+        default=True,
+        alias="trustMode",
+        serialization_alias="trustMode",
+        description="If true, skip all permission prompts",
+    )
+
+    model_config = {"populate_by_name": True}
+
+    def can_read(self, path: str) -> bool:
+        """Check if reading the given path is allowed."""
+        if self.trust_mode:
+            return True
+        return self._matches_any_pattern(path, self.read)
+
+    def can_write(self, path: str) -> bool:
+        """Check if writing to the given path is allowed."""
+        if self.trust_mode:
+            return True
+        return self._matches_any_pattern(path, self.write)
+
+    def can_bash(self, command: str) -> bool:
+        """Check if running the given bash command is allowed."""
+        if self.trust_mode:
+            return True
+        if isinstance(self.bash, bool):
+            return self.bash
+        # Extract base command (first word)
+        base_cmd = command.strip().split()[0] if command.strip() else ""
+        return base_cmd in self.bash
+
+    def _matches_any_pattern(self, path: str, patterns: list[str]) -> bool:
+        """Check if path matches any of the glob patterns."""
+        import fnmatch
+        # Normalize path (remove leading ./ or /)
+        normalized = path.lstrip("./")
+        for pattern in patterns:
+            if fnmatch.fnmatch(normalized, pattern):
+                return True
+            # Also check if the pattern matches a parent directory
+            # e.g., pattern "Blogs/**/*" should match "Blogs/post.md"
+            if "**" in pattern:
+                # Convert ** to regex-style matching
+                base = pattern.split("**")[0].rstrip("/")
+                if normalized.startswith(base):
+                    return True
+        return False
+
+
 class SessionSource(str, Enum):
     """Source of the session."""
 
@@ -64,6 +139,19 @@ class Session(BaseModel):
     )
 
     model_config = {"from_attributes": True, "populate_by_name": True}
+
+    @property
+    def permissions(self) -> SessionPermissions:
+        """Get session permissions from metadata."""
+        if self.metadata and "permissions" in self.metadata:
+            return SessionPermissions(**self.metadata["permissions"])
+        return SessionPermissions()
+
+    def with_permissions(self, permissions: SessionPermissions) -> "Session":
+        """Return a copy of the session with updated permissions."""
+        new_metadata = dict(self.metadata) if self.metadata else {}
+        new_metadata["permissions"] = permissions.model_dump(by_alias=True)
+        return self.model_copy(update={"metadata": new_metadata})
 
 
 class SessionCreate(BaseModel):

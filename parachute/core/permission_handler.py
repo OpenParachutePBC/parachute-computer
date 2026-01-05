@@ -1,38 +1,63 @@
 """
 Permission handler for tool access control.
 
-Implements TIER-based permission checking:
-- TIER 1 (always allow): Read-only tools
-- TIER 2 (configurable): Write tools - check against allowed paths
-- TIER 3 (ask first): MCP tools - require user approval
+Implements session-based permission checking:
+- Always allowed: MCP tools, WebSearch, WebFetch, limited Bash (ls, pwd, tree)
+- Gated: Read, Write, Edit, full Bash - require session permissions
+- Deny list: .env, credentials, etc. - always blocked
+
+Session permissions are stored in session metadata and can be granted
+dynamically via the permission_request SSE flow.
 """
 
 import asyncio
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Callable, Optional
 from uuid import uuid4
 
-from parachute.models.agent import AgentDefinition
-from parachute.lib.vault_utils import matches_patterns
+from parachute.lib.ignore_patterns import get_ignore_patterns
+from parachute.models.session import Session, SessionPermissions
 
 logger = logging.getLogger(__name__)
 
 
-# Tool tier definitions
-TIER1_ALWAYS_ALLOW = [
-    "Read", "Glob", "Grep", "LS",
-    "WebSearch", "WebFetch",
-    "NotebookRead",
+# Tools that are always allowed (no permission needed)
+ALWAYS_ALLOWED_TOOLS = [
+    # MCP tools are always allowed - they provide structured vault access
+    # (patterns: mcp__*)
+
+    # Web tools
+    "WebSearch",
+    "WebFetch",
+
+    # Task/agent delegation
     "Task",
+    "TaskOutput",
 ]
 
-TIER2_WRITE_TOOLS = [
-    "Write", "Edit", "MultiEdit",
-    "Bash",
+# Read-only tools that require permission
+READ_TOOLS = [
+    "Read",
+    "Glob",
+    "Grep",
+    "LS",
+    "NotebookRead",
+    "LSP",
+]
+
+# Write tools that require permission
+WRITE_TOOLS = [
+    "Write",
+    "Edit",
+    "MultiEdit",
     "NotebookEdit",
 ]
+
+# Bash requires special handling
+BASH_TOOL = "Bash"
 
 
 @dataclass
@@ -73,41 +98,56 @@ class PermissionHandler:
     Handles permission checks for tool usage.
 
     Creates a callback that can be passed to the Claude SDK.
+    Uses session-based permissions with global deny list enforcement.
     """
 
     def __init__(
         self,
-        agent: AgentDefinition,
-        session_id: str,
+        session: Session,
         vault_path: str,
         on_denial: Optional[Callable[[dict[str, Any]], None]] = None,
         on_request: Optional[Callable[[PermissionRequest], None]] = None,
+        on_permission_update: Optional[Callable[[SessionPermissions], None]] = None,
     ):
         """
         Initialize permission handler.
 
         Args:
-            agent: Agent definition with permissions
-            session_id: Current session ID
+            session: Session with permissions in metadata
             vault_path: Path to vault root
             on_denial: Callback when permission is denied
             on_request: Callback when permission needs user approval
+            on_permission_update: Callback when session permissions are updated
         """
-        self.agent = agent
-        self.session_id = session_id
-        self.vault_path = vault_path
+        self.session = session
+        self.vault_path = Path(vault_path)
         self.on_denial = on_denial
         self.on_request = on_request
+        self.on_permission_update = on_permission_update
+
+        # Get session permissions (may be empty for new sessions)
+        self._permissions = session.permissions
+
+        # Global deny list
+        self._ignore = get_ignore_patterns()
 
         # Pending permission requests
         self.pending: dict[str, PermissionRequest] = {}
 
-        # Session-approved MCP servers
-        self.approved_mcps: set[str] = set()
-
         # Limits
         self.max_pending = 100
         self.timeout_seconds = 120
+
+    @property
+    def permissions(self) -> SessionPermissions:
+        """Get current session permissions."""
+        return self._permissions
+
+    def update_permissions(self, permissions: SessionPermissions) -> None:
+        """Update session permissions (e.g., after user grants access)."""
+        self._permissions = permissions
+        if self.on_permission_update:
+            self.on_permission_update(permissions)
 
     def create_sdk_callback(self):
         """
@@ -174,52 +214,94 @@ class PermissionHandler:
         """
         logger.debug(f"Permission check: {tool_name}")
 
-        # TIER 1: Always allow read-only tools
-        if tool_name in TIER1_ALWAYS_ALLOW:
-            logger.debug(f"TIER 1 auto-allow: {tool_name}")
+        # Trust mode bypasses checks (except deny list)
+        trust_mode = self._permissions.trust_mode
+
+        # Always allow MCP tools (they provide structured access)
+        if tool_name.startswith("mcp__"):
+            logger.debug(f"MCP tool auto-allow: {tool_name}")
             return PermissionDecision(behavior="allow", updated_input=input_data)
 
-        # TIER 3: MCP tools - check approval
-        if tool_name.startswith("mcp__"):
-            return await self._check_mcp_permission(tool_name, input_data, tool_use_id)
+        # Always allow web tools and task delegation
+        if tool_name in ALWAYS_ALLOWED_TOOLS:
+            logger.debug(f"Always allowed: {tool_name}")
+            return PermissionDecision(behavior="allow", updated_input=input_data)
 
-        # TIER 2: Write tools - check paths
-        if tool_name in TIER2_WRITE_TOOLS:
-            return await self._check_write_permission(tool_name, input_data, tool_use_id)
+        # Bash requires special handling
+        if tool_name == BASH_TOOL:
+            return await self._check_bash_permission(input_data, tool_use_id, trust_mode)
 
-        # Unknown tool - allow by default
-        logger.debug(f"Unknown tool allowed: {tool_name}")
-        return PermissionDecision(behavior="allow", updated_input=input_data)
+        # Read tools - check read permission
+        if tool_name in READ_TOOLS:
+            return await self._check_read_permission(tool_name, input_data, tool_use_id, trust_mode)
 
-    async def _check_mcp_permission(
+        # Write tools - check write permission
+        if tool_name in WRITE_TOOLS:
+            return await self._check_write_permission(tool_name, input_data, tool_use_id, trust_mode)
+
+        # Unknown tool - allow in trust mode, deny otherwise
+        if trust_mode:
+            logger.debug(f"Unknown tool allowed (trust mode): {tool_name}")
+            return PermissionDecision(behavior="allow", updated_input=input_data)
+
+        logger.warning(f"Unknown tool denied: {tool_name}")
+        return PermissionDecision(
+            behavior="deny",
+            message=f"Unknown tool: {tool_name}",
+        )
+
+    def _to_relative_path(self, path: str) -> str:
+        """Convert an absolute path to a vault-relative path."""
+        try:
+            abs_path = Path(path).resolve()
+            if abs_path.is_relative_to(self.vault_path):
+                return str(abs_path.relative_to(self.vault_path))
+            return path
+        except (ValueError, OSError):
+            return path
+
+    async def _check_read_permission(
         self,
         tool_name: str,
         input_data: dict[str, Any],
         tool_use_id: Optional[str],
+        trust_mode: bool,
     ) -> PermissionDecision:
-        """Check permission for MCP tools."""
-        parts = tool_name.split("__")
-        mcp_server = parts[1] if len(parts) > 1 else "unknown"
-        mcp_tool = parts[2] if len(parts) > 2 else "unknown"
+        """Check permission for read tools."""
+        # Get file path from input
+        file_path = input_data.get("file_path") or input_data.get("path") or ""
+        relative_path = self._to_relative_path(file_path)
 
-        # Check session approval
-        if mcp_server in self.approved_mcps:
-            logger.debug(f"MCP auto-allow (session): {tool_name}")
+        # Check deny list first (always enforced)
+        if relative_path and self._ignore.is_denied(relative_path):
+            logger.warning(f"Read denied by ignore list: {relative_path}")
+            if self.on_denial:
+                self.on_denial({
+                    "tool_name": tool_name,
+                    "file_path": relative_path,
+                    "reason": "denied_by_ignore_list",
+                })
+            return PermissionDecision(
+                behavior="deny",
+                message=f"Access denied: {relative_path} matches security pattern",
+            )
+
+        # Trust mode allows all (after deny list check)
+        if trust_mode:
             return PermissionDecision(behavior="allow", updated_input=input_data)
 
-        # Check agent config approval
-        approved = self.agent.permissions.approved_mcps
-        if mcp_server in approved or "*" in approved:
-            logger.debug(f"MCP auto-allow (config): {tool_name}")
+        # Check session permissions
+        if relative_path and self._permissions.can_read(relative_path):
+            logger.debug(f"Read allowed by permission: {relative_path}")
             return PermissionDecision(behavior="allow", updated_input=input_data)
 
-        # Need user approval
+        # No permission - request approval
         return await self._request_approval(
             tool_name=tool_name,
             input_data=input_data,
             tool_use_id=tool_use_id,
-            mcp_server=mcp_server,
-            mcp_tool=mcp_tool,
+            file_path=relative_path,
+            permission_type="read",
         )
 
     async def _check_write_permission(
@@ -227,48 +309,112 @@ class PermissionHandler:
         tool_name: str,
         input_data: dict[str, Any],
         tool_use_id: Optional[str],
+        trust_mode: bool,
     ) -> PermissionDecision:
         """Check permission for write tools."""
         # Get file path from input
         file_path = input_data.get("file_path") or input_data.get("path") or ""
+        relative_path = self._to_relative_path(file_path)
 
-        # Convert absolute paths to relative
-        if file_path.startswith(self.vault_path):
-            file_path = file_path[len(self.vault_path):].lstrip("/")
-
-        # Check Bash commands
-        if tool_name == "Bash":
-            write_patterns = self.agent.permissions.write
-            if "*" in write_patterns:
-                logger.debug(f"Bash auto-allow (full write access)")
-                return PermissionDecision(behavior="allow", updated_input=input_data)
-
-            # Need approval for Bash without full write access
-            return await self._request_approval(
-                tool_name=tool_name,
-                input_data=input_data,
-                tool_use_id=tool_use_id,
-                file_path=input_data.get("command", ""),
+        # Check deny list first (always enforced)
+        if relative_path and self._ignore.is_denied(relative_path):
+            logger.warning(f"Write denied by ignore list: {relative_path}")
+            if self.on_denial:
+                self.on_denial({
+                    "tool_name": tool_name,
+                    "file_path": relative_path,
+                    "reason": "denied_by_ignore_list",
+                })
+            return PermissionDecision(
+                behavior="deny",
+                message=f"Access denied: {relative_path} matches security pattern",
             )
 
-        # Check file path against patterns
-        if file_path:
-            write_patterns = self.agent.permissions.write
-            if matches_patterns(file_path, write_patterns):
-                logger.debug(f"Write allowed by policy: {file_path}")
-                return PermissionDecision(behavior="allow", updated_input=input_data)
+        # Trust mode allows all (after deny list check)
+        if trust_mode:
+            return PermissionDecision(behavior="allow", updated_input=input_data)
 
-            # Need approval
-            return await self._request_approval(
-                tool_name=tool_name,
-                input_data=input_data,
-                tool_use_id=tool_use_id,
-                file_path=file_path,
-                allowed_patterns=write_patterns,
+        # Check session permissions
+        if relative_path and self._permissions.can_write(relative_path):
+            logger.debug(f"Write allowed by permission: {relative_path}")
+            return PermissionDecision(behavior="allow", updated_input=input_data)
+
+        # No permission - request approval
+        return await self._request_approval(
+            tool_name=tool_name,
+            input_data=input_data,
+            tool_use_id=tool_use_id,
+            file_path=relative_path,
+            permission_type="write",
+        )
+
+    async def _check_bash_permission(
+        self,
+        input_data: dict[str, Any],
+        tool_use_id: Optional[str],
+        trust_mode: bool,
+    ) -> PermissionDecision:
+        """Check permission for Bash commands."""
+        command = input_data.get("command", "")
+
+        # Check for dangerous commands (always blocked)
+        dangerous = self._is_dangerous_command(command)
+        if dangerous:
+            logger.warning(f"Bash denied (dangerous): {command[:50]}...")
+            if self.on_denial:
+                self.on_denial({
+                    "tool_name": BASH_TOOL,
+                    "command": command,
+                    "reason": dangerous,
+                })
+            return PermissionDecision(
+                behavior="deny",
+                message=dangerous,
             )
 
-        # No path - allow
-        return PermissionDecision(behavior="allow", updated_input=input_data)
+        # Trust mode allows all safe commands
+        if trust_mode:
+            return PermissionDecision(behavior="allow", updated_input=input_data)
+
+        # Check session permissions
+        if self._permissions.can_bash(command):
+            logger.debug(f"Bash allowed by permission: {command[:30]}...")
+            return PermissionDecision(behavior="allow", updated_input=input_data)
+
+        # No permission - request approval
+        return await self._request_approval(
+            tool_name=BASH_TOOL,
+            input_data=input_data,
+            tool_use_id=tool_use_id,
+            file_path=command,
+            permission_type="bash",
+        )
+
+    def _is_dangerous_command(self, command: str) -> Optional[str]:
+        """
+        Check if a command is inherently dangerous.
+
+        Returns the reason if dangerous, None if OK.
+        """
+        cmd_lower = command.lower().strip()
+
+        blocked_commands = [
+            ("sudo", "sudo commands are not allowed"),
+            ("rm -rf /", "Cannot delete root filesystem"),
+            ("rm -rf ~", "Cannot delete home directory"),
+            ("rm -rf /*", "Cannot delete root filesystem"),
+            (":(){:|:&};:", "Fork bomb detected"),
+            ("mkfs", "Cannot format filesystems"),
+            ("dd if=", "Direct disk access not allowed"),
+            ("> /dev/", "Cannot write to device files"),
+            ("chmod -R 777 /", "Cannot change permissions on root"),
+        ]
+
+        for pattern, reason in blocked_commands:
+            if pattern in cmd_lower:
+                return reason
+
+        return None
 
     async def _request_approval(
         self,
@@ -276,9 +422,7 @@ class PermissionHandler:
         input_data: dict[str, Any],
         tool_use_id: Optional[str],
         file_path: Optional[str] = None,
-        allowed_patterns: Optional[list[str]] = None,
-        mcp_server: Optional[str] = None,
-        mcp_tool: Optional[str] = None,
+        permission_type: str = "write",  # "read", "write", or "bash"
     ) -> PermissionDecision:
         """Request user approval for an operation."""
         if len(self.pending) >= self.max_pending:
@@ -290,7 +434,7 @@ class PermissionHandler:
                 message="Server overloaded with permission requests",
             )
 
-        request_id = f"{self.session_id}-{tool_use_id or uuid4().hex[:8]}"
+        request_id = f"{self.session.id}-{tool_use_id or uuid4().hex[:8]}"
 
         # Create promise-like for resolution
         loop = asyncio.get_event_loop()
@@ -304,21 +448,19 @@ class PermissionHandler:
             id=request_id,
             tool_name=tool_name,
             input_data=input_data,
-            agent_name=self.agent.name,
+            agent_name="vault-agent",
             file_path=file_path,
-            allowed_patterns=allowed_patterns or [],
-            mcp_server=mcp_server,
-            mcp_tool=mcp_tool,
+            allowed_patterns=self._permissions.read if permission_type == "read" else self._permissions.write,
             _resolve=resolve,
         )
 
         self.pending[request_id] = request
 
-        # Notify listeners
+        # Notify listeners (this triggers the SSE event)
         if self.on_request:
             self.on_request(request)
 
-        logger.info(f"Waiting for approval: {request_id}")
+        logger.info(f"Waiting for approval: {request_id} ({permission_type} {file_path})")
 
         # Wait for decision with timeout
         try:
@@ -333,9 +475,12 @@ class PermissionHandler:
 
         logger.info(f"Permission decision: {request_id} -> {decision}")
 
-        if decision == "granted" or decision == "allow_session":
-            if decision == "allow_session" and mcp_server:
-                self.approved_mcps.add(mcp_server)
+        if decision.startswith("granted"):
+            # Handle permission grants with pattern
+            # Format: "granted:pattern" or just "granted"
+            if ":" in decision:
+                pattern = decision.split(":", 1)[1]
+                self._add_permission(permission_type, pattern)
             return PermissionDecision(behavior="allow", updated_input=input_data)
 
         # Denied or timeout
@@ -352,12 +497,56 @@ class PermissionHandler:
             message=f"Permission {reason} for {tool_name}",
         )
 
-    def grant(self, request_id: str) -> bool:
-        """Grant a pending permission request."""
+    def _add_permission(self, permission_type: str, pattern: str) -> None:
+        """Add a permission pattern to the session."""
+        if permission_type == "read":
+            if pattern not in self._permissions.read:
+                new_read = self._permissions.read + [pattern]
+                self._permissions = SessionPermissions(
+                    read=new_read,
+                    write=self._permissions.write,
+                    bash=self._permissions.bash,
+                    trust_mode=self._permissions.trust_mode,
+                )
+        elif permission_type == "write":
+            if pattern not in self._permissions.write:
+                new_write = self._permissions.write + [pattern]
+                self._permissions = SessionPermissions(
+                    read=self._permissions.read,
+                    write=new_write,
+                    bash=self._permissions.bash,
+                    trust_mode=self._permissions.trust_mode,
+                )
+        elif permission_type == "bash":
+            if isinstance(self._permissions.bash, list) and pattern not in self._permissions.bash:
+                new_bash = self._permissions.bash + [pattern]
+                self._permissions = SessionPermissions(
+                    read=self._permissions.read,
+                    write=self._permissions.write,
+                    bash=new_bash,
+                    trust_mode=self._permissions.trust_mode,
+                )
+
+        # Notify about permission update
+        if self.on_permission_update:
+            self.on_permission_update(self._permissions)
+
+    def grant(self, request_id: str, pattern: Optional[str] = None) -> bool:
+        """
+        Grant a pending permission request.
+
+        Args:
+            request_id: The request ID to grant
+            pattern: Optional glob pattern for the grant (e.g., "Blogs/**/*")
+                    If not provided, grants access to the specific file only.
+        """
         request = self.pending.get(request_id)
         if request and request.status == "pending" and request._resolve:
             request.status = "granted"
-            request._resolve("granted")
+            if pattern:
+                request._resolve(f"granted:{pattern}")
+            else:
+                request._resolve("granted")
             return True
         return False
 
@@ -367,15 +556,6 @@ class PermissionHandler:
         if request and request.status == "pending" and request._resolve:
             request.status = "denied"
             request._resolve("denied")
-            return True
-        return False
-
-    def grant_session(self, request_id: str) -> bool:
-        """Grant permission for the entire session (MCP tools)."""
-        request = self.pending.get(request_id)
-        if request and request.status == "pending" and request._resolve:
-            request.status = "granted"
-            request._resolve("allow_session")
             return True
         return False
 
@@ -397,3 +577,55 @@ class PermissionHandler:
                 cleaned += 1
 
         return cleaned
+
+    def get_suggested_grants(self, path: str) -> list[dict[str, str]]:
+        """
+        Get suggested permission grants for a path.
+
+        Returns a list of grant options from most specific to most broad.
+        """
+        parts = Path(path).parts
+        suggestions = []
+
+        # Option 1: Just this file
+        suggestions.append({
+            "scope": "file",
+            "pattern": path,
+            "label": f"This file only ({Path(path).name})",
+        })
+
+        # Option 2: This folder
+        if len(parts) > 1:
+            folder = str(Path(*parts[:-1]))
+            suggestions.append({
+                "scope": "folder",
+                "pattern": f"{folder}/*",
+                "label": f"{folder}/ folder",
+            })
+
+        # Option 3: This folder recursively
+        if len(parts) > 1:
+            folder = str(Path(*parts[:-1]))
+            suggestions.append({
+                "scope": "recursive",
+                "pattern": f"{folder}/**/*",
+                "label": f"{folder}/ and subfolders",
+            })
+
+        # Option 4: Root folder (if nested)
+        if len(parts) > 2:
+            root_folder = parts[0]
+            suggestions.append({
+                "scope": "root",
+                "pattern": f"{root_folder}/**/*",
+                "label": f"All of {root_folder}/",
+            })
+
+        # Option 5: Full vault access (trust mode)
+        suggestions.append({
+            "scope": "vault",
+            "pattern": "**/*",
+            "label": "Full vault access",
+        })
+
+        return suggestions

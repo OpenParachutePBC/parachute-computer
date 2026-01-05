@@ -132,10 +132,14 @@ class PermissionRequestEvent(BaseModel):
     tool_name: str = Field(alias="toolName")
     agent_name: str = Field(alias="agentName")
     timestamp: int
+    permission_type: str = Field(alias="permissionType", default="write")  # read, write, bash
 
-    # For write tools
+    # For file tools
     file_path: Optional[str] = Field(alias="filePath", default=None)
     allowed_patterns: list[str] = Field(alias="allowedPatterns", default_factory=list)
+
+    # Suggested grant options
+    suggested_grants: list[dict[str, str]] = Field(alias="suggestedGrants", default_factory=list)
 
     # For MCP tools
     mcp_server: Optional[str] = Field(alias="mcpServer", default=None)
@@ -143,6 +147,18 @@ class PermissionRequestEvent(BaseModel):
 
     # Tool input for context
     input_data: Optional[dict[str, Any]] = Field(alias="input", default=None)
+
+    model_config = {"populate_by_name": True}
+
+
+class PermissionDeniedEvent(BaseModel):
+    """Permission denied event - operation was denied (by user or policy)."""
+
+    type: Literal["permission_denied"] = "permission_denied"
+    request_id: Optional[str] = Field(alias="requestId", default=None)
+    tool_name: str = Field(alias="toolName")
+    reason: str
+    file_path: Optional[str] = Field(alias="filePath", default=None)
 
     model_config = {"populate_by_name": True}
 
@@ -161,4 +177,5 @@ SSEEvent = Union[
     SessionUnavailableEvent,
     ErrorEvent,
     PermissionRequestEvent,
+    PermissionDeniedEvent,
 ]
