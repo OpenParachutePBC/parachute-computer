@@ -8,6 +8,7 @@ import logging
 from pathlib import Path
 from typing import Any, Optional
 
+import aiofiles
 import frontmatter
 import yaml
 
@@ -49,8 +50,8 @@ async def load_agent(agent_path: str, vault_path: Path) -> Optional[AgentDefinit
         return None
 
     try:
-        with open(full_path, "r", encoding="utf-8") as f:
-            content = f.read()
+        async with aiofiles.open(full_path, "r", encoding="utf-8") as f:
+            content = await f.read()
 
         post = frontmatter.loads(content)
         data = _parse_agent_frontmatter(dict(post.metadata))

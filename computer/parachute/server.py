@@ -89,11 +89,65 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS middleware - allow all origins by default
-# Configure via CORS_ORIGINS environment variable
+# CORS middleware
+# By default, only allow localhost and Parachute app requests
+# Configure via CORS_ORIGINS environment variable for additional origins
+def _get_cors_origins() -> list[str]:
+    """Get CORS origins from settings."""
+    settings = get_settings()
+    if settings.cors_origins_list is None:
+        # Wildcard mode - but we still want some basic protection
+        # Allow localhost variants and Parachute app
+        return [
+            "http://localhost:3333",
+            "http://localhost:3334",  # Test server
+            "http://127.0.0.1:3333",
+            "http://127.0.0.1:3334",
+            # Allow requests from any device on local network with Parachute user-agent
+            # The middleware below handles user-agent validation
+        ]
+    return settings.cors_origins_list
+
+
+# Custom CORS middleware that also validates User-Agent for app identification
+@app.middleware("http")
+async def cors_with_app_validation(request: Request, call_next):
+    """CORS middleware with Parachute app identification.
+
+    In addition to standard CORS origin checking, this middleware:
+    - Allows requests with User-Agent containing 'Parachute' from any origin
+    - Provides a way for the mobile app to identify itself
+    """
+    origin = request.headers.get("origin", "")
+    user_agent = request.headers.get("user-agent", "")
+
+    # Check if this is a Parachute app request (identified by User-Agent)
+    is_parachute_app = "Parachute" in user_agent
+
+    response = await call_next(request)
+
+    # Set CORS headers based on validation
+    if is_parachute_app:
+        # Trust Parachute app requests from any origin
+        response.headers["Access-Control-Allow-Origin"] = origin or "*"
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Access-Control-Allow-Methods"] = "*"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+    elif origin:
+        cors_origins = _get_cors_origins()
+        if origin in cors_origins:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Access-Control-Allow-Credentials"] = "true"
+            response.headers["Access-Control-Allow-Methods"] = "*"
+            response.headers["Access-Control-Allow-Headers"] = "*"
+
+    return response
+
+
+# Also keep standard CORS for preflight requests
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_get_cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -22,6 +22,8 @@ import sys
 from pathlib import Path
 from typing import Any, Literal, Optional
 
+import aiofiles
+
 logger = logging.getLogger(__name__)
 
 
@@ -127,8 +129,9 @@ async def load_mcp_servers(
     # Load user servers from .mcp.json (can override built-ins)
     if mcp_path.exists():
         try:
-            with open(mcp_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
+            async with aiofiles.open(mcp_path, "r", encoding="utf-8") as f:
+                content = await f.read()
+                data = json.loads(content)
 
             # .mcp.json has servers as top-level keys (not under mcpServers)
             # Filter out any non-dict entries that might be metadata
@@ -318,8 +321,9 @@ async def add_mcp_server(
 
     # Load existing config or create new
     if mcp_path.exists():
-        with open(mcp_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
+        async with aiofiles.open(mcp_path, "r", encoding="utf-8") as f:
+            content = await f.read()
+            data = json.loads(content)
     else:
         data = {"mcpServers": {}}
 
@@ -327,8 +331,8 @@ async def add_mcp_server(
     data["mcpServers"][name] = config
 
     # Write back
-    with open(mcp_path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
+    async with aiofiles.open(mcp_path, "w", encoding="utf-8") as f:
+        await f.write(json.dumps(data, indent=2))
 
     # Invalidate cache
     global _mcp_cache
@@ -345,14 +349,15 @@ async def remove_mcp_server(vault_path: Path, name: str) -> dict[str, dict[str, 
     if not mcp_path.exists():
         return {}
 
-    with open(mcp_path, "r", encoding="utf-8") as f:
-        data = json.load(f)
+    async with aiofiles.open(mcp_path, "r", encoding="utf-8") as f:
+        content = await f.read()
+        data = json.loads(content)
 
     if name in data.get("mcpServers", {}):
         del data["mcpServers"][name]
 
-        with open(mcp_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
+        async with aiofiles.open(mcp_path, "w", encoding="utf-8") as f:
+            await f.write(json.dumps(data, indent=2))
 
         # Invalidate cache
         global _mcp_cache
