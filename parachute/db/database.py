@@ -132,15 +132,28 @@ CREATE TABLE IF NOT EXISTS mcp_oauth_tokens (
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Session context folders (folder-based context system)
+-- Each row is a folder path that provides context for a session
+-- The full parent chain is computed at runtime
+CREATE TABLE IF NOT EXISTS session_contexts (
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    folder_path TEXT NOT NULL,  -- Relative to vault (e.g., "Projects/parachute")
+    added_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (session_id, folder_path)
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_contexts_session ON session_contexts(session_id);
+CREATE INDEX IF NOT EXISTS idx_session_contexts_folder ON session_contexts(folder_path);
+
 -- Schema version tracking
 CREATE TABLE IF NOT EXISTS schema_version (
     version INTEGER PRIMARY KEY,
     applied_at TEXT NOT NULL
 );
 
--- Insert schema version 4 (MCP OAuth support)
+-- Insert schema version 5 (session context folders)
 INSERT OR IGNORE INTO schema_version (version, applied_at)
-VALUES (4, datetime('now'));
+VALUES (5, datetime('now'));
 """
 
 
@@ -438,6 +451,80 @@ class Database:
         ) as cursor:
             rows = await cursor.fetchall()
             return [(row["tag"], row["count"]) for row in rows]
+
+    # =========================================================================
+    # Session Context Folders
+    # =========================================================================
+
+    async def set_session_contexts(
+        self, session_id: str, folder_paths: list[str]
+    ) -> None:
+        """
+        Set the context folders for a session (replaces existing).
+
+        Args:
+            session_id: The session ID
+            folder_paths: List of folder paths relative to vault
+        """
+        now = datetime.now(timezone.utc).isoformat()
+
+        # Delete existing contexts
+        await self.connection.execute(
+            "DELETE FROM session_contexts WHERE session_id = ?",
+            (session_id,),
+        )
+
+        # Insert new contexts
+        for folder_path in folder_paths:
+            await self.connection.execute(
+                "INSERT INTO session_contexts (session_id, folder_path, added_at) VALUES (?, ?, ?)",
+                (session_id, folder_path, now),
+            )
+
+        await self.connection.commit()
+
+    async def add_session_context(self, session_id: str, folder_path: str) -> None:
+        """Add a context folder to a session."""
+        now = datetime.now(timezone.utc).isoformat()
+        await self.connection.execute(
+            "INSERT OR IGNORE INTO session_contexts (session_id, folder_path, added_at) VALUES (?, ?, ?)",
+            (session_id, folder_path, now),
+        )
+        await self.connection.commit()
+
+    async def remove_session_context(self, session_id: str, folder_path: str) -> None:
+        """Remove a context folder from a session."""
+        await self.connection.execute(
+            "DELETE FROM session_contexts WHERE session_id = ? AND folder_path = ?",
+            (session_id, folder_path),
+        )
+        await self.connection.commit()
+
+    async def get_session_contexts(self, session_id: str) -> list[str]:
+        """Get all context folder paths for a session."""
+        async with self.connection.execute(
+            "SELECT folder_path FROM session_contexts WHERE session_id = ? ORDER BY folder_path",
+            (session_id,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [row["folder_path"] for row in rows]
+
+    async def get_sessions_by_context(
+        self, folder_path: str, limit: int = 100
+    ) -> list[Session]:
+        """Get all sessions using a specific context folder."""
+        async with self.connection.execute(
+            """
+            SELECT s.* FROM sessions s
+            JOIN session_contexts sc ON s.id = sc.session_id
+            WHERE sc.folder_path = ?
+            ORDER BY s.last_accessed DESC
+            LIMIT ?
+            """,
+            (folder_path, limit),
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [self._row_to_session(row) for row in rows]
 
     # =========================================================================
     # Chunks (RAG Index)

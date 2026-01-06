@@ -100,6 +100,61 @@ async def get_curator_for_session(request: Request, session_id: str) -> dict:
     }
 
 
+@router.get("/{session_id}/messages")
+async def get_curator_messages(request: Request, session_id: str) -> dict:
+    """
+    Get the curator's conversation messages for a chat session.
+
+    The curator is an SDK session, so we can load its messages just like
+    a regular chat session. This provides transparency into what the curator
+    has been "thinking" and what context it was fed.
+
+    Returns messages in chat format: [{role, content, timestamp}, ...]
+    """
+    from parachute.core.curator_service import get_curator_service
+    from parachute.core.session_manager import SessionManager
+
+    try:
+        curator = await get_curator_service()
+    except RuntimeError:
+        raise HTTPException(status_code=503, detail="Curator service not available")
+
+    # Get curator session
+    curator_session = await curator.get_curator_session(session_id)
+    if not curator_session:
+        return {
+            "messages": [],
+            "sdk_session_id": None,
+            "message": "No curator session for this chat yet",
+        }
+
+    # If no SDK session yet, no messages
+    if not curator_session.sdk_session_id:
+        return {
+            "messages": [],
+            "sdk_session_id": None,
+            "message": "Curator has not run yet",
+        }
+
+    # Load messages from the curator's SDK session
+    from parachute.config import get_settings
+
+    db = request.app.state.database
+    settings = get_settings()
+    session_manager = SessionManager(settings.vault_path, db)
+
+    messages = await session_manager.load_sdk_messages_by_id(
+        curator_session.sdk_session_id,
+        working_directory=None,  # Curator runs without a specific working directory
+    )
+
+    return {
+        "messages": messages,
+        "sdk_session_id": curator_session.sdk_session_id,
+        "message_count": len(messages),
+    }
+
+
 @router.post("/{session_id}/trigger")
 async def trigger_curator(request: Request, session_id: str) -> dict:
     """

@@ -55,6 +55,12 @@ class Settings(BaseSettings):
     debug: bool = Field(default=False, description="Enable debug mode")
     reload: bool = Field(default=False, description="Enable auto-reload")
 
+    # Curator settings
+    curator_model: Optional[str] = Field(
+        default=None,
+        description="Model for curator agent (e.g., 'claude-sonnet-4-20250514'). If not set, uses account default.",
+    )
+
     model_config = {
         "env_prefix": "",
         "env_file": ".env",

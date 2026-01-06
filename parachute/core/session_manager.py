@@ -288,6 +288,128 @@ class SessionManager:
 
         return claude_dir / f"{session_id}.jsonl"
 
+    def _find_sdk_transcript(self, session_id: str) -> Optional[Path]:
+        """
+        Search all SDK project directories for a transcript file.
+
+        This is a fallback when we don't know the working directory that was
+        used when the session was created (e.g., curator sessions).
+
+        Args:
+            session_id: The SDK session UUID
+
+        Returns:
+            Path to the transcript file, or None if not found
+        """
+        claude_projects = Path.home() / ".claude" / "projects"
+        if not claude_projects.exists():
+            return None
+
+        filename = f"{session_id}.jsonl"
+        for project_dir in claude_projects.iterdir():
+            if project_dir.is_dir():
+                candidate = project_dir / filename
+                if candidate.exists():
+                    return candidate
+
+        return None
+
+    async def load_sdk_messages_by_id(
+        self,
+        session_id: str,
+        working_directory: Optional[str] = None,
+        include_tool_calls: bool = True,
+    ) -> list[dict[str, Any]]:
+        """
+        Load messages from SDK JSONL file by session ID.
+
+        This is a public method that can be used to load messages for any SDK
+        session, including curator sessions that don't have a corresponding
+        database entry.
+
+        Args:
+            session_id: The SDK session UUID
+            working_directory: Optional working directory for path resolution
+            include_tool_calls: Whether to include tool use details
+
+        Returns:
+            List of message dicts with role, content, timestamp, and optionally tools
+        """
+        transcript_path = self.get_sdk_transcript_path(session_id, working_directory)
+
+        # If not found at the expected path, search all SDK project directories
+        if not transcript_path or not transcript_path.exists():
+            transcript_path = self._find_sdk_transcript(session_id)
+
+        if not transcript_path or not transcript_path.exists():
+            return []
+
+        messages = []
+        try:
+            with open(transcript_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        event = json.loads(line)
+
+                        # Extract user and assistant messages
+                        if event.get("type") == "user":
+                            content = self._extract_message_content(event.get("message", {}))
+                            if content:
+                                messages.append({
+                                    "role": "user",
+                                    "content": content,
+                                    "timestamp": event.get("timestamp"),
+                                })
+                        elif event.get("type") == "assistant":
+                            msg = event.get("message", {})
+                            content = self._extract_message_content(msg)
+                            tool_calls = self._extract_tool_calls(msg) if include_tool_calls else []
+
+                            if content or tool_calls:
+                                message_entry = {
+                                    "role": "assistant",
+                                    "content": content or "",
+                                    "timestamp": event.get("timestamp"),
+                                }
+                                if tool_calls:
+                                    message_entry["tool_calls"] = tool_calls
+                                messages.append(message_entry)
+                        elif event.get("type") == "result":
+                            # Final result message
+                            if event.get("result"):
+                                messages.append({
+                                    "role": "assistant",
+                                    "content": event["result"],
+                                    "timestamp": event.get("timestamp"),
+                                })
+
+                    except json.JSONDecodeError:
+                        continue
+
+        except Exception as e:
+            logger.error(f"Error loading SDK transcript: {e}")
+
+        return messages
+
+    def _extract_tool_calls(self, message: dict[str, Any]) -> list[dict[str, Any]]:
+        """Extract tool call info from an SDK message."""
+        content = message.get("content", [])
+        if not isinstance(content, list):
+            return []
+
+        tool_calls = []
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "tool_use":
+                tool_calls.append({
+                    "id": block.get("id"),
+                    "name": block.get("name"),
+                    "input": block.get("input", {}),
+                })
+        return tool_calls
+
     async def _load_sdk_messages(self, session: Session) -> list[dict[str, Any]]:
         """Load messages from SDK JSONL file."""
         transcript_path = self.get_sdk_transcript_path(
