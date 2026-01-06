@@ -3,6 +3,15 @@ MCP (Model Context Protocol) server configuration loader.
 
 Built-in MCPs (like the Parachute vault search) are configured in code.
 User MCPs are loaded from .mcp.json in the vault.
+
+Supports two types of MCP servers:
+1. stdio (local): command + args to spawn a process
+2. http (remote): url + auth config for remote MCP servers
+
+Remote servers can use different auth methods:
+- none: No authentication required
+- bearer: Static API key/token
+- oauth: OAuth 2.1 flow (requires token management)
 """
 
 import json
@@ -11,9 +20,13 @@ import os
 import re
 import sys
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 logger = logging.getLogger(__name__)
+
+
+# Valid auth types for remote MCP servers
+AuthType = Literal["none", "bearer", "oauth"]
 
 
 def _get_builtin_mcp_servers(vault_path: Path) -> dict[str, dict[str, Any]]:
@@ -83,7 +96,7 @@ def _process_config(config: dict[str, Any]) -> dict[str, Any]:
 
 
 async def load_mcp_servers(
-    vault_path: Path, raw: bool = False
+    vault_path: Path, raw: bool = False, attach_tokens: bool = False
 ) -> dict[str, dict[str, Any]]:
     """
     Load MCP server configurations.
@@ -94,6 +107,7 @@ async def load_mcp_servers(
     Args:
         vault_path: Path to the vault
         raw: If True, don't substitute environment variables
+        attach_tokens: If True, attach OAuth tokens to HTTP servers (for SDK use)
 
     Returns:
         Dictionary mapping server names to their configurations
@@ -102,8 +116,9 @@ async def load_mcp_servers(
 
     mcp_path = vault_path / ".mcp.json"
 
-    # Check cache (invalidate if path changed)
-    if not raw and _mcp_cache_path == mcp_path and _mcp_cache:
+    # Check cache (invalidate if path changed or tokens requested)
+    # Don't use cache when attaching tokens since they may have changed
+    if not raw and not attach_tokens and _mcp_cache_path == mcp_path and _mcp_cache:
         return _mcp_cache
 
     # Start with built-in servers
@@ -132,17 +147,136 @@ async def load_mcp_servers(
     if raw:
         return servers
 
-    # Process each server config (substitute env vars)
+    # Process each server config (substitute env vars and normalize)
     processed = {}
     for name, config in servers.items():
-        processed[name] = _process_config(config)
+        processed_config = _process_config(config)
 
-    # Update cache
-    _mcp_cache = processed
-    _mcp_cache_path = mcp_path
+        # Ensure HTTP servers have required `type` field for SDK compatibility
+        if "url" in processed_config and "type" not in processed_config:
+            processed_config["type"] = "http"
+            logger.debug(f"Added type='http' to server '{name}' for SDK compatibility")
+
+        processed[name] = processed_config
+
+    # Attach OAuth tokens to HTTP servers if requested
+    if attach_tokens:
+        processed = await _attach_oauth_tokens(processed)
+
+    # Update cache (only if not attaching tokens)
+    if not attach_tokens:
+        _mcp_cache = processed
+        _mcp_cache_path = mcp_path
 
     logger.debug(f"Total MCP servers available: {len(processed)}")
     return processed
+
+
+async def _attach_oauth_tokens(servers: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """
+    Attach OAuth tokens to HTTP servers that require authentication.
+
+    The Claude SDK needs the Authorization header set for HTTP MCP servers.
+    """
+    from parachute.db.database import get_database
+
+    result = {}
+    db = await get_database()
+
+    for name, config in servers.items():
+        server_type = _get_server_type(config)
+
+        if server_type == "http":
+            # Check if we have a stored OAuth token for this server
+            try:
+                token = await db.get_oauth_token(name)
+                if token and token.get("access_token"):
+                    # Check if token is expired
+                    is_expired = await db.is_token_expired(name)
+                    if not is_expired:
+                        # Add Authorization header
+                        config = dict(config)  # Make a copy
+                        headers = dict(config.get("headers", {}))
+                        token_type = token.get("token_type", "Bearer")
+                        headers["Authorization"] = f"{token_type} {token['access_token']}"
+                        config["headers"] = headers
+                        logger.info(f"Attached OAuth token to MCP server '{name}'")
+                    else:
+                        logger.warning(f"OAuth token expired for MCP server '{name}'")
+            except Exception as e:
+                logger.warning(f"Failed to get OAuth token for {name}: {e}")
+
+        result[name] = config
+
+    return result
+
+
+def _validate_remote_server(name: str, config: dict[str, Any]) -> list[str]:
+    """
+    Validate a remote (HTTP) MCP server configuration.
+
+    Returns a list of validation errors (empty if valid).
+    """
+    errors = []
+
+    url = config.get("url", "")
+    if not url:
+        errors.append(f"Server '{name}': missing 'url' field")
+    elif not url.startswith(("http://", "https://")):
+        errors.append(f"Server '{name}': url must start with http:// or https://")
+
+    auth = config.get("auth", "none")
+    if auth not in ("none", "bearer", "oauth"):
+        errors.append(f"Server '{name}': invalid auth type '{auth}' (must be none, bearer, or oauth)")
+
+    if auth == "bearer" and not config.get("token"):
+        errors.append(f"Server '{name}': bearer auth requires 'token' field")
+
+    if auth == "oauth":
+        # OAuth servers may optionally specify scopes
+        scopes = config.get("scopes", [])
+        if scopes and not isinstance(scopes, list):
+            errors.append(f"Server '{name}': 'scopes' must be a list of strings")
+
+    return errors
+
+
+def _get_server_type(config: dict[str, Any]) -> str:
+    """Determine server type from config."""
+    if "command" in config:
+        return "stdio"
+    elif "url" in config:
+        return "http"
+    else:
+        return "unknown"
+
+
+def filter_stdio_servers(servers: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """
+    Filter MCP servers to only include stdio servers.
+
+    The Claude SDK only supports stdio (command-based) MCP servers.
+    HTTP/remote servers are not supported by the SDK and must be
+    filtered out before passing to the SDK to avoid validation errors.
+
+    Args:
+        servers: Dictionary of server name -> config
+
+    Returns:
+        Dictionary containing only stdio servers
+    """
+    if not servers:
+        return {}
+
+    stdio_servers = {}
+    for name, config in servers.items():
+        server_type = _get_server_type(config)
+        if server_type == "stdio":
+            stdio_servers[name] = config
+        else:
+            logger.debug(f"Filtering out non-stdio MCP server '{name}' (type: {server_type})")
+
+    return stdio_servers
 
 
 async def list_mcp_servers(vault_path: Path) -> list[dict[str, Any]]:
@@ -151,12 +285,26 @@ async def list_mcp_servers(vault_path: Path) -> list[dict[str, Any]]:
     result = []
 
     for name, config in servers.items():
+        server_type = _get_server_type(config)
+
         server_info = {
             "name": name,
-            "type": "stdio" if "command" in config else "http" if "url" in config else "unknown",
+            "type": server_type,
             "builtin": config.get("_builtin", False),
-            **{k: v for k, v in config.items() if k != "_builtin"},
+            **{k: v for k, v in config.items() if not k.startswith("_")},
         }
+
+        # Add auth status for remote servers
+        if server_type == "http":
+            auth = config.get("auth", "none")
+            server_info["auth"] = auth
+            server_info["authRequired"] = auth != "none"
+
+            # Validate remote server config
+            validation_errors = _validate_remote_server(name, config)
+            if validation_errors:
+                server_info["validationErrors"] = validation_errors
+
         result.append(server_info)
 
     return result

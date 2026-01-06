@@ -361,8 +361,9 @@ class Orchestrator:
         captured_model: Optional[str] = None
 
         try:
-            # Load MCP servers
-            global_mcps = await load_mcp_servers(self.vault_path)
+            # Load MCP servers with OAuth tokens attached for HTTP servers
+            # Note: SDK supports both stdio and HTTP servers, but HTTP servers need `type: "http"`
+            global_mcps = await load_mcp_servers(self.vault_path, attach_tokens=True)
             resolved_mcps = resolve_mcp_servers(agent.mcp_servers, global_mcps)
 
             # Set up permission handler with event callbacks
