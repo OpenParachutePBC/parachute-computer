@@ -3,11 +3,12 @@ Curator Tools - Minimal Permission Tools for Background Agents.
 
 These tools are purpose-built for the curator agent with strict security constraints:
 - update_title: Can ONLY update session titles in the database
-- update_context: Can ONLY append to files in Chat/contexts/
+- update_context: Can ONLY append to AGENTS.md files in the context chain
 - get_session_info: Read-only access to session metadata
+- list_context_files: List AGENTS.md files the curator can update
 
 The curator agent has NO access to:
-- General file reading/writing
+- General file reading/writing (only specific AGENTS.md files)
 - Shell commands
 - Other tools from the main agent
 
@@ -18,7 +19,7 @@ import logging
 import os
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Awaitable
+from typing import Any, Callable, Awaitable, Optional
 
 from claude_code_sdk import tool, create_sdk_mcp_server, SdkMcpTool
 
@@ -32,13 +33,34 @@ def create_curator_tools(
     db: Database,
     vault_path: Path,
     parent_session_id: str,
+    context_folders: Optional[list[str]] = None,
 ) -> tuple[list[SdkMcpTool], dict[str, Any]]:
     """
     Create curator tools bound to a specific session context.
 
+    Args:
+        db: Database instance
+        vault_path: Path to the vault
+        parent_session_id: The session being curated
+        context_folders: List of folder paths for the context chain (e.g., ["Projects/parachute"])
+
     Returns:
         Tuple of (list of SdkMcpTool instances, server config dict)
     """
+    # Build the list of AGENTS.md files the curator can update
+    # This includes the full parent chain for each selected folder
+    from parachute.core.context_folders import ContextFolderService
+
+    context_service = ContextFolderService(vault_path)
+
+    # Build context chain to get all updatable files
+    effective_folders = context_folders or [""]  # Root only if nothing selected
+    chain = context_service.build_chain(effective_folders, max_tokens=100000)
+
+    # Extract the file paths the curator can update
+    updatable_files = [f.path for f in chain.files if f.exists]
+
+    # Legacy support: also keep Chat/contexts/ accessible
     contexts_dir = vault_path / "Chat" / "contexts"
     contexts_dir.mkdir(parents=True, exist_ok=True)
 
@@ -82,23 +104,26 @@ def create_curator_tools(
                 "is_error": True
             }
 
-    # Tool: Append to context file
+    # Tool: Append to context file (AGENTS.md or legacy contexts/)
     @tool(
         "update_context",
-        "Append new information to a context file. Use this to record persistent learnings about the user that should be remembered across conversations. Only add genuinely new, useful information.",
+        "Append new information to a context file. For AGENTS.md files in the context chain, use the full path (e.g., 'Projects/parachute/AGENTS.md'). For legacy files, just use the filename (e.g., 'general-context.md'). Only add genuinely new, useful information.",
         {
-            "file_name": str,  # Just the filename, not path
+            "file_path": str,  # Path to AGENTS.md or filename for legacy
             "additions": str,  # Content to append
         }
     )
     async def update_context(args: dict[str, Any]) -> dict[str, Any]:
         """Append to a context file (append-only, no overwrite)."""
-        file_name = args.get("file_name", "").strip()
+        file_path = args.get("file_path", "").strip()
+        # Also accept file_name for backwards compatibility
+        if not file_path:
+            file_path = args.get("file_name", "").strip()
         additions = args.get("additions", "").strip()
 
-        if not file_name:
+        if not file_path:
             return {
-                "content": [{"type": "text", "text": "Error: file_name cannot be empty"}],
+                "content": [{"type": "text", "text": "Error: file_path cannot be empty"}],
                 "is_error": True
             }
 
@@ -108,33 +133,42 @@ def create_curator_tools(
                 "is_error": True
             }
 
-        # Security: validate file_name has no path components
-        if "/" in file_name or "\\" in file_name or ".." in file_name:
+        # Security: no path traversal
+        if ".." in file_path:
             return {
-                "content": [{"type": "text", "text": "Error: file_name cannot contain path separators"}],
+                "content": [{"type": "text", "text": "Error: invalid file path (no .. allowed)"}],
                 "is_error": True
             }
 
-        # Security: must end in .md
-        if not file_name.endswith(".md"):
-            file_name = file_name + ".md"
+        # Determine if this is a new AGENTS.md path or legacy filename
+        if "/" in file_path or file_path in ["AGENTS.md", "CLAUDE.md"]:
+            # New system: path to AGENTS.md in context chain
+            # Security: must be in the updatable files list
+            if file_path not in updatable_files:
+                return {
+                    "content": [{"type": "text", "text": f"Error: {file_path} is not in the context chain. Available files: {', '.join(updatable_files)}"}],
+                    "is_error": True
+                }
+            target_path = vault_path / file_path
+        else:
+            # Legacy system: filename in Chat/contexts/
+            if not file_path.endswith(".md"):
+                file_path = file_path + ".md"
+            target_path = contexts_dir / file_path
 
-        # Build safe path
-        target_path = contexts_dir / file_name
-
-        # Verify it resolves to within contexts_dir (prevent symlink attacks)
-        try:
-            resolved = target_path.resolve()
-            if not str(resolved).startswith(str(contexts_dir.resolve())):
+            # Verify it resolves to within contexts_dir
+            try:
+                resolved = target_path.resolve()
+                if not str(resolved).startswith(str(contexts_dir.resolve())):
+                    return {
+                        "content": [{"type": "text", "text": "Error: invalid file path"}],
+                        "is_error": True
+                    }
+            except Exception:
                 return {
                     "content": [{"type": "text", "text": "Error: invalid file path"}],
                     "is_error": True
                 }
-        except Exception:
-            return {
-                "content": [{"type": "text", "text": "Error: invalid file path"}],
-                "is_error": True
-            }
 
         try:
             # Append-only operation
@@ -147,9 +181,9 @@ def create_curator_tools(
             with open(target_path, "a", encoding="utf-8") as f:
                 f.write(formatted_addition)
 
-            logger.info(f"Curator appended to context file: {file_name}")
+            logger.info(f"Curator appended to context file: {file_path}")
             return {
-                "content": [{"type": "text", "text": f"Successfully added to {file_name}"}]
+                "content": [{"type": "text", "text": f"Successfully added to {file_path}"}]
             }
         except Exception as e:
             logger.error(f"Failed to update context file: {e}")
@@ -194,25 +228,40 @@ def create_curator_tools(
     # Tool: List context files (read-only)
     @tool(
         "list_context_files",
-        "List available context files that can be updated.",
+        "List available AGENTS.md files in the context chain that can be updated.",
         {}
     )
     async def list_context_files(args: dict[str, Any]) -> dict[str, Any]:
-        """List context files in the contexts directory."""
+        """List AGENTS.md files in the context chain."""
         try:
-            files = []
+            output_lines = ["## Context Chain (AGENTS.md files you can update):\n"]
+
+            if updatable_files:
+                for f in updatable_files:
+                    # Find the matching file in chain for level info
+                    level = "direct"
+                    for cf in chain.files:
+                        if cf.path == f:
+                            level = cf.level
+                            break
+                    output_lines.append(f"- {f} ({level})")
+            else:
+                output_lines.append("No AGENTS.md files in context chain.")
+
+            # Also list legacy context files
+            legacy_files = []
             if contexts_dir.exists():
                 for f in contexts_dir.iterdir():
                     if f.is_file() and f.suffix == ".md":
-                        files.append(f.name)
+                        legacy_files.append(f.name)
 
-            if not files:
-                return {
-                    "content": [{"type": "text", "text": "No context files found. You can create one by using update_context with a new file_name."}]
-                }
+            if legacy_files:
+                output_lines.append("\n## Legacy context files (Chat/contexts/):\n")
+                for f in sorted(legacy_files):
+                    output_lines.append(f"- {f}")
 
             return {
-                "content": [{"type": "text", "text": f"Available context files:\n" + "\n".join(f"- {f}" for f in sorted(files))}]
+                "content": [{"type": "text", "text": "\n".join(output_lines)}]
             }
         except Exception as e:
             logger.error(f"Failed to list context files: {e}")
@@ -234,140 +283,156 @@ def create_curator_tools(
 
 
 # System prompt for curator agent - used for simple title-only generation
-CURATOR_TITLE_PROMPT = """You are a title generator. Given a conversation, respond with ONLY a concise title (2-8 words) that captures the main topic. No explanation, no punctuation at the end, just the title itself.
+CURATOR_TITLE_PROMPT = """You are a title generator. Given a conversation, respond with ONLY a concise title that captures the main topic. No explanation, no punctuation at the end, just the title itself.
+
+## Title Format: "Project: Task" (max 8 words total)
+
+Use a **prefix: suffix** format where:
+- **Prefix** = Short project/topic name (1-2 words) inferred from the conversation
+- **Suffix** = What's being done (3-6 words)
+
+Infer the prefix from:
+- The working directory or codebase being discussed
+- The main project or topic of conversation
+- Use "Personal:" only for non-project conversations
 
 Examples of good titles:
-- Fix React useState infinite loop
-- Planning weekend trip to Portland
-- Debugging Python import errors
-- Setting up Kubernetes cluster
-- Discussing project architecture"""
+- MyApp: Fix authentication bug
+- Website: Landing page redesign
+- Personal: Weekend trip planning
+- Backend: Database migration setup
+- Docs: API reference updates"""
 
 
-# Full system prompt for curator agent with JSON-based actions
-CURATOR_SYSTEM_PROMPT = """You are a Session Curator - a background agent that maintains a user's knowledge base by keeping session titles accurate and context files updated.
+# Full system prompt for curator agent with tool access
+CURATOR_SYSTEM_PROMPT = """You are a Session Curator - a long-running background agent that maintains a user's knowledge base. You watch conversations as they evolve and have full memory of your past actions in this curator session.
 
 ## Your Job
 
-After messages in a chat conversation, you evaluate:
+You receive message digests after each exchange in a chat conversation. For each digest, you evaluate:
 1. **Title**: Does the current title still accurately describe this conversation?
 2. **Context**: Is there new, persistent information worth saving?
 
-You're given the current title, available context files, and recent messages.
+## Tools Available
 
-## Title Update Guidelines (BE CONSERVATIVE)
+You have access to these tools (use them directly when needed):
+- **mcp__curator__update_title**: Update the session title (use VERY conservatively!)
+- **mcp__curator__update_context**: Append to a context file (for significant milestones only)
+- **mcp__curator__list_context_files**: See available context files
+- **mcp__curator__get_session_info**: Get current session info
 
-Titles should be **stable**. Only update when:
-- The conversation has **meaningfully shifted direction** (not just continued on the same topic)
-- The current title is **clearly wrong or misleading** about what's being discussed
-- A **much better, more specific** title is now obvious
+## IMPORTANT: You have memory
 
-Do NOT update if:
-- The current title is still reasonably accurate
-- The conversation is just continuing on the same topic
-- You're just rephrasing (e.g., "Python decorators" → "Understanding Python decorators")
+You maintain session continuity - you can remember what updates you've already made. If you already updated the title or logged a milestone, don't do it again. Check your memory before acting.
 
-## Context Update Guidelines
+## Title Format: "Project: Task" (max 8 words total)
 
-Context files store **persistent information** about the user. You have three types of updates:
+Titles use a **prefix: suffix** format for easy searching and organization:
+- **Prefix** = Short project/topic name (1-2 words) inferred from conversation context
+- **Suffix** = What's being done (3-6 words)
 
-### 1. Update Facts (can modify existing facts)
-Use `update_facts` when you need to:
-- Add a new fact about the user
-- Correct an outdated fact
-- Remove obsolete information
+Infer the prefix from:
+- The working directory or codebase being discussed
+- Context files that are loaded (e.g., if "myproject.md" is loaded, prefix might be "MyProject:")
+- The main topic of conversation
+- Use "Personal:" only for non-project conversations
 
-Facts are stored as bullet points and can be replaced entirely.
+Examples:
+- "MyApp: Fix authentication bug"
+- "Website: Landing page and funnel"
+- "Personal: Movie recommendations"
 
-### 2. Update Current Focus (what's active now)
-Use `update_focus` when:
-- The user mentions a new active project or goal
-- A previous focus is completed or abandoned
+## Title Update Guidelines (BE VERY CONSERVATIVE)
 
-### 3. Append to History (append-only)
-Use `append_history` when:
-- Something notable happened that should be remembered
-- A decision was made
-- A milestone was reached
+Titles should be **stable**. A good title set early should rarely change.
 
-History is append-only - use this for temporal events.
+**Only update the title when:**
+- The **project prefix is wrong** (e.g., switched from Parachute work to LVB work)
+- The current title is **completely misleading** about the conversation's purpose
+- The session is untitled or has a garbage auto-generated title
 
-## File Routing
+**Do NOT update if:**
+- The current title is still reasonably accurate for the overall session
+- You're just updating the suffix to reflect the latest task (this causes churn!)
+- The conversation is continuing on related work within the same project
+- You're just rephrasing (e.g., "Fix bug" → "Debug and fix bug")
 
-You'll see a list of available context files. Route updates to the MOST SPECIFIC file:
-- **Project-specific files** (e.g., `parachute.md`, `woven-web.md`) - for project context
-- **general-context.md** - for personal info that spans projects
+**Key principle**: A session about "Parachute: Feature development" that moves from implementing file attachments to fixing audio bugs should KEEP the same title. The prefix captures the project, and the suffix should be broad enough to cover the session's scope.
 
-If no existing file fits and the topic is significant enough, you can create a new file.
+## Context Update Guidelines (BE CONSERVATIVE)
 
-## Response Format (IMPORTANT)
+Context files store **persistent information** about the user. Most messages do NOT warrant context updates.
 
-Respond with ONLY a JSON object:
+**Only update context when:**
+- A **significant milestone** is reached (feature shipped, decision made, project completed)
+- The user shares **new personal information** worth remembering
+- A **fact needs correction** (e.g., wrong name, outdated info)
 
-```json
-{
-  "update_title": null,
-  "context_actions": [],
-  "reasoning": "Brief explanation"
-}
-```
+**Do NOT update context for:**
+- Routine development work (implementing features, fixing bugs, refactoring)
+- Work in progress that hasn't concluded
+- Information already captured in previous entries
+- Minor implementation details
 
-### Context Actions
+### Types of Updates
 
-Each action in `context_actions` is an object with `action` and relevant fields:
+**1. Update Facts** - Use sparingly to correct or add important user facts
+- Correct wrong information (e.g., name misspelling)
+- Add significant new preferences or attributes
 
-**Update facts (replaces the Facts section):**
-```json
-{"action": "update_facts", "file": "parachute.md", "facts": ["Fact 1", "Fact 2"]}
-```
+**2. Update Current Focus** - Use when major focus shifts
+- Starting a new major project
+- Completing/abandoning a previous focus
 
-**Update current focus:**
-```json
-{"action": "update_focus", "file": "general-context.md", "focus": ["Working on X", "Planning Y"]}
-```
+**3. Append to History** - Use for significant milestones only
+- Major feature completions
+- Important decisions
+- Project launches or completions
+- NOT for incremental progress updates
 
-**Append to history:**
-```json
-{"action": "append_history", "file": "parachute.md", "entry": "- Completed feature X"}
-```
+**Key principle**: If you already logged something similar recently, don't log it again. One entry per milestone is enough.
 
-**Create new context file:**
-```json
-{"action": "create_file", "file": "new-project.md", "name": "New Project", "description": "Brief description", "facts": ["Initial fact"]}
-```
+## Context Chain & File Routing
+
+The session has a context chain of AGENTS.md files from the vault root down to the specific project.
+Use `mcp__curator__list_context_files` to see available files, then route updates to the MOST SPECIFIC file:
+
+**Hierarchy example for Projects/parachute:**
+- `AGENTS.md` (root) - Personal info spanning all projects
+- `Projects/AGENTS.md` (parent) - Overview of all projects
+- `Projects/parachute/AGENTS.md` (direct) - Parachute-specific context
+
+**Routing guidance:**
+- User facts, preferences, identity → Root `AGENTS.md`
+- Project milestones, decisions → Most specific project AGENTS.md
+- Cross-project info → Parent-level AGENTS.md
+
+**Legacy support:**
+- Files in `Chat/contexts/` (e.g., `general-context.md`) still work with just the filename
+
+## How to Respond
+
+1. **If no updates needed (MOST COMMON)**: Just say "No updates needed" and briefly explain why
+2. **If title needs updating**: Use `mcp__curator__update_title` with the new title
+3. **If context needs updating**: Use `mcp__curator__update_context` with file_name and content
 
 ### Examples
 
-No updates needed:
-```json
-{
-  "update_title": null,
-  "context_actions": [],
-  "reasoning": "Title accurate, no new persistent info"
-}
-```
+**No updates needed:**
+"No updates needed - title is accurate and this is routine development work, not a milestone."
 
-Update a fact in existing file:
-```json
-{
-  "update_title": null,
-  "context_actions": [
-    {"action": "update_facts", "file": "general-context.md", "facts": ["Prefers TypeScript over JavaScript", "Uses neovim as primary editor"]}
-  ],
-  "reasoning": "User mentioned switching from vim to neovim"
-}
-```
+**Title needs updating (RARE):**
+Use `mcp__curator__update_title` with new_title="LVB: Course content planning"
+(because conversation shifted from Parachute to LVB project)
 
-Record milestone in project history:
-```json
-{
-  "update_title": "Parachute v1.0 Launch Planning",
-  "context_actions": [
-    {"action": "append_history", "file": "parachute.md", "entry": "- Decided to target January 2026 for v1.0 launch"}
-  ],
-  "reasoning": "Significant project decision made"
-}
-```
+**Significant milestone (RARE):**
+Use `mcp__curator__update_context` with file_name="parachute.md" and content="- Shipped v1.0 to App Store"
+(because a major milestone was reached)
 
-Remember: Respond with ONLY the JSON object. Be efficient - this runs in the background.
+## Remember
+
+- You have MEMORY of your past actions - check what you've already done before acting
+- Be efficient - this runs in the background after every message
+- **Most digests require NO action** - only use tools when truly necessary
+- When no action is needed, just respond with a brief explanation
 """

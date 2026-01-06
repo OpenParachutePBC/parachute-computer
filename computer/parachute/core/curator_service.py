@@ -1,15 +1,17 @@
 """
 Session Curator Service.
 
-Background agent system that maintains session titles and updates context files
-based on conversation content. Each chat session gets a companion curator
-session that runs after messages complete.
+A long-running parallel agent that maintains session titles and updates context
+files based on conversation content. Each chat session gets a companion curator
+that watches the conversation as it evolves and has full memory of its actions.
 
 Key design decisions:
+- Curator is a LONG-RUNNING parallel agent with session continuity
+- Uses real tool access (update_title, update_context) instead of JSON parsing
+- Gets message digests: user prompt, tool list (no full I/O), final response
 - One curator task runs at a time (queue-based) to avoid context file conflicts
-- Curators use Haiku for speed and cost efficiency
-- Curator sessions persist, maintaining memory of past updates
-- Auto-apply changes by default
+- Uses configurable model (curator_model setting, defaults to account default)
+- Auto-applies changes with conservative guidelines
 - Users can peek at curator activity via API
 """
 
@@ -422,41 +424,82 @@ class CuratorService:
         messages: list[dict],
         context_files: list[str],
     ) -> str:
-        """Build the context string to send to the curator agent."""
+        """
+        Build a message digest for the curator agent.
+
+        Format:
+        - User's prompt (full text)
+        - Tool calls (just names, no full I/O)
+        - Final assistant response
+
+        This gives the curator enough context without overwhelming it.
+        """
         parts = []
 
-        # Session info
-        parts.append(f"## Session to Curate")
-        parts.append(f"Session ID: {parent_session.id}")
+        # Session info (only on first run for this session)
+        parts.append(f"## Message Digest for Session: {parent_session.id}")
         parts.append(f"Current Title: {parent_session.title or '(untitled)'}")
-        parts.append(f"Message Count: {parent_session.message_count}")
         parts.append("")
 
-        # Context files being tracked
-        if context_files:
-            parts.append(f"## Context Files")
-            parts.append(f"Files to potentially update: {', '.join(context_files)}")
-            parts.append("")
-
-        # Recent messages
-        parts.append("## Recent Conversation")
+        # Process messages to extract digest format
         for msg in messages:
             role = msg.get("role", "unknown")
             content = msg.get("content", "")
-            if isinstance(content, list):
-                # Handle structured content
-                text_parts = [
-                    c.get("text", "") for c in content
-                    if isinstance(c, dict) and c.get("type") == "text"
-                ]
-                content = "\n".join(text_parts)
-            # Truncate very long messages
-            if len(content) > 2000:
-                content = content[:2000] + "...(truncated)"
-            parts.append(f"**{role.title()}**: {content}")
-            parts.append("")
+
+            if role == "user":
+                # Include full user prompt
+                user_text = self._extract_text_content(content)
+                if user_text:
+                    parts.append(f"### User Message")
+                    parts.append(user_text[:3000] if len(user_text) > 3000 else user_text)
+                    parts.append("")
+
+            elif role == "assistant":
+                # For assistant, extract tool calls (names only) and final text
+                tool_calls = self._extract_tool_names(content)
+                final_text = self._extract_text_content(content)
+
+                if tool_calls:
+                    parts.append(f"### Tools Used")
+                    parts.append(", ".join(tool_calls))
+                    parts.append("")
+
+                if final_text:
+                    parts.append(f"### Assistant Response")
+                    # Truncate long responses
+                    if len(final_text) > 2000:
+                        final_text = final_text[:2000] + "...(truncated)"
+                    parts.append(final_text)
+                    parts.append("")
 
         return "\n".join(parts)
+
+    def _extract_text_content(self, content: Any) -> str:
+        """Extract text from message content (handles string or list format)."""
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            text_parts = []
+            for c in content:
+                if isinstance(c, dict):
+                    if c.get("type") == "text":
+                        text_parts.append(c.get("text", ""))
+            return "\n".join(text_parts)
+        return ""
+
+    def _extract_tool_names(self, content: Any) -> list[str]:
+        """Extract tool names from assistant message content."""
+        tool_names = []
+        if isinstance(content, list):
+            for c in content:
+                if isinstance(c, dict):
+                    # Handle tool_use blocks
+                    if c.get("type") == "tool_use":
+                        tool_names.append(c.get("name", "unknown_tool"))
+                    # Handle tool calls in different formats
+                    elif c.get("type") == "tool_call":
+                        tool_names.append(c.get("name", "unknown_tool"))
+        return tool_names
 
     async def _invoke_curator_agent(
         self,
@@ -486,9 +529,24 @@ class CuratorService:
         # Determine what kind of curation is needed
         is_untitled = not parent_session.title or parent_session.title == "(untitled)"
 
-        # Only use simple title generation for truly untitled sessions
-        # Once a session has a title (even from the first message), use conservative evaluation
-        use_simple_title_gen = is_untitled
+        # Detect placeholder titles (auto-generated from first message)
+        # These end with "..." and are just truncated user messages
+        is_placeholder_title = (
+            parent_session.title and
+            parent_session.title.endswith("...") and
+            len(parent_session.title) <= 65  # max_length + "..."
+        )
+
+        # Use simple title generation for untitled OR placeholder-titled sessions
+        # Once a session has a proper title (not placeholder), use conservative evaluation
+        use_simple_title_gen = is_untitled or is_placeholder_title
+
+        logger.info(
+            f"Curator decision for {parent_session.id}: "
+            f"is_untitled={is_untitled}, is_placeholder={is_placeholder_title}, "
+            f"use_simple_title_gen={use_simple_title_gen}, "
+            f"current_title='{parent_session.title[:50] if parent_session.title else None}...'"
+        )
 
         try:
             from claude_code_sdk import query as sdk_query, ClaudeCodeOptions
@@ -570,82 +628,134 @@ class CuratorService:
         result: dict[str, Any],
     ) -> dict[str, Any]:
         """
-        Run full curator evaluation for title and context updates.
+        Run full curator evaluation as a long-running parallel agent.
 
-        The curator responds with a JSON object specifying what updates to make,
-        and we execute those updates directly.
+        The curator:
+        - Resumes its SDK session for continuity (memory of past actions)
+        - Has real tool access via external MCP server (update_title, update_context, etc.)
+        - Receives message digests, not raw conversation data
+
+        Note: We use an external MCP server subprocess rather than in-process SDK MCP
+        because the SDK's in-process MCP has transport issues during cleanup.
         """
         from claude_code_sdk import query as sdk_query, ClaudeCodeOptions
         from parachute.core.curator_tools import CURATOR_SYSTEM_PROMPT
-        from parachute.core.context_parser import ContextParser
+        from parachute.config import get_settings
+        import sys
 
-        # Build a richer prompt with current state and context file info
-        current_title = parent_session.title or "(untitled)"
+        settings = get_settings()
 
-        # Get summary of all available context files
-        parser = ContextParser(self.vault_path)
-        context_summary = parser.get_context_summary()
+        # Build the prompt with message digest
+        prompt = f"""New message exchange completed. Here's the digest:
 
-        # Get details of loaded context files (facts, etc.)
-        loaded_files_detail = ""
-        if curator_session.context_files:
-            loaded_details = []
-            for file_path_str in curator_session.context_files:
-                # Extract just the filename
-                file_name = file_path_str.split("/")[-1] if "/" in file_path_str else file_path_str
-                file_path = self.vault_path / "Chat" / "contexts" / file_name
-                if file_path.exists():
-                    ctx = parser.parse_file(file_path)
-                    if ctx.facts:
-                        facts_str = "\n".join(f"  - {f}" for f in ctx.facts[:5])
-                        loaded_details.append(f"**{ctx.name}** facts:\n{facts_str}")
-            if loaded_details:
-                loaded_files_detail = "\n".join(loaded_details)
-
-        prompt = f"""## Current State
-- **Current Title**: {current_title}
-- **Message Count**: {parent_session.message_count}
-
-## {context_summary}
-
-{f"## Loaded Context Details (subset)\n{loaded_files_detail}" if loaded_files_detail else ""}
-
-## Recent Conversation
 {context}
 
 ## Your Task
-Evaluate whether the title or context files need updating based on the conversation above.
+Evaluate if any updates are needed:
+1. Use `list_context_files` to see available context files
+2. Use `update_title` if the title needs changing (be very conservative!)
+3. Use `update_context` to log significant milestones (be conservative!)
 
-Guidelines:
-- Be conservative with title changes (only if direction meaningfully shifted)
-- Route context updates to the most specific file
-- Use `update_facts` to modify existing facts, `append_history` for events
-- Create new files only for significant new projects/topics
+Remember:
+- Be very conservative with title changes (only if project prefix is wrong or title is misleading)
+- Only log significant milestones to context, not routine work
+- Check your memory of past actions - don't duplicate entries
+- Most message digests require NO action
 
-Respond with ONLY a JSON object as specified in your instructions.
+If no updates are needed, just say "No updates needed" and explain briefly why.
 """
 
-        logger.info(f"Running full curator evaluation for session {parent_session.id}")
+        logger.info(f"Running curator agent for session {parent_session.id} (resume: {curator_session.sdk_session_id})")
 
-        options = ClaudeCodeOptions(
-            system_prompt=CURATOR_SYSTEM_PROMPT,
-            max_turns=1,  # Single turn - just get the JSON response
-            allowed_tools=[],  # No tools needed - we execute based on JSON
-        )
+        # Configure the external curator MCP server
+        # Find python executable in venv
+        base_dir = Path(__file__).parent.parent.parent
+        venv_python = base_dir / "venv" / "bin" / "python"
+        python_path = str(venv_python) if venv_python.exists() else sys.executable
+
+        # Build context folders string for curator
+        # context_files in CuratorSession can now be folder paths (e.g., "Projects/parachute")
+        context_folders_str = ",".join(curator_session.context_files) if curator_session.context_files else ""
+
+        curator_mcp_config = {
+            "command": python_path,
+            "args": ["-m", "parachute.curator_mcp_server"],
+            "env": {
+                "PARACHUTE_VAULT_PATH": str(self.vault_path),
+                "CURATOR_SESSION_ID": parent_session.id,
+                "CURATOR_CONTEXT_FOLDERS": context_folders_str,
+                "PYTHONPATH": str(base_dir),
+            },
+        }
+
+        # Build options with session resumption and MCP tool access
+        options_kwargs = {
+            "system_prompt": CURATOR_SYSTEM_PROMPT,
+            "max_turns": 5,  # Allow multiple turns for tool use
+            "mcp_servers": {"curator": curator_mcp_config},
+            "permission_mode": "bypassPermissions",
+        }
+
+        # Resume existing curator session if available (for memory continuity)
+        if curator_session.sdk_session_id:
+            options_kwargs["resume"] = curator_session.sdk_session_id
+
+        # Use curator model if configured
+        if settings.curator_model:
+            options_kwargs["model"] = settings.curator_model
+
+        options = ClaudeCodeOptions(**options_kwargs)
 
         response_text = ""
-        async for event in sdk_query(prompt=prompt, options=options):
-            if hasattr(event, "content"):
-                for block in event.content:
-                    if hasattr(block, "text"):
-                        response_text += block.text
-            if hasattr(event, "session_id") and event.session_id:
-                result["sdk_session_id"] = event.session_id
+        new_session_id = None
+        tool_calls_made = []
 
-        # Parse the JSON response and execute actions
-        result = await self._execute_curator_actions(
-            response_text, parent_session, curator_session, result
-        )
+        try:
+            async for event in sdk_query(prompt=prompt, options=options):
+                # Track the session ID for future resumption
+                if hasattr(event, "session_id") and event.session_id:
+                    new_session_id = event.session_id
+
+                # Process content blocks
+                if hasattr(event, "content"):
+                    for block in event.content:
+                        # Track text responses
+                        if hasattr(block, "text"):
+                            response_text += block.text
+
+                        # Track tool usage
+                        if hasattr(block, "name"):
+                            tool_name = block.name
+                            tool_calls_made.append(tool_name)
+                            logger.info(f"Curator tool call: {tool_name}")
+
+                            # Track specific tool results
+                            if "update_title" in tool_name:
+                                result["title_updated"] = True
+                                if hasattr(block, "input"):
+                                    new_title = block.input.get("new_title", "")
+                                    result["actions"].append(f"Updated title to: {new_title}")
+                                    result["new_title"] = new_title
+                            elif "update_context" in tool_name:
+                                result["context_updated"] = True
+                                if hasattr(block, "input"):
+                                    file_name = block.input.get("file_name", "")
+                                    result["actions"].append(f"Updated context: {file_name}")
+
+            # Update session ID for continuity
+            if new_session_id:
+                result["sdk_session_id"] = new_session_id
+
+            # Log results
+            result["tool_calls"] = tool_calls_made
+            if tool_calls_made:
+                logger.info(f"Curator made {len(tool_calls_made)} tool calls: {tool_calls_made}")
+            else:
+                logger.info(f"Curator response (no tool calls): {response_text[:200]}...")
+
+        except Exception as e:
+            logger.error(f"Curator agent error: {e}", exc_info=True)
+            result["error"] = str(e)
 
         return result
 

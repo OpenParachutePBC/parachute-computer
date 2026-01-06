@@ -22,6 +22,7 @@ from parachute.core.session_manager import SessionManager
 from parachute.db.database import Database
 from parachute.lib.agent_loader import build_system_prompt, load_agent, load_all_agents
 from parachute.lib.context_loader import format_context_for_prompt, load_agent_context
+from parachute.core.context_folders import ContextFolderService
 from parachute.lib.mcp_loader import load_mcp_servers, resolve_mcp_servers
 from parachute.models.agent import AgentDefinition, AgentType, create_vault_agent
 from parachute.models.events import (
@@ -359,6 +360,7 @@ class Orchestrator:
         permission_denials: list[dict[str, Any]] = []
         captured_session_id: Optional[str] = None
         captured_model: Optional[str] = None
+        session_finalized = False  # Track if session has been saved to DB
 
         try:
             # Load MCP servers with OAuth tokens attached for HTTP servers
@@ -419,12 +421,22 @@ class Orchestrator:
                 event_type = event.get("type")
                 logger.debug(f"SDK Event: type={event_type} keys={list(event.keys())}")
 
-                # Capture session ID
+                # Capture session ID and immediately save to database
                 if event.get("session_id"):
                     captured_session_id = event["session_id"]
                     if stream_session_id is None:
                         stream_session_id = captured_session_id
                         self.active_streams[stream_session_id] = interrupt
+
+                    # Immediately finalize new sessions so they appear in the chat list
+                    # even if the user navigates away before the response completes
+                    if is_new and not session_finalized and captured_session_id:
+                        title = generate_title_from_message(message) if message.strip() else None
+                        session = await self.session_manager.finalize_session(
+                            session, captured_session_id, captured_model, title=title
+                        )
+                        session_finalized = True
+                        logger.info(f"Early finalized session: {captured_session_id[:8]}...")
 
                 # Handle different event types
                 if event_type == "system" and event.get("subtype") == "init":
@@ -503,13 +515,14 @@ class Orchestrator:
                     if event.get("session_id"):
                         captured_session_id = event["session_id"]
 
-            # Finalize session
-            if is_new and captured_session_id:
+            # Finalize session (if not already done early)
+            if is_new and captured_session_id and not session_finalized:
                 # Generate title from the user's first message
                 title = generate_title_from_message(message) if message.strip() else None
                 session = await self.session_manager.finalize_session(
                     session, captured_session_id, captured_model, title=title
                 )
+                session_finalized = True
                 logger.info(f"Finalized session: {captured_session_id[:8]}...")
 
             # Update message count
@@ -715,30 +728,71 @@ class Orchestrator:
                     prompt += f"- {a.path}: {a.description or a.name}\n"
                     metadata["available_agents"].append(a.name)
 
-        # Load context files
-        # Note: contexts=[] means "no contexts" (explicit choice), contexts=None means "use default"
+        # Load context using folder-based system
+        #
+        # New system: contexts are folder paths (e.g., "Projects/parachute")
+        # that contain AGENTS.md files. Parent chain is auto-included.
+        #
+        # Backwards compatibility: file paths (e.g., "Chat/contexts/general.md")
+        # are still supported via the old loader.
+        #
+        # Default: Always include root AGENTS.md (vault context)
+
+        context_folder_service = ContextFolderService(self.vault_path)
+
+        # Determine what contexts to load
         if contexts is not None:
-            context_paths = contexts  # Use what was provided, even if empty
+            context_input = contexts  # Use what was provided, even if empty
         elif agent.context and agent.context.include:
-            context_paths = agent.context.include  # Use agent's configured contexts
+            context_input = agent.context.include  # Use agent's configured contexts
         else:
-            context_paths = ["Chat/contexts/general-context.md"]  # Default fallback
+            context_input = []  # Start empty, we'll add root by default
 
-        logger.info(f"Context paths to load: {context_paths}")
+        # Separate folder paths from file paths
+        folder_paths: list[str] = []
+        file_paths: list[str] = []
 
-        context_result: dict[str, Any] = {}
-        try:
-            context_result = await load_agent_context(
-                {"include": context_paths, "max_tokens": 50000},
-                self.vault_path,
-            )
-            if context_result.get("content"):
-                prompt += format_context_for_prompt(context_result)
-                metadata["context_files"] = context_result.get("files", [])
-                metadata["context_tokens"] = context_result.get("totalTokens", 0)
-                metadata["context_truncated"] = context_result.get("truncated", False)
-        except Exception as e:
-            logger.warning(f"Failed to load context: {e}")
+        for ctx in context_input:
+            if ctx.endswith(".md"):
+                file_paths.append(ctx)
+            else:
+                folder_paths.append(ctx)
+
+        # Always include root context (empty string = vault root)
+        # unless explicitly providing contexts (then respect that choice)
+        if not context_input and contexts is None:
+            folder_paths = [""]  # Root AGENTS.md only as default
+
+        logger.info(f"Context folders: {folder_paths}, files: {file_paths}")
+
+        # Load folder-based context (AGENTS.md hierarchy)
+        if folder_paths:
+            try:
+                chain = context_folder_service.build_chain(folder_paths, max_tokens=40000)
+                if chain.files:
+                    folder_context = context_folder_service.format_chain_for_prompt(chain)
+                    prompt += f"\n\n{folder_context}"
+                    metadata["context_files"].extend(chain.file_paths)
+                    metadata["context_tokens"] += chain.total_tokens
+                    metadata["context_truncated"] = metadata["context_truncated"] or chain.truncated
+                    logger.info(f"Loaded {len(chain.files)} context files from folders ({chain.total_tokens} tokens)")
+            except Exception as e:
+                logger.warning(f"Failed to load folder context: {e}")
+
+        # Load legacy file-based context (backwards compatibility)
+        if file_paths:
+            try:
+                context_result = await load_agent_context(
+                    {"include": file_paths, "max_tokens": 10000},  # Lower limit for legacy
+                    self.vault_path,
+                )
+                if context_result.get("content"):
+                    prompt += format_context_for_prompt(context_result)
+                    metadata["context_files"].extend(context_result.get("files", []))
+                    metadata["context_tokens"] += context_result.get("totalTokens", 0)
+                    metadata["context_truncated"] = metadata["context_truncated"] or context_result.get("truncated", False)
+            except Exception as e:
+                logger.warning(f"Failed to load file context: {e}")
 
         # Check for working directory CLAUDE.md
         if working_directory:
@@ -767,8 +821,15 @@ class Orchestrator:
                 except Exception as e:
                     logger.warning(f"Failed to read working directory CLAUDE.md: {e}")
 
-        # Add vault location
+        # Add vault location and context info
         prompt += f"\n\n---\n\n## Environment\n\nVault location: {self.vault_path}"
+
+        # Add context folders info
+        if folder_paths:
+            context_info = context_folder_service.format_context_folders_section(folder_paths)
+            if context_info:
+                prompt += f"\n\n{context_info}"
+
         if working_directory:
             prompt += f"\n\nWorking directory: {working_directory}"
 

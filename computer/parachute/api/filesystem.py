@@ -44,6 +44,7 @@ async def list_directory(
     - isDirectory: Whether it's a directory
     - size: File size in bytes
     - lastModified: ISO timestamp
+    - hasAgentsMd: (directories only) Whether AGENTS.md exists
     - hasClaudeMd: (directories only) Whether CLAUDE.md exists
     """
     vault_path = get_vault_path(request)
@@ -84,14 +85,16 @@ async def list_directory(
                 "isFile": item.is_file(),
                 "isSymlink": is_symlink,
                 "symlinkTarget": str(os.readlink(item)) if is_symlink else None,
+                "hasAgentsMd": False,
                 "hasClaudeMd": False,
                 "isGitRepo": False,
                 "size": stat.st_size if item.is_file() else None,
                 "lastModified": datetime.fromtimestamp(stat.st_mtime).isoformat() + "Z",
             }
 
-            # For directories, check if they have CLAUDE.md or .git
+            # For directories, check if they have AGENTS.md, CLAUDE.md, or .git
             if item.is_dir():
+                entry["hasAgentsMd"] = (item / "AGENTS.md").exists()
                 entry["hasClaudeMd"] = (item / "CLAUDE.md").exists()
                 entry["isGitRepo"] = (item / ".git").exists()
 
