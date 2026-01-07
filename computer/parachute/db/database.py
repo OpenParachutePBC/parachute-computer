@@ -145,15 +145,30 @@ CREATE TABLE IF NOT EXISTS session_contexts (
 CREATE INDEX IF NOT EXISTS idx_session_contexts_session ON session_contexts(session_id);
 CREATE INDEX IF NOT EXISTS idx_session_contexts_folder ON session_contexts(folder_path);
 
+-- Context watches (AGENTS.md files declaring what they watch)
+-- Used for bubbling: when a file is updated, find who watches it
+CREATE TABLE IF NOT EXISTS context_watches (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    watcher_path TEXT NOT NULL,       -- Path to AGENTS.md (e.g., "AGENTS.md", "Projects/parachute/AGENTS.md")
+    watch_pattern TEXT NOT NULL,      -- Glob pattern being watched (e.g., "Projects/*", "../")
+    resolved_paths TEXT,              -- JSON array of resolved absolute paths (cached)
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(watcher_path, watch_pattern)
+);
+
+CREATE INDEX IF NOT EXISTS idx_context_watches_watcher ON context_watches(watcher_path);
+CREATE INDEX IF NOT EXISTS idx_context_watches_pattern ON context_watches(watch_pattern);
+
 -- Schema version tracking
 CREATE TABLE IF NOT EXISTS schema_version (
     version INTEGER PRIMARY KEY,
     applied_at TEXT NOT NULL
 );
 
--- Insert schema version 5 (session context folders)
+-- Insert schema version 6 (context watches)
 INSERT OR IGNORE INTO schema_version (version, applied_at)
-VALUES (5, datetime('now'));
+VALUES (6, datetime('now'));
 """
 
 
@@ -525,6 +540,94 @@ class Database:
         ) as cursor:
             rows = await cursor.fetchall()
             return [self._row_to_session(row) for row in rows]
+
+    # =========================================================================
+    # Context Watches
+    # =========================================================================
+
+    async def set_watches_for_context(
+        self, watcher_path: str, watch_patterns: list[str]
+    ) -> None:
+        """
+        Set the watch patterns for a context file (replaces existing).
+
+        Args:
+            watcher_path: Path to the AGENTS.md file (relative to vault)
+            watch_patterns: List of glob patterns this file watches
+        """
+        now = datetime.now(timezone.utc).isoformat()
+
+        # Delete existing watches for this watcher
+        await self.connection.execute(
+            "DELETE FROM context_watches WHERE watcher_path = ?",
+            (watcher_path,),
+        )
+
+        # Insert new watches
+        for pattern in watch_patterns:
+            await self.connection.execute(
+                """
+                INSERT INTO context_watches (watcher_path, watch_pattern, created_at, updated_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (watcher_path, pattern, now, now),
+            )
+
+        await self.connection.commit()
+
+    async def get_watches_for_context(self, watcher_path: str) -> list[str]:
+        """Get all watch patterns for a context file."""
+        async with self.connection.execute(
+            "SELECT watch_pattern FROM context_watches WHERE watcher_path = ? ORDER BY watch_pattern",
+            (watcher_path,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [row["watch_pattern"] for row in rows]
+
+    async def get_watchers_for_path(self, context_path: str) -> list[str]:
+        """
+        Get all context files that watch a given path.
+
+        This is the key query for bubbling: when a file is updated,
+        find all files that declared they watch it.
+
+        Args:
+            context_path: The path that was updated (e.g., "Projects/parachute/AGENTS.md")
+
+        Returns:
+            List of watcher paths that watch this path
+        """
+        # We need to match against patterns. For simple patterns:
+        # - Exact match: "Projects/parachute"
+        # - Wildcard: "Projects/*" matches "Projects/parachute"
+        # - Parent: "../" from "Projects/parachute" matches "Projects"
+
+        # For now, we'll do a simple LIKE match for patterns with *
+        # More sophisticated matching should happen in Python
+        async with self.connection.execute(
+            """
+            SELECT DISTINCT watcher_path FROM context_watches
+            WHERE watch_pattern = ?
+               OR (watch_pattern LIKE '%*%' AND ? LIKE REPLACE(REPLACE(watch_pattern, '*', '%'), '**', '%'))
+            """,
+            (context_path, context_path),
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [row["watcher_path"] for row in rows]
+
+    async def get_all_watches(self) -> list[dict[str, Any]]:
+        """Get all watch entries (for debugging/admin)."""
+        async with self.connection.execute(
+            "SELECT * FROM context_watches ORDER BY watcher_path, watch_pattern"
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    async def clear_all_watches(self) -> int:
+        """Clear all watches (for re-scanning)."""
+        cursor = await self.connection.execute("DELETE FROM context_watches")
+        await self.connection.commit()
+        return cursor.rowcount
 
     # =========================================================================
     # Chunks (RAG Index)

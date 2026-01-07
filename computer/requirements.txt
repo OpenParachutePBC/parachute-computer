@@ -12,3 +12,4 @@ python-frontmatter>=1.1.0
 sse-starlette>=2.0.0
 claude-code-sdk>=0.0.20
 watchfiles>=0.21.0
+watchdog>=4.0.0

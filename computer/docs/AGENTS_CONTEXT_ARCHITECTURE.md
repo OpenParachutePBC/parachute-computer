@@ -2,12 +2,12 @@
 
 ## Overview
 
-This document describes the new context system for Parachute, where context is tied to **folders with AGENTS.md files** rather than flat context files. This enables:
+This document describes the context system for Parachute, where context is tied to **folders with AGENTS.md files** rather than flat context files. This enables:
 
-1. **Hierarchical context** - Parent folders provide broader context
+1. **Explicit relationships** - Files declare what they watch via frontmatter
 2. **Curator-tended context** - The curator agent maintains context files in real-time
 3. **Project-based organization** - Context lives with the project/area it describes
-4. **Flexible structure** - Users organize however they want (PARA, custom, etc.)
+4. **Bubbling updates** - When a file changes, watchers are notified
 
 ## Core Concepts
 
@@ -20,25 +20,30 @@ Selected: Projects/parachute
 Loads:    Projects/parachute/AGENTS.md (or CLAUDE.md)
 ```
 
-### Parent Chain Inclusion
+### Watch Declarations (No Automatic Parent Chain)
 
-When a folder is selected, we automatically include all parent AGENTS.md files up to the vault root:
+Context files declare what they watch using frontmatter. **There is no automatic parent chain** - relationships must be explicit:
 
+```yaml
+---
+watch:
+  - "Projects/*"     # Watch all project AGENTS.md files
+  - "../"            # Explicitly watch parent folder
+---
+
+# Root Context
+
+This is the vault root context...
 ```
-Selected folder: Projects/parachute
 
-Context chain loaded (bottom-up):
-1. ~/Parachute/AGENTS.md                    # Root context (always included)
-2. ~/Parachute/Projects/AGENTS.md           # Projects overview
-3. ~/Parachute/Projects/parachute/AGENTS.md # Parachute-specific
-
-Optional deeper nesting:
-4. ~/Parachute/Projects/parachute/chat/AGENTS.md  # Sub-project
-```
+This design means:
+- Selecting `Projects/parachute` ONLY loads that folder's AGENTS.md
+- To include parent context, the parent must be explicitly selected OR the child must watch it
+- The root AGENTS.md can watch all projects with `watch: ["Projects/*"]`
 
 ### File Discovery Priority
 
-For each folder in the chain, we look for:
+For each folder, we look for:
 1. `AGENTS.md` (preferred - Parachute convention)
 2. `CLAUDE.md` (fallback - Claude Code convention)
 
@@ -46,18 +51,37 @@ If neither exists, that level is skipped (no error).
 
 ### Multiple Context Folders
 
-A session can have multiple context folders selected. Each gets its full parent chain:
+A session can have multiple context folders selected:
 
 ```
 Selected: Projects/parachute, Areas/taiji
 
-Full context loaded:
-- ~/Parachute/AGENTS.md (shared root)
-- ~/Parachute/Projects/AGENTS.md
+Context loaded (only directly selected):
 - ~/Parachute/Projects/parachute/AGENTS.md
-- ~/Parachute/Areas/AGENTS.md
 - ~/Parachute/Areas/taiji/AGENTS.md
+
+NOT automatically included (unless selected):
+- ~/Parachute/AGENTS.md
+- ~/Parachute/Projects/AGENTS.md
 ```
+
+### Bubbling System
+
+When an AGENTS.md file is updated (by curator or direct edit), the system finds all files that **watch** it and queues curator tasks to review if they need updates.
+
+```
+Example: Projects/parachute/AGENTS.md updated
+
+1. Check context_watches table for watchers
+2. Find: AGENTS.md watches "Projects/*" → match!
+3. Queue curator task for AGENTS.md to review the change
+4. Curator decides if root context needs updating based on child change
+```
+
+This enables:
+- Root context staying aware of project changes
+- Cross-project awareness (if projects watch each other)
+- Automated context propagation without manual updates
 
 ## Curator Responsibilities
 
@@ -89,7 +113,9 @@ mcp__curator__update_context(
 
 ## Database Schema
 
-### New Table: session_contexts
+### Table: session_contexts
+
+Tracks which context folders are selected for each session.
 
 ```sql
 CREATE TABLE IF NOT EXISTS session_contexts (
@@ -102,6 +128,31 @@ CREATE TABLE IF NOT EXISTS session_contexts (
 CREATE INDEX IF NOT EXISTS idx_session_contexts_session ON session_contexts(session_id);
 CREATE INDEX IF NOT EXISTS idx_session_contexts_folder ON session_contexts(folder_path);
 ```
+
+### Table: context_watches
+
+Tracks watch declarations from AGENTS.md frontmatter. Used for bubbling.
+
+```sql
+CREATE TABLE IF NOT EXISTS context_watches (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    watcher_path TEXT NOT NULL,       -- Path to AGENTS.md (e.g., "AGENTS.md", "Projects/parachute/AGENTS.md")
+    watch_pattern TEXT NOT NULL,      -- Glob pattern being watched (e.g., "Projects/*", "../")
+    resolved_paths TEXT,              -- JSON array of resolved paths (cached)
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(watcher_path, watch_pattern)
+);
+
+CREATE INDEX IF NOT EXISTS idx_context_watches_watcher ON context_watches(watcher_path);
+CREATE INDEX IF NOT EXISTS idx_context_watches_pattern ON context_watches(watch_pattern);
+```
+
+### How Watches Work
+
+1. **On server startup**: Scan all AGENTS.md files, parse frontmatter, populate `context_watches`
+2. **On file change**: Re-scan that file's frontmatter, update its watches
+3. **On context update**: Query "who watches this path?", queue curator tasks for watchers
 
 ### Migration from Old System
 

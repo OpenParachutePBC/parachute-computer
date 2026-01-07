@@ -29,6 +29,82 @@ from parachute.models.session import SessionUpdate
 logger = logging.getLogger(__name__)
 
 
+async def _trigger_bubble_for_path(
+    db: Database,
+    vault_path: Path,
+    updated_path: str,
+    source_session_id: str,
+) -> list[str]:
+    """
+    Trigger bubbling for a context file update.
+
+    When a context file (AGENTS.md) is updated, find all files that watch it
+    and queue curator tasks for them.
+
+    Args:
+        db: Database instance
+        vault_path: Path to the vault
+        updated_path: The file that was updated (e.g., "Projects/parachute/AGENTS.md")
+        source_session_id: The session that triggered this update
+
+    Returns:
+        List of watcher paths that were notified
+    """
+    try:
+        from parachute.core.context_watches import ContextWatchService
+
+        watch_service = ContextWatchService(vault_path, db)
+        watchers = await watch_service.find_watchers(updated_path)
+
+        if not watchers:
+            logger.debug(f"No watchers for {updated_path}")
+            return []
+
+        # Queue curator tasks for each watcher
+        notified: list[str] = []
+        for target in watchers:
+            logger.info(
+                f"Bubbling: {updated_path} -> {target.watcher_path} (pattern: {target.watch_pattern})"
+            )
+
+            # Queue a curator task for the watching file's context
+            # The curator will review if the watching file needs updates based on the change
+            try:
+                from parachute.core.curator_service import get_curator_service
+
+                curator_service = await get_curator_service()
+
+                # Extract folder from watcher path (remove /AGENTS.md)
+                if target.watcher_path.endswith("/AGENTS.md"):
+                    watcher_folder = target.watcher_path.rsplit("/", 1)[0]
+                elif target.watcher_path == "AGENTS.md":
+                    watcher_folder = ""
+                else:
+                    watcher_folder = target.watcher_path
+
+                # Queue a special "bubble" task type
+                await curator_service.queue_task(
+                    parent_session_id=source_session_id,
+                    trigger_type="bubble",
+                    context_files=[watcher_folder],
+                )
+                notified.append(target.watcher_path)
+
+            except RuntimeError:
+                # Curator service not initialized - skip bubbling
+                logger.debug("Curator service not available for bubbling")
+                break
+
+        if notified:
+            logger.info(f"Bubbled to {len(notified)} watchers: {notified}")
+
+        return notified
+
+    except Exception as e:
+        logger.warning(f"Error during bubbling for {updated_path}: {e}")
+        return []
+
+
 def create_curator_tools(
     db: Database,
     vault_path: Path,
@@ -182,6 +258,10 @@ def create_curator_tools(
                 f.write(formatted_addition)
 
             logger.info(f"Curator appended to context file: {file_path}")
+
+            # Trigger bubbling: notify files that watch this one
+            await _trigger_bubble_for_path(db, vault_path, file_path, parent_session_id)
+
             return {
                 "content": [{"type": "text", "text": f"Successfully added to {file_path}"}]
             }

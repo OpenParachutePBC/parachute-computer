@@ -129,11 +129,16 @@ class ContextFolderService:
         self,
         selected_folders: list[str],
         max_tokens: int = 50000,
+        include_parent_chain: bool = False,
     ) -> ContextChain:
         """
-        Build the full context chain for selected folders.
+        Build the context chain for selected folders.
 
-        This includes:
+        By default (include_parent_chain=False), this ONLY loads the directly
+        selected folders' AGENTS.md files. Files must explicitly declare what
+        they watch using frontmatter `watch:` declarations.
+
+        If include_parent_chain=True (legacy mode), includes:
         1. Root AGENTS.md (always, if exists)
         2. Parent folders' AGENTS.md for each selected folder
         3. The selected folders' AGENTS.md files
@@ -145,23 +150,28 @@ class ContextFolderService:
         total_chars = 0
         max_chars = max_tokens * CHARS_PER_TOKEN
 
-        # Collect all folder paths we need to check (with parents)
+        # Collect all folder paths we need to check
         all_folders: list[tuple[str, str]] = []  # (folder_path, level)
 
-        # Always include root
-        all_folders.append(("", "root"))
+        if include_parent_chain:
+            # Legacy mode: include root and parent chain
+            all_folders.append(("", "root"))
 
-        # For each selected folder, add it and all its parents
-        for folder_path in selected_folders:
-            if not folder_path:
-                continue
+            for folder_path in selected_folders:
+                if not folder_path:
+                    continue
 
-            # Add parent folders
-            parts = folder_path.split("/")
-            for i in range(len(parts)):
-                parent_path = "/".join(parts[:i+1])
-                level = "direct" if i == len(parts) - 1 else "parent"
-                all_folders.append((parent_path, level))
+                # Add parent folders
+                parts = folder_path.split("/")
+                for i in range(len(parts)):
+                    parent_path = "/".join(parts[:i+1])
+                    level = "direct" if i == len(parts) - 1 else "parent"
+                    all_folders.append((parent_path, level))
+        else:
+            # New mode: only load directly selected folders
+            for folder_path in selected_folders:
+                # Empty string means root folder
+                all_folders.append((folder_path, "direct"))
 
         # Deduplicate and sort by depth
         unique_folders: dict[str, str] = {}  # path -> level (prefer "direct" over "parent")
