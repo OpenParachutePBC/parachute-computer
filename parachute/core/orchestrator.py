@@ -40,6 +40,7 @@ from parachute.models.events import (
     ThinkingEvent,
     ToolResultEvent,
     ToolUseEvent,
+    UserMessageEvent,
 )
 from parachute.models.session import ResumeInfo, SessionSource
 
@@ -339,6 +340,12 @@ class Orchestrator:
                 attachment_text = "\n\n".join(attachment_parts)
                 actual_message = f"{actual_message}\n\n## Attachments\n\n{attachment_text}"
 
+        # Emit user message event immediately so clients can display it
+        # This ensures the user's message is visible even if they rejoin mid-stream
+        # (SDK doesn't write user messages to JSONL until response completes)
+        logger.info(f"Emitting user_message event: {message[:50]}...")
+        yield UserMessageEvent(content=message).model_dump(by_alias=True)
+
         # Handle recovery mode
         force_new = False
         if recovery_mode == "inject_context":
@@ -437,6 +444,14 @@ class Orchestrator:
                         )
                         session_finalized = True
                         logger.info(f"Early finalized session: {captured_session_id[:8]}...")
+
+                        # Yield a second session event now that we have the real ID
+                        # This allows the client to update its session list immediately
+                        yield SessionEvent(
+                            session_id=captured_session_id,
+                            working_directory=working_directory,
+                            resume_info=resume_info.model_dump(),
+                        ).model_dump(by_alias=True)
 
                 # Handle different event types
                 if event_type == "system" and event.get("subtype") == "init":

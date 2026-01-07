@@ -124,6 +124,20 @@ class ErrorEvent(BaseModel):
     model_config = {"populate_by_name": True}
 
 
+class UserMessageEvent(BaseModel):
+    """User message event - sent at start of stream so clients can display immediately.
+
+    This is emitted by the server before the SDK starts processing, ensuring
+    the user's message is visible even if the client rejoins mid-stream
+    (since the SDK doesn't write user messages to JSONL until response completes).
+    """
+
+    type: Literal["user_message"] = "user_message"
+    content: str = Field(description="The user's message text")
+
+    model_config = {"populate_by_name": True}
+
+
 class PromptMetadataEvent(BaseModel):
     """Prompt composition metadata - sent after session event for transparency."""
 
