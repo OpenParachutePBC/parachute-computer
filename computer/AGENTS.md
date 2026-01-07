@@ -247,3 +247,17 @@ To migrate:
 1. Stop the Node.js server
 2. Start the Python server
 3. Existing sessions will be created fresh (markdown sessions not migrated)
+
+---
+
+## GitHub Repository
+
+This is a standalone repository: [parachute-base](https://github.com/OpenParachutePBC/parachute-base)
+
+**Related repos:**
+- [parachute-chat](https://github.com/OpenParachutePBC/parachute-chat) - AI chat assistant (requires this server)
+- [parachute-daily](https://github.com/OpenParachutePBC/parachute-daily) - Voice journaling (standalone)
+
+---
+
+**Last Updated:** January 7, 2026

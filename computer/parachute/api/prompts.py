@@ -72,9 +72,17 @@ async def preview_prompt(
 
     try:
         # Parse contexts if provided
+        # Note: empty string "" means vault root, so we preserve it
         context_list = None
         if contexts:
-            context_list = [c.strip() for c in contexts.split(",") if c.strip()]
+            # Split and strip, but preserve empty strings (which mean root)
+            parts = contexts.split(",")
+            context_list = []
+            for c in parts:
+                stripped = c.strip()
+                # Keep empty string (root) or non-empty paths
+                if stripped or c == "":
+                    context_list.append(stripped)
 
         # Load or create agent
         if agent_path:
