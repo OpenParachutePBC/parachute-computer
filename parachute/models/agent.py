@@ -121,8 +121,10 @@ def create_vault_agent() -> AgentDefinition:
         tools=DEFAULT_VAULT_TOOLS,
         mcp_servers="all",
         context=AgentContext(
-            include=["Chat/contexts/general-context.md"],
-            max_tokens=10000,
+            # Use folder-based context system (AGENTS.md hierarchy)
+            # Empty string means vault root, which loads root AGENTS.md
+            include=[""],
+            max_tokens=50000,
         ),
         permissions=AgentPermissions(
             read=["*"],
