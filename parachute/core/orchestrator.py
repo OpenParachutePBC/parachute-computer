@@ -43,6 +43,7 @@ from parachute.models.events import (
     ToolResultEvent,
     ToolUseEvent,
     UserMessageEvent,
+    UserQuestionEvent,
 )
 from parachute.models.session import ResumeInfo, SessionSource
 
@@ -424,10 +425,23 @@ class Orchestrator:
                 """Track permission denials for reporting in done event."""
                 permission_denials.append(denial)
 
+            # Track pending user question for SSE events
+            pending_user_question: dict | None = None
+
+            def on_user_question(request) -> None:
+                """Handle AskUserQuestion - store for SSE event emission."""
+                nonlocal pending_user_question
+                pending_user_question = {
+                    "request_id": request.id,
+                    "questions": request.questions,
+                }
+                logger.info(f"User question pending: {request.id} with {len(request.questions)} questions")
+
             permission_handler = PermissionHandler(
                 session=session,
                 vault_path=str(self.vault_path),
                 on_denial=on_permission_denial,
+                on_user_question=on_user_question,
             )
 
             # Store handler for potential API grant/deny calls
@@ -453,9 +467,10 @@ class Orchestrator:
             trust_mode = session.permissions.trust_mode
             logger.debug(f"Session trust_mode={trust_mode}: {session.id}")
 
-            # TODO: Implement restricted mode with can_use_tool callback
-            # Currently always using bypassPermissions regardless of trust_mode
-            # Deny list enforcement would need to be added via SDK callback
+            # Note: can_use_tool callback requires AsyncIterable prompt (SDK limitation)
+            # For now, AskUserQuestion events are detected in the stream but not interactive
+            # The client receives user_question events and can display them to the user
+
             async for event in query_streaming(
                 prompt=actual_message,
                 system_prompt=effective_prompt,
@@ -548,6 +563,21 @@ class Orchestrator:
                             }
                             tool_calls.append(tool_call)
                             yield ToolUseEvent(tool=tool_call).model_dump(by_alias=True)
+
+                            # Special handling for AskUserQuestion - emit user_question event
+                            if block.get("name") == "AskUserQuestion":
+                                questions = block.get("input", {}).get("questions", [])
+                                if questions and captured_session_id:
+                                    # Generate request ID for answer submission
+                                    tool_use_id = block.get("id", "")
+                                    request_id = f"{captured_session_id}-q-{tool_use_id}"
+                                    yield UserQuestionEvent(
+                                        request_id=request_id,
+                                        session_id=captured_session_id,
+                                        questions=questions,
+                                    ).model_dump(by_alias=True)
+                                    logger.info(f"Emitted user_question event: {request_id}")
+
                             # Reset for next text block
                             current_text = ""
 

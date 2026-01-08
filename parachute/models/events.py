@@ -251,6 +251,17 @@ class PermissionDeniedEvent(BaseModel):
     model_config = {"populate_by_name": True}
 
 
+class UserQuestionEvent(BaseModel):
+    """User question event - Claude is asking the user a question (AskUserQuestion tool)."""
+
+    type: Literal["user_question"] = "user_question"
+    request_id: str = Field(alias="requestId")
+    session_id: str = Field(alias="sessionId")
+    questions: list[dict[str, Any]]
+
+    model_config = {"populate_by_name": True}
+
+
 # Union type for all SSE events
 SSEEvent = Union[
     SessionEvent,
@@ -266,5 +277,6 @@ SSEEvent = Union[
     SessionUnavailableEvent,
     ErrorEvent,
     PermissionRequestEvent,
+    UserQuestionEvent,
     PermissionDeniedEvent,
 ]
