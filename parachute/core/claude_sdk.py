@@ -136,6 +136,7 @@ async def query_streaming(
                 mcp_servers=mcp_servers,
                 plugin_dirs=plugin_dirs,
                 agents=agents,
+                permission_mode=permission_mode,
             ):
                 yield event
             return
@@ -172,6 +173,9 @@ async def query_streaming(
             resume=resume,
             tools=tools,
             mcp_servers=mcp_servers,
+            plugin_dirs=plugin_dirs,
+            agents=agents,
+            permission_mode=permission_mode,
         ):
             yield event
 
@@ -284,6 +288,7 @@ async def _query_subprocess(
     mcp_servers: Optional[dict[str, Any]] = None,
     plugin_dirs: Optional[list[Path]] = None,
     agents: Optional[dict[str, Any]] = None,
+    permission_mode: Optional[str] = None,
 ) -> AsyncGenerator[dict[str, Any], None]:
     """
     Fallback: Run Claude via CLI subprocess.
@@ -315,6 +320,10 @@ async def _query_subprocess(
     # Agents definition as JSON
     if agents:
         cmd.extend(["--agents", json.dumps(agents)])
+
+    # Permission mode
+    if permission_mode:
+        cmd.extend(["--permission-mode", permission_mode])
 
     # Add the prompt as the final positional argument
     cmd.append(prompt)
