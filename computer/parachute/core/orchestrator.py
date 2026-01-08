@@ -18,6 +18,8 @@ from typing import Any, AsyncGenerator, Optional
 from parachute.config import Settings
 from parachute.core.claude_sdk import query_streaming, QueryInterrupt
 from parachute.core.permission_handler import PermissionHandler
+from parachute.core.skills import generate_runtime_plugin, cleanup_runtime_plugin, get_skills_for_system_prompt
+from parachute.core.agents import discover_agents, agents_to_sdk_format, get_agents_for_system_prompt
 from parachute.core.session_manager import SessionManager
 from parachute.db.database import Database
 from parachute.lib.agent_loader import build_system_prompt, load_agent, load_all_agents
@@ -129,6 +131,35 @@ The user expects you to engage with their attachments, not just confirm they wer
 ### Other MCP Tools
 Additional tools may be available depending on which modules are connected.
 Check the tool list for mcp__* tools from other servers.
+
+## Skills System
+
+Skills are reusable AI capabilities that can be invoked via the `/skill` command or Skill tool.
+Skills are stored in `.skills/` and may include:
+- Creative workflows (image/video generation)
+- Code analysis patterns
+- Research methodologies
+- Custom prompts and personas
+
+When a skill is relevant, invoke it with the Skill tool. Skills have specialized prompts and tool access configured for their purpose.
+
+## Creating Skills
+
+Users can create skills in their vault at `.skills/skill-name/SKILL.md`:
+
+```markdown
+---
+name: My Skill
+description: What this skill does
+allowed-tools: [Read, Write, Bash]
+---
+
+# Skill Instructions
+
+Your prompt/instructions here...
+```
+
+Skills can also be single files at `.skills/skill-name.md`.
 """
 
 
@@ -375,6 +406,19 @@ class Orchestrator:
             global_mcps = await load_mcp_servers(self.vault_path, attach_tokens=True)
             resolved_mcps = resolve_mcp_servers(agent.mcp_servers, global_mcps)
 
+            # Generate runtime plugin for skills (if any skills exist)
+            plugin_dirs: list[Path] = []
+            skills_plugin_dir = generate_runtime_plugin(self.vault_path)
+            if skills_plugin_dir:
+                plugin_dirs.append(skills_plugin_dir)
+                logger.info(f"Generated skills plugin at {skills_plugin_dir}")
+
+            # Load custom agents from .parachute/agents/
+            custom_agents = discover_agents(self.vault_path)
+            agents_dict = agents_to_sdk_format(custom_agents) if custom_agents else None
+            if agents_dict:
+                logger.info(f"Loaded {len(agents_dict)} custom agents")
+
             # Set up permission handler with event callbacks
             def on_permission_denial(denial: dict) -> None:
                 """Track permission denials for reporting in done event."""
@@ -420,6 +464,8 @@ class Orchestrator:
                 tools=agent.tools if agent.tools else None,
                 mcp_servers=resolved_mcps,
                 permission_mode="bypassPermissions",
+                plugin_dirs=plugin_dirs if plugin_dirs else None,
+                agents=agents_dict,
             ):
                 # Check for interrupt
                 if interrupt.is_interrupted:
@@ -742,6 +788,16 @@ class Orchestrator:
                 for a in agents:
                     prompt += f"- {a.path}: {a.description or a.name}\n"
                     metadata["available_agents"].append(a.name)
+
+        # Add available skills to prompt (discovered from .skills/)
+        skills_section = get_skills_for_system_prompt(self.vault_path)
+        if skills_section:
+            prompt += f"\n\n{skills_section}"
+
+        # Add custom agents to prompt (discovered from .parachute/agents/)
+        agents_section = get_agents_for_system_prompt(self.vault_path)
+        if agents_section:
+            prompt += f"\n\n{agents_section}"
 
         # Load context using folder-based system
         #
