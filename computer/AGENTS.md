@@ -261,3 +261,46 @@ This is a standalone repository: [parachute-base](https://github.com/OpenParachu
 ---
 
 **Last Updated:** January 7, 2026
+
+
+<!-- Added by curator on 2026-01-07 22:57 UTC -->
+
+
+## Context Watch System (January 7, 2026)
+
+Replaced automatic parent-chain loading with a watch/subscription system for AGENTS.md files:
+
+**Key Changes:**
+- **Dropped parent chain**: Context loading no longer automatically includes parent AGENTS.md files
+- **Watch declarations**: Files declare what they watch via frontmatter `watch:` field with glob patterns
+- **SQLite caching**: Watch patterns cached in `context_watches` table for efficient querying
+- **Curator bubbling**: When curator updates a file, it finds watchers and queues them for review
+- **File monitoring**: Watchdog monitors AGENTS.md files for direct edits, triggers bubbling
+
+**New files:**
+- `parachute/lib/context_watches.py` - ContextWatchService and file watcher
+
+**Modified:**
+- `parachute/db/database.py` - Added `context_watches` table
+- `parachute/lib/context_folders.py` - `build_chain()` no longer loads parent chain by default
+- `parachute/lib/curator_tools.py` - Added `_trigger_bubble_for_path()` for bubbling
+- `parachute/server.py` - Watch service initialization on startup
+
+<!-- Added by curator on 2026-01-07 23:39 UTC -->
+
+
+## Daily Curator Feature (January 7, 2026)
+
+Implemented the Daily Curator - a long-running agent that reflects on daily journal entries.
+
+**Files created:**
+- `parachute/core/daily_curator.py` - Main curator logic with `run_daily_curator()` entry point
+- `parachute/daily_curator_mcp_server.py` - MCP server with tools: `read_journal`, `read_recent_journals`, `write_reflection`
+- `Daily/.curator/state.json` - State storage (SDK session ID, last run, backend type)
+- `Daily/.agents/curator.md` - User-customizable agent definition/prompt
+
+**New API endpoints:**
+- `POST /api/modules/{mod}/curate` - Trigger a curator run
+- `GET /api/modules/{mod}/curator` - Get curator status
+
+**Architecture pattern:** Extends the existing chat curator pattern - long-running sessions with memory continuity, MCP tools for actions, queue-based processing.
