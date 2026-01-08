@@ -160,9 +160,9 @@ cmd_start() {
     local pid=$!
     echo $pid > "$PID_FILE"
 
-    # Wait for server to start
+    # Wait for server to start (context watch scanning can take 30+ seconds)
     echo -n "Waiting for server"
-    for i in {1..30}; do
+    for i in {1..60}; do
         if is_running; then
             echo ""
             echo -e "${GREEN}✓ Server started successfully${NC}"
