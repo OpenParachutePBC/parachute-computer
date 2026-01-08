@@ -317,6 +317,18 @@ async def _query_subprocess(
         for pd in plugin_dirs:
             cmd.extend(["--plugin-dir", str(pd)])
 
+    # MCP servers configuration (as JSON string)
+    if mcp_servers:
+        # Filter to only stdio servers (CLI doesn't support HTTP MCPs the same way)
+        from parachute.lib.mcp_loader import filter_stdio_servers
+        stdio_mcps = filter_stdio_servers(mcp_servers)
+        if stdio_mcps:
+            # Convert to the format expected by --mcp-config
+            # The CLI expects: {"mcpServers": {...}} format
+            mcp_config = {"mcpServers": stdio_mcps}
+            cmd.extend(["--mcp-config", json.dumps(mcp_config)])
+            logger.debug(f"Passing {len(stdio_mcps)} MCP servers to CLI")
+
     # Agents definition as JSON
     if agents:
         cmd.extend(["--agents", json.dumps(agents)])
