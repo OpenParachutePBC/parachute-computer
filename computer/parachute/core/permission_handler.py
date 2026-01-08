@@ -84,6 +84,20 @@ class PermissionRequest:
 
 
 @dataclass
+class UserQuestionRequest:
+    """A pending user question request (from AskUserQuestion tool)."""
+
+    id: str
+    tool_use_id: str
+    questions: list[dict[str, Any]]
+    timestamp: datetime = field(default_factory=datetime.utcnow)
+    status: str = "pending"  # pending, answered, timeout
+
+    # Resolution - receives dict of question -> answer(s)
+    _resolve: Optional[Callable[[dict[str, Any]], None]] = field(default=None, repr=False)
+
+
+@dataclass
 class PermissionDecision:
     """Result of a permission check."""
 
@@ -108,6 +122,7 @@ class PermissionHandler:
         on_denial: Optional[Callable[[dict[str, Any]], None]] = None,
         on_request: Optional[Callable[[PermissionRequest], None]] = None,
         on_permission_update: Optional[Callable[[SessionPermissions], None]] = None,
+        on_user_question: Optional[Callable[[UserQuestionRequest], None]] = None,
     ):
         """
         Initialize permission handler.
@@ -118,11 +133,13 @@ class PermissionHandler:
             on_denial: Callback when permission is denied
             on_request: Callback when permission needs user approval
             on_permission_update: Callback when session permissions are updated
+            on_user_question: Callback when Claude asks user a question (AskUserQuestion)
         """
         self.session = session
         self.vault_path = Path(vault_path)
         self.on_denial = on_denial
         self.on_request = on_request
+        self.on_user_question = on_user_question
         self.on_permission_update = on_permission_update
 
         # Get session permissions (may be empty for new sessions)
@@ -134,9 +151,13 @@ class PermissionHandler:
         # Pending permission requests
         self.pending: dict[str, PermissionRequest] = {}
 
+        # Pending user questions (from AskUserQuestion tool)
+        self.pending_questions: dict[str, UserQuestionRequest] = {}
+
         # Limits
         self.max_pending = 100
         self.timeout_seconds = 120
+        self.question_timeout_seconds = 300  # 5 minutes for user questions
 
     @property
     def permissions(self) -> SessionPermissions:
@@ -171,6 +192,13 @@ class PermissionHandler:
             context: Any,  # ToolPermissionContext from SDK
         ):
             logger.debug(f"can_use_tool called: {tool_name}")
+
+            # Special handling for AskUserQuestion - needs interactive response
+            if tool_name == "AskUserQuestion":
+                result = await self._handle_ask_user_question(input_data, context)
+                if PermissionResultAllow is None:
+                    return {"behavior": "allow", "updated_input": result}
+                return PermissionResultAllow(updated_input=result)
 
             # Check our permission handler
             decision = await self.check_permission(tool_name, input_data)
@@ -629,3 +657,96 @@ class PermissionHandler:
         })
 
         return suggestions
+
+    # -------------------------------------------------------------------------
+    # AskUserQuestion handling
+    # -------------------------------------------------------------------------
+
+    async def _handle_ask_user_question(
+        self,
+        input_data: dict[str, Any],
+        context: Any,
+    ) -> dict[str, Any]:
+        """
+        Handle AskUserQuestion tool call by waiting for user response.
+
+        Args:
+            input_data: Tool input containing 'questions' list
+            context: SDK context (contains tool_use_id if available)
+
+        Returns:
+            Updated input with 'answers' dict added
+        """
+        questions = input_data.get("questions", [])
+        if not questions:
+            logger.warning("AskUserQuestion called with no questions")
+            return input_data
+
+        # Generate request ID
+        tool_use_id = getattr(context, "tool_use_id", None) or uuid4().hex[:8]
+        request_id = f"{self.session.id}-q-{tool_use_id}"
+
+        logger.info(f"AskUserQuestion: {len(questions)} questions, request_id={request_id}")
+
+        # Create promise-like for resolution
+        loop = asyncio.get_event_loop()
+        future: asyncio.Future[dict[str, Any]] = loop.create_future()
+
+        def resolve(answers: dict[str, Any]) -> None:
+            if not future.done():
+                future.set_result(answers)
+
+        request = UserQuestionRequest(
+            id=request_id,
+            tool_use_id=tool_use_id,
+            questions=questions,
+            _resolve=resolve,
+        )
+
+        self.pending_questions[request_id] = request
+
+        # Notify listeners (triggers SSE event to client)
+        if self.on_user_question:
+            self.on_user_question(request)
+
+        # Wait for user response with timeout
+        try:
+            answers = await asyncio.wait_for(
+                future, timeout=self.question_timeout_seconds
+            )
+            request.status = "answered"
+        except asyncio.TimeoutError:
+            logger.warning(f"AskUserQuestion timeout: {request_id}")
+            request.status = "timeout"
+            # Return empty answers on timeout - Claude will see no response
+            answers = {}
+
+        # Clean up
+        del self.pending_questions[request_id]
+
+        # Return updated input with answers
+        return {
+            "questions": questions,
+            "answers": answers,
+        }
+
+    def answer_questions(self, request_id: str, answers: dict[str, Any]) -> bool:
+        """
+        Submit answers to a pending AskUserQuestion request.
+
+        Args:
+            request_id: The request ID to answer
+            answers: Dict mapping question text to selected answer(s)
+
+        Returns:
+            True if request was found and answered, False otherwise
+        """
+        request = self.pending_questions.get(request_id)
+        if request and request.status == "pending" and request._resolve:
+            request._resolve(answers)
+            return True
+        return False
+
+    def get_pending_questions(self) -> list[UserQuestionRequest]:
+        """Get all pending user question requests."""
+        return [r for r in self.pending_questions.values() if r.status == "pending"]

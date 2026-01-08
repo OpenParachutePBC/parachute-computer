@@ -318,3 +318,50 @@ async def join_stream(request: Request, session_id: str):
             "Access-Control-Allow-Origin": "*",
         },
     )
+
+
+@router.post("/chat/{session_id}/answer")
+async def answer_questions(
+    request: Request,
+    session_id: str,
+    body: dict[str, Any],
+) -> dict[str, Any]:
+    """
+    Submit answers to a pending AskUserQuestion request.
+
+    Request body:
+    - request_id: The question request ID
+    - answers: Dict mapping question text to selected answer(s)
+
+    Returns success if answers were submitted, or 404 if no pending questions found.
+    """
+    orchestrator = get_orchestrator(request)
+
+    request_id = body.get("request_id")
+    answers = body.get("answers", {})
+
+    if not request_id:
+        raise HTTPException(status_code=400, detail="request_id is required")
+
+    # Try to find the permission handler for this session
+    handler = orchestrator.pending_permissions.get(session_id)
+    if not handler:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No active session found: {session_id}",
+        )
+
+    # Submit the answers
+    success = handler.answer_questions(request_id, answers)
+    if not success:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No pending question with request_id: {request_id}",
+        )
+
+    return {
+        "success": True,
+        "message": "Answers submitted",
+        "session_id": session_id,
+        "request_id": request_id,
+    }

@@ -124,7 +124,8 @@ async def query_streaming(
             options_kwargs["can_use_tool"] = can_use_tool
 
         # Plugin directories for skills - need subprocess for proper --plugin-dir support
-        # The SDK's extra_args doesn't handle repeatable flags well
+        # Note: can_use_tool callback requires AsyncIterable prompt, so it can't be used
+        # with the current architecture. AskUserQuestion events are detected in stream output.
         if plugin_dirs:
             logger.debug(f"Plugin dirs requested, using subprocess for proper --plugin-dir support")
             async for event in _query_subprocess(
