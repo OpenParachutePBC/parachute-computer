@@ -1,9 +1,0 @@
-{
-  "id": "agent-pilot",
-  "name": "Agent Pilot",
-  "version": "0.1.0",
-  "minAppVersion": "1.0.0",
-  "description": "Connect to your Agent Pilot orchestrator - AI agents for your vault",
-  "author": "You",
-  "isDesktopOnly": false
-}

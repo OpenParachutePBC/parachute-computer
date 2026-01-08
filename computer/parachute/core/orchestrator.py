@@ -865,32 +865,41 @@ class Orchestrator:
             except Exception as e:
                 logger.warning(f"Failed to load file context: {e}")
 
-        # Check for working directory CLAUDE.md
+        # Check for working directory AGENTS.md or CLAUDE.md (prefer AGENTS.md)
         if working_directory:
             working_dir_path = Path(working_directory)
             # Handle both absolute paths and vault-relative paths
             if not working_dir_path.is_absolute():
                 working_dir_path = self.vault_path / working_directory
 
+            # Try AGENTS.md first, then fall back to CLAUDE.md
+            agents_md_path = working_dir_path / "AGENTS.md"
             claude_md_path = working_dir_path / "CLAUDE.md"
-            if claude_md_path.exists():
+
+            context_file_path = None
+            if agents_md_path.exists():
+                context_file_path = agents_md_path
+            elif claude_md_path.exists():
+                context_file_path = claude_md_path
+
+            if context_file_path:
                 try:
-                    claude_md_content = claude_md_path.read_text(encoding="utf-8")
+                    context_content = context_file_path.read_text(encoding="utf-8")
                     # Make path relative for display
                     try:
-                        relative_path = claude_md_path.relative_to(self.vault_path)
+                        relative_path = context_file_path.relative_to(self.vault_path)
                         display_path = str(relative_path)
                     except ValueError:
-                        display_path = str(claude_md_path)
+                        display_path = str(context_file_path)
 
-                    prompt += f"\n\n---\n\n## Project Context ({display_path})\n\n{claude_md_content}"
-                    metadata["working_directory_claude_md"] = display_path
-                    # Add tokens from CLAUDE.md to context tokens
-                    claude_md_tokens = len(claude_md_content) // 4
-                    metadata["context_tokens"] += claude_md_tokens
-                    logger.info(f"Loaded working directory CLAUDE.md: {display_path} ({claude_md_tokens} tokens)")
+                    prompt += f"\n\n---\n\n## Project Context ({display_path})\n\n{context_content}"
+                    metadata["working_directory_claude_md"] = display_path  # Keep field name for backwards compat
+                    # Add tokens from context file to context tokens
+                    context_tokens = len(context_content) // 4
+                    metadata["context_tokens"] += context_tokens
+                    logger.info(f"Loaded working directory context: {display_path} ({context_tokens} tokens)")
                 except Exception as e:
-                    logger.warning(f"Failed to read working directory CLAUDE.md: {e}")
+                    logger.warning(f"Failed to read working directory context: {e}")
 
         # Add vault location and context info
         prompt += f"\n\n---\n\n## Environment\n\nVault location: {self.vault_path}"
