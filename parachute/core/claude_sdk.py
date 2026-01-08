@@ -65,6 +65,8 @@ async def query_streaming(
     mcp_servers: Optional[dict[str, Any]] = None,
     permission_mode: str = "default",
     can_use_tool: CanUseToolCallback = None,
+    plugin_dirs: Optional[list[Path]] = None,
+    agents: Optional[dict[str, Any]] = None,
 ) -> AsyncGenerator[dict[str, Any], None]:
     """
     Run a Claude SDK query with streaming response.
@@ -78,6 +80,8 @@ async def query_streaming(
         mcp_servers: MCP server configurations
         permission_mode: Permission mode for tools
         can_use_tool: Optional callback for permission checking
+        plugin_dirs: List of plugin directories to load (for skills)
+        agents: Dict of agent definitions for subagents
 
     Yields:
         SDK events as dictionaries
@@ -118,6 +122,29 @@ async def query_streaming(
 
         if can_use_tool:
             options_kwargs["can_use_tool"] = can_use_tool
+
+        # Plugin directories for skills - need subprocess for proper --plugin-dir support
+        # The SDK's extra_args doesn't handle repeatable flags well
+        if plugin_dirs:
+            logger.debug(f"Plugin dirs requested, using subprocess for proper --plugin-dir support")
+            async for event in _query_subprocess(
+                prompt=prompt,
+                system_prompt=system_prompt,
+                cwd=cwd,
+                resume=resume,
+                tools=tools,
+                mcp_servers=mcp_servers,
+                plugin_dirs=plugin_dirs,
+                agents=agents,
+            ):
+                yield event
+            return
+
+        # Agents definition (passed as JSON via --agents flag)
+        if agents:
+            import json
+            options_kwargs["extra_args"] = options_kwargs.get("extra_args", {})
+            options_kwargs["extra_args"]["--agents"] = json.dumps(agents)
 
         options = ClaudeCodeOptions(**options_kwargs)
 
@@ -255,15 +282,21 @@ async def _query_subprocess(
     resume: Optional[str] = None,
     tools: Optional[list[str]] = None,
     mcp_servers: Optional[dict[str, Any]] = None,
+    plugin_dirs: Optional[list[Path]] = None,
+    agents: Optional[dict[str, Any]] = None,
 ) -> AsyncGenerator[dict[str, Any], None]:
     """
     Fallback: Run Claude via CLI subprocess.
 
     This is less efficient but works without the SDK package installed.
+    Also used when plugin_dirs are specified since SDK doesn't handle
+    repeatable --plugin-dir flags well.
     """
     import json
 
-    cmd = ["claude", "--output-format", "stream-json"]
+    # Build CLI command
+    # -p (print mode) and --verbose are required for --output-format=stream-json
+    cmd = ["claude", "-p", "--verbose", "--output-format", "stream-json"]
 
     if system_prompt:
         cmd.extend(["--system-prompt", system_prompt])
@@ -274,8 +307,17 @@ async def _query_subprocess(
     if tools:
         cmd.extend(["--allowedTools", ",".join(tools)])
 
-    # Add the prompt
-    cmd.extend(["--prompt", prompt])
+    # Plugin directories (repeatable flag)
+    if plugin_dirs:
+        for pd in plugin_dirs:
+            cmd.extend(["--plugin-dir", str(pd)])
+
+    # Agents definition as JSON
+    if agents:
+        cmd.extend(["--agents", json.dumps(agents)])
+
+    # Add the prompt as the final positional argument
+    cmd.append(prompt)
 
     env = get_sdk_env()
     if cwd:
