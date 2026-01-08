@@ -323,7 +323,11 @@ async def _query_subprocess(
     if cwd:
         env["PWD"] = str(cwd)
 
-    logger.debug(f"Running Claude CLI: {' '.join(cmd[:5])}...")
+    # Log full command for debugging (truncate prompt)
+    cmd_display = cmd.copy()
+    if len(cmd_display) > 0 and len(cmd_display[-1]) > 100:
+        cmd_display[-1] = cmd_display[-1][:100] + "..."
+    logger.info(f"Running Claude CLI: {' '.join(cmd_display)}")
 
     try:
         process = await asyncio.create_subprocess_exec(

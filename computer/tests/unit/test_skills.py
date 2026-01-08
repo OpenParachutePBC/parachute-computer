@@ -24,7 +24,52 @@ from parachute.core.skills import (
     generate_runtime_plugin,
     get_skills_for_system_prompt,
     cleanup_runtime_plugin,
+    sanitize_skill_name,
 )
+
+
+class TestSanitizeSkillName:
+    """Tests for skill name sanitization to kebab-case."""
+
+    def test_spaces_to_hyphens(self):
+        """Test spaces are converted to hyphens."""
+        assert sanitize_skill_name("Creative Studio") == "creative-studio"
+        assert sanitize_skill_name("My Cool Skill") == "my-cool-skill"
+
+    def test_underscores_to_hyphens(self):
+        """Test underscores are converted to hyphens."""
+        assert sanitize_skill_name("my_skill") == "my-skill"
+        assert sanitize_skill_name("code_review_tool") == "code-review-tool"
+
+    def test_lowercase_conversion(self):
+        """Test uppercase is converted to lowercase."""
+        assert sanitize_skill_name("MySkill") == "myskill"
+        assert sanitize_skill_name("CODE-REVIEWER") == "code-reviewer"
+
+    def test_special_characters_removed(self):
+        """Test special characters are removed."""
+        assert sanitize_skill_name("skill!@#$%") == "skill"
+        assert sanitize_skill_name("my.skill.name") == "myskillname"
+
+    def test_consecutive_hyphens_collapsed(self):
+        """Test consecutive hyphens are collapsed to single hyphen."""
+        assert sanitize_skill_name("my--skill") == "my-skill"
+        assert sanitize_skill_name("a - - b") == "a-b"
+
+    def test_leading_trailing_hyphens_stripped(self):
+        """Test leading and trailing hyphens are stripped."""
+        assert sanitize_skill_name("-skill-") == "skill"
+        assert sanitize_skill_name("---skill---") == "skill"
+
+    def test_already_kebab_case(self):
+        """Test already kebab-case names are unchanged."""
+        assert sanitize_skill_name("creative-studio") == "creative-studio"
+        assert sanitize_skill_name("code-reviewer") == "code-reviewer"
+
+    def test_mixed_formats(self):
+        """Test mixed format conversions."""
+        assert sanitize_skill_name("My_Cool Skill!") == "my-cool-skill"
+        assert sanitize_skill_name("  Spaced  Out  ") == "spaced-out"
 
 
 class TestParseFrontmatter:
@@ -326,7 +371,7 @@ Instructions.
 
         assert manifest["name"] == "parachute-skills"
         assert manifest["version"] == "1.0.0"
-        assert "generated" in manifest
+        assert manifest["description"] == "Auto-generated plugin for Parachute vault skills"
 
     def test_skills_copied_to_plugin(self, vault_with_skills):
         """Test that skills are copied to plugin directory."""
@@ -334,12 +379,12 @@ Instructions.
 
         skills_dir = plugin_dir / "skills"
 
-        # Check single file skill
-        assert (skills_dir / "Single" / "SKILL.md").exists()
+        # Check single file skill - directory name is sanitized to kebab-case
+        assert (skills_dir / "single" / "SKILL.md").exists()
 
-        # Check complex skill
-        assert (skills_dir / "Complex" / "SKILL.md").exists()
-        assert (skills_dir / "Complex" / "extra.md").exists()
+        # Check complex skill - directory name is sanitized to kebab-case
+        assert (skills_dir / "complex" / "SKILL.md").exists()
+        assert (skills_dir / "complex" / "extra.md").exists()
 
     def test_regenerates_clean_plugin(self, vault_with_skills):
         """Test that regenerating cleans up old plugin."""
@@ -472,19 +517,19 @@ class TestIntegrationWithTestVault:
         """Test discovering all skills in test vault."""
         skills = discover_skills(test_vault)
 
-        # Should find: summarizer, code-explainer, brainstorm
+        # Should find: summarizer, code-explainer, brainstorm (kebab-case names)
         assert len(skills) == 3
 
         skill_names = {s.name for s in skills}
-        assert "Summarizer" in skill_names
-        assert "Code Explainer" in skill_names
-        assert "Brainstorm" in skill_names
+        assert "summarizer" in skill_names
+        assert "code-explainer" in skill_names
+        assert "brainstorm" in skill_names
 
     def test_skill_tools_parsed(self, test_vault):
         """Test that allowed-tools are parsed correctly."""
         skills = discover_skills(test_vault)
 
-        summarizer = next(s for s in skills if s.name == "Summarizer")
+        summarizer = next(s for s in skills if s.name == "summarizer")
         assert summarizer.allowed_tools == ["Read", "WebFetch"]
 
     def test_generates_plugin_for_test_vault(self, test_vault):
@@ -492,14 +537,16 @@ class TestIntegrationWithTestVault:
         plugin_dir = generate_runtime_plugin(test_vault)
 
         assert plugin_dir is not None
-        assert (plugin_dir / "skills" / "Summarizer" / "SKILL.md").exists()
-        assert (plugin_dir / "skills" / "Code Explainer" / "SKILL.md").exists()
-        assert (plugin_dir / "skills" / "Brainstorm" / "SKILL.md").exists()
+        # Directory names are sanitized to kebab-case
+        assert (plugin_dir / "skills" / "summarizer" / "SKILL.md").exists()
+        assert (plugin_dir / "skills" / "code-explainer" / "SKILL.md").exists()
+        assert (plugin_dir / "skills" / "brainstorm" / "SKILL.md").exists()
 
     def test_system_prompt_includes_all_skills(self, test_vault):
         """Test system prompt generation includes all skills."""
         prompt_section = get_skills_for_system_prompt(test_vault)
 
-        assert "Summarizer" in prompt_section
-        assert "Code Explainer" in prompt_section
-        assert "Brainstorm" in prompt_section
+        # System prompt uses the skill name from frontmatter (kebab-case)
+        assert "summarizer" in prompt_section
+        assert "code-explainer" in prompt_section
+        assert "brainstorm" in prompt_section

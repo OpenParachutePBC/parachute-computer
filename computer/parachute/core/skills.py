@@ -18,11 +18,31 @@ import logging
 import os
 import shutil
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
+
+
+def sanitize_skill_name(name: str) -> str:
+    """
+    Sanitize a skill name to kebab-case for use in directories and invocation.
+
+    Claude's Skill tool expects kebab-case names (e.g., "creative-studio").
+    This converts names like "Creative Studio" or "my_skill" to "creative-studio".
+    """
+    # Replace underscores and spaces with hyphens
+    sanitized = name.replace("_", "-").replace(" ", "-")
+    # Convert to lowercase
+    sanitized = sanitized.lower()
+    # Remove any characters that aren't alphanumeric or hyphens
+    sanitized = "".join(c for c in sanitized if c.isalnum() or c == "-")
+    # Remove consecutive hyphens
+    while "--" in sanitized:
+        sanitized = sanitized.replace("--", "-")
+    # Strip leading/trailing hyphens
+    sanitized = sanitized.strip("-")
+    return sanitized
 
 
 @dataclass
@@ -182,11 +202,11 @@ def generate_runtime_plugin(vault_path: Path, skills: Optional[list[SkillInfo]] 
     plugin_skills_dir.mkdir(parents=True, exist_ok=True)
 
     # Generate plugin.json manifest
+    # Note: Only use valid plugin.json keys per Claude's schema
     manifest = {
         "name": "parachute-skills",
         "version": "1.0.0",
         "description": "Auto-generated plugin for Parachute vault skills",
-        "generated": datetime.now().isoformat(),
     }
 
     manifest_path = plugin_meta_dir / "plugin.json"
@@ -197,7 +217,10 @@ def generate_runtime_plugin(vault_path: Path, skills: Optional[list[SkillInfo]] 
     skills_source_dir = vault_path / ".skills"
 
     for skill in skills:
-        skill_target_dir = plugin_skills_dir / skill.name
+        # Use sanitized (kebab-case) name for the directory
+        # Claude's Skill tool expects kebab-case names for invocation
+        safe_name = sanitize_skill_name(skill.name)
+        skill_target_dir = plugin_skills_dir / safe_name
         skill_target_dir.mkdir(exist_ok=True)
 
         # Determine source - could be file or directory
