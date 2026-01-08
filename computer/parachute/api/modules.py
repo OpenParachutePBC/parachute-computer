@@ -4,13 +4,18 @@ Module management API endpoints.
 Modules are top-level directories in the vault (Chat, Daily, Build, etc.)
 """
 
+import logging
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel
 
 from parachute.config import get_settings
 from parachute.models.requests import ModulePromptUpdate
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -176,3 +181,102 @@ async def get_module_stats(mod: str) -> dict[str, Any]:
         "totalSize": total_size,
         "hasPrompt": (module_path / "CLAUDE.md").exists(),
     }
+
+
+# =============================================================================
+# Module Curator Endpoints
+# =============================================================================
+
+
+class CurateRequest(BaseModel):
+    """Request body for module curation."""
+    date: Optional[str] = None  # YYYY-MM-DD, defaults to today
+    force: bool = False  # Run even if already processed
+
+
+@router.post("/modules/{mod}/curate")
+async def curate_module(mod: str, body: Optional[CurateRequest] = None) -> dict[str, Any]:
+    """
+    Trigger a curator run for a module.
+
+    Currently supported modules:
+    - daily: Creates a reflection based on journal entries
+
+    Query params:
+    - date: Date to process (YYYY-MM-DD), defaults to today
+    - force: Run even if already processed today
+    """
+    settings = get_settings()
+    module_name = mod.lower()
+
+    # Parse request body
+    date = None
+    force = False
+    if body:
+        date = body.date
+        force = body.force
+
+    if module_name == "daily":
+        # Use the daily curator
+        from parachute.core.daily_curator import run_daily_curator
+
+        try:
+            result = await run_daily_curator(
+                vault_path=settings.vault_path,
+                date=date,
+                force=force,
+            )
+            return {
+                "module": module_name,
+                **result,
+            }
+        except Exception as e:
+            logger.error(f"Error running daily curator: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Curator error: {str(e)}")
+
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Module '{mod}' does not support curation. Supported: daily"
+        )
+
+
+@router.get("/modules/{mod}/curator")
+async def get_module_curator_status(mod: str) -> dict[str, Any]:
+    """
+    Get the curator status for a module.
+
+    Returns the current state of the module's curator, including:
+    - Last run time
+    - Last processed date
+    - Session ID (for session continuity)
+    - Run count
+    """
+    settings = get_settings()
+    module_name = mod.lower()
+
+    if module_name == "daily":
+        from parachute.core.daily_curator import DailyCuratorState
+
+        state = DailyCuratorState(settings.vault_path)
+        state_data = state.load()
+
+        # Check if there's a reflection for today
+        today = datetime.now().strftime("%Y-%m-%d")
+        reflection_path = settings.vault_path / "Daily" / "reflections" / f"{today}.md"
+        has_today_reflection = reflection_path.exists()
+
+        return {
+            "module": module_name,
+            "hasCurator": True,
+            "state": state_data,
+            "hasTodayReflection": has_today_reflection,
+            "todayReflectionPath": f"Daily/reflections/{today}.md" if has_today_reflection else None,
+        }
+
+    else:
+        return {
+            "module": module_name,
+            "hasCurator": False,
+            "message": f"Module '{mod}' does not have a curator configured",
+        }
