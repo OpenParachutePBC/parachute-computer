@@ -1,8 +1,10 @@
 """
 Curator API endpoints.
 
-Provides visibility into the background title generation service:
-- View recent curator tasks for a session
+Provides visibility into the background curator system:
+- View curator session for a chat
+- View curator's conversation messages (it's a persistent SDK session!)
+- List curator tasks and their status
 - Manually trigger curator tasks
 """
 
@@ -13,10 +15,21 @@ from typing import Any, Optional
 router = APIRouter(prefix="/curator")
 
 
+class CuratorSessionResponse(BaseModel):
+    """Curator session info."""
+    id: str
+    parent_session_id: str
+    sdk_session_id: Optional[str]
+    last_run_at: Optional[str]
+    last_message_index: int
+    created_at: str
+
+
 class CuratorTaskResponse(BaseModel):
     """Curator task info."""
     id: int
-    session_id: str
+    parent_session_id: str
+    curator_session_id: Optional[str]
     trigger_type: str
     message_count: int
     queued_at: str
@@ -30,9 +43,10 @@ class CuratorTaskResponse(BaseModel):
 @router.get("/{session_id}", response_model=dict)
 async def get_curator_for_session(request: Request, session_id: str) -> dict:
     """
-    Get curator task history for a chat session.
+    Get curator information for a chat session.
 
-    Returns recent tasks for visibility into title generation.
+    Returns the curator session and recent tasks for visibility into
+    what the curator has been doing.
     """
     from parachute.core.curator_service import get_curator_service
 
@@ -41,11 +55,27 @@ async def get_curator_for_session(request: Request, session_id: str) -> dict:
     except RuntimeError:
         raise HTTPException(status_code=503, detail="Curator service not available")
 
+    # Get curator session
+    curator_session = await curator.get_curator_session(session_id)
+    if not curator_session:
+        return {
+            "curator_session": None,
+            "recent_tasks": [],
+            "message": "No curator session for this chat yet",
+        }
+
     # Get recent tasks
     tasks = await curator.get_tasks_for_session(session_id, limit=10)
 
     return {
-        "session_id": session_id,
+        "curator_session": {
+            "id": curator_session.id,
+            "parent_session_id": curator_session.parent_session_id,
+            "sdk_session_id": curator_session.sdk_session_id,
+            "last_run_at": curator_session.last_run_at.isoformat() if curator_session.last_run_at else None,
+            "last_message_index": curator_session.last_message_index,
+            "created_at": curator_session.created_at.isoformat(),
+        },
         "recent_tasks": [
             {
                 "id": t.id,
@@ -62,12 +92,67 @@ async def get_curator_for_session(request: Request, session_id: str) -> dict:
     }
 
 
+@router.get("/{session_id}/messages")
+async def get_curator_messages(request: Request, session_id: str) -> dict:
+    """
+    Get the curator's conversation messages for a chat session.
+
+    The curator is a PERSISTENT SDK session, so we can load its messages
+    just like a regular chat. This provides transparency into what the curator
+    has been "thinking" and what context it was fed.
+
+    Returns messages in chat format: [{role, content, timestamp}, ...]
+    """
+    from parachute.core.curator_service import get_curator_service
+    from parachute.core.session_manager import SessionManager
+
+    try:
+        curator = await get_curator_service()
+    except RuntimeError:
+        raise HTTPException(status_code=503, detail="Curator service not available")
+
+    # Get curator session
+    curator_session = await curator.get_curator_session(session_id)
+    if not curator_session:
+        return {
+            "messages": [],
+            "sdk_session_id": None,
+            "message": "No curator session for this chat yet",
+        }
+
+    # If no SDK session yet, no messages
+    if not curator_session.sdk_session_id:
+        return {
+            "messages": [],
+            "sdk_session_id": None,
+            "message": "Curator has not run yet",
+        }
+
+    # Load messages from the curator's SDK session
+    from parachute.config import get_settings
+
+    db = request.app.state.database
+    settings = get_settings()
+    session_manager = SessionManager(settings.vault_path, db)
+
+    messages = await session_manager.load_sdk_messages_by_id(
+        curator_session.sdk_session_id,
+        working_directory=None,
+    )
+
+    return {
+        "messages": messages,
+        "sdk_session_id": curator_session.sdk_session_id,
+        "message_count": len(messages),
+    }
+
+
 @router.post("/{session_id}/trigger")
 async def trigger_curator(request: Request, session_id: str) -> dict:
     """
     Manually trigger a curator task for a session.
 
-    Useful for testing or forcing title regeneration.
+    Useful for testing or forcing a curator run.
     """
     from parachute.core.curator_service import get_curator_service
 
@@ -112,7 +197,8 @@ async def get_curator_task(request: Request, task_id: int) -> dict:
 
     return {
         "id": task.id,
-        "session_id": task.session_id,
+        "parent_session_id": task.session_id,
+        "curator_session_id": task.curator_session_id,
         "trigger_type": task.trigger_type,
         "message_count": task.message_count,
         "queued_at": task.queued_at.isoformat(),
@@ -170,7 +256,7 @@ async def get_recent_curator_activity(
             continue
 
         # Skip tasks that made no updates
-        if not result_data.get("title_updated"):
+        if not result_data.get("title_updated") and not result_data.get("logged"):
             continue
 
         completed_at = row["completed_at"]
@@ -181,7 +267,9 @@ async def get_recent_curator_activity(
             "task_id": row["id"],
             "session_id": row["parent_session_id"],
             "completed_at": completed_at,
+            "title_updated": result_data.get("title_updated", False),
             "new_title": result_data.get("new_title"),
+            "logged": result_data.get("logged", False),
         })
 
         if len(recent_updates) >= limit:

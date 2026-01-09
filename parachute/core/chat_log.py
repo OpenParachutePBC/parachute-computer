@@ -9,10 +9,16 @@ Creates daily log files compatible with the Daily journal format:
 
 This runs separately from Daily's journal files to avoid concurrent
 edit conflicts, but uses the same format for future UI integration.
+
+Key features:
+- Each session gets one para:ID per day (linked in frontmatter)
+- Activities append to the session's entry throughout the day
+- Supports session continuations from previous days
 """
 
 import logging
 import random
+import re
 import string
 from datetime import datetime, timezone
 from pathlib import Path
@@ -165,6 +171,168 @@ class ChatLogService:
         """Serialize frontmatter and body to file content."""
         fm_str = yaml.dump(frontmatter, default_flow_style=False, sort_keys=False)
         return f"---\n{fm_str}---\n\n{body}"
+
+    def get_today_path(self) -> Path:
+        """Get path for today's log file."""
+        now = datetime.now(timezone.utc).astimezone()
+        return self._get_log_path(now)
+
+    def get_session_para_id(self, session_id: str) -> Optional[str]:
+        """
+        Get the para_id for a session if it has an entry today.
+
+        Returns None if no entry exists for this session today.
+        """
+        log_path = self.get_today_path()
+        if not log_path.exists():
+            return None
+
+        try:
+            content = log_path.read_text(encoding="utf-8")
+            frontmatter, _ = self._parse_file(content)
+
+            entries = frontmatter.get("entries", {})
+            for para_id, meta in entries.items():
+                if meta.get("session") == session_id:
+                    return para_id
+
+            return None
+        except Exception as e:
+            logger.error(f"Failed to get session para_id: {e}")
+            return None
+
+    def append_to_entry(self, para_id: str, content: str) -> bool:
+        """
+        Append content to an existing entry.
+
+        Finds the entry by para_id and appends content to its section.
+        """
+        log_path = self.get_today_path()
+        if not log_path.exists():
+            logger.error(f"Log file not found: {log_path}")
+            return False
+
+        try:
+            file_content = log_path.read_text(encoding="utf-8")
+            frontmatter, body = self._parse_file(file_content)
+
+            # Find the entry section
+            entry_pattern = rf"(# para:{re.escape(para_id)} [^\n]+\n)"
+            match = re.search(entry_pattern, body)
+
+            if not match:
+                logger.error(f"Entry para:{para_id} not found in {log_path.name}")
+                return False
+
+            # Find where this entry ends (next entry or end of file)
+            entry_start = match.end()
+            next_entry = re.search(r"\n---\n\n# para:", body[entry_start:])
+
+            if next_entry:
+                entry_end = entry_start + next_entry.start()
+                entry_content = body[entry_start:entry_end]
+                # Insert content before the separator
+                new_entry_content = entry_content.rstrip() + "\n" + content + "\n"
+                new_body = body[:entry_start] + new_entry_content + body[entry_end:]
+            else:
+                # This is the last entry
+                new_body = body.rstrip() + "\n" + content + "\n"
+
+            # Write file
+            new_content = self._serialize_file(frontmatter, new_body)
+            log_path.write_text(new_content, encoding="utf-8")
+
+            logger.info(f"Appended to entry para:{para_id}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to append to entry: {e}", exc_info=True)
+            return False
+
+    def update_entry(self, para_id: str, new_content: str) -> bool:
+        """
+        Replace the entire content of an entry (everything after the header).
+
+        The curator uses this to rewrite the session's log entry as the
+        conversation evolves throughout the day.
+        """
+        log_path = self.get_today_path()
+        if not log_path.exists():
+            return False
+
+        try:
+            file_content = log_path.read_text(encoding="utf-8")
+            frontmatter, body = self._parse_file(file_content)
+
+            # Find the entry header
+            header_pattern = rf"(# para:{re.escape(para_id)} [^\n]+\n)"
+            header_match = re.search(header_pattern, body)
+
+            if not header_match:
+                logger.error(f"Entry para:{para_id} not found in {log_path.name}")
+                return False
+
+            # Find where this entry ends (next entry separator or end of file)
+            entry_start = header_match.end()
+            next_entry = re.search(r"\n---\n\n# para:", body[entry_start:])
+
+            if next_entry:
+                entry_end = entry_start + next_entry.start()
+                # Replace content between header and separator
+                new_body = (
+                    body[:entry_start] +
+                    "\n" + new_content.strip() + "\n" +
+                    body[entry_end:]
+                )
+            else:
+                # This is the last entry - replace from header to end
+                new_body = body[:entry_start] + "\n" + new_content.strip() + "\n"
+
+            # Write file
+            new_file_content = self._serialize_file(frontmatter, new_body)
+            log_path.write_text(new_file_content, encoding="utf-8")
+
+            logger.info(f"Updated entry para:{para_id}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to update entry: {e}", exc_info=True)
+            return False
+
+    def get_entry_content(self, para_id: str) -> Optional[str]:
+        """
+        Get the current content of an entry (everything after the header).
+
+        Used by curator to read what it previously wrote before updating.
+        """
+        log_path = self.get_today_path()
+        if not log_path.exists():
+            return None
+
+        try:
+            file_content = log_path.read_text(encoding="utf-8")
+            _, body = self._parse_file(file_content)
+
+            # Find the entry header
+            header_pattern = rf"# para:{re.escape(para_id)} [^\n]+\n"
+            header_match = re.search(header_pattern, body)
+
+            if not header_match:
+                return None
+
+            # Find where this entry ends
+            entry_start = header_match.end()
+            next_entry = re.search(r"\n---\n\n# para:", body[entry_start:])
+
+            if next_entry:
+                entry_end = entry_start + next_entry.start()
+                return body[entry_start:entry_end].strip()
+            else:
+                return body[entry_start:].strip()
+
+        except Exception as e:
+            logger.error(f"Failed to get entry content: {e}")
+            return None
 
     def log_commits(
         self,
