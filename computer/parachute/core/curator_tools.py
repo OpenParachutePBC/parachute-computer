@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Awaitable, Optional
 
-from claude_code_sdk import tool, create_sdk_mcp_server, SdkMcpTool
+from claude_agent_sdk import tool, create_sdk_mcp_server, SdkMcpTool
 
 from parachute.db.database import Database
 from parachute.models.session import SessionUpdate

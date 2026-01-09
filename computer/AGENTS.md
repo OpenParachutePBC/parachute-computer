@@ -15,8 +15,9 @@ A FastAPI-based backend server for the Parachute ecosystem, providing AI agent o
 ### Prerequisites
 
 - Python 3.10+
-- Claude Code CLI (`npm install -g @anthropic-ai/claude-code`)
 - Anthropic API key (`export ANTHROPIC_API_KEY=...`)
+
+Note: The Claude Agent SDK (which includes the Claude CLI) is installed automatically with the Python dependencies.
 
 ### Installation
 
@@ -183,20 +184,10 @@ For active development, you can run your local code as a launchd service that au
 This gives you:
 - **Autostart at login** - Server runs automatically when you log in
 - **Auto-restart on crash** - `KeepAlive` restarts the server if it dies
-- **Local dev code** - Runs from your cloned repo, not a Homebrew install
-- **Standard logging** - Logs to `$(brew --prefix)/var/log/parachute.log`
+- **Local dev code** - Runs from your cloned repo
+- **Standard logging** - Logs to `/opt/homebrew/var/log/parachute.log`
 
-> **Note:** Don't use `brew services restart parachute` if you've used `service-install` - it will overwrite your dev plist. Use `./parachute.sh service-restart` instead.
-
-### Homebrew Installation (End Users)
-
-For end users who just want to run Parachute:
-
-```bash
-brew tap openparachutepbc/parachute
-brew install parachute
-brew services start parachute
-```
+> **Important:** During development, always use `./parachute.sh` commands to manage the server. This ensures you're running your local code.
 
 ## Supervisor Service
 

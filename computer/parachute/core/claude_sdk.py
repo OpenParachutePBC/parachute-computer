@@ -1,53 +1,38 @@
 """
 Claude SDK wrapper for async streaming.
 
-Wraps the claude-code-sdk to provide async generators for streaming responses.
+Wraps the claude-agent-sdk to provide async generators for streaming responses.
+The SDK bundles the Claude CLI, so no separate installation is required.
 """
 
 import asyncio
 import logging
-import os
 from pathlib import Path
 from typing import Any, AsyncGenerator, Awaitable, Callable, Optional
 
 logger = logging.getLogger(__name__)
 
-# Ensure Claude CLI is in PATH before SDK is imported
-# The SDK looks for 'claude' binary at import time
-_claude_paths = [
-    os.path.expanduser("~/.claude/local"),  # Claude Code local install
-    "/opt/homebrew/bin",  # macOS Homebrew
-    os.path.expanduser("~/node_modules/.bin"),  # Local npm
-]
-_current_path = os.environ.get("PATH", "")
-for _p in _claude_paths:
-    if _p not in _current_path:
-        _current_path = f"{_p}:{_current_path}"
-os.environ["PATH"] = _current_path
 
+class QueryInterrupt:
+    """Handle for interrupting a running query."""
 
-def get_sdk_env() -> dict[str, str]:
-    """
-    Get environment variables for SDK subprocess.
+    def __init__(self) -> None:
+        self._interrupted = False
+        self._event = asyncio.Event()
 
-    Ensures PATH includes common node and Claude installation locations.
-    """
-    env = dict(os.environ)
-    path = env.get("PATH", "")
+    def interrupt(self) -> None:
+        """Signal the query to stop."""
+        self._interrupted = True
+        self._event.set()
 
-    # Add common paths for Claude Code CLI and Node.js
-    paths_to_add = [
-        os.path.expanduser("~/.claude/local"),  # Claude Code local install
-        "/opt/homebrew/bin",  # macOS Homebrew
-        os.path.expanduser("~/node_modules/.bin"),  # Local npm
-    ]
+    @property
+    def is_interrupted(self) -> bool:
+        """Check if interrupt was requested."""
+        return self._interrupted
 
-    for p in paths_to_add:
-        if p not in path:
-            path = f"{p}:{path}"
-
-    env["PATH"] = path
-    return env
+    async def wait(self) -> None:
+        """Wait for interrupt signal."""
+        await self._event.wait()
 
 
 # Type alias for permission callback
@@ -59,6 +44,9 @@ CanUseToolCallback = Optional[
 async def query_streaming(
     prompt: str,
     system_prompt: Optional[str] = None,
+    system_prompt_append: Optional[str] = None,
+    use_claude_code_preset: bool = True,
+    setting_sources: Optional[list[str]] = None,
     cwd: Optional[Path] = None,
     resume: Optional[str] = None,
     tools: Optional[list[str]] = None,
@@ -73,8 +61,12 @@ async def query_streaming(
 
     Args:
         prompt: User message
-        system_prompt: System prompt
-        cwd: Working directory
+        system_prompt: Full custom system prompt (overrides preset if provided)
+        system_prompt_append: Text to append to Claude Code preset (ignored if system_prompt is set)
+        use_claude_code_preset: If True (default), use Claude Code's system prompt as base
+        setting_sources: List of setting sources to load CLAUDE.md from ("user", "project", "local")
+                        Defaults to ["project"] to enable CLAUDE.md hierarchy loading
+        cwd: Working directory - CLAUDE.md files are discovered from here upward
         resume: Session ID to resume
         tools: List of allowed tools
         mcp_servers: MCP server configurations
@@ -85,100 +77,83 @@ async def query_streaming(
 
     Yields:
         SDK events as dictionaries
+
+    Note:
+        When setting_sources includes "project", Claude SDK loads CLAUDE.md files from
+        the directory hierarchy, walking up from cwd to root. This enables hierarchical context:
+        ~/Parachute/CLAUDE.md → ~/Parachute/projects/foo/CLAUDE.md → etc.
     """
+    # Import the SDK
+    from claude_agent_sdk import query as sdk_query, ClaudeAgentOptions, ClaudeSDKError
+
+    # Build options
+    options_kwargs: dict[str, Any] = {}
+
+    # Configure system prompt
+    # Priority: explicit system_prompt > preset with append > preset only
+    if system_prompt:
+        # Full custom system prompt overrides everything
+        options_kwargs["system_prompt"] = system_prompt
+    elif use_claude_code_preset:
+        # Use Claude Code's system prompt as base
+        if system_prompt_append:
+            options_kwargs["system_prompt"] = {
+                "type": "preset",
+                "preset": "claude_code",
+                "append": system_prompt_append,
+            }
+        else:
+            options_kwargs["system_prompt"] = {
+                "type": "preset",
+                "preset": "claude_code",
+            }
+
+    # Configure setting sources for CLAUDE.md loading
+    if setting_sources:
+        options_kwargs["setting_sources"] = setting_sources
+
+    if cwd:
+        options_kwargs["cwd"] = cwd
+
+    if permission_mode:
+        valid_modes = ["default", "acceptEdits", "plan", "bypassPermissions"]
+        if permission_mode in valid_modes:
+            options_kwargs["permission_mode"] = permission_mode  # type: ignore
+
+    if tools:
+        options_kwargs["allowed_tools"] = tools
+
+    if resume:
+        options_kwargs["resume"] = resume
+
+    if mcp_servers:
+        options_kwargs["mcp_servers"] = mcp_servers
+
+    if can_use_tool:
+        options_kwargs["can_use_tool"] = can_use_tool
+
+    # Agents - SDK supports this natively
+    if agents:
+        options_kwargs["agents"] = agents
+
+    # Plugins - SDK supports this natively
+    if plugin_dirs:
+        # SDK expects plugins as list of SdkPluginConfig: {"type": "local", "path": "..."}
+        options_kwargs["plugins"] = [{"type": "local", "path": str(pd)} for pd in plugin_dirs]
+
+    options = ClaudeAgentOptions(**options_kwargs)
+
+    # Run query and stream events
     try:
-        # Import the SDK
-        from claude_code_sdk import query as sdk_query, ClaudeCodeOptions
-        try:
-            from claude_code_sdk import ClaudeSDKError
-        except ImportError:
-            ClaudeSDKError = Exception  # Fallback if not available
-
-        # Build options - using dataclass style
-        options_kwargs: dict[str, Any] = {
-            "env": get_sdk_env(),
-        }
-
-        if system_prompt:
-            options_kwargs["system_prompt"] = system_prompt
-
-        if cwd:
-            options_kwargs["cwd"] = cwd
-
-        if permission_mode:
-            # Validate permission_mode
-            valid_modes = ["default", "acceptEdits", "plan", "bypassPermissions"]
-            if permission_mode in valid_modes:
-                options_kwargs["permission_mode"] = permission_mode  # type: ignore
-
-        if tools:
-            options_kwargs["allowed_tools"] = tools
-
-        if resume:
-            options_kwargs["resume"] = resume
-
-        if mcp_servers:
-            options_kwargs["mcp_servers"] = mcp_servers
-
-        if can_use_tool:
-            options_kwargs["can_use_tool"] = can_use_tool
-
-        # Plugin directories for skills - need subprocess for proper --plugin-dir support
-        # Note: can_use_tool callback requires AsyncIterable prompt, so it can't be used
-        # with the current architecture. AskUserQuestion events are detected in stream output.
-        if plugin_dirs:
-            logger.debug(f"Plugin dirs requested, using subprocess for proper --plugin-dir support")
-            async for event in _query_subprocess(
-                prompt=prompt,
-                system_prompt=system_prompt,
-                cwd=cwd,
-                resume=resume,
-                tools=tools,
-                mcp_servers=mcp_servers,
-                plugin_dirs=plugin_dirs,
-                agents=agents,
-                permission_mode=permission_mode,
-            ):
-                yield event
-            return
-
-        # Agents definition (passed as JSON via --agents flag)
-        if agents:
-            import json
-            options_kwargs["extra_args"] = options_kwargs.get("extra_args", {})
-            options_kwargs["extra_args"]["--agents"] = json.dumps(agents)
-
-        options = ClaudeCodeOptions(**options_kwargs)
-
-        # Run query and stream events
-        try:
-            async for event in sdk_query(prompt=prompt, options=options):
-                # Convert SDK message types to dicts
-                yield _event_to_dict(event)
-        except ClaudeSDKError as e:
-            logger.error(f"Claude SDK error: {e}")
-            yield {"type": "error", "error": str(e)}
-        except Exception as e:
-            # Catch any other SDK runtime errors
-            error_msg = str(e)
-            logger.error(f"SDK query error: {error_msg}")
-            yield {"type": "error", "error": error_msg}
-
-    except ImportError as e:
-        # SDK not installed - use subprocess fallback
-        logger.warning(f"claude-code-sdk import failed ({e}), using subprocess fallback")
-        async for event in _query_subprocess(
-            prompt=prompt,
-            system_prompt=system_prompt,
-            cwd=cwd,
-            resume=resume,
-            tools=tools,
-            mcp_servers=mcp_servers,
-            plugin_dirs=plugin_dirs,
-            agents=agents,
-            permission_mode=permission_mode,
-        ):
-            yield event
+        async for event in sdk_query(prompt=prompt, options=options):
+            yield _event_to_dict(event)
+    except ClaudeSDKError as e:
+        logger.error(f"Claude SDK error: {e}")
+        yield {"type": "error", "error": str(e)}
+    except Exception as e:
+        error_msg = str(e)
+        logger.error(f"SDK query error: {error_msg}")
+        yield {"type": "error", "error": error_msg}
 
 
 def _event_to_dict(event: Any) -> dict[str, Any]:
@@ -278,142 +253,3 @@ def _object_to_dict(obj: Any) -> dict[str, Any]:
         else:
             result[key] = value
     return result
-
-
-async def _query_subprocess(
-    prompt: str,
-    system_prompt: Optional[str] = None,
-    cwd: Optional[Path] = None,
-    resume: Optional[str] = None,
-    tools: Optional[list[str]] = None,
-    mcp_servers: Optional[dict[str, Any]] = None,
-    plugin_dirs: Optional[list[Path]] = None,
-    agents: Optional[dict[str, Any]] = None,
-    permission_mode: Optional[str] = None,
-) -> AsyncGenerator[dict[str, Any], None]:
-    """
-    Fallback: Run Claude via CLI subprocess.
-
-    This is less efficient but works without the SDK package installed.
-    Also used when plugin_dirs are specified since SDK doesn't handle
-    repeatable --plugin-dir flags well.
-    """
-    import json
-
-    # Build CLI command
-    # -p (print mode) and --verbose are required for --output-format=stream-json
-    cmd = ["claude", "-p", "--verbose", "--output-format", "stream-json"]
-
-    if system_prompt:
-        cmd.extend(["--system-prompt", system_prompt])
-
-    if resume:
-        cmd.extend(["--resume", resume])
-
-    if tools:
-        cmd.extend(["--allowedTools", ",".join(tools)])
-
-    # Plugin directories (repeatable flag)
-    if plugin_dirs:
-        for pd in plugin_dirs:
-            cmd.extend(["--plugin-dir", str(pd)])
-
-    # MCP servers configuration (as JSON string)
-    if mcp_servers:
-        # Filter to only stdio servers (CLI doesn't support HTTP MCPs the same way)
-        from parachute.lib.mcp_loader import filter_stdio_servers
-        stdio_mcps = filter_stdio_servers(mcp_servers)
-        if stdio_mcps:
-            # Convert to the format expected by --mcp-config
-            # The CLI expects: {"mcpServers": {...}} format
-            mcp_config = {"mcpServers": stdio_mcps}
-            cmd.extend(["--mcp-config", json.dumps(mcp_config)])
-            logger.debug(f"Passing {len(stdio_mcps)} MCP servers to CLI")
-
-    # Agents definition as JSON
-    if agents:
-        cmd.extend(["--agents", json.dumps(agents)])
-
-    # Permission mode
-    if permission_mode:
-        cmd.extend(["--permission-mode", permission_mode])
-
-    # Add the prompt as the final positional argument
-    cmd.append(prompt)
-
-    env = get_sdk_env()
-    if cwd:
-        env["PWD"] = str(cwd)
-
-    # Log full command for debugging (truncate prompt)
-    cmd_display = cmd.copy()
-    if len(cmd_display) > 0 and len(cmd_display[-1]) > 100:
-        cmd_display[-1] = cmd_display[-1][:100] + "..."
-    logger.info(f"Running Claude CLI: {' '.join(cmd_display)}")
-
-    try:
-        process = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=str(cwd) if cwd else None,
-            env=env,
-        )
-
-        # Read stdout line by line
-        while True:
-            if process.stdout is None:
-                break
-
-            line = await process.stdout.readline()
-            if not line:
-                break
-
-            line = line.decode("utf-8").strip()
-            if not line:
-                continue
-
-            try:
-                event = json.loads(line)
-                # Normalize camelCase to snake_case for session_id
-                if "sessionId" in event:
-                    event["session_id"] = event["sessionId"]
-                yield event
-            except json.JSONDecodeError:
-                logger.debug(f"Non-JSON line from Claude: {line[:100]}")
-
-        # Wait for process to complete
-        await process.wait()
-
-        if process.returncode != 0:
-            stderr = ""
-            if process.stderr:
-                stderr = (await process.stderr.read()).decode("utf-8")
-            logger.error(f"Claude CLI error: {stderr}")
-            yield {"type": "error", "error": stderr or "Claude CLI failed"}
-
-    except FileNotFoundError:
-        logger.error("Claude CLI not found. Install with: npm install -g @anthropic-ai/claude-code")
-        yield {"type": "error", "error": "Claude CLI not installed"}
-
-
-class QueryInterrupt:
-    """Handle for interrupting a running query."""
-
-    def __init__(self) -> None:
-        self._interrupted = False
-        self._event = asyncio.Event()
-
-    def interrupt(self) -> None:
-        """Signal the query to stop."""
-        self._interrupted = True
-        self._event.set()
-
-    @property
-    def is_interrupted(self) -> bool:
-        """Check if interrupt was requested."""
-        return self._interrupted
-
-    async def wait(self) -> None:
-        """Wait for interrupt signal."""
-        await self._event.wait()

@@ -176,7 +176,7 @@ async def run_daily_curator(
     system_prompt = load_curator_prompt(vault_path)
 
     # Import SDK here to avoid import errors when not needed
-    from claude_code_sdk import ClaudeCodeOptions, query as sdk_query
+    from claude_agent_sdk import ClaudeAgentOptions, query as sdk_query
 
     # Create tools via MCP server
     import sys
@@ -215,7 +215,7 @@ Remember: Be genuine, brief (3-5 paragraphs), and mirror back what you noticed w
     if state.sdk_session_id:
         options_kwargs["resume"] = state.sdk_session_id
 
-    options = ClaudeCodeOptions(**options_kwargs)
+    options = ClaudeAgentOptions(**options_kwargs)
 
     result = {
         "status": "running",

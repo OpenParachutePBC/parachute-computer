@@ -549,7 +549,7 @@ class CuratorService:
         )
 
         try:
-            from claude_code_sdk import query as sdk_query, ClaudeCodeOptions
+            from claude_agent_sdk import query as sdk_query, ClaudeAgentOptions
 
             if use_simple_title_gen:
                 # Simple title generation for new sessions
@@ -583,10 +583,10 @@ class CuratorService:
         result: dict[str, Any],
     ) -> dict[str, Any]:
         """Simple title generation for new sessions."""
-        from claude_code_sdk import query as sdk_query, ClaudeCodeOptions
+        from claude_agent_sdk import query as sdk_query, ClaudeAgentOptions
         from parachute.core.curator_tools import CURATOR_TITLE_PROMPT
 
-        options = ClaudeCodeOptions(
+        options = ClaudeAgentOptions(
             system_prompt=CURATOR_TITLE_PROMPT,
             max_turns=1,
             allowed_tools=[],
@@ -632,16 +632,12 @@ class CuratorService:
 
         The curator:
         - Resumes its SDK session for continuity (memory of past actions)
-        - Has real tool access via external MCP server (update_title, update_context, etc.)
+        - Has real tool access via in-process MCP server (update_title, update_context, etc.)
         - Receives message digests, not raw conversation data
-
-        Note: We use an external MCP server subprocess rather than in-process SDK MCP
-        because the SDK's in-process MCP has transport issues during cleanup.
         """
-        from claude_code_sdk import query as sdk_query, ClaudeCodeOptions
-        from parachute.core.curator_tools import CURATOR_SYSTEM_PROMPT
+        from claude_agent_sdk import query as sdk_query, ClaudeAgentOptions
+        from parachute.core.curator_tools import CURATOR_SYSTEM_PROMPT, create_curator_tools
         from parachute.config import get_settings
-        import sys
 
         settings = get_settings()
 
@@ -667,28 +663,16 @@ If no updates are needed, just say "No updates needed" and explain briefly why.
 
         logger.info(f"Running curator agent for session {parent_session.id} (resume: {curator_session.sdk_session_id})")
 
-        # Configure the external curator MCP server
-        # Find python executable in venv
-        base_dir = Path(__file__).parent.parent.parent
-        venv_python = base_dir / "venv" / "bin" / "python"
-        python_path = str(venv_python) if venv_python.exists() else sys.executable
+        # Create in-process MCP tools bound to this session
+        context_folders = curator_session.context_files if curator_session.context_files else None
+        _tools, curator_mcp_config = create_curator_tools(
+            db=self.db,
+            vault_path=self.vault_path,
+            parent_session_id=parent_session.id,
+            context_folders=context_folders,
+        )
 
-        # Build context folders string for curator
-        # context_files in CuratorSession can now be folder paths (e.g., "Projects/parachute")
-        context_folders_str = ",".join(curator_session.context_files) if curator_session.context_files else ""
-
-        curator_mcp_config = {
-            "command": python_path,
-            "args": ["-m", "parachute.curator_mcp_server"],
-            "env": {
-                "PARACHUTE_VAULT_PATH": str(self.vault_path),
-                "CURATOR_SESSION_ID": parent_session.id,
-                "CURATOR_CONTEXT_FOLDERS": context_folders_str,
-                "PYTHONPATH": str(base_dir),
-            },
-        }
-
-        # Build options with session resumption and MCP tool access
+        # Build options with session resumption and in-process MCP tool access
         options_kwargs = {
             "system_prompt": CURATOR_SYSTEM_PROMPT,
             "max_turns": 5,  # Allow multiple turns for tool use
@@ -704,7 +688,7 @@ If no updates are needed, just say "No updates needed" and explain briefly why.
         if settings.curator_model:
             options_kwargs["model"] = settings.curator_model
 
-        options = ClaudeCodeOptions(**options_kwargs)
+        options = ClaudeAgentOptions(**options_kwargs)
 
         response_text = ""
         new_session_id = None
@@ -758,261 +742,6 @@ If no updates are needed, just say "No updates needed" and explain briefly why.
             result["error"] = str(e)
 
         return result
-
-    async def _execute_curator_actions(
-        self,
-        response_text: str,
-        parent_session: Any,
-        curator_session: CuratorSession,
-        result: dict[str, Any],
-    ) -> dict[str, Any]:
-        """
-        Parse the curator's JSON response and execute any requested actions.
-
-        Supports both old format (update_context) and new format (context_actions).
-        """
-        import re
-        from parachute.core.context_parser import ContextParser
-
-        # Try to extract JSON from the response
-        # Handle cases where it might be wrapped in ```json ... ```
-        json_match = re.search(r'```json\s*(.*?)\s*```', response_text, re.DOTALL)
-        if json_match:
-            json_str = json_match.group(1)
-        else:
-            # Try to find a raw JSON object
-            json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
-            if json_match:
-                json_str = json_match.group(0)
-            else:
-                logger.warning(f"Curator response not valid JSON: {response_text[:200]}")
-                result["error"] = "Invalid JSON response from curator"
-                return result
-
-        try:
-            response = json.loads(json_str)
-        except json.JSONDecodeError as e:
-            logger.warning(f"Failed to parse curator JSON: {e}, response: {json_str[:200]}")
-            result["error"] = f"JSON parse error: {e}"
-            return result
-
-        # Log reasoning
-        reasoning = response.get("reasoning", "No reasoning provided")
-        logger.info(f"Curator reasoning for {parent_session.id}: {reasoning}")
-        result["reasoning"] = reasoning
-
-        # Execute title update if requested
-        new_title = response.get("update_title")
-        if new_title and isinstance(new_title, str):
-            new_title = new_title.strip()
-            if new_title and len(new_title) < 200:
-                await self.db.update_session(
-                    parent_session.id,
-                    SessionUpdate(title=new_title),
-                )
-                result["title_updated"] = True
-                result["new_title"] = new_title
-                result["actions"].append(f"Updated title to: {new_title}")
-                logger.info(f"Curator updated title for {parent_session.id}: {new_title}")
-
-        # Handle new format: context_actions array
-        context_actions = response.get("context_actions", [])
-        if context_actions:
-            parser = ContextParser(self.vault_path)
-            for action_obj in context_actions:
-                success = await self._execute_single_context_action(action_obj, parser)
-                if success:
-                    result["context_updated"] = True
-                    action_type = action_obj.get("action", "unknown")
-                    file_name = action_obj.get("file", "unknown")
-                    result["actions"].append(f"{action_type}: {file_name}")
-
-        # Handle old format: update_context object (backwards compatibility)
-        context_update = response.get("update_context")
-        if context_update and isinstance(context_update, dict) and not context_actions:
-            file_name = context_update.get("file", "").strip()
-            content = context_update.get("content", "").strip()
-
-            if file_name and content:
-                success = await self._append_to_context_file(file_name, content)
-                if success:
-                    result["context_updated"] = True
-                    result["actions"].append(f"Updated context file: {file_name}")
-                    logger.info(f"Curator updated context file {file_name} for {parent_session.id}")
-                else:
-                    logger.warning(f"Failed to update context file {file_name}")
-
-        # If no updates were made
-        if not result.get("title_updated") and not result.get("context_updated"):
-            logger.info(f"Curator: No updates needed for {parent_session.id}")
-
-        return result
-
-    async def _execute_single_context_action(
-        self,
-        action_obj: dict[str, Any],
-        parser: "ContextParser",
-    ) -> bool:
-        """
-        Execute a single context action from the curator.
-
-        Supports:
-        - update_facts: Replace facts section
-        - update_focus: Replace current focus section
-        - append_history: Append to history section
-        - create_file: Create a new context file
-        """
-        from parachute.core.context_parser import ContextParser
-
-        action_type = action_obj.get("action", "")
-        file_name = action_obj.get("file", "").strip()
-
-        if not action_type or not file_name:
-            logger.warning(f"Invalid context action: missing action or file")
-            return False
-
-        # Security: validate file_name has no path components
-        if "/" in file_name or "\\" in file_name or ".." in file_name:
-            logger.warning(f"Invalid context file name (path chars): {file_name}")
-            return False
-
-        # Ensure .md extension
-        if not file_name.endswith(".md"):
-            file_name = file_name + ".md"
-
-        contexts_dir = self.vault_path / "Chat" / "contexts"
-        contexts_dir.mkdir(parents=True, exist_ok=True)
-        file_path = contexts_dir / file_name
-
-        # Verify it resolves to within contexts_dir
-        try:
-            resolved = file_path.resolve()
-            if not str(resolved).startswith(str(contexts_dir.resolve())):
-                logger.warning(f"Context file path escapes contexts dir: {file_name}")
-                return False
-        except Exception:
-            logger.warning(f"Invalid context file path: {file_name}")
-            return False
-
-        try:
-            if action_type == "update_facts":
-                facts = action_obj.get("facts", [])
-                if not isinstance(facts, list):
-                    logger.warning(f"update_facts: facts must be a list")
-                    return False
-
-                if not file_path.exists():
-                    # Create minimal file first
-                    name = file_name.replace(".md", "").replace("-", " ").title()
-                    file_path.write_text(f"# {name}\n\n---\n\n## Facts\n", encoding="utf-8")
-
-                return parser.update_facts(file_path, facts)
-
-            elif action_type == "update_focus":
-                focus = action_obj.get("focus", [])
-                if not isinstance(focus, list):
-                    logger.warning(f"update_focus: focus must be a list")
-                    return False
-
-                if not file_path.exists():
-                    logger.warning(f"update_focus: file doesn't exist: {file_name}")
-                    return False
-
-                return parser.update_current_focus(file_path, focus)
-
-            elif action_type == "append_history":
-                entry = action_obj.get("entry", "").strip()
-                if not entry:
-                    logger.warning(f"append_history: empty entry")
-                    return False
-
-                if not file_path.exists():
-                    logger.warning(f"append_history: file doesn't exist: {file_name}")
-                    return False
-
-                return parser.append_history(file_path, entry)
-
-            elif action_type == "create_file":
-                if file_path.exists():
-                    logger.warning(f"create_file: file already exists: {file_name}")
-                    return False
-
-                name = action_obj.get("name", file_name.replace(".md", ""))
-                description = action_obj.get("description", "")
-                facts = action_obj.get("facts", [])
-
-                # Build new file content
-                content_parts = [f"# {name}"]
-                if description:
-                    content_parts.append(f"\n> {description}")
-                content_parts.append("\n\n---\n")
-
-                if facts:
-                    content_parts.append("\n## Facts\n")
-                    for fact in facts:
-                        content_parts.append(f"- {fact}\n")
-
-                content_parts.append("\n## History\n")
-
-                file_path.write_text("".join(content_parts), encoding="utf-8")
-                logger.info(f"Curator created new context file: {file_name}")
-                return True
-
-            else:
-                logger.warning(f"Unknown context action type: {action_type}")
-                return False
-
-        except Exception as e:
-            logger.error(f"Error executing context action {action_type}: {e}")
-            return False
-
-    async def _append_to_context_file(self, file_name: str, content: str) -> bool:
-        """
-        Safely append content to a context file.
-
-        Security checks:
-        - File must be in Chat/contexts/ directory
-        - No path traversal allowed
-        - Append-only (no overwrite)
-        """
-        from datetime import datetime, timezone
-
-        # Security: validate file_name has no path components
-        if "/" in file_name or "\\" in file_name or ".." in file_name:
-            logger.warning(f"Invalid context file name (path chars): {file_name}")
-            return False
-
-        # Ensure .md extension
-        if not file_name.endswith(".md"):
-            file_name = file_name + ".md"
-
-        # Build safe path
-        contexts_dir = self.vault_path / "Chat" / "contexts"
-        contexts_dir.mkdir(parents=True, exist_ok=True)
-        target_path = contexts_dir / file_name
-
-        # Verify it resolves to within contexts_dir (prevent symlink attacks)
-        try:
-            resolved = target_path.resolve()
-            if not str(resolved).startswith(str(contexts_dir.resolve())):
-                logger.warning(f"Context file path escapes contexts dir: {file_name}")
-                return False
-        except Exception:
-            logger.warning(f"Invalid context file path: {file_name}")
-            return False
-
-        try:
-            # Append-only operation with timestamp
-            timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-            formatted_addition = f"\n\n<!-- Added by curator on {timestamp} -->\n{content}"
-
-            with open(target_path, "a", encoding="utf-8") as f:
-                f.write(formatted_addition)
-
-            return True
-        except Exception as e:
-            logger.error(f"Failed to write context file: {e}")
-            return False
 
     def _process_curator_event(self, event: Any, result: dict[str, Any]) -> dict[str, Any]:
         """Process SDK event and update result tracking."""

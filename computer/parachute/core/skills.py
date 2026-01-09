@@ -247,7 +247,7 @@ def get_skills_for_system_prompt(vault_path: Path) -> str:
 
     This can be appended to the system prompt to inform the agent
     about what skills are available without relying on Claude's
-    native skill discovery.
+    native skill discovery. Uses XML format for clear structured parsing.
     """
     skills = discover_skills(vault_path)
 
@@ -255,16 +255,30 @@ def get_skills_for_system_prompt(vault_path: Path) -> str:
         return ""
 
     lines = [
-        "## Available Skills",
+        "<vault_skills>",
+        "<description>",
+        "Skills defined in this vault. Invoke via /skill-name command or the Skill tool.",
+        "Skills run inline in the current conversation (not as subagents).",
+        "</description>",
         "",
-        "The following skills are available. Use the /skill command or Skill tool to invoke them:",
-        "",
+        "<available_skills>",
     ]
 
     for skill in skills:
-        lines.append(f"- **{skill.name}**: {skill.description}")
+        lines.append(f"<skill name=\"{skill.name}\">")
+        lines.append(f"  <description>{skill.description}</description>")
+        if skill.allowed_tools:
+            lines.append(f"  <tools>{', '.join(skill.allowed_tools)}</tools>")
+        lines.append("</skill>")
 
+    lines.append("</available_skills>")
     lines.append("")
+    lines.append("<invocation>")
+    lines.append("To invoke a skill, either:")
+    lines.append("- Use slash command: /skill-name [arguments]")
+    lines.append("- Use Skill tool: Skill(skill=\"skill-name\", args=\"...\")")
+    lines.append("</invocation>")
+    lines.append("</vault_skills>")
 
     return "\n".join(lines)
 

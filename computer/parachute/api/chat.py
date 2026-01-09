@@ -63,7 +63,10 @@ async def event_generator(request: Request, chat_request: ChatRequest):
 
     # Get the session ID - we need this for stream management
     # For new sessions, we'll capture it from the first event
+    # Normalize 'new' to None - client sends 'new' when it wants a new session
     session_id = chat_request.session_id
+    if session_id == 'new':
+        session_id = None
     captured_session_id = None
 
     try:
@@ -75,7 +78,7 @@ async def event_generator(request: Request, chat_request: ChatRequest):
 
         orchestrator_gen = orchestrator.run_streaming(
             message=chat_request.message,
-            session_id=chat_request.session_id,
+            session_id=session_id,  # Use normalized value (None for new sessions)
             module=chat_request.module,
             system_prompt=chat_request.system_prompt,
             working_directory=chat_request.working_directory,

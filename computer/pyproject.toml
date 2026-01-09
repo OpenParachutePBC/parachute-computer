@@ -21,7 +21,7 @@ dependencies = [
     "pyyaml>=6.0.1",
     "python-frontmatter>=1.1.0",
     "sse-starlette>=2.0.0",
-    "claude-code-sdk>=0.0.20",
+    "claude-agent-sdk>=0.1.19",
     "watchfiles>=0.21.0",
 ]
 

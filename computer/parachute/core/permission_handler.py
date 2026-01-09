@@ -174,13 +174,13 @@ class PermissionHandler:
         """
         Create an SDK-compatible can_use_tool callback.
 
-        Returns a function that can be passed to ClaudeCodeOptions.can_use_tool.
+        Returns a function that can be passed to ClaudeAgentOptions.can_use_tool.
         The SDK expects a function with signature:
             async (tool_name: str, input_data: dict, context: ToolPermissionContext) -> PermissionResultAllow | PermissionResultDeny
         """
         # Import SDK types upfront
         try:
-            from claude_code_sdk.types import PermissionResultAllow, PermissionResultDeny
+            from claude_agent_sdk.types import PermissionResultAllow, PermissionResultDeny
         except ImportError:
             logger.warning("SDK types not available, permissions will use defaults")
             PermissionResultAllow = None

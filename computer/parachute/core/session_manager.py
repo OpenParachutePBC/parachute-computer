@@ -100,23 +100,24 @@ class SessionManager:
                 )
                 return session, resume_info, False
 
-            # Neither we nor SDK have this session
-            logger.warning(f"Session not found: {session_id}")
-            resume_info = ResumeInfo(
-                method="new",
-                is_new_session=True,
-                previous_message_count=0,
-                sdk_session_available=False,
-            )
-            # Create a placeholder that will be updated when SDK provides ID
+            # Neither we nor SDK have this session - shouldn't happen with new client
+            # (client sends 'new' for new sessions, normalized to None)
+            # Treat as a new session with placeholder ID
+            logger.warning(f"Unknown session ID requested: {session_id}, treating as new session")
             placeholder = Session(
-                id=session_id,  # Temporary
+                id="pending",  # Will be replaced with SDK session ID
                 module=module,
                 source=SessionSource.PARACHUTE,
                 working_directory=working_directory,
                 continued_from=continued_from,
                 created_at=datetime.utcnow(),
                 last_accessed=datetime.utcnow(),
+            )
+            resume_info = ResumeInfo(
+                method="new",
+                is_new_session=True,
+                previous_message_count=0,
+                sdk_session_available=False,
             )
             return placeholder, resume_info, True
 

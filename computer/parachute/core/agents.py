@@ -211,6 +211,7 @@ def get_agents_for_system_prompt(vault_path: Path) -> str:
     Generate a system prompt section documenting available custom agents.
 
     This informs the agent about what subagents can be invoked via Task tool.
+    Uses XML format for clear structured parsing.
     """
     agents = discover_agents(vault_path)
 
@@ -218,16 +219,33 @@ def get_agents_for_system_prompt(vault_path: Path) -> str:
         return ""
 
     lines = [
-        "## Custom Agents",
+        "<custom_agents>",
+        "<description>",
+        "Custom agents defined in this vault. Invoke via Task tool with the agent name as subagent_type.",
+        "</description>",
         "",
-        "The following custom agents are available via the Task tool:",
-        "",
+        "<available_agents>",
     ]
 
     for agent in agents:
-        model_note = f" (uses {agent.model})" if agent.model else ""
-        lines.append(f"- **{agent.name}**: {agent.description}{model_note}")
+        lines.append(f"<agent name=\"{agent.name}\">")
+        lines.append(f"  <description>{agent.description}</description>")
+        if agent.model:
+            lines.append(f"  <model>{agent.model}</model>")
+        if agent.tools:
+            lines.append(f"  <tools>{', '.join(agent.tools)}</tools>")
+        lines.append("</agent>")
 
+    lines.append("</available_agents>")
     lines.append("")
+    lines.append("<invocation>")
+    lines.append("To invoke a custom agent, use the Task tool:")
+    lines.append("")
+    lines.append("Task(")
+    lines.append('  subagent_type="agent-name",')
+    lines.append('  prompt="Your task description"')
+    lines.append(")")
+    lines.append("</invocation>")
+    lines.append("</custom_agents>")
 
     return "\n".join(lines)

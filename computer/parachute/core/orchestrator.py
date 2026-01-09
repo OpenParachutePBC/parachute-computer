@@ -18,14 +18,14 @@ from typing import Any, AsyncGenerator, Optional
 from parachute.config import Settings
 from parachute.core.claude_sdk import query_streaming, QueryInterrupt
 from parachute.core.permission_handler import PermissionHandler
-from parachute.core.skills import generate_runtime_plugin, cleanup_runtime_plugin, get_skills_for_system_prompt
-from parachute.core.agents import discover_agents, agents_to_sdk_format, get_agents_for_system_prompt
+from parachute.core.skills import generate_runtime_plugin, cleanup_runtime_plugin
+from parachute.core.agents import discover_agents, agents_to_sdk_format
 from parachute.core.session_manager import SessionManager
 from parachute.db.database import Database
-from parachute.lib.agent_loader import build_system_prompt, load_agent, load_all_agents
+from parachute.lib.agent_loader import build_system_prompt, load_agent
 from parachute.lib.context_loader import format_context_for_prompt, load_agent_context
 from parachute.core.context_folders import ContextFolderService
-from parachute.lib.mcp_loader import load_mcp_servers, resolve_mcp_servers
+from parachute.lib.mcp_loader import load_mcp_servers, resolve_mcp_servers, validate_and_filter_servers
 from parachute.models.agent import AgentDefinition, AgentType, create_vault_agent
 from parachute.models.events import (
     AbortedEvent,
@@ -266,6 +266,15 @@ class Orchestrator:
             effective_working_dir = session.working_directory
             effective_cwd = Path(session.working_directory)
 
+        # Validate working directory exists - fall back to vault path if not
+        if not effective_cwd.exists():
+            logger.warning(
+                f"Working directory does not exist: {effective_cwd}, "
+                f"falling back to vault path: {self.vault_path}"
+            )
+            effective_cwd = self.vault_path
+            effective_working_dir = None
+
         # Build system prompt (after loading prior conversation, with working dir)
         effective_prompt, prompt_metadata = await self._build_system_prompt(
             agent=agent,
@@ -404,8 +413,28 @@ class Orchestrator:
         try:
             # Load MCP servers with OAuth tokens attached for HTTP servers
             # Note: SDK supports both stdio and HTTP servers, but HTTP servers need `type: "http"`
-            global_mcps = await load_mcp_servers(self.vault_path, attach_tokens=True)
-            resolved_mcps = resolve_mcp_servers(agent.mcp_servers, global_mcps)
+            # Wrap in try/catch for resilience - MCP misconfig shouldn't crash the server
+            resolved_mcps = None
+            mcp_warnings: list[str] = []
+            try:
+                global_mcps = await load_mcp_servers(self.vault_path, attach_tokens=True)
+                resolved_mcps = resolve_mcp_servers(agent.mcp_servers, global_mcps)
+
+                # Validate and filter out problematic MCP servers
+                if resolved_mcps:
+                    resolved_mcps, mcp_warnings = validate_and_filter_servers(resolved_mcps)
+
+                    # Log any warnings but continue
+                    if mcp_warnings:
+                        logger.warning(
+                            f"MCP configuration issues (continuing with valid servers): "
+                            f"{'; '.join(mcp_warnings[:3])}"
+                            f"{'...' if len(mcp_warnings) > 3 else ''}"
+                        )
+            except Exception as e:
+                # MCP loading failed entirely - log and continue without MCP
+                logger.error(f"Failed to load MCP servers (continuing without MCP): {e}")
+                resolved_mcps = None
 
             # Generate runtime plugin for skills (if any skills exist)
             plugin_dirs: list[Path] = []
@@ -471,9 +500,18 @@ class Orchestrator:
             # For now, AskUserQuestion events are detected in the stream but not interactive
             # The client receives user_question events and can display them to the user
 
+            # Determine if this is a full custom prompt or append content
+            # Custom agents and explicit custom_prompt return full prompts (override preset)
+            # vault-agent returns append content only (uses preset + CLAUDE.md hierarchy)
+            is_full_prompt = prompt_metadata.get("prompt_source") in ("custom", "agent")
+
             async for event in query_streaming(
                 prompt=actual_message,
-                system_prompt=effective_prompt,
+                # Full prompt overrides preset, append content adds to it
+                system_prompt=effective_prompt if is_full_prompt else None,
+                system_prompt_append=effective_prompt if not is_full_prompt and effective_prompt else None,
+                use_claude_code_preset=not is_full_prompt,  # Use preset unless custom/agent
+                setting_sources=["project"],  # Enable CLAUDE.md hierarchy loading
                 cwd=effective_cwd,
                 resume=resume_id,
                 tools=agent.tools if agent.tools else None,
@@ -605,6 +643,36 @@ class Orchestrator:
                         ).model_dump(by_alias=True)
                     if event.get("session_id"):
                         captured_session_id = event["session_id"]
+
+                elif event_type == "error":
+                    # SDK emitted an error event - handle it properly
+                    error_msg = event.get("error", "Unknown SDK error")
+                    logger.error(f"SDK error event received: {error_msg}")
+
+                    # Check if this is a session/directory issue that's recoverable
+                    error_lower = error_msg.lower()
+                    is_session_issue = (
+                        "not found" in error_lower
+                        or "does not exist" in error_lower
+                        or "enoent" in error_lower
+                    )
+
+                    if is_session_issue:
+                        yield SessionUnavailableEvent(
+                            reason="sdk_error",
+                            session_id=session.id,
+                            has_markdown_history=False,
+                            message_count=session.message_count,
+                            message=f"Session could not be loaded: {error_msg}",
+                        ).model_dump(by_alias=True)
+                    else:
+                        yield ErrorEvent(
+                            error=error_msg,
+                            session_id=captured_session_id or session.id,
+                        ).model_dump(by_alias=True)
+
+                    # Stop processing - don't continue to done event
+                    return
 
             # Finalize session (if not already done early)
             if is_new and captured_session_id and not session_finalized:
@@ -766,189 +834,121 @@ class Orchestrator:
         working_directory: Optional[str] = None,
     ) -> tuple[str, dict[str, Any]]:
         """
-        Build the complete system prompt for an agent.
+        Build runtime additions to the system prompt.
+
+        With setting_sources=["project"], Claude SDK automatically loads CLAUDE.md
+        files from the directory hierarchy (cwd up to root). This method now only
+        builds content that CANNOT be in static files:
+        - Prior conversation history (runtime only)
+        - Runtime-discovered skills and agents
+        - Explicitly selected context files (beyond hierarchy)
+
+        The base prompt (DEFAULT_VAULT_PROMPT) is now in ~/Parachute/CLAUDE.md
+        and loaded automatically by the SDK.
 
         Returns:
-            Tuple of (prompt_string, metadata_dict) for transparency
+            Tuple of (append_string, metadata_dict) for transparency
         """
         # Track metadata for transparency
         metadata: dict[str, Any] = {
-            "prompt_source": "default",
+            "prompt_source": "claude_code_preset",  # Using SDK preset
             "prompt_source_path": None,
             "context_files": [],
             "context_tokens": 0,
             "context_truncated": False,
             "agent_name": agent.name,
             "available_agents": [],
-            "base_prompt_tokens": 0,
-            "working_directory_claude_md": None,  # Track if working dir has CLAUDE.md
+            "base_prompt_tokens": 0,  # SDK handles base prompt
+            "working_directory_claude_md": None,
         }
 
-        # Start with custom or agent prompt
+        # Build append content (runtime-only additions)
+        append_parts: list[str] = []
+
+        # Handle custom prompt - if provided, this REPLACES everything
+        # (useful for specialized agents that don't want Claude Code preset)
         if custom_prompt:
-            prompt = custom_prompt
             metadata["prompt_source"] = "custom"
-        elif agent.system_prompt and agent.name != "vault-agent":
-            prompt = agent.system_prompt
+            # For custom prompts, we return the full custom prompt
+            # The caller should use system_prompt instead of system_prompt_append
+            return custom_prompt, metadata
+
+        # Handle non-vault agents with their own prompts
+        if agent.system_prompt and agent.name != "vault-agent":
             metadata["prompt_source"] = "agent"
             metadata["prompt_source_path"] = agent.path
-        else:
-            # Check for module-level CLAUDE.md override
-            module_prompt_path = self.vault_path / "Chat" / "CLAUDE.md"
-            if module_prompt_path.exists():
+            # Agent has custom prompt - return it for full override
+            return agent.system_prompt, metadata
+
+        # For vault-agent: SDK loads CLAUDE.md hierarchy automatically
+        # Skills and agents are auto-discovered from .claude/skills/ and .claude/agents/
+        # by Claude Code's native setting_sources=["project"] behavior
+        # No need to inject them into the prompt manually
+
+        # Handle explicitly selected context files (beyond automatic hierarchy)
+        # These are files the user explicitly selected in the UI
+        if contexts:
+            context_folder_service = ContextFolderService(self.vault_path)
+
+            # Separate folder paths from file paths
+            folder_paths: list[str] = []
+            file_paths: list[str] = []
+
+            for ctx in contexts:
+                if ctx.endswith(".md"):
+                    file_paths.append(ctx)
+                else:
+                    folder_paths.append(ctx)
+
+            # Load folder-based context (explicit selections only)
+            if folder_paths:
                 try:
-                    prompt = module_prompt_path.read_text(encoding="utf-8")
-                    metadata["prompt_source"] = "module"
-                    metadata["prompt_source_path"] = "Chat/CLAUDE.md"
+                    chain = context_folder_service.build_chain(folder_paths, max_tokens=40000)
+                    if chain.files:
+                        folder_context = context_folder_service.format_chain_for_prompt(chain)
+                        append_parts.append(folder_context)
+                        metadata["context_files"].extend(chain.file_paths)
+                        metadata["context_tokens"] += chain.total_tokens
+                        metadata["context_truncated"] = chain.truncated
+                        logger.info(f"Loaded {len(chain.files)} explicit context files ({chain.total_tokens} tokens)")
                 except Exception as e:
-                    logger.warning(f"Failed to read module prompt: {e}")
-                    prompt = DEFAULT_VAULT_PROMPT
-            else:
-                prompt = DEFAULT_VAULT_PROMPT
+                    logger.warning(f"Failed to load folder context: {e}")
 
-        # Estimate base prompt tokens
-        metadata["base_prompt_tokens"] = len(prompt) // 4  # Rough estimate
+            # Load legacy file-based context
+            if file_paths:
+                try:
+                    context_result = await load_agent_context(
+                        {"include": file_paths, "max_tokens": 10000},
+                        self.vault_path,
+                    )
+                    if context_result.get("content"):
+                        append_parts.append(format_context_for_prompt(context_result))
+                        metadata["context_files"].extend(context_result.get("files", []))
+                        metadata["context_tokens"] += context_result.get("totalTokens", 0)
+                        metadata["context_truncated"] = metadata["context_truncated"] or context_result.get("truncated", False)
+                except Exception as e:
+                    logger.warning(f"Failed to load file context: {e}")
 
-        # Load specialized agents if vault agent
-        if agent.name == "vault-agent":
-            agents = await load_all_agents(self.vault_path)
-            if agents:
-                prompt += "\n\n## Specialized Agents Available\n\n"
-                prompt += "You can suggest these agents for specific tasks:\n"
-                for a in agents:
-                    prompt += f"- {a.path}: {a.description or a.name}\n"
-                    metadata["available_agents"].append(a.name)
-
-        # Add available skills to prompt (discovered from .skills/)
-        skills_section = get_skills_for_system_prompt(self.vault_path)
-        if skills_section:
-            prompt += f"\n\n{skills_section}"
-
-        # Add custom agents to prompt (discovered from .parachute/agents/)
-        agents_section = get_agents_for_system_prompt(self.vault_path)
-        if agents_section:
-            prompt += f"\n\n{agents_section}"
-
-        # Load context using folder-based system
-        #
-        # New system: contexts are folder paths (e.g., "Projects/parachute")
-        # that contain AGENTS.md files. Parent chain is auto-included.
-        #
-        # Backwards compatibility: file paths (e.g., "Chat/contexts/general.md")
-        # are still supported via the old loader.
-        #
-        # Default: Always include root AGENTS.md (vault context)
-
-        context_folder_service = ContextFolderService(self.vault_path)
-
-        # Determine what contexts to load
-        if contexts is not None:
-            context_input = contexts  # Use what was provided, even if empty
-        elif agent.context and agent.context.include:
-            context_input = agent.context.include  # Use agent's configured contexts
-        else:
-            context_input = []  # Start empty, we'll add root by default
-
-        # Separate folder paths from file paths
-        folder_paths: list[str] = []
-        file_paths: list[str] = []
-
-        for ctx in context_input:
-            if ctx.endswith(".md"):
-                file_paths.append(ctx)
-            else:
-                folder_paths.append(ctx)
-
-        # Always include root context (empty string = vault root)
-        # unless explicitly providing contexts (then respect that choice)
-        if not context_input and contexts is None:
-            folder_paths = [""]  # Root AGENTS.md only as default
-
-        logger.info(f"Context folders: {folder_paths}, files: {file_paths}")
-
-        # Load folder-based context (AGENTS.md hierarchy)
-        if folder_paths:
-            try:
-                chain = context_folder_service.build_chain(folder_paths, max_tokens=40000)
-                if chain.files:
-                    folder_context = context_folder_service.format_chain_for_prompt(chain)
-                    prompt += f"\n\n{folder_context}"
-                    metadata["context_files"].extend(chain.file_paths)
-                    metadata["context_tokens"] += chain.total_tokens
-                    metadata["context_truncated"] = metadata["context_truncated"] or chain.truncated
-                    logger.info(f"Loaded {len(chain.files)} context files from folders ({chain.total_tokens} tokens)")
-            except Exception as e:
-                logger.warning(f"Failed to load folder context: {e}")
-
-        # Load legacy file-based context (backwards compatibility)
-        if file_paths:
-            try:
-                context_result = await load_agent_context(
-                    {"include": file_paths, "max_tokens": 10000},  # Lower limit for legacy
-                    self.vault_path,
-                )
-                if context_result.get("content"):
-                    prompt += format_context_for_prompt(context_result)
-                    metadata["context_files"].extend(context_result.get("files", []))
-                    metadata["context_tokens"] += context_result.get("totalTokens", 0)
-                    metadata["context_truncated"] = metadata["context_truncated"] or context_result.get("truncated", False)
-            except Exception as e:
-                logger.warning(f"Failed to load file context: {e}")
-
-        # Check for working directory AGENTS.md or CLAUDE.md (prefer AGENTS.md)
+        # Note working directory for metadata (SDK loads CLAUDE.md automatically)
         if working_directory:
             working_dir_path = Path(working_directory)
-            # Handle both absolute paths and vault-relative paths
             if not working_dir_path.is_absolute():
                 working_dir_path = self.vault_path / working_directory
 
-            # Try AGENTS.md first, then fall back to CLAUDE.md
-            agents_md_path = working_dir_path / "AGENTS.md"
-            claude_md_path = working_dir_path / "CLAUDE.md"
-
-            context_file_path = None
-            if agents_md_path.exists():
-                context_file_path = agents_md_path
-            elif claude_md_path.exists():
-                context_file_path = claude_md_path
-
-            if context_file_path:
-                try:
-                    context_content = context_file_path.read_text(encoding="utf-8")
-                    # Make path relative for display
+            # Check if CLAUDE.md exists (for metadata, SDK loads it)
+            for md_name in ["AGENTS.md", "CLAUDE.md"]:
+                md_path = working_dir_path / md_name
+                if md_path.exists():
                     try:
-                        relative_path = context_file_path.relative_to(self.vault_path)
-                        display_path = str(relative_path)
+                        relative_path = md_path.relative_to(self.vault_path)
+                        metadata["working_directory_claude_md"] = str(relative_path)
                     except ValueError:
-                        display_path = str(context_file_path)
+                        metadata["working_directory_claude_md"] = str(md_path)
+                    break
 
-                    prompt += f"\n\n---\n\n## Project Context ({display_path})\n\n{context_content}"
-                    metadata["working_directory_claude_md"] = display_path  # Keep field name for backwards compat
-                    # Add tokens from context file to context tokens
-                    context_tokens = len(context_content) // 4
-                    metadata["context_tokens"] += context_tokens
-                    logger.info(f"Loaded working directory context: {display_path} ({context_tokens} tokens)")
-                except Exception as e:
-                    logger.warning(f"Failed to read working directory context: {e}")
-
-        # Add vault location and context info
-        prompt += f"\n\n---\n\n## Environment\n\nVault location: {self.vault_path}"
-
-        # Add context folders info
-        if folder_paths:
-            context_info = context_folder_service.format_context_folders_section(folder_paths)
-            if context_info:
-                prompt += f"\n\n{context_info}"
-
-        if working_directory:
-            prompt += f"\n\nWorking directory: {working_directory}"
-
-        # Add prior conversation
+        # Prior conversation (MUST be runtime - can't be in static files)
         if prior_conversation:
-            prompt += f"""
-
----
-
+            prior_section = f"""
 ## Prior Conversation (IMPORTANT)
 
 **The user is continuing a previous conversation they had with you (or another AI assistant).**
@@ -960,11 +960,15 @@ The messages below are from that earlier session. Treat them as if they happened
 
 The user is now continuing this conversation with you. Respond naturally as if you remember the above exchange.
 """
+            append_parts.append(prior_section)
 
-        # Calculate total prompt tokens
-        metadata["total_prompt_tokens"] = len(prompt) // 4
+        # Combine all append parts
+        append_content = "\n\n".join(append_parts) if append_parts else ""
 
-        return prompt, metadata
+        # Calculate tokens for metadata
+        metadata["total_prompt_tokens"] = len(append_content) // 4
+
+        return append_content, metadata
 
     # =========================================================================
     # Session Management (delegated to SessionManager)

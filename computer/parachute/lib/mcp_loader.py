@@ -246,6 +246,18 @@ def _validate_remote_server(name: str, config: dict[str, Any]) -> list[str]:
 
 def _get_server_type(config: dict[str, Any]) -> str:
     """Determine server type from config."""
+    # Check explicit type field first
+    explicit_type = config.get("type", "").lower()
+    if explicit_type:
+        # Map common type names to our categories
+        if explicit_type in ("stdio", "command"):
+            return "stdio"
+        elif explicit_type in ("http", "https", "sse", "streamable-http"):
+            return "http"
+        else:
+            return explicit_type  # Return unknown types as-is for filtering
+
+    # Fall back to inferring from fields
     if "command" in config:
         return "stdio"
     elif "url" in config:
@@ -280,6 +292,91 @@ def filter_stdio_servers(servers: dict[str, dict[str, Any]]) -> dict[str, dict[s
             logger.debug(f"Filtering out non-stdio MCP server '{name}' (type: {server_type})")
 
     return stdio_servers
+
+
+def validate_and_filter_servers(
+    servers: dict[str, dict[str, Any]]
+) -> tuple[dict[str, dict[str, Any]], list[str]]:
+    """
+    Validate MCP server configurations and filter out invalid ones.
+
+    This provides graceful degradation - invalid servers are logged and skipped
+    rather than causing the entire system to fail.
+
+    Args:
+        servers: Dictionary of server name -> config
+
+    Returns:
+        Tuple of (valid_servers, warning_messages)
+    """
+    if not servers:
+        return {}, []
+
+    valid_servers = {}
+    warnings: list[str] = []
+
+    for name, config in servers.items():
+        server_type = _get_server_type(config)
+
+        # Validate based on server type
+        if server_type == "stdio":
+            # Validate stdio server
+            errors = _validate_stdio_server(name, config)
+            if errors:
+                for error in errors:
+                    warnings.append(error)
+                    logger.warning(f"MCP validation: {error}")
+            else:
+                valid_servers[name] = config
+
+        elif server_type == "http":
+            # Validate HTTP/SSE server
+            errors = _validate_remote_server(name, config)
+            if errors:
+                for error in errors:
+                    warnings.append(error)
+                    logger.warning(f"MCP validation: {error}")
+            else:
+                valid_servers[name] = config
+
+        else:
+            # Unknown server type - skip with warning
+            warning = f"Server '{name}': unsupported type '{server_type}' (skipping)"
+            warnings.append(warning)
+            logger.warning(f"MCP validation: {warning}")
+
+    if warnings:
+        logger.info(
+            f"MCP validation: {len(valid_servers)}/{len(servers)} servers valid, "
+            f"{len(warnings)} warnings"
+        )
+
+    return valid_servers, warnings
+
+
+def _validate_stdio_server(name: str, config: dict[str, Any]) -> list[str]:
+    """
+    Validate a stdio (command-based) MCP server configuration.
+
+    Returns a list of validation errors (empty if valid).
+    """
+    errors = []
+
+    command = config.get("command", "")
+    if not command:
+        errors.append(f"Server '{name}': missing 'command' field")
+    elif not isinstance(command, str):
+        errors.append(f"Server '{name}': 'command' must be a string")
+
+    args = config.get("args", [])
+    if args and not isinstance(args, list):
+        errors.append(f"Server '{name}': 'args' must be a list")
+
+    env = config.get("env", {})
+    if env and not isinstance(env, dict):
+        errors.append(f"Server '{name}': 'env' must be a dictionary")
+
+    return errors
 
 
 async def list_mcp_servers(vault_path: Path) -> list[dict[str, Any]]:
