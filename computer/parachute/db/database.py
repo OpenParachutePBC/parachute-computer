@@ -114,7 +114,8 @@ CREATE TABLE IF NOT EXISTS curator_queue (
     completed_at TEXT,
     status TEXT DEFAULT 'pending',
     result TEXT,
-    error TEXT
+    error TEXT,
+    tool_calls TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_curator_queue_status ON curator_queue(status);
@@ -151,9 +152,9 @@ CREATE TABLE IF NOT EXISTS schema_version (
     applied_at TEXT NOT NULL
 );
 
--- Insert schema version 7 (removed context_watches table)
+-- Insert schema version 8 (added tool_calls to curator_queue)
 INSERT OR IGNORE INTO schema_version (version, applied_at)
-VALUES (7, datetime('now'));
+VALUES (8, datetime('now'));
 """
 
 
@@ -177,7 +178,26 @@ class Database:
         await self._connection.executescript(SCHEMA_SQL)
         await self._connection.commit()
 
+        # Run migrations for existing databases
+        await self._run_migrations()
+
         logger.info(f"Database connected: {self.db_path}")
+
+    async def _run_migrations(self) -> None:
+        """Run any needed migrations for existing databases."""
+        # Migration: Add tool_calls column to curator_queue if missing
+        try:
+            async with self._connection.execute(
+                "SELECT tool_calls FROM curator_queue LIMIT 1"
+            ):
+                pass  # Column exists
+        except Exception:
+            # Column doesn't exist, add it
+            await self._connection.execute(
+                "ALTER TABLE curator_queue ADD COLUMN tool_calls TEXT"
+            )
+            await self._connection.commit()
+            logger.info("Added tool_calls column to curator_queue")
 
     async def close(self) -> None:
         """Close database connection."""

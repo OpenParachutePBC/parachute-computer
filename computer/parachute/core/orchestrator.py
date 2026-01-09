@@ -698,6 +698,7 @@ class Orchestrator:
                 await self._queue_curator_task(
                     session_id=final_session_id,
                     message_count=session.message_count + 2,
+                    tool_calls=tool_calls if tool_calls else None,
                 )
 
             # Yield done event
@@ -1247,13 +1248,14 @@ The user is now continuing this conversation with you. Respond naturally as if y
         self,
         session_id: str,
         message_count: int,
+        tool_calls: Optional[list[dict]] = None,
     ) -> None:
         """
         Queue a curator task to run in the background.
 
         Called after a message completes. The curator will:
         - Update session title if needed
-        - Update context files with new learnings
+        - Log commits to Daily/chat-log/
 
         This is non-blocking - the task is queued and processed asynchronously.
         """
@@ -1267,6 +1269,7 @@ The user is now continuing this conversation with you. Respond naturally as if y
                 parent_session_id=session_id,
                 trigger_type="message_done",
                 message_count=message_count,
+                tool_calls=tool_calls,
             )
             logger.info(f"Auto-queued curator task {task_id} for session {session_id[:8]}...")
 

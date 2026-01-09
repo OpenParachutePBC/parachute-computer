@@ -54,6 +54,7 @@ class CuratorTask:
     status: str  # 'pending', 'running', 'completed', 'failed'
     result: Optional[dict]
     error: Optional[str]
+    tool_calls: Optional[list[dict]] = None
 
 
 class CuratorService:
@@ -108,16 +109,19 @@ class CuratorService:
         parent_session_id: str,
         trigger_type: str = "message_done",
         message_count: int = 0,
+        tool_calls: Optional[list[dict]] = None,
     ) -> int:
         """Queue a curator task. Returns the task ID."""
         now = datetime.now(timezone.utc).isoformat()
+        tool_calls_json = json.dumps(tool_calls) if tool_calls else None
+
         async with self.db.connection.execute(
             """
             INSERT INTO curator_queue
-            (parent_session_id, trigger_type, message_count, queued_at, status)
-            VALUES (?, ?, ?, ?, 'pending')
+            (parent_session_id, trigger_type, message_count, queued_at, status, tool_calls)
+            VALUES (?, ?, ?, ?, 'pending', ?)
             """,
-            (parent_session_id, trigger_type, message_count, now),
+            (parent_session_id, trigger_type, message_count, now, tool_calls_json),
         ) as cursor:
             task_id = cursor.lastrowid
 
@@ -231,15 +235,37 @@ class CuratorService:
             await self._update_task_status(task.id, "failed", error=str(e))
 
     async def _run_curator(self, task: CuratorTask) -> dict[str, Any]:
-        """Run curator for a task - generates/updates session title."""
+        """Run curator for a task - generates title and logs commits."""
         from parachute.core.session_manager import SessionManager
+        from parachute.core.chat_log import get_chat_log_service
+
+        result: dict[str, Any] = {
+            "title_updated": False,
+            "commits_logged": False,
+        }
 
         # Get session
         session = await self.db.get_session(task.session_id)
         if not session:
             return {"error": "Session not found"}
 
-        # Check if title needs generating
+        # 1. Log any commits from tool calls
+        commits = self._extract_commits(task.tool_calls)
+        if commits:
+            try:
+                chat_log = get_chat_log_service(self.vault_path)
+                logged = chat_log.log_commits(
+                    session_id=task.session_id,
+                    session_title=session.title,
+                    commits=commits,
+                )
+                result["commits_logged"] = logged
+                result["commit_count"] = len(commits)
+                logger.info(f"Logged {len(commits)} commits for session {task.session_id[:8]}")
+            except Exception as e:
+                logger.warning(f"Failed to log commits: {e}")
+
+        # 2. Generate title if needed
         is_untitled = not session.title or session.title == "(untitled)"
         is_placeholder = (
             session.title and
@@ -247,31 +273,72 @@ class CuratorService:
             len(session.title) <= 65
         )
 
-        if not is_untitled and not is_placeholder:
-            return {"skipped": True, "reason": "Session already has title"}
+        if is_untitled or is_placeholder:
+            session_manager = SessionManager(self.vault_path, self.db)
+            messages = await session_manager.get_session_messages(task.session_id, limit=5)
 
-        # Get recent messages for context
-        session_manager = SessionManager(self.vault_path, self.db)
-        messages = await session_manager.get_session_messages(task.session_id, limit=5)
+            if messages:
+                context = self._build_context(session, messages)
 
-        if not messages:
-            return {"skipped": True, "reason": "No messages"}
+                try:
+                    title = await self._generate_title_with_sdk(context)
+                except Exception as e:
+                    logger.warning(f"SDK title generation failed, using fallback: {e}")
+                    title = self._generate_title_heuristic(context)
 
-        # Build context
-        context = self._build_context(session, messages)
+                if title:
+                    await self.db.update_session(session.id, SessionUpdate(title=title))
+                    result["title_updated"] = True
+                    result["new_title"] = title
 
-        # Generate title
-        try:
-            title = await self._generate_title_with_sdk(context)
-        except Exception as e:
-            logger.warning(f"SDK title generation failed, using fallback: {e}")
-            title = self._generate_title_heuristic(context)
+        return result
 
-        if title:
-            await self.db.update_session(session.id, SessionUpdate(title=title))
-            return {"title_updated": True, "new_title": title}
+    def _extract_commits(self, tool_calls: Optional[list[dict]]) -> list[dict]:
+        """Extract git commits from Bash tool calls."""
+        commits = []
+        if not tool_calls:
+            return commits
 
-        return {"title_updated": False}
+        for call in tool_calls:
+            name = call.get("name", "")
+            input_data = call.get("input", {})
+
+            # Look for Bash commands that are git commits
+            if name == "Bash":
+                command = input_data.get("command", "")
+                if "git commit" in command:
+                    message = self._extract_commit_message(command)
+                    if message:
+                        commits.append({
+                            "message": message,
+                            "hash": "",  # We don't have hash from command
+                        })
+
+        return commits
+
+    def _extract_commit_message(self, command: str) -> Optional[str]:
+        """Extract commit message from a git commit command."""
+        # Pattern 1: Simple -m "message" or -m 'message'
+        msg_match = re.search(r'-m\s+["\']([^"\']+)["\']', command)
+        if msg_match:
+            return msg_match.group(1).strip()
+
+        # Pattern 2: Heredoc with cat <<'EOF' or cat <<EOF
+        # git commit -m "$(cat <<'EOF'\nMessage here\n...\nEOF\n)"
+        heredoc_match = re.search(
+            r'-m\s+"\$\(cat\s+<<[\'"]?EOF[\'"]?\s*\n([^)]+?)EOF',
+            command,
+            re.DOTALL
+        )
+        if heredoc_match:
+            # Get first line of heredoc (main message)
+            heredoc_content = heredoc_match.group(1).strip()
+            first_line = heredoc_content.split('\n')[0].strip()
+            if first_line:
+                return first_line
+
+        # Pattern 3: Just note a commit was made
+        return "(commit made)"
 
     def _build_context(self, session: Any, messages: list[dict]) -> str:
         """Build context string from messages for title generation."""
@@ -361,6 +428,13 @@ class CuratorService:
             except json.JSONDecodeError:
                 pass
 
+        tool_calls = None
+        try:
+            if row["tool_calls"]:
+                tool_calls = json.loads(row["tool_calls"])
+        except (json.JSONDecodeError, KeyError):
+            pass
+
         started_at = None
         if row["started_at"]:
             started_at = datetime.fromisoformat(row["started_at"])
@@ -380,6 +454,7 @@ class CuratorService:
             status=row["status"],
             result=result,
             error=row["error"],
+            tool_calls=tool_calls,
         )
 
 
