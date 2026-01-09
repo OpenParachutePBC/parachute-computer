@@ -269,7 +269,7 @@ async def get_recent_curator_activity(
         try:
             import json
             result_data = json.loads(result)
-        except:
+        except (json.JSONDecodeError, TypeError, ValueError):
             continue
 
         # Skip tasks that made no updates

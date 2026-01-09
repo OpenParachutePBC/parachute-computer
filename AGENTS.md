@@ -286,7 +286,7 @@ Implemented the Daily Curator - a long-running agent that reflects on daily jour
 
 **Files created:**
 - `parachute/core/daily_curator.py` - Main curator logic with `run_daily_curator()` entry point
-- `parachute/daily_curator_mcp_server.py` - MCP server with tools: `read_journal`, `read_recent_journals`, `write_reflection`
+- `parachute/core/daily_curator_tools.py` - In-process MCP tools: `read_journal`, `read_recent_journals`, `write_reflection`
 - `Daily/.curator/state.json` - State storage (SDK session ID, last run, backend type)
 - `Daily/.agents/curator.md` - User-customizable agent definition/prompt
 

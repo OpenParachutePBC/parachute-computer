@@ -743,28 +743,6 @@ If no updates are needed, just say "No updates needed" and explain briefly why.
 
         return result
 
-    def _process_curator_event(self, event: Any, result: dict[str, Any]) -> dict[str, Any]:
-        """Process SDK event and update result tracking."""
-        event_dict: dict[str, Any] = {}
-
-        # Check for tool use in assistant messages
-        if hasattr(event, "content"):
-            for block in event.content:
-                if hasattr(block, "name"):
-                    tool_name = block.name
-                    if "update_title" in tool_name:
-                        result["title_updated"] = True
-                        if hasattr(block, "input"):
-                            new_title = block.input.get("new_title", "")
-                            result["actions"].append(f"Updated title to: {new_title}")
-                    elif "update_context" in tool_name:
-                        result["context_updated"] = True
-                        if hasattr(block, "input"):
-                            file_name = block.input.get("file_name", "")
-                            result["actions"].append(f"Updated context file: {file_name}")
-
-        return event_dict
-
     async def _invoke_curator_fallback(
         self,
         curator_session: CuratorSession,

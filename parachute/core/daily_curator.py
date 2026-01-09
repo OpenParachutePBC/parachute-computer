@@ -175,23 +175,11 @@ async def run_daily_curator(
     # Load system prompt
     system_prompt = load_curator_prompt(vault_path)
 
-    # Import SDK here to avoid import errors when not needed
+    # Import SDK and create in-process MCP tools
     from claude_agent_sdk import ClaudeAgentOptions, query as sdk_query
+    from parachute.core.daily_curator_tools import create_daily_curator_tools
 
-    # Create tools via MCP server
-    import sys
-    base_dir = Path(__file__).parent.parent
-    venv_python = base_dir / "venv" / "bin" / "python"
-    python_path = str(venv_python) if venv_python.exists() else sys.executable
-
-    daily_mcp_config = {
-        "command": python_path,
-        "args": ["-m", "parachute.daily_curator_mcp_server"],
-        "env": {
-            "PARACHUTE_VAULT_PATH": str(vault_path),
-            "PYTHONPATH": str(base_dir),
-        },
-    }
+    _tools, daily_mcp_config = create_daily_curator_tools(vault_path)
 
     # Build the prompt
     prompt = f"""Today's date is {date}. Please:
