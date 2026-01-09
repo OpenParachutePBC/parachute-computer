@@ -698,7 +698,6 @@ class Orchestrator:
                 await self._queue_curator_task(
                     session_id=final_session_id,
                     message_count=session.message_count + 2,
-                    context_files=contexts,
                 )
 
             # Yield done event
@@ -1248,7 +1247,6 @@ The user is now continuing this conversation with you. Respond naturally as if y
         self,
         session_id: str,
         message_count: int,
-        context_files: Optional[list[str]] = None,
     ) -> None:
         """
         Queue a curator task to run in the background.
@@ -1269,7 +1267,6 @@ The user is now continuing this conversation with you. Respond naturally as if y
                 parent_session_id=session_id,
                 trigger_type="message_done",
                 message_count=message_count,
-                context_files=context_files,
             )
             logger.info(f"Auto-queued curator task {task_id} for session {session_id[:8]}...")
 

@@ -1,24 +1,20 @@
 """
 Session Curator Service.
 
-A long-running parallel agent that maintains session titles and updates context
-files based on conversation content. Each chat session gets a companion curator
-that watches the conversation as it evolves and has full memory of its actions.
+A background service that generates and updates session titles.
+Runs as a single worker processing tasks from a queue.
 
-Key design decisions:
-- Curator is a LONG-RUNNING parallel agent with session continuity
-- Uses real tool access (update_title, update_context) instead of JSON parsing
-- Gets message digests: user prompt, tool list (no full I/O), final response
-- One curator task runs at a time (queue-based) to avoid context file conflicts
-- Uses configurable model (curator_model setting, defaults to account default)
-- Auto-applies changes with conservative guidelines
-- Users can peek at curator activity via API
+Key design:
+- Queue-based to avoid blocking main chat flow
+- Single worker to process tasks one at a time
+- Simple title generation using Claude SDK
+- Falls back to heuristics if SDK unavailable
 """
 
 import asyncio
 import json
 import logging
-import uuid
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -32,27 +28,25 @@ from parachute.models.session import SessionUpdate
 logger = logging.getLogger(__name__)
 
 
-# Note: CURATOR_SYSTEM_PROMPT is now in curator_tools.py with the restricted tools
+# System prompt for title generation
+TITLE_PROMPT = """You are a title generator. Generate a concise, descriptive title for the conversation below.
 
+Rules:
+- 3-8 words, no more than 60 characters
+- Capture the main topic or intent
+- Use sentence case (capitalize first word only)
+- No quotes, no prefixes like "Title:"
+- No emojis unless the conversation is specifically about them
 
-@dataclass
-class CuratorSession:
-    """Represents a curator session linked to a chat session."""
-    id: str
-    parent_session_id: str
-    sdk_session_id: Optional[str]
-    last_run_at: Optional[datetime]
-    last_message_index: int
-    created_at: datetime
+Just output the title text, nothing else."""
 
 
 @dataclass
 class CuratorTask:
     """A queued curator task."""
     id: int
-    parent_session_id: str
-    curator_session_id: Optional[str]
-    trigger_type: str  # 'message_done', 'compact', 'manual'
+    session_id: str
+    trigger_type: str
     message_count: int
     queued_at: datetime
     started_at: Optional[datetime]
@@ -64,13 +58,9 @@ class CuratorTask:
 
 class CuratorService:
     """
-    Manages curator sessions and task queue.
+    Background service for generating session titles.
 
-    Each chat session can have a companion curator session that:
-    - Generates/updates session titles
-    - Updates context files with new learnings
-
-    Tasks are queued and processed one at a time to avoid conflicts.
+    Tasks are queued and processed one at a time by a background worker.
     """
 
     def __init__(self, db: Database, vault_path: Path):
@@ -81,9 +71,8 @@ class CuratorService:
         self._queue_event = asyncio.Event()
 
     async def start_worker(self) -> None:
-        """Start the background worker that processes curator tasks."""
+        """Start the background worker."""
         if self._worker_task is not None:
-            logger.warning("Curator worker already running")
             return
 
         self._shutdown = False
@@ -96,12 +85,11 @@ class CuratorService:
             return
 
         self._shutdown = True
-        self._queue_event.set()  # Wake up the worker
+        self._queue_event.set()
 
         try:
-            await asyncio.wait_for(self._worker_task, timeout=10.0)
+            await asyncio.wait_for(self._worker_task, timeout=5.0)
         except asyncio.TimeoutError:
-            logger.warning("Curator worker didn't stop gracefully, cancelling")
             self._worker_task.cancel()
             try:
                 await self._worker_task
@@ -121,33 +109,22 @@ class CuratorService:
         trigger_type: str = "message_done",
         message_count: int = 0,
     ) -> int:
-        """
-        Queue a curator task for a session.
-
-        Returns the task ID.
-        """
-        # Get or create curator session
-        curator_session = await self.get_or_create_curator_session(parent_session_id)
-
-        # Insert task into queue
+        """Queue a curator task. Returns the task ID."""
         now = datetime.now(timezone.utc).isoformat()
         async with self.db.connection.execute(
             """
             INSERT INTO curator_queue
-            (parent_session_id, curator_session_id, trigger_type, message_count, queued_at, status)
-            VALUES (?, ?, ?, ?, ?, 'pending')
+            (parent_session_id, trigger_type, message_count, queued_at, status)
+            VALUES (?, ?, ?, ?, 'pending')
             """,
-            (parent_session_id, curator_session.id, trigger_type, message_count, now),
+            (parent_session_id, trigger_type, message_count, now),
         ) as cursor:
             task_id = cursor.lastrowid
 
         await self.db.connection.commit()
+        logger.info(f"Queued curator task {task_id} for session {parent_session_id[:8]}")
 
-        logger.info(f"Queued curator task {task_id} for session {parent_session_id}")
-
-        # Wake up the worker
         self._queue_event.set()
-
         return task_id
 
     async def get_pending_task(self) -> Optional[CuratorTask]:
@@ -165,7 +142,33 @@ class CuratorService:
                 return self._row_to_task(row)
             return None
 
-    async def update_task_status(
+    async def get_task(self, task_id: int) -> Optional[CuratorTask]:
+        """Get a task by ID."""
+        async with self.db.connection.execute(
+            "SELECT * FROM curator_queue WHERE id = ?", (task_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                return self._row_to_task(row)
+            return None
+
+    async def get_tasks_for_session(
+        self, session_id: str, limit: int = 20
+    ) -> list[CuratorTask]:
+        """Get recent tasks for a session."""
+        async with self.db.connection.execute(
+            """
+            SELECT * FROM curator_queue
+            WHERE parent_session_id = ?
+            ORDER BY queued_at DESC
+            LIMIT ?
+            """,
+            (session_id, limit),
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [self._row_to_task(row) for row in rows]
+
+    async def _update_task_status(
         self,
         task_id: int,
         status: str,
@@ -186,623 +189,168 @@ class CuratorService:
                 "UPDATE curator_queue SET status = ?, completed_at = ?, result = ?, error = ? WHERE id = ?",
                 (status, now, result_json, error, task_id),
             )
-        else:
-            await self.db.connection.execute(
-                "UPDATE curator_queue SET status = ? WHERE id = ?",
-                (status, task_id),
-            )
 
         await self.db.connection.commit()
-
-    async def get_task(self, task_id: int) -> Optional[CuratorTask]:
-        """Get a task by ID."""
-        async with self.db.connection.execute(
-            "SELECT * FROM curator_queue WHERE id = ?", (task_id,)
-        ) as cursor:
-            row = await cursor.fetchone()
-            if row:
-                return self._row_to_task(row)
-            return None
-
-    async def get_tasks_for_session(
-        self, parent_session_id: str, limit: int = 20
-    ) -> list[CuratorTask]:
-        """Get recent tasks for a session."""
-        async with self.db.connection.execute(
-            """
-            SELECT * FROM curator_queue
-            WHERE parent_session_id = ?
-            ORDER BY queued_at DESC
-            LIMIT ?
-            """,
-            (parent_session_id, limit),
-        ) as cursor:
-            rows = await cursor.fetchall()
-            return [self._row_to_task(row) for row in rows]
-
-    # =========================================================================
-    # Curator Session Management
-    # =========================================================================
-
-    async def get_or_create_curator_session(
-        self,
-        parent_session_id: str,
-    ) -> CuratorSession:
-        """Get existing curator session or create a new one."""
-        # Try to get existing
-        async with self.db.connection.execute(
-            "SELECT * FROM curator_sessions WHERE parent_session_id = ?",
-            (parent_session_id,),
-        ) as cursor:
-            row = await cursor.fetchone()
-            if row:
-                return self._row_to_curator_session(row)
-
-        # Create new
-        curator_id = f"curator-{uuid.uuid4()}"
-        now = datetime.now(timezone.utc).isoformat()
-
-        await self.db.connection.execute(
-            """
-            INSERT INTO curator_sessions
-            (id, parent_session_id, created_at)
-            VALUES (?, ?, ?)
-            """,
-            (curator_id, parent_session_id, now),
-        )
-        await self.db.connection.commit()
-
-        logger.info(f"Created curator session {curator_id} for {parent_session_id}")
-
-        return CuratorSession(
-            id=curator_id,
-            parent_session_id=parent_session_id,
-            sdk_session_id=None,
-            last_run_at=None,
-            last_message_index=0,
-            created_at=datetime.now(timezone.utc),
-        )
-
-    async def update_curator_session(
-        self,
-        curator_id: str,
-        sdk_session_id: Optional[str] = None,
-        last_message_index: Optional[int] = None,
-    ) -> None:
-        """Update curator session after a run."""
-        updates = []
-        params = []
-
-        now = datetime.now(timezone.utc).isoformat()
-        updates.append("last_run_at = ?")
-        params.append(now)
-
-        if sdk_session_id is not None:
-            updates.append("sdk_session_id = ?")
-            params.append(sdk_session_id)
-
-        if last_message_index is not None:
-            updates.append("last_message_index = ?")
-            params.append(last_message_index)
-
-        params.append(curator_id)
-
-        await self.db.connection.execute(
-            f"UPDATE curator_sessions SET {', '.join(updates)} WHERE id = ?",
-            params,
-        )
-        await self.db.connection.commit()
-
-    async def get_curator_session(self, parent_session_id: str) -> Optional[CuratorSession]:
-        """Get curator session for a chat session."""
-        async with self.db.connection.execute(
-            "SELECT * FROM curator_sessions WHERE parent_session_id = ?",
-            (parent_session_id,),
-        ) as cursor:
-            row = await cursor.fetchone()
-            if row:
-                return self._row_to_curator_session(row)
-            return None
 
     # =========================================================================
     # Worker Loop
     # =========================================================================
 
     async def _worker_loop(self) -> None:
-        """Background worker that processes curator tasks one at a time."""
-        logger.info("Curator worker loop started")
-
+        """Background worker that processes curator tasks."""
         while not self._shutdown:
             try:
-                # Get next pending task
                 task = await self.get_pending_task()
 
                 if task is None:
-                    # No tasks, wait for signal or timeout
                     self._queue_event.clear()
                     try:
-                        await asyncio.wait_for(
-                            self._queue_event.wait(),
-                            timeout=30.0  # Check every 30 seconds even without signal
-                        )
+                        await asyncio.wait_for(self._queue_event.wait(), timeout=30.0)
                     except asyncio.TimeoutError:
                         pass
                     continue
 
-                # Process the task
                 await self._process_task(task)
 
             except Exception as e:
                 logger.error(f"Curator worker error: {e}", exc_info=True)
-                # Don't crash the worker on errors, just continue
                 await asyncio.sleep(5.0)
-
-        logger.info("Curator worker loop exiting")
 
     async def _process_task(self, task: CuratorTask) -> None:
         """Process a single curator task."""
-        logger.info(f"Processing curator task {task.id} for session {task.parent_session_id}")
-
-        await self.update_task_status(task.id, "running")
+        logger.info(f"Processing curator task {task.id} for session {task.session_id[:8]}")
+        await self._update_task_status(task.id, "running")
 
         try:
             result = await self._run_curator(task)
-            await self.update_task_status(task.id, "completed", result=result)
+            await self._update_task_status(task.id, "completed", result=result)
             logger.info(f"Curator task {task.id} completed: {result}")
 
         except Exception as e:
             logger.error(f"Curator task {task.id} failed: {e}", exc_info=True)
-            await self.update_task_status(task.id, "failed", error=str(e))
+            await self._update_task_status(task.id, "failed", error=str(e))
 
     async def _run_curator(self, task: CuratorTask) -> dict[str, Any]:
-        """
-        Run the curator agent for a task.
-
-        This is where we invoke the Claude SDK to:
-        1. Analyze recent messages
-        2. Update title if needed
-        3. Update context files if needed
-        """
-        # Import here to avoid circular imports
+        """Run curator for a task - generates/updates session title."""
         from parachute.core.session_manager import SessionManager
 
-        # Get parent session info
-        parent_session = await self.db.get_session(task.parent_session_id)
-        if not parent_session:
-            return {"error": "Parent session not found"}
+        # Get session
+        session = await self.db.get_session(task.session_id)
+        if not session:
+            return {"error": "Session not found"}
 
-        # Get curator session
-        curator_session = await self.get_curator_session(task.parent_session_id)
-        if not curator_session:
-            return {"error": "Curator session not found"}
-
-        # Get recent messages from parent session
-        session_manager = SessionManager(self.vault_path, self.db)
-        messages = await session_manager.get_session_messages(
-            task.parent_session_id,
-            after_index=curator_session.last_message_index,
+        # Check if title needs generating
+        is_untitled = not session.title or session.title == "(untitled)"
+        is_placeholder = (
+            session.title and
+            session.title.endswith("...") and
+            len(session.title) <= 65
         )
+
+        if not is_untitled and not is_placeholder:
+            return {"skipped": True, "reason": "Session already has title"}
+
+        # Get recent messages for context
+        session_manager = SessionManager(self.vault_path, self.db)
+        messages = await session_manager.get_session_messages(task.session_id, limit=5)
 
         if not messages:
-            logger.info(f"No new messages to curate for {task.parent_session_id}")
-            return {"skipped": True, "reason": "No new messages"}
+            return {"skipped": True, "reason": "No messages"}
 
-        # Build context for curator
-        context = self._build_curator_context(
-            parent_session=parent_session,
-            messages=messages,
-        )
+        # Build context
+        context = self._build_context(session, messages)
 
-        # Run curator agent
-        result = await self._invoke_curator_agent(
-            curator_session=curator_session,
-            context=context,
-            parent_session=parent_session,
-        )
+        # Generate title
+        try:
+            title = await self._generate_title_with_sdk(context)
+        except Exception as e:
+            logger.warning(f"SDK title generation failed, using fallback: {e}")
+            title = self._generate_title_heuristic(context)
 
-        # Update curator session tracking
-        new_message_index = curator_session.last_message_index + len(messages)
-        await self.update_curator_session(
-            curator_session.id,
-            sdk_session_id=result.get("sdk_session_id"),
-            last_message_index=new_message_index,
-        )
+        if title:
+            await self.db.update_session(session.id, SessionUpdate(title=title))
+            return {"title_updated": True, "new_title": title}
 
-        return result
+        return {"title_updated": False}
 
-    def _build_curator_context(
-        self,
-        parent_session: Any,
-        messages: list[dict],
-    ) -> str:
-        """
-        Build a message digest for the curator agent.
-
-        Format:
-        - User's prompt (full text)
-        - Tool calls (just names, no full I/O)
-        - Final assistant response
-
-        This gives the curator enough context without overwhelming it.
-        """
+    def _build_context(self, session: Any, messages: list[dict]) -> str:
+        """Build context string from messages for title generation."""
         parts = []
 
-        # Session info (only on first run for this session)
-        parts.append(f"## Message Digest for Session: {parent_session.id}")
-        parts.append(f"Current Title: {parent_session.title or '(untitled)'}")
-        parts.append("")
-
-        # Process messages to extract digest format
-        for msg in messages:
+        for msg in messages[:3]:  # First 3 messages max
             role = msg.get("role", "unknown")
             content = msg.get("content", "")
 
-            if role == "user":
-                # Include full user prompt
-                user_text = self._extract_text_content(content)
-                if user_text:
-                    parts.append(f"### User Message")
-                    parts.append(user_text[:3000] if len(user_text) > 3000 else user_text)
-                    parts.append("")
-
-            elif role == "assistant":
-                # For assistant, extract tool calls (names only) and final text
-                tool_calls = self._extract_tool_names(content)
-                final_text = self._extract_text_content(content)
-
-                if tool_calls:
-                    parts.append(f"### Tools Used")
-                    parts.append(", ".join(tool_calls))
-                    parts.append("")
-
-                if final_text:
-                    parts.append(f"### Assistant Response")
-                    # Truncate long responses
-                    if len(final_text) > 2000:
-                        final_text = final_text[:2000] + "...(truncated)"
-                    parts.append(final_text)
-                    parts.append("")
-
-        return "\n".join(parts)
-
-    def _extract_text_content(self, content: Any) -> str:
-        """Extract text from message content (handles string or list format)."""
-        if isinstance(content, str):
-            return content
-        if isinstance(content, list):
-            text_parts = []
-            for c in content:
-                if isinstance(c, dict):
-                    if c.get("type") == "text":
+            if isinstance(content, str):
+                text = content
+            elif isinstance(content, list):
+                text_parts = []
+                for c in content:
+                    if isinstance(c, dict) and c.get("type") == "text":
                         text_parts.append(c.get("text", ""))
-            return "\n".join(text_parts)
-        return ""
-
-    def _extract_tool_names(self, content: Any) -> list[str]:
-        """Extract tool names from assistant message content."""
-        tool_names = []
-        if isinstance(content, list):
-            for c in content:
-                if isinstance(c, dict):
-                    # Handle tool_use blocks
-                    if c.get("type") == "tool_use":
-                        tool_names.append(c.get("name", "unknown_tool"))
-                    # Handle tool calls in different formats
-                    elif c.get("type") == "tool_call":
-                        tool_names.append(c.get("name", "unknown_tool"))
-        return tool_names
-
-    async def _invoke_curator_agent(
-        self,
-        curator_session: CuratorSession,
-        context: str,
-        parent_session: Any,
-    ) -> dict[str, Any]:
-        """
-        Invoke the curator agent using Claude SDK with restricted tools.
-
-        The curator evaluates both title and context updates with appropriate
-        conservatism levels. It has access ONLY to curator-specific tools
-        with no general file access or shell commands.
-        """
-        from parachute.core.curator_tools import (
-            CURATOR_TITLE_PROMPT,
-            CURATOR_SYSTEM_PROMPT,
-        )
-
-        result: dict[str, Any] = {
-            "title_updated": False,
-            "context_updated": False,
-            "actions": [],
-            "sdk_session_id": curator_session.sdk_session_id,
-        }
-
-        # Determine what kind of curation is needed
-        is_untitled = not parent_session.title or parent_session.title == "(untitled)"
-
-        # Detect placeholder titles (auto-generated from first message)
-        # These end with "..." and are just truncated user messages
-        is_placeholder_title = (
-            parent_session.title and
-            parent_session.title.endswith("...") and
-            len(parent_session.title) <= 65  # max_length + "..."
-        )
-
-        # Use simple title generation for untitled OR placeholder-titled sessions
-        # Once a session has a proper title (not placeholder), use conservative evaluation
-        use_simple_title_gen = is_untitled or is_placeholder_title
-
-        logger.info(
-            f"Curator decision for {parent_session.id}: "
-            f"is_untitled={is_untitled}, is_placeholder={is_placeholder_title}, "
-            f"use_simple_title_gen={use_simple_title_gen}, "
-            f"current_title='{parent_session.title[:50] if parent_session.title else None}...'"
-        )
-
-        try:
-            from claude_agent_sdk import query as sdk_query, ClaudeAgentOptions
-
-            if use_simple_title_gen:
-                # Simple title generation for new sessions
-                result = await self._generate_title_simple(
-                    context, parent_session, result
-                )
+                text = "\n".join(text_parts)
             else:
-                # Full curator evaluation for established sessions
-                result = await self._run_full_curator(
-                    curator_session, context, parent_session, result
-                )
+                continue
 
-        except ImportError as e:
-            logger.warning(f"Claude SDK not available, falling back to heuristic: {e}")
-            result = await self._invoke_curator_fallback(curator_session, context, parent_session)
+            if text:
+                # Truncate long content
+                if len(text) > 500:
+                    text = text[:500] + "..."
+                parts.append(f"{role.upper()}: {text}")
 
-        except Exception as e:
-            logger.error(f"Curator agent error: {e}", exc_info=True)
-            result["error"] = str(e)
-            # Fall back to heuristic for title if needed
-            if not parent_session.title or parent_session.title == "(untitled)":
-                fallback = await self._invoke_curator_fallback(curator_session, context, parent_session)
-                result.update(fallback)
+        return "\n\n".join(parts)
 
-        return result
-
-    async def _generate_title_simple(
-        self,
-        context: str,
-        parent_session: Any,
-        result: dict[str, Any],
-    ) -> dict[str, Any]:
-        """Simple title generation for new sessions."""
+    async def _generate_title_with_sdk(self, context: str) -> Optional[str]:
+        """Generate title using Claude SDK."""
         from claude_agent_sdk import query as sdk_query, ClaudeAgentOptions
-        from parachute.core.curator_tools import CURATOR_TITLE_PROMPT
-
-        options = ClaudeAgentOptions(
-            system_prompt=CURATOR_TITLE_PROMPT,
-            max_turns=1,
-            allowed_tools=[],
-        )
-
-        prompt = f"Generate a title for this conversation:\n\n{context}"
-        logger.info(f"Running simple title generation for session {parent_session.id}")
-
-        generated_title = ""
-        async for event in sdk_query(prompt=prompt, options=options):
-            if hasattr(event, "content"):
-                for block in event.content:
-                    if hasattr(block, "text"):
-                        generated_title += block.text
-            if hasattr(event, "session_id") and event.session_id:
-                result["sdk_session_id"] = event.session_id
-
-        # Clean up and save
-        generated_title = generated_title.strip().strip('"').strip("'")
-        if generated_title and len(generated_title) < 200:
-            await self.db.update_session(
-                parent_session.id,
-                SessionUpdate(title=generated_title),
-            )
-            result["title_updated"] = True
-            result["new_title"] = generated_title
-            result["actions"].append(f"Updated title to: {generated_title}")
-            logger.info(f"Curator set title for {parent_session.id}: {generated_title}")
-        else:
-            logger.warning(f"Generated title invalid: {generated_title[:100] if generated_title else 'empty'}")
-
-        return result
-
-    async def _run_full_curator(
-        self,
-        curator_session: CuratorSession,
-        context: str,
-        parent_session: Any,
-        result: dict[str, Any],
-    ) -> dict[str, Any]:
-        """
-        Run full curator evaluation as a long-running parallel agent.
-
-        The curator:
-        - Resumes its SDK session for continuity (memory of past actions)
-        - Has real tool access via in-process MCP server (update_title, update_context, etc.)
-        - Receives message digests, not raw conversation data
-        """
-        from claude_agent_sdk import query as sdk_query, ClaudeAgentOptions
-        from parachute.core.curator_tools import CURATOR_SYSTEM_PROMPT, create_curator_tools
         from parachute.config import get_settings
 
         settings = get_settings()
 
-        # Build the prompt with message digest
-        prompt = f"""New message exchange completed. Here's the digest:
-
-{context}
-
-## Your Task
-Evaluate if any updates are needed:
-1. Use `get_session_info` to see the current session state including working directory
-2. Use `update_title` if the title needs changing (be very conservative!)
-3. Use `read_context` and `update_context` to check/update AGENTS.md files for significant milestones
-
-Remember:
-- Be very conservative with title changes (only if project prefix is wrong or title is misleading)
-- Only log significant milestones to context, not routine work
-- Check your memory of past actions - don't duplicate entries
-- Most message digests require NO action
-
-If no updates are needed, just say "No updates needed" and explain briefly why.
-"""
-
-        logger.info(f"Running curator agent for session {parent_session.id} (resume: {curator_session.sdk_session_id})")
-
-        # Create in-process MCP tools bound to this session
-        _tools, curator_mcp_config = create_curator_tools(
-            db=self.db,
-            vault_path=self.vault_path,
-            parent_session_id=parent_session.id,
-        )
-
-        # Determine working directory for SDK context
-        # If the parent session has a working directory, use it so curator sees the same CLAUDE.md hierarchy
-        cwd = parent_session.working_directory or str(self.vault_path)
-
-        # Build options with session resumption and in-process MCP tool access
         options_kwargs = {
-            "system_prompt": CURATOR_SYSTEM_PROMPT,
-            "max_turns": 5,  # Allow multiple turns for tool use
-            "mcp_servers": {"curator": curator_mcp_config},
-            "permission_mode": "bypassPermissions",
-            "cwd": cwd,
-            "setting_sources": ["project"],  # Load CLAUDE.md hierarchy like main agent
+            "system_prompt": TITLE_PROMPT,
+            "max_turns": 1,
+            "allowed_tools": [],
         }
 
-        # Resume existing curator session if available (for memory continuity)
-        if curator_session.sdk_session_id:
-            options_kwargs["resume"] = curator_session.sdk_session_id
-
-        # Use curator model if configured
         if settings.curator_model:
             options_kwargs["model"] = settings.curator_model
 
         options = ClaudeAgentOptions(**options_kwargs)
+        prompt = f"Generate a title for this conversation:\n\n{context}"
 
-        response_text = ""
-        new_session_id = None
-        tool_calls_made = []
+        title = ""
+        async for event in sdk_query(prompt=prompt, options=options):
+            if hasattr(event, "content"):
+                for block in event.content:
+                    if hasattr(block, "text"):
+                        title += block.text
 
-        try:
-            async for event in sdk_query(prompt=prompt, options=options):
-                # Track the session ID for future resumption
-                if hasattr(event, "session_id") and event.session_id:
-                    new_session_id = event.session_id
+        # Clean up
+        title = title.strip().strip('"').strip("'").strip()
+        if title and len(title) < 100:
+            return title
+        return None
 
-                # Process content blocks
-                if hasattr(event, "content"):
-                    for block in event.content:
-                        # Track text responses
-                        if hasattr(block, "text"):
-                            response_text += block.text
-
-                        # Track tool usage
-                        if hasattr(block, "name"):
-                            tool_name = block.name
-                            tool_calls_made.append(tool_name)
-                            logger.info(f"Curator tool call: {tool_name}")
-
-                            # Track specific tool results
-                            if "update_title" in tool_name:
-                                result["title_updated"] = True
-                                if hasattr(block, "input"):
-                                    new_title = block.input.get("new_title", "")
-                                    result["actions"].append(f"Updated title to: {new_title}")
-                                    result["new_title"] = new_title
-                            elif "update_context" in tool_name:
-                                result["context_updated"] = True
-                                if hasattr(block, "input"):
-                                    file_name = block.input.get("file_name", "")
-                                    result["actions"].append(f"Updated context: {file_name}")
-
-            # Update session ID for continuity
-            if new_session_id:
-                result["sdk_session_id"] = new_session_id
-
-            # Log results
-            result["tool_calls"] = tool_calls_made
-            if tool_calls_made:
-                logger.info(f"Curator made {len(tool_calls_made)} tool calls: {tool_calls_made}")
-            else:
-                logger.info(f"Curator response (no tool calls): {response_text[:200]}...")
-
-        except Exception as e:
-            logger.error(f"Curator agent error: {e}", exc_info=True)
-            result["error"] = str(e)
-
-        return result
-
-    async def _invoke_curator_fallback(
-        self,
-        curator_session: CuratorSession,
-        context: str,
-        parent_session: Any,
-    ) -> dict[str, Any]:
-        """
-        Fallback curator using simple heuristics when SDK is unavailable.
-        """
-        result = {
-            "title_updated": False,
-            "context_updated": False,
-            "actions": [],
-            "fallback": True,
-        }
-
-        # Simple title generation heuristic
-        if not parent_session.title or parent_session.title == "(untitled)":
-            new_title = self._generate_simple_title(context)
-            if new_title:
-                await self.db.update_session(
-                    parent_session.id,
-                    SessionUpdate(title=new_title),
-                )
-                result["title_updated"] = True
-                result["new_title"] = new_title
-                result["actions"].append(f"Updated title to: {new_title}")
-
-        return result
-
-    def _generate_simple_title(self, context: str) -> Optional[str]:
-        """
-        Generate a simple title from context using heuristics.
-        """
-        import re
-        match = re.search(r'\*\*User\*\*:\s*(.+?)(?:\n|$)', context)
+    def _generate_title_heuristic(self, context: str) -> Optional[str]:
+        """Generate title using simple heuristics (fallback)."""
+        # Extract first user message
+        match = re.search(r'USER:\s*(.+?)(?:\n|$)', context, re.IGNORECASE)
         if match:
-            first_message = match.group(1).strip()
-            if len(first_message) > 60:
-                words = first_message[:60].split()
+            text = match.group(1).strip()
+            text = " ".join(text.split())  # Normalize whitespace
+            if len(text) > 60:
+                words = text[:60].split()
                 if len(words) > 3:
-                    first_message = " ".join(words[:-1]) + "..."
+                    text = " ".join(words[:-1]) + "..."
                 else:
-                    first_message = first_message[:57] + "..."
-            return first_message
+                    text = text[:57] + "..."
+            return text
         return None
 
     # =========================================================================
     # Helpers
     # =========================================================================
-
-    def _row_to_curator_session(self, row: aiosqlite.Row) -> CuratorSession:
-        """Convert database row to CuratorSession."""
-        last_run_at = None
-        if row["last_run_at"]:
-            last_run_at = datetime.fromisoformat(row["last_run_at"])
-
-        return CuratorSession(
-            id=row["id"],
-            parent_session_id=row["parent_session_id"],
-            sdk_session_id=row["sdk_session_id"],
-            last_run_at=last_run_at,
-            last_message_index=row["last_message_index"] or 0,
-            created_at=datetime.fromisoformat(row["created_at"]),
-        )
 
     def _row_to_task(self, row: aiosqlite.Row) -> CuratorTask:
         """Convert database row to CuratorTask."""
@@ -823,8 +371,7 @@ If no updates are needed, just say "No updates needed" and explain briefly why.
 
         return CuratorTask(
             id=row["id"],
-            parent_session_id=row["parent_session_id"],
-            curator_session_id=row["curator_session_id"],
+            session_id=row["parent_session_id"],
             trigger_type=row["trigger_type"],
             message_count=row["message_count"] or 0,
             queued_at=datetime.fromisoformat(row["queued_at"]),
@@ -836,7 +383,7 @@ If no updates are needed, just say "No updates needed" and explain briefly why.
         )
 
 
-# Global curator service instance
+# Global service instance
 _curator_service: Optional[CuratorService] = None
 
 
