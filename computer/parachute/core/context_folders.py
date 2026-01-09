@@ -300,28 +300,6 @@ class ContextFolderService:
 
         return "\n".join(parts)
 
-    def get_curator_context_list(self, selected_folders: list[str]) -> list[dict]:
-        """
-        Get list of context files for the curator to manage.
-
-        Returns info about each AGENTS.md in the chain so curator knows
-        what files it can update.
-        """
-        chain = self.build_chain(selected_folders, max_tokens=100000)  # Don't limit for curator
-
-        result = []
-        for ctx_file in chain.files:
-            result.append({
-                "path": ctx_file.path,
-                "folder_path": ctx_file.folder_path,
-                "level": ctx_file.level,
-                "exists": ctx_file.exists,
-                "tokens": ctx_file.tokens,
-                "can_update": ctx_file.exists,  # Curator can update existing files
-            })
-
-        return result
-
 
 def get_context_folder_service(vault_path: Path) -> ContextFolderService:
     """Get a ContextFolderService instance."""

@@ -43,7 +43,6 @@ class CuratorSession:
     sdk_session_id: Optional[str]
     last_run_at: Optional[datetime]
     last_message_index: int
-    context_files: list[str]
     created_at: datetime
 
 
@@ -121,7 +120,6 @@ class CuratorService:
         parent_session_id: str,
         trigger_type: str = "message_done",
         message_count: int = 0,
-        context_files: Optional[list[str]] = None,
     ) -> int:
         """
         Queue a curator task for a session.
@@ -129,9 +127,7 @@ class CuratorService:
         Returns the task ID.
         """
         # Get or create curator session
-        curator_session = await self.get_or_create_curator_session(
-            parent_session_id, context_files
-        )
+        curator_session = await self.get_or_create_curator_session(parent_session_id)
 
         # Insert task into queue
         now = datetime.now(timezone.utc).isoformat()
@@ -231,7 +227,6 @@ class CuratorService:
     async def get_or_create_curator_session(
         self,
         parent_session_id: str,
-        context_files: Optional[list[str]] = None,
     ) -> CuratorSession:
         """Get existing curator session or create a new one."""
         # Try to get existing
@@ -246,15 +241,14 @@ class CuratorService:
         # Create new
         curator_id = f"curator-{uuid.uuid4()}"
         now = datetime.now(timezone.utc).isoformat()
-        context_files_json = json.dumps(context_files or [])
 
         await self.db.connection.execute(
             """
             INSERT INTO curator_sessions
-            (id, parent_session_id, context_files, created_at)
-            VALUES (?, ?, ?, ?)
+            (id, parent_session_id, created_at)
+            VALUES (?, ?, ?)
             """,
-            (curator_id, parent_session_id, context_files_json, now),
+            (curator_id, parent_session_id, now),
         )
         await self.db.connection.commit()
 
@@ -266,7 +260,6 @@ class CuratorService:
             sdk_session_id=None,
             last_run_at=None,
             last_message_index=0,
-            context_files=context_files or [],
             created_at=datetime.now(timezone.utc),
         )
 
@@ -398,7 +391,6 @@ class CuratorService:
         context = self._build_curator_context(
             parent_session=parent_session,
             messages=messages,
-            context_files=curator_session.context_files,
         )
 
         # Run curator agent
@@ -422,7 +414,6 @@ class CuratorService:
         self,
         parent_session: Any,
         messages: list[dict],
-        context_files: list[str],
     ) -> str:
         """
         Build a message digest for the curator agent.
@@ -648,9 +639,9 @@ class CuratorService:
 
 ## Your Task
 Evaluate if any updates are needed:
-1. Use `list_context_files` to see available context files
+1. Use `get_session_info` to see the current session state including working directory
 2. Use `update_title` if the title needs changing (be very conservative!)
-3. Use `update_context` to log significant milestones (be conservative!)
+3. Use `read_context` and `update_context` to check/update AGENTS.md files for significant milestones
 
 Remember:
 - Be very conservative with title changes (only if project prefix is wrong or title is misleading)
@@ -664,13 +655,15 @@ If no updates are needed, just say "No updates needed" and explain briefly why.
         logger.info(f"Running curator agent for session {parent_session.id} (resume: {curator_session.sdk_session_id})")
 
         # Create in-process MCP tools bound to this session
-        context_folders = curator_session.context_files if curator_session.context_files else None
         _tools, curator_mcp_config = create_curator_tools(
             db=self.db,
             vault_path=self.vault_path,
             parent_session_id=parent_session.id,
-            context_folders=context_folders,
         )
+
+        # Determine working directory for SDK context
+        # If the parent session has a working directory, use it so curator sees the same CLAUDE.md hierarchy
+        cwd = parent_session.working_directory or str(self.vault_path)
 
         # Build options with session resumption and in-process MCP tool access
         options_kwargs = {
@@ -678,6 +671,8 @@ If no updates are needed, just say "No updates needed" and explain briefly why.
             "max_turns": 5,  # Allow multiple turns for tool use
             "mcp_servers": {"curator": curator_mcp_config},
             "permission_mode": "bypassPermissions",
+            "cwd": cwd,
+            "setting_sources": ["project"],  # Load CLAUDE.md hierarchy like main agent
         }
 
         # Resume existing curator session if available (for memory continuity)
@@ -796,13 +791,6 @@ If no updates are needed, just say "No updates needed" and explain briefly why.
 
     def _row_to_curator_session(self, row: aiosqlite.Row) -> CuratorSession:
         """Convert database row to CuratorSession."""
-        context_files = []
-        if row["context_files"]:
-            try:
-                context_files = json.loads(row["context_files"])
-            except json.JSONDecodeError:
-                pass
-
         last_run_at = None
         if row["last_run_at"]:
             last_run_at = datetime.fromisoformat(row["last_run_at"])
@@ -813,7 +801,6 @@ If no updates are needed, just say "No updates needed" and explain briefly why.
             sdk_session_id=row["sdk_session_id"],
             last_run_at=last_run_at,
             last_message_index=row["last_message_index"] or 0,
-            context_files=context_files,
             created_at=datetime.fromisoformat(row["created_at"]),
         )
 

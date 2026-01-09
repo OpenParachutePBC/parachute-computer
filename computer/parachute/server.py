@@ -19,7 +19,6 @@ from parachute.api import api_router
 from parachute.config import get_settings, Settings
 from parachute.core.orchestrator import Orchestrator
 from parachute.core.curator_service import init_curator_service, stop_curator_service
-from parachute.core.context_watches import init_watch_service, stop_watch_service
 from parachute.db.database import Database, init_database, close_database
 from parachute.lib.logger import setup_logging, get_logger
 
@@ -59,24 +58,17 @@ async def lifespan(app: FastAPI):
     app.state.curator = curator
     logger.info("Curator service initialized")
 
-    # Initialize context watch service for AGENTS.md subscriptions
-    watch_service = await init_watch_service(settings.vault_path, db)
-    app.state.watch_service = watch_service
-    logger.info("Context watch service initialized")
-
     logger.info("Server ready")
 
     yield
 
     # Shutdown
     logger.info("Shutting down...")
-    await stop_watch_service()
     await stop_curator_service()
     await close_database()
     app.state.orchestrator = None
     app.state.database = None
     app.state.curator = None
-    app.state.watch_service = None
 
 
 def get_orchestrator() -> Orchestrator:

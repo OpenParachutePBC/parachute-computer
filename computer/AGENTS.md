@@ -254,30 +254,7 @@ This is a standalone repository: [parachute-base](https://github.com/OpenParachu
 **Last Updated:** January 7, 2026
 
 
-<!-- Added by curator on 2026-01-07 22:57 UTC -->
-
-
-## Context Watch System (January 7, 2026)
-
-Replaced automatic parent-chain loading with a watch/subscription system for AGENTS.md files:
-
-**Key Changes:**
-- **Dropped parent chain**: Context loading no longer automatically includes parent AGENTS.md files
-- **Watch declarations**: Files declare what they watch via frontmatter `watch:` field with glob patterns
-- **SQLite caching**: Watch patterns cached in `context_watches` table for efficient querying
-- **Curator bubbling**: When curator updates a file, it finds watchers and queues them for review
-- **File monitoring**: Watchdog monitors AGENTS.md files for direct edits, triggers bubbling
-
-**New files:**
-- `parachute/lib/context_watches.py` - ContextWatchService and file watcher
-
-**Modified:**
-- `parachute/db/database.py` - Added `context_watches` table
-- `parachute/lib/context_folders.py` - `build_chain()` no longer loads parent chain by default
-- `parachute/lib/curator_tools.py` - Added `_trigger_bubble_for_path()` for bubbling
-- `parachute/server.py` - Watch service initialization on startup
-
-<!-- Added by curator on 2026-01-07 23:39 UTC -->
+<!-- Added by curator on 2026-01-08 -->
 
 
 ## Daily Curator Feature (January 7, 2026)
