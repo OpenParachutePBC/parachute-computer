@@ -25,7 +25,7 @@ def is_server_running():
     try:
         response = httpx.get(f"{TEST_SERVER_URL}/api/health", timeout=5)
         return response.status_code == 200
-    except:
+    except (httpx.HTTPError, httpx.TimeoutException, OSError):
         return False
 
 
