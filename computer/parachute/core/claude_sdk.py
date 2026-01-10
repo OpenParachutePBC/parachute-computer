@@ -41,6 +41,17 @@ CanUseToolCallback = Optional[
 ]
 
 
+async def _string_to_async_iterable(s: str) -> AsyncGenerator[dict[str, Any], None]:
+    """Convert a string to an async iterable that yields a user message."""
+    yield {
+        "type": "user",
+        "message": {
+            "role": "user",
+            "content": s,
+        }
+    }
+
+
 async def query_streaming(
     prompt: str,
     system_prompt: Optional[str] = None,
@@ -144,8 +155,13 @@ async def query_streaming(
     options = ClaudeAgentOptions(**options_kwargs)
 
     # Run query and stream events
+    # When using can_use_tool callback, SDK requires prompt as AsyncIterable
     try:
-        async for event in sdk_query(prompt=prompt, options=options):
+        effective_prompt: Any = prompt
+        if can_use_tool:
+            effective_prompt = _string_to_async_iterable(prompt)
+
+        async for event in sdk_query(prompt=effective_prompt, options=options):
             yield _event_to_dict(event)
     except ClaudeSDKError as e:
         logger.error(f"Claude SDK error: {e}")

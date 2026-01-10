@@ -360,16 +360,14 @@ class Orchestrator:
                             # Also include absolute path for Claude to read
                             attachment_parts.append(f"![{file_name}]({relative_path})\n*(Absolute path for reading: {file_path})*")
                         elif att_type in ("text", "code"):
-                            # For text/code, include content inline
-                            # Support up to 200KB of text (Claude can handle large contexts)
-                            try:
-                                content = file_bytes.decode("utf-8")
-                                max_inline_chars = 200000  # ~200KB
-                                if len(content) > max_inline_chars:
-                                    content = content[:max_inline_chars] + "\n...(truncated, full file saved)"
-                                attachment_parts.append(f"**[{file_name}]({relative_path})**\n```\n{content}\n```")
-                            except UnicodeDecodeError:
-                                attachment_parts.append(f"[Attached binary file: {relative_path}]({relative_path})")
+                            # For text/code files, save to disk and reference by path
+                            # Claude can use the Read tool to access the content
+                            # This keeps the message size manageable for large files
+                            file_size_kb = len(file_bytes) / 1024
+                            attachment_parts.append(
+                                f"**[{file_name}]({relative_path})** ({file_size_kb:.1f} KB)\n"
+                                f"*(Absolute path for reading: {file_path})*"
+                            )
                         elif att_type == "pdf":
                             # For PDFs, reference with both paths
                             attachment_parts.append(f"**[{file_name}]({relative_path})**\n*(Absolute path for reading: {file_path})*")
