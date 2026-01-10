@@ -361,16 +361,18 @@ class Orchestrator:
                             attachment_parts.append(f"![{file_name}]({relative_path})\n*(Absolute path for reading: {file_path})*")
                         elif att_type in ("text", "code"):
                             # For text/code, include content inline
+                            # Support up to 200KB of text (Claude can handle large contexts)
                             try:
                                 content = file_bytes.decode("utf-8")
-                                if len(content) > 10000:
-                                    content = content[:10000] + "\n...(truncated)"
-                                attachment_parts.append(f"**{file_name}** ([{relative_path}]({relative_path}))\n```\n{content}\n```")
+                                max_inline_chars = 200000  # ~200KB
+                                if len(content) > max_inline_chars:
+                                    content = content[:max_inline_chars] + "\n...(truncated, full file saved)"
+                                attachment_parts.append(f"**[{file_name}]({relative_path})**\n```\n{content}\n```")
                             except UnicodeDecodeError:
                                 attachment_parts.append(f"[Attached binary file: {relative_path}]({relative_path})")
                         elif att_type == "pdf":
                             # For PDFs, reference with both paths
-                            attachment_parts.append(f"**{file_name}** ([{relative_path}]({relative_path}))\n*(Absolute path for reading: {file_path})*")
+                            attachment_parts.append(f"**[{file_name}]({relative_path})**\n*(Absolute path for reading: {file_path})*")
                         else:
                             attachment_parts.append(f"[{file_name}]({relative_path})")
                     except Exception as e:
