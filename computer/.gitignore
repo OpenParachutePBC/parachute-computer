@@ -21,3 +21,4 @@ node/.env
 # General
 .env
 .DS_Store
+activity.log
