@@ -494,13 +494,13 @@ class Orchestrator:
 
             # Use session-based permission handler for tool access control
             # Trust mode (default): Use bypassPermissions for backwards compatibility
-            # Restricted mode: Would use can_use_tool callback (not yet supported - SDK requires AsyncIterable prompt)
+            # Restricted mode: Uses can_use_tool callback for interactive permission checks
             trust_mode = session.permissions.trust_mode
             logger.debug(f"Session trust_mode={trust_mode}: {session.id}")
 
-            # Note: can_use_tool callback requires AsyncIterable prompt (SDK limitation)
-            # For now, AskUserQuestion events are detected in the stream but not interactive
-            # The client receives user_question events and can display them to the user
+            # Create SDK callback for tool permission checks
+            # This enables interactive tools like AskUserQuestion to pause and wait for user input
+            sdk_can_use_tool = permission_handler.create_sdk_callback()
 
             # Determine if this is a full custom prompt or append content
             # Custom agents and explicit custom_prompt return full prompts (override preset)
@@ -519,6 +519,7 @@ class Orchestrator:
                 tools=agent.tools if agent.tools else None,
                 mcp_servers=resolved_mcps,
                 permission_mode="bypassPermissions",
+                can_use_tool=sdk_can_use_tool,  # Enable interactive tool permission checks (AskUserQuestion)
                 plugin_dirs=plugin_dirs if plugin_dirs else None,
                 agents=agents_dict,
             ):
@@ -545,6 +546,13 @@ class Orchestrator:
                         )
                         session_finalized = True
                         logger.info(f"Early finalized session: {captured_session_id[:8]}...")
+
+                        # Update permission handler with finalized session so request_ids match
+                        permission_handler.session = session
+                        # Also update the pending_permissions key to use the real session ID
+                        if "pending" in self.pending_permissions:
+                            del self.pending_permissions["pending"]
+                        self.pending_permissions[captured_session_id] = permission_handler
 
                         # Yield a second session event now that we have the real ID
                         # This allows the client to update its session list immediately
