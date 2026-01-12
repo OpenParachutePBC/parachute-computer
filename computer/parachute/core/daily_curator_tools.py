@@ -3,6 +3,7 @@ Daily Curator Tools - In-process MCP tools for the daily curator.
 
 These tools are purpose-built for the daily curator agent:
 - read_journal: Read journal entries for a specific date
+- read_chat_log: Read AI chat logs for a specific date
 - read_recent_journals: Read recent journal entries for context
 - write_reflection: Write the daily reflection
 
@@ -32,6 +33,7 @@ def create_daily_curator_tools(
         Tuple of (list of SdkMcpTool instances, server config dict)
     """
     journals_dir = vault_path / "Daily" / "journals"
+    chat_log_dir = vault_path / "Daily" / "chat-log"
     reflections_dir = vault_path / "Daily" / "reflections"
 
     @tool(
@@ -65,6 +67,43 @@ def create_daily_curator_tools(
             logger.error(f"Error reading journal: {e}")
             return {
                 "content": [{"type": "text", "text": f"Error reading journal: {e}"}],
+                "is_error": True
+            }
+
+    @tool(
+        "read_chat_log",
+        "Read AI chat logs for a specific date. Shows what conversations happened with AI assistants that day.",
+        {"date": str}
+    )
+    async def read_chat_log(args: dict[str, Any]) -> dict[str, Any]:
+        """Read chat logs for a date."""
+        date_str = args.get("date", "").strip()
+
+        if not date_str:
+            return {
+                "content": [{"type": "text", "text": "Error: date is required (YYYY-MM-DD format)"}],
+                "is_error": True
+            }
+
+        chat_log_file = chat_log_dir / f"{date_str}.md"
+
+        if not chat_log_file.exists():
+            return {
+                "content": [{"type": "text", "text": f"No chat log found for {date_str}"}]
+            }
+
+        try:
+            content = chat_log_file.read_text(encoding="utf-8")
+            # Truncate if very long
+            if len(content) > 10000:
+                content = content[:10000] + "\n\n...(truncated - chat log was very long)"
+            return {
+                "content": [{"type": "text", "text": f"# Chat Log for {date_str}\n\n{content}"}]
+            }
+        except Exception as e:
+            logger.error(f"Error reading chat log: {e}")
+            return {
+                "content": [{"type": "text", "text": f"Error reading chat log: {e}"}],
                 "is_error": True
             }
 
@@ -110,7 +149,7 @@ def create_daily_curator_tools(
 
     @tool(
         "write_reflection",
-        "Write the daily reflection to Daily/reflections/{date}.md",
+        "Write the daily reflection to Daily/reflections/{date}.md. Include the reflection text, song URL, and image URL.",
         {"date": str, "content": str}
     )
     async def write_reflection(args: dict[str, Any]) -> dict[str, Any]:
@@ -157,7 +196,7 @@ generated_at: {datetime.now(timezone.utc).isoformat()}
                 "is_error": True
             }
 
-    tools = [read_journal, read_recent_journals, write_reflection]
+    tools = [read_journal, read_chat_log, read_recent_journals, write_reflection]
 
     # Create the MCP server config
     server_config = create_sdk_mcp_server(

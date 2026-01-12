@@ -19,6 +19,7 @@ from parachute.api import api_router
 from parachute.config import get_settings, Settings
 from parachute.core.orchestrator import Orchestrator
 from parachute.core.curator_service import init_curator_service, stop_curator_service
+from parachute.core.scheduler import init_scheduler, stop_scheduler
 from parachute.db.database import Database, init_database, close_database
 from parachute.lib.logger import setup_logging, get_logger
 
@@ -58,17 +59,24 @@ async def lifespan(app: FastAPI):
     app.state.curator = curator
     logger.info("Curator service initialized")
 
+    # Initialize scheduler for automated tasks (daily curator at 3am, etc.)
+    scheduler = await init_scheduler(settings.vault_path)
+    app.state.scheduler = scheduler
+    logger.info("Scheduler initialized")
+
     logger.info("Server ready")
 
     yield
 
     # Shutdown
     logger.info("Shutting down...")
+    await stop_scheduler()
     await stop_curator_service()
     await close_database()
     app.state.orchestrator = None
     app.state.database = None
     app.state.curator = None
+    app.state.scheduler = None
 
 
 def get_orchestrator() -> Orchestrator:

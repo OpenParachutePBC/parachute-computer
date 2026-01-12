@@ -280,3 +280,143 @@ async def get_module_curator_status(mod: str) -> dict[str, Any]:
             "hasCurator": False,
             "message": f"Module '{mod}' does not have a curator configured",
         }
+
+
+@router.get("/modules/{mod}/curator/transcript")
+async def get_module_curator_transcript(
+    mod: str,
+    limit: int = Query(50, ge=1, le=200, description="Max messages to return"),
+) -> dict[str, Any]:
+    """
+    Get the curator's conversation transcript.
+
+    Returns the recent messages from the curator's long-running session,
+    including tool calls, responses, and the curator's reasoning.
+    """
+    settings = get_settings()
+    module_name = mod.lower()
+
+    if module_name != "daily":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Module '{mod}' does not have a curator transcript"
+        )
+
+    from parachute.core.daily_curator import DailyCuratorState
+    import json
+    from pathlib import Path
+    import os
+
+    state = DailyCuratorState(settings.vault_path)
+    state_data = state.load()
+
+    session_id = state_data.get("sdk_session_id")
+    if not session_id:
+        return {
+            "module": module_name,
+            "hasTranscript": False,
+            "message": "No curator session exists yet",
+        }
+
+    # Find the transcript file
+    # SDK stores transcripts in ~/.claude/projects/{escaped-cwd}/{session_id}.jsonl
+    claude_projects_dir = Path.home() / ".claude" / "projects"
+
+    # The curator runs from the base directory, so look for that path
+    base_dir = settings.vault_path / "projects" / "parachute" / "base"
+    escaped_cwd = str(base_dir).replace("/", "-").replace("\\", "-")
+    if escaped_cwd.startswith("-"):
+        escaped_cwd = escaped_cwd  # Keep leading dash
+
+    transcript_path = claude_projects_dir / escaped_cwd / f"{session_id}.jsonl"
+
+    if not transcript_path.exists():
+        # Try alternate paths - the SDK might use different cwd
+        possible_paths = list(claude_projects_dir.glob(f"*/{session_id}.jsonl"))
+        if possible_paths:
+            transcript_path = possible_paths[0]
+        else:
+            return {
+                "module": module_name,
+                "hasTranscript": False,
+                "sessionId": session_id,
+                "message": f"Transcript file not found for session {session_id}",
+            }
+
+    # Parse the JSONL transcript
+    messages = []
+    try:
+        with open(transcript_path, "r") as f:
+            for line in f:
+                if line.strip():
+                    try:
+                        entry = json.loads(line)
+                        # Extract relevant info
+                        msg_type = entry.get("type")
+                        message = entry.get("message", {})
+
+                        if msg_type == "user" or (message and message.get("role")):
+                            parsed = {
+                                "type": msg_type or message.get("role"),
+                                "timestamp": entry.get("timestamp"),
+                            }
+
+                            # Extract content
+                            content = message.get("content")
+                            if isinstance(content, str):
+                                parsed["content"] = content[:2000]  # Truncate long content
+                            elif isinstance(content, list):
+                                # Handle content blocks (tool_use, tool_result, text)
+                                parsed["blocks"] = []
+                                for block in content[:10]:  # Limit blocks
+                                    block_type = block.get("type")
+                                    if block_type == "text":
+                                        parsed["blocks"].append({
+                                            "type": "text",
+                                            "text": block.get("text", "")[:1000]
+                                        })
+                                    elif block_type == "tool_use":
+                                        parsed["blocks"].append({
+                                            "type": "tool_use",
+                                            "name": block.get("name"),
+                                            "input": str(block.get("input", {}))[:500]
+                                        })
+                                    elif block_type == "tool_result":
+                                        result_content = block.get("content", [])
+                                        text = ""
+                                        if isinstance(result_content, list) and result_content:
+                                            text = result_content[0].get("text", "")[:500]
+                                        parsed["blocks"].append({
+                                            "type": "tool_result",
+                                            "tool_use_id": block.get("tool_use_id"),
+                                            "text": text
+                                        })
+
+                            if message.get("model"):
+                                parsed["model"] = message.get("model")
+
+                            messages.append(parsed)
+
+                    except json.JSONDecodeError:
+                        continue
+
+    except Exception as e:
+        logger.error(f"Error reading curator transcript: {e}")
+        return {
+            "module": module_name,
+            "hasTranscript": False,
+            "sessionId": session_id,
+            "error": str(e),
+        }
+
+    # Return most recent messages
+    recent_messages = messages[-limit:] if len(messages) > limit else messages
+
+    return {
+        "module": module_name,
+        "hasTranscript": True,
+        "sessionId": session_id,
+        "transcriptPath": str(transcript_path),
+        "totalMessages": len(messages),
+        "messages": recent_messages,
+    }

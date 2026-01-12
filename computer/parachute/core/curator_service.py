@@ -18,6 +18,7 @@ Key design:
 import asyncio
 import json
 import logging
+import os
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -33,30 +34,48 @@ logger = logging.getLogger(__name__)
 
 
 # System prompt for the curator agent
-CURATOR_SYSTEM_PROMPT = """You are a session curator. You run alongside chat conversations to:
-1. Generate and update session titles when the topic becomes clear
-2. Log significant activities to the daily chat-log
+CURATOR_SYSTEM_PROMPT = """You are a session curator. You maintain a live, evolving summary of what's being accomplished in this chat session.
 
-You have two tools:
-- update_title: Update the session title (use when topic is clear)
-- log_activity: Log significant events (commits, decisions, milestones)
+## Available Tools
 
-Guidelines:
-- Update title when you have enough context to capture the main topic
+- mcp__curator__update_title(session_id, new_title) - Update the session title
+- mcp__curator__get_session_log(session_id) - Read your current summary for today
+- mcp__curator__update_session_log(session_id, title, summary) - Update the summary
+
+## Your Job: Maintain a Living Summary
+
+You write a **rolling summary** of this chat session - not a changelog of individual updates, but a cohesive description of what's being worked on and what's been accomplished.
+
+Each time you run:
+1. Read your previous summary with get_session_log
+2. Consider the new messages in context
+3. **Rewrite the entire summary** to reflect the current state of work
+
+The summary should EVOLVE and REFINE over time:
+- Early: "Investigating why curator agents aren't updating titles"
+- Mid-session: "Fixing curator MCP tool access - discovered tools weren't connecting properly"
+- Later: "Fixed curator MCP tools by changing config format. Curator now successfully maintains session titles and daily logs."
+
+## Summary Style
+
+Write 2-4 concise paragraphs (not bullet lists) that answer:
+- **Context**: What project, codebase, or area is this work in? (e.g., "Working in the Parachute base server...", "In the Daily Flutter app...", "On the Suno MCP server...")
+- **Focus**: What specific problem or feature is being addressed?
+- **Progress**: What's been accomplished so far?
+- **State**: What's the current status or outcome?
+
+Always anchor the summary with context. Don't just say "fixed the curator agent" - say "Fixed the curator agent in Parachute's base server". The reader should immediately understand what project/system this work relates to.
+
+Think of it like a brief status update someone could read to understand what this chat session is about and what it achieved.
+
+## Title Guidelines
 - Keep titles concise (3-8 words, max 60 chars)
-- Only log SIGNIFICANT activities - skip routine back-and-forth
-- Format log entries as markdown bullets
+- Include project context when relevant (e.g., "Parachute: Fix curator MCP tools")
+- Update when you have enough context or when the focus shifts
+- Only update if current title is "(untitled)" or no longer fits
 
-What to log:
-- Git commits (always)
-- Decisions made
-- Tasks completed
-- Key milestones or breakthroughs
-
-What NOT to log:
-- Regular Q&A
-- Debugging sessions (unless they resolve something)
-- Small clarifications
+## When to Skip
+If the new messages are just small talk, clarifying questions, or trivial exchanges with no real progress, you can skip updating. Only update when there's meaningful progress to report.
 """
 
 
@@ -319,6 +338,68 @@ class CuratorService:
         )
         await self.db.connection.commit()
 
+    async def get_transcript_after_compact(
+        self,
+        session_id: str,
+    ) -> Optional[list[dict[str, Any]]]:
+        """
+        Get transcript events from the last compact boundary for a session.
+
+        Reads the SDK JSONL file and returns only events after the last
+        compact_boundary marker. This keeps context size manageable while
+        still providing full conversation context.
+
+        Returns None if transcript not found, empty list if no events.
+        """
+        # Look for SDK session file
+        projects_dir = Path.home() / ".claude" / "projects"
+        if not projects_dir.exists():
+            return None
+
+        session_file = None
+
+        # Search all project directories
+        for project_dir in projects_dir.iterdir():
+            if project_dir.is_dir():
+                candidate = project_dir / f"{session_id}.jsonl"
+                if candidate.exists():
+                    session_file = candidate
+                    break
+
+        if not session_file:
+            return None
+
+        # Parse the JSONL file
+        all_events: list[dict[str, Any]] = []
+        last_compact_index = -1
+
+        try:
+            with open(session_file, "r", encoding="utf-8") as f:
+                for i, line in enumerate(f):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        event = json.loads(line)
+                        all_events.append(event)
+
+                        # Track compact boundaries
+                        if (
+                            event.get("type") == "system"
+                            and event.get("subtype") == "compact_boundary"
+                        ):
+                            last_compact_index = i
+                    except json.JSONDecodeError:
+                        continue
+
+        except Exception as e:
+            logger.error(f"Error reading transcript {session_id}: {e}")
+            return None
+
+        # Return events after last compact (or all if no compact)
+        start_index = last_compact_index + 1 if last_compact_index >= 0 else 0
+        return all_events[start_index:]
+
     # =========================================================================
     # Worker Loop
     # =========================================================================
@@ -377,22 +458,42 @@ class CuratorService:
         if not curator_session:
             return {"error": "Curator session not found"}
 
-        # Get messages since last curator run
-        session_manager = SessionManager(self.vault_path, self.db)
-        all_messages = await session_manager.get_session_messages(task.session_id)
+        # Determine if this is a fresh curator (no SDK session yet)
+        is_fresh_curator = curator_session.sdk_session_id is None
 
-        # Get only new messages since last run
-        new_messages = all_messages[curator_session.last_message_index:]
+        if is_fresh_curator:
+            # Fresh curator: get full transcript from last compact boundary
+            # This provides complete context for the curator's first run
+            logger.info(f"Fresh curator for {task.session_id[:8]}, loading full transcript")
+            transcript_events = await self.get_transcript_after_compact(task.session_id)
 
-        if not new_messages:
+            if not transcript_events:
+                # Fallback to session manager if no transcript found
+                session_manager = SessionManager(self.vault_path, self.db)
+                all_messages = await session_manager.get_session_messages(task.session_id)
+                messages_to_curate = all_messages
+                is_catchup = len(all_messages) > 2  # More than one exchange
+            else:
+                # Convert transcript events to simplified message format
+                messages_to_curate = self._events_to_messages(transcript_events)
+                is_catchup = len(messages_to_curate) > 2
+        else:
+            # Existing curator: get only new messages since last run
+            session_manager = SessionManager(self.vault_path, self.db)
+            all_messages = await session_manager.get_session_messages(task.session_id)
+            messages_to_curate = all_messages[curator_session.last_message_index:]
+            is_catchup = False
+
+        if not messages_to_curate:
             logger.info(f"No new messages to curate for {task.session_id[:8]}")
             return {"skipped": True, "reason": "No new messages"}
 
         # Build message digest for curator
         context = self._build_curator_context(
             parent_session=parent_session,
-            messages=new_messages,
+            messages=messages_to_curate,
             task=task,
+            is_catchup=is_catchup,
         )
 
         # Run curator agent with tools
@@ -404,7 +505,16 @@ class CuratorService:
         result.update(agent_result)
 
         # Update curator session tracking
-        new_message_index = len(all_messages)
+        # For fresh curators, we don't track message index since we used transcript
+        # For existing curators, update the message index
+        if not is_fresh_curator:
+            session_manager = SessionManager(self.vault_path, self.db)
+            all_messages = await session_manager.get_session_messages(task.session_id)
+            new_message_index = len(all_messages)
+        else:
+            # Fresh curator processed everything available
+            new_message_index = task.message_count
+
         await self.update_curator_session(
             curator_session.id,
             sdk_session_id=result.get("sdk_session_id"),
@@ -413,14 +523,57 @@ class CuratorService:
 
         return result
 
+    def _events_to_messages(self, events: list[dict[str, Any]]) -> list[dict]:
+        """
+        Convert SDK transcript events to simplified message format.
+
+        Extracts user and assistant messages from the event stream,
+        preserving text content and tool names (but not full tool I/O).
+        """
+        messages = []
+
+        for event in events:
+            event_type = event.get("type")
+
+            if event_type == "user":
+                # User message - extract text content only (skip tool results)
+                message_content = event.get("message", {}).get("content")
+                if message_content:
+                    text = self._extract_text_content(message_content)
+                    if text:
+                        messages.append({"role": "user", "content": text})
+
+            elif event_type == "assistant":
+                # Assistant message - extract text and tool names
+                message_content = event.get("message", {}).get("content", [])
+                text = self._extract_text_content(message_content)
+                tool_names = self._extract_tool_names(message_content)
+
+                if text or tool_names:
+                    content = []
+                    if tool_names:
+                        content.append({"type": "tools", "names": tool_names})
+                    if text:
+                        content.append({"type": "text", "text": text})
+                    messages.append({"role": "assistant", "content": content})
+
+        return messages
+
     def _build_curator_context(
         self,
         parent_session: Any,
         messages: list[dict],
         task: CuratorTask,
+        is_catchup: bool = False,
     ) -> str:
         """
         Build a message digest for the curator agent.
+
+        Args:
+            parent_session: The parent chat session
+            messages: Messages to include in the context
+            task: The curator task
+            is_catchup: If True, this is a catch-up run with full conversation context
 
         Format:
         - User's prompt (full text, truncated if long)
@@ -434,23 +587,48 @@ class CuratorService:
         parts.append(f"Current Title: {parent_session.title or '(untitled)'}")
         parts.append("")
 
-        # Tool calls from the trigger (if any)
-        if task.tool_calls:
-            parts.append("### Tools Used")
+        # Indicate catch-up mode
+        if is_catchup:
+            parts.append("## ⚠️ CATCH-UP CONTEXT")
+            parts.append(f"This is your first run for this session. Below are {len(messages)} messages from the conversation so far.")
+            parts.append("Please review and create a consolidated summary of all accomplishments.")
+            parts.append("")
+
+        # Tool calls from the trigger (if any) - only for non-catchup
+        if task.tool_calls and not is_catchup:
+            parts.append("### Tools Used (Latest)")
             tool_names = [tc.get("name", "unknown") for tc in task.tool_calls[:10]]
             parts.append(", ".join(tool_names))
             parts.append("")
 
         # Process messages
-        for msg in messages[-5:]:  # Last 5 messages
+        # For catch-up: process all messages but with shorter truncation
+        # For incremental: process last 5 messages with longer truncation
+        if is_catchup:
+            max_messages = 50  # Cap at 50 messages for catch-up
+            user_truncate = 500
+            assistant_truncate = 300
+            messages_to_process = messages[:max_messages]
+            if len(messages) > max_messages:
+                parts.append(f"(Showing first {max_messages} of {len(messages)} messages)")
+                parts.append("")
+        else:
+            messages_to_process = messages[-5:]
+            user_truncate = 2000
+            assistant_truncate = 1500
+
+        for i, msg in enumerate(messages_to_process):
             role = msg.get("role", "unknown")
             content = msg.get("content", "")
 
             if role == "user":
                 user_text = self._extract_text_content(content)
                 if user_text:
-                    parts.append("### User")
-                    truncated = user_text[:2000] + "..." if len(user_text) > 2000 else user_text
+                    if is_catchup:
+                        parts.append(f"**User ({i+1}):**")
+                    else:
+                        parts.append("### User")
+                    truncated = user_text[:user_truncate] + "..." if len(user_text) > user_truncate else user_text
                     parts.append(truncated)
                     parts.append("")
 
@@ -459,15 +637,24 @@ class CuratorService:
                 tool_names = self._extract_tool_names(content)
                 final_text = self._extract_text_content(content)
 
-                if tool_names:
-                    parts.append("### Assistant Tools")
-                    parts.append(", ".join(tool_names))
-
-                if final_text:
-                    parts.append("### Assistant Response")
-                    truncated = final_text[:1500] + "..." if len(final_text) > 1500 else final_text
-                    parts.append(truncated)
+                if is_catchup:
+                    parts.append(f"**Assistant ({i+1}):**")
+                    if tool_names:
+                        parts.append(f"Tools: {', '.join(tool_names[:5])}")
+                    if final_text:
+                        truncated = final_text[:assistant_truncate] + "..." if len(final_text) > assistant_truncate else final_text
+                        parts.append(truncated)
                     parts.append("")
+                else:
+                    if tool_names:
+                        parts.append("### Assistant Tools")
+                        parts.append(", ".join(tool_names))
+
+                    if final_text:
+                        parts.append("### Assistant Response")
+                        truncated = final_text[:assistant_truncate] + "..." if len(final_text) > assistant_truncate else final_text
+                        parts.append(truncated)
+                        parts.append("")
 
         return "\n".join(parts)
 
@@ -506,9 +693,7 @@ class CuratorService:
         allowing it to remember previous decisions and context.
         """
         from claude_agent_sdk import query as sdk_query, ClaudeAgentOptions
-        from claude_agent_sdk.types import McpStdioServerConfig
         from parachute.config import get_settings
-        import sys
 
         settings = get_settings()
         result: dict[str, Any] = {
@@ -530,25 +715,46 @@ Session ID for tools: {parent_session.id}
 Current title: {parent_session.title or '(untitled)'}"""
 
         # Configure MCP server with curator tools
+        # Use stdio subprocess MCP server with explicit type
+        import sys
         python_path = sys.executable
+        base_dir = Path(__file__).parent.parent.parent  # base/ directory
         mcp_config = {
-            "curator": McpStdioServerConfig(
-                command=python_path,
-                args=["-m", "parachute.core.curator_mcp_server", str(self.vault_path)],
-            )
+            "curator": {
+                "type": "stdio",
+                "command": python_path,
+                "args": ["-m", "parachute.core.curator_mcp_server", str(self.vault_path)],
+                "env": {
+                    "PYTHONPATH": str(base_dir),
+                    "PATH": os.environ.get("PATH", ""),
+                },
+            }
         }
 
-        # Build options
-        cwd = parent_session.working_directory or str(self.vault_path)
+        # Build options - resolve relative working directories against vault path
+        if parent_session.working_directory:
+            wd_path = Path(parent_session.working_directory)
+            if not wd_path.is_absolute():
+                wd_path = self.vault_path / wd_path
+            cwd = str(wd_path.resolve())
+        else:
+            cwd = str(self.vault_path)
         options_kwargs: dict[str, Any] = {
             "system_prompt": CURATOR_SYSTEM_PROMPT,
             "max_turns": 5,
             "mcp_servers": mcp_config,
             "permission_mode": "bypassPermissions",
             "cwd": cwd,
+            # IMPORTANT: Restrict curator to only its MCP tools
+            # Using allowed_tools ONLY should restrict to just these tools
+            "allowed_tools": [
+                "mcp__curator__update_title",
+                "mcp__curator__get_session_log",
+                "mcp__curator__update_session_log",
+            ],
         }
 
-        # Resume existing session for continuity
+        # Resume existing session for continuity - curator maintains memory across runs
         if curator_session.sdk_session_id:
             options_kwargs["resume"] = curator_session.sdk_session_id
             logger.info(f"Resuming curator SDK session: {curator_session.sdk_session_id[:16]}...")
@@ -562,8 +768,15 @@ Current title: {parent_session.title or '(untitled)'}"""
         new_session_id = None
         tool_calls_made = []
 
+        # Debug: log the options being passed
+        logger.info(f"Curator options: allowed_tools={options.allowed_tools}")
+
         try:
             async for event in sdk_query(prompt=prompt, options=options):
+                # Debug: log all events
+                event_type = type(event).__name__
+                logger.debug(f"Curator event: {event_type}")
+
                 # Track session ID for future resumption
                 if hasattr(event, "session_id") and event.session_id:
                     new_session_id = event.session_id
@@ -572,6 +785,13 @@ Current title: {parent_session.title or '(untitled)'}"""
                 if hasattr(event, "content"):
                     for block in event.content:
                         block_type = type(block).__name__
+
+                        # Log tool results
+                        if "ToolResult" in block_type:
+                            tool_use_id = getattr(block, "tool_use_id", "")
+                            content = getattr(block, "content", "")
+                            is_error = getattr(block, "is_error", False)
+                            logger.info(f"Curator tool result: id={tool_use_id}, error={is_error}, content={str(content)[:200]}")
 
                         if "ToolUse" in block_type:
                             tool_name = getattr(block, "name", "")
@@ -597,9 +817,13 @@ Current title: {parent_session.title or '(untitled)'}"""
                                             logger.error(f"Failed to apply title update: {e}")
                                             result["actions"].append(f"Title update failed: {e}")
 
-                            elif "log_activity" in tool_name:
+                            elif "update_session_log" in tool_name:
                                 result["logged"] = True
-                                result["actions"].append("Logged activity to chat-log")
+                                result["actions"].append("Updated session log")
+
+                            elif "get_session_log" in tool_name:
+                                # Just tracking - the curator reads its previous log
+                                result["actions"].append("Read previous log entry")
 
             # Store session ID for continuity
             if new_session_id:

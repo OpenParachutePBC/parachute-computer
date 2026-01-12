@@ -2,12 +2,15 @@
 Daily Module Curator.
 
 A long-running curator for the Daily module that:
-- Reads journal entries
-- Creates daily reflections
+- Reads journal entries and chat logs
+- Creates daily reflections with insights
+- Generates a morning song (via Suno)
+- Creates a visual capture of current state (via Glif)
 - Maintains session continuity for pattern recognition over time
 
-Unlike the chat curator (which runs per-session), the module curator
-runs once per day and has memory across all days.
+The curator has access to:
+- Built-in tools: read_journal, read_chat_log, write_reflection
+- Vault MCPs: Suno, Glif, Parachute search, and any stdio MCPs in .mcp.json
 """
 
 import json
@@ -19,34 +22,22 @@ from typing import Any, Optional
 logger = logging.getLogger(__name__)
 
 
-# System prompt loaded from Daily/.agents/curator.md if it exists
 DEFAULT_DAILY_CURATOR_PROMPT = """# Daily Curator
 
-You are a reflective companion who reads journal entries and writes thoughtful reflections.
+You are a morning companion who reflects on journal entries and creates meaningful starts to each day.
 
 ## Your Role
 
-You're like a thoughtful friend who listened to everything they shared today and mirrors it back with care. You're not here to give advice or be prescriptive - you're here to help them feel heard and see their own thoughts from a fresh angle.
+You wake up each morning, read what happened yesterday, and create three things:
+1. A warm, insightful reflection
+2. A song to set the tone for the day
+3. An image capturing the current state
 
-## What You Do
-
-1. Read today's journal entries
-2. Notice themes and patterns
-3. Reflect back warmly
-4. Ask gentle questions if natural
-5. Surface connections to their interests
-
-## Your Tone
-
-- Warm and conversational
-- Non-judgmental
-- Curious but not intrusive
-- Brief (3-5 paragraphs)
-- Genuine, not performatively positive
+You have memory across days - you remember previous reflections and how the person responded.
 
 ## Output
 
-Write a reflection starting with "## Reflection - {date}" and keep it to 3-5 paragraphs.
+Write your reflection, then create the song and image. Embed URLs directly in the markdown.
 """
 
 
@@ -116,20 +107,43 @@ class DailyCuratorState:
         self.save()
 
 
-def load_curator_prompt(vault_path: Path) -> str:
-    """Load the curator prompt from Daily/.agents/curator.md or use default."""
+def load_curator_config(vault_path: Path) -> tuple[str, dict[str, Any]]:
+    """
+    Load the curator config from Daily/.agents/curator.md.
+
+    Returns:
+        Tuple of (system_prompt, frontmatter_metadata)
+    """
     agent_file = vault_path / "Daily" / ".agents" / "curator.md"
 
     if agent_file.exists():
         try:
             import frontmatter
             post = frontmatter.loads(agent_file.read_text())
-            if post.content.strip():
-                return post.content.strip()
+            prompt = post.content.strip() if post.content.strip() else DEFAULT_DAILY_CURATOR_PROMPT
+            return prompt, dict(post.metadata)
         except Exception as e:
-            logger.warning(f"Error loading curator prompt: {e}")
+            logger.warning(f"Error loading curator config: {e}")
 
-    return DEFAULT_DAILY_CURATOR_PROMPT
+    return DEFAULT_DAILY_CURATOR_PROMPT, {}
+
+
+async def _load_vault_mcps(vault_path: Path) -> dict[str, dict[str, Any]]:
+    """
+    Load MCP servers from the vault's .mcp.json.
+
+    Only returns stdio servers since the Claude SDK doesn't support HTTP MCPs.
+    """
+    from parachute.lib.mcp_loader import load_mcp_servers, filter_stdio_servers
+
+    try:
+        all_servers = await load_mcp_servers(vault_path)
+        stdio_servers = filter_stdio_servers(all_servers)
+        logger.info(f"Loaded {len(stdio_servers)} stdio MCP servers for daily curator")
+        return stdio_servers
+    except Exception as e:
+        logger.warning(f"Failed to load vault MCPs: {e}")
+        return {}
 
 
 async def run_daily_curator(
@@ -172,34 +186,54 @@ async def run_daily_curator(
             "reason": f"No journal found for {date}",
         }
 
-    # Load system prompt
-    system_prompt = load_curator_prompt(vault_path)
+    # Load curator config (system prompt + metadata)
+    system_prompt, metadata = load_curator_config(vault_path)
 
-    # Import SDK and create in-process MCP tools
+    # Import SDK and create tools
     from claude_agent_sdk import ClaudeAgentOptions, query as sdk_query
     from parachute.core.daily_curator_tools import create_daily_curator_tools
 
-    _tools, daily_mcp_config = create_daily_curator_tools(vault_path)
+    # Create built-in curator tools (read_journal, write_reflection, etc.)
+    _tools, curator_mcp_config = create_daily_curator_tools(vault_path)
 
-    # Build the prompt
-    prompt = f"""Today's date is {date}. Please:
+    # Load vault MCPs (Suno, Glif, Parachute, etc.)
+    vault_mcps = await _load_vault_mcps(vault_path)
 
-1. Use `read_journal` to read today's journal entries
-2. Optionally use `read_recent_journals` if you want context from recent days
-3. Write a warm, thoughtful reflection
-4. Use `write_reflection` to save it
+    # Combine all MCP servers
+    all_mcp_servers = {
+        "daily_curator": curator_mcp_config,  # Built-in tools
+        **vault_mcps,  # Vault MCPs (suno, glif, parachute, etc.)
+    }
 
-Remember: Be genuine, brief (3-5 paragraphs), and mirror back what you noticed without being preachy."""
+    logger.info(f"Daily curator running with MCPs: {list(all_mcp_servers.keys())}")
+
+    # Build the prompt - this is what we send each day
+    prompt = f"""Today's date is {date}.
+
+Please create my morning reflection:
+
+1. Use `read_journal` to read yesterday's journal entries ({date})
+2. Optionally use `read_chat_log` to see what AI conversations happened
+3. Optionally use `read_recent_journals` for context from recent days
+
+Then create:
+- A warm, thoughtful reflection (3-5 paragraphs)
+- A song using Suno that captures the energy for today
+- An image using Glif that visualizes the current state/theme
+
+Use `write_reflection` to save everything. Embed the song and image URLs directly in the markdown.
+
+Remember: Be genuine and warm. Notice patterns across days. Let my responses to previous reflections inform what you bring forward."""
 
     # Build options
     options_kwargs = {
         "system_prompt": system_prompt,
-        "max_turns": 10,  # Allow multiple tool calls
-        "mcp_servers": {"daily_curator": daily_mcp_config},
+        "max_turns": 20,  # More turns for creative work
+        "mcp_servers": all_mcp_servers,
         "permission_mode": "bypassPermissions",
     }
 
-    # Resume existing session if available
+    # Resume existing session if available (for continuity)
     if state.sdk_session_id:
         options_kwargs["resume"] = state.sdk_session_id
 
@@ -209,6 +243,7 @@ Remember: Be genuine, brief (3-5 paragraphs), and mirror back what you noticed w
         "status": "running",
         "date": date,
         "sdk_session_id": state.sdk_session_id,
+        "mcp_servers": list(all_mcp_servers.keys()),
     }
 
     try:
@@ -233,7 +268,7 @@ Remember: Be genuine, brief (3-5 paragraphs), and mirror back what you noticed w
                         response_text += block.text
 
                     # Track tool use
-                    if hasattr(block, "name") and "write_reflection" in block.name:
+                    if hasattr(block, "name") and "write_reflection" in str(getattr(block, "name", "")):
                         reflection_written = True
 
         # Update state
