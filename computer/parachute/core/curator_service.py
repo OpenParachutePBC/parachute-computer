@@ -33,8 +33,8 @@ from parachute.models.session import SessionUpdate
 logger = logging.getLogger(__name__)
 
 
-# System prompt for the curator agent
-CURATOR_SYSTEM_PROMPT = """You are a session curator. You maintain a live, evolving summary of what's being accomplished in this chat session.
+# Base system prompt for the curator agent (context added dynamically)
+CURATOR_SYSTEM_PROMPT_BASE = """You are a session curator for {user_name}. You maintain a live, evolving summary of what's being accomplished in this chat session.
 
 ## Available Tools
 
@@ -59,7 +59,7 @@ The summary should EVOLVE and REFINE over time:
 ## Summary Style
 
 Write 2-4 concise paragraphs (not bullet lists) that answer:
-- **Context**: What project, codebase, or area is this work in? (e.g., "Working in the Parachute base server...", "In the Daily Flutter app...", "On the Suno MCP server...")
+- **Context**: What project, codebase, or area is this work in? Use the user context below to identify projects correctly.
 - **Focus**: What specific problem or feature is being addressed?
 - **Progress**: What's been accomplished so far?
 - **State**: What's the current status or outcome?
@@ -76,7 +76,86 @@ Think of it like a brief status update someone could read to understand what thi
 
 ## When to Skip
 If the new messages are just small talk, clarifying questions, or trivial exchanges with no real progress, you can skip updating. Only update when there's meaningful progress to report.
+
+## User Context
+
+{user_context}
 """
+
+
+def resolve_at_references(content: str, base_path: Path, max_depth: int = 3) -> str:
+    """
+    Resolve @file.md references in content, recursively.
+
+    Args:
+        content: The content with potential @ references
+        base_path: Directory to resolve relative paths from
+        max_depth: Maximum recursion depth to prevent infinite loops
+    """
+    import re
+
+    if max_depth <= 0:
+        return content
+
+    # Match @path/to/file.md or @file.md on its own line
+    pattern = r'^@(.+\.md)\s*$'
+    lines = content.split('\n')
+    result_lines = []
+
+    for line in lines:
+        match = re.match(pattern, line.strip())
+        if match:
+            ref_path = base_path / match.group(1)
+            if ref_path.exists():
+                try:
+                    ref_content = ref_path.read_text()
+                    # Recursively resolve references in the included file
+                    ref_content = resolve_at_references(
+                        ref_content,
+                        ref_path.parent,
+                        max_depth - 1
+                    )
+                    result_lines.append(ref_content)
+                except Exception as e:
+                    logger.warning(f"Failed to load @reference {ref_path}: {e}")
+                    result_lines.append(line)
+            else:
+                logger.warning(f"@reference not found: {ref_path}")
+                result_lines.append(line)
+        else:
+            result_lines.append(line)
+
+    return '\n'.join(result_lines)
+
+
+def load_user_context(vault_path: Path) -> tuple[str, str]:
+    """
+    Load user context from context/curator.md, resolving @ references.
+
+    Returns (user_name, context_text) tuple.
+    """
+    user_name = "the user"
+    context_text = "No user context available."
+
+    curator_context_path = vault_path / "context" / "curator.md"
+    if curator_context_path.exists():
+        try:
+            content = curator_context_path.read_text()
+            # Resolve @ references to load profile, projects, areas
+            context_text = resolve_at_references(content, curator_context_path.parent)
+
+            # Extract name from resolved content
+            for line in context_text.split("\n"):
+                if "**Name**:" in line:
+                    user_name = line.split("**Name**:")[-1].strip()
+                    # Take just first name if full name given
+                    if "(" in user_name:
+                        user_name = user_name.split("(")[0].strip()
+                    break
+        except Exception as e:
+            logger.warning(f"Failed to load curator context: {e}")
+
+    return user_name, context_text
 
 
 @dataclass
@@ -739,8 +818,16 @@ Current title: {parent_session.title or '(untitled)'}"""
             cwd = str(wd_path.resolve())
         else:
             cwd = str(self.vault_path)
+
+        # Build system prompt with user context
+        user_name, user_context = load_user_context(self.vault_path)
+        system_prompt = CURATOR_SYSTEM_PROMPT_BASE.format(
+            user_name=user_name,
+            user_context=user_context,
+        )
+
         options_kwargs: dict[str, Any] = {
-            "system_prompt": CURATOR_SYSTEM_PROMPT,
+            "system_prompt": system_prompt,
             "max_turns": 5,
             "mcp_servers": mcp_config,
             "permission_mode": "bypassPermissions",
