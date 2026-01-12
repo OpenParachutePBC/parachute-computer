@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_DAILY_CURATOR_PROMPT = """# Daily Curator
 
-You are a morning companion who reflects on journal entries and creates meaningful starts to each day.
+You are {user_name}'s morning companion who reflects on journal entries and creates meaningful starts to each day.
 
 ## Your Role
 
@@ -38,6 +38,10 @@ You have memory across days - you remember previous reflections and how the pers
 ## Output
 
 Write your reflection, then create the song and image. Embed URLs directly in the markdown.
+
+## User Context
+
+{user_context}
 """
 
 
@@ -111,21 +115,37 @@ def load_curator_config(vault_path: Path) -> tuple[str, dict[str, Any]]:
     """
     Load the curator config from Daily/.agents/curator.md.
 
+    Also loads user context from context/curator.md and injects it into the prompt.
+
     Returns:
         Tuple of (system_prompt, frontmatter_metadata)
     """
+    from parachute.core.curator_service import load_user_context
+
+    # Load user context (profile, projects, areas)
+    user_name, user_context = load_user_context(vault_path)
+
     agent_file = vault_path / "Daily" / ".agents" / "curator.md"
 
     if agent_file.exists():
         try:
             import frontmatter
             post = frontmatter.loads(agent_file.read_text())
-            prompt = post.content.strip() if post.content.strip() else DEFAULT_DAILY_CURATOR_PROMPT
+            prompt_template = post.content.strip() if post.content.strip() else DEFAULT_DAILY_CURATOR_PROMPT
+
+            # If custom prompt has placeholders, format them; otherwise append context
+            if "{user_name}" in prompt_template or "{user_context}" in prompt_template:
+                prompt = prompt_template.format(user_name=user_name, user_context=user_context)
+            else:
+                # Custom prompt without placeholders - append context section
+                prompt = prompt_template + f"\n\n## User Context\n\n{user_context}"
+
             return prompt, dict(post.metadata)
         except Exception as e:
             logger.warning(f"Error loading curator config: {e}")
 
-    return DEFAULT_DAILY_CURATOR_PROMPT, {}
+    # Use default prompt with user context
+    return DEFAULT_DAILY_CURATOR_PROMPT.format(user_name=user_name, user_context=user_context), {}
 
 
 async def _load_vault_mcps(vault_path: Path) -> dict[str, dict[str, Any]]:
