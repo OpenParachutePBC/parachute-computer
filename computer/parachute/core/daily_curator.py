@@ -15,7 +15,7 @@ The curator has access to:
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -162,9 +162,14 @@ async def run_daily_curator(
     Returns:
         Result dict with status, reflection path, etc.
     """
-    # Determine date
+    # Determine date - default to yesterday since we run in the morning
+    # reflecting on the previous day
     if date is None:
-        date = datetime.now().strftime("%Y-%m-%d")
+        yesterday = datetime.now() - timedelta(days=1)
+        date = yesterday.strftime("%Y-%m-%d")
+
+    # Today's date for the reflection file and prompt context
+    today = datetime.now().strftime("%Y-%m-%d")
 
     # Load state
     state = DailyCuratorState(vault_path)
@@ -208,12 +213,12 @@ async def run_daily_curator(
     logger.info(f"Daily curator running with MCPs: {list(all_mcp_servers.keys())}")
 
     # Build the prompt - this is what we send each day
-    prompt = f"""Today's date is {date}.
+    prompt_text = f"""Today is {today}. Please create my morning reflection based on yesterday ({date}).
 
-Please create my morning reflection:
+Please:
 
-1. Use `read_journal` to read yesterday's journal entries ({date})
-2. Optionally use `read_chat_log` to see what AI conversations happened
+1. Use `read_journal` with date "{date}" to read yesterday's journal entries
+2. Optionally use `read_chat_log` with date "{date}" to see AI conversations from yesterday
 3. Optionally use `read_recent_journals` for context from recent days
 
 Then create:
@@ -221,9 +226,15 @@ Then create:
 - A song using Suno that captures the energy for today
 - An image using Glif that visualizes the current state/theme
 
-Use `write_reflection` to save everything. Embed the song and image URLs directly in the markdown.
+Use `write_reflection` with date "{today}" to save everything. Embed the song and image URLs directly in the markdown.
 
 Remember: Be genuine and warm. Notice patterns across days. Let my responses to previous reflections inform what you bring forward."""
+
+    # Wrap prompt in async generator - workaround for SDK bug #386
+    # https://github.com/anthropics/claude-agent-sdk-python/issues/386
+    # String prompts fail with "ProcessTransport is not ready for writing" when using MCP servers
+    async def generate_prompt():
+        yield {"type": "user", "message": {"role": "user", "content": prompt_text}}
 
     # Build options
     options_kwargs = {
@@ -252,7 +263,7 @@ Remember: Be genuine and warm. Notice patterns across days. Let my responses to 
         model_used = None
         reflection_written = False
 
-        async for event in sdk_query(prompt=prompt, options=options):
+        async for event in sdk_query(prompt=generate_prompt(), options=options):
             # Track session ID
             if hasattr(event, "session_id") and event.session_id:
                 new_session_id = event.session_id
@@ -278,7 +289,9 @@ Remember: Be genuine and warm. Notice patterns across days. Let my responses to 
         result["sdk_session_id"] = new_session_id
         result["model"] = model_used
         result["reflection_written"] = reflection_written
-        result["reflection_path"] = f"Daily/reflections/{date}.md" if reflection_written else None
+        result["reflection_path"] = f"Daily/reflections/{today}.md" if reflection_written else None
+        result["journal_date"] = date  # Yesterday's journal we read
+        result["reflection_date"] = today  # Today's reflection we wrote
 
         logger.info(f"Daily curator completed for {date}: reflection_written={reflection_written}")
 
