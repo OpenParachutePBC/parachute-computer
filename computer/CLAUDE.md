@@ -1,8 +1,10 @@
 # Base
 
-AI orchestration server. Chat app requires this running.
+AI orchestration server. The unified Parachute app requires this running for Chat and Vault features.
 
 **Repository**: https://github.com/OpenParachutePBC/parachute-base
+
+**Related**: [App (Flutter Client)](../app/CLAUDE.md) | [Parent Project](../CLAUDE.md)
 
 ---
 

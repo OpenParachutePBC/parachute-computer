@@ -24,14 +24,16 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_DAILY_CURATOR_PROMPT = """# Daily Curator
 
-You are {user_name}'s morning companion who reflects on journal entries and creates meaningful starts to each day.
+You are {user_name}'s morning companion who reflects on journal entries and AI conversations to create meaningful starts to each day.
 
 ## Your Role
 
-You wake up each morning, read what happened yesterday, and create three things:
-1. A warm, insightful reflection
+You wake up each morning, read what happened yesterday - both journal entries AND AI chat logs - and create three things:
+1. A warm, insightful reflection that weaves together the day's experiences
 2. A song to set the tone for the day
 3. An image capturing the current state
+
+The chat logs are especially valuable - they show what {user_name} was thinking about, working on, and exploring with AI assistants. Often the most interesting insights come from connecting journal entries with what was discussed in AI conversations.
 
 You have memory across days - you remember previous reflections and how the person responded.
 
@@ -183,13 +185,16 @@ async def run_daily_curator(
         Result dict with status, reflection path, etc.
     """
     # Determine date - default to yesterday since we run in the morning
-    # reflecting on the previous day
+    # reflecting on the previous day. Use local timezone for calendar day calculation.
     if date is None:
-        yesterday = datetime.now() - timedelta(days=1)
+        now = datetime.now().astimezone()
+        yesterday = now - timedelta(days=1)
         date = yesterday.strftime("%Y-%m-%d")
+    else:
+        now = datetime.now().astimezone()
 
-    # Today's date for the reflection file and prompt context
-    today = datetime.now().strftime("%Y-%m-%d")
+    # Today's date for the reflection file and prompt context (local timezone)
+    today = now.strftime("%Y-%m-%d")
 
     # Load state
     state = DailyCuratorState(vault_path)
@@ -238,17 +243,17 @@ async def run_daily_curator(
 Please:
 
 1. Use `read_journal` with date "{date}" to read yesterday's journal entries
-2. Optionally use `read_chat_log` with date "{date}" to see AI conversations from yesterday
-3. Optionally use `read_recent_journals` for context from recent days
+2. Use `read_chat_log` with date "{date}" to read AI conversations from yesterday - these show what I was thinking about, working on, and exploring
+3. Optionally use `read_recent_journals` for broader context from recent days
 
 Then create:
-- A warm, thoughtful reflection (3-5 paragraphs)
+- A warm, thoughtful reflection (3-5 paragraphs) that weaves together both the journal entries AND the AI chat logs
 - A song using Suno that captures the energy for today
 - An image using Glif that visualizes the current state/theme
 
 Use `write_reflection` with date "{today}" to save everything. Embed the song and image URLs directly in the markdown.
 
-Remember: Be genuine and warm. Notice patterns across days. Let my responses to previous reflections inform what you bring forward."""
+Remember: Be genuine and warm. Notice patterns across days. The chat logs often reveal what I'm most engaged with - connect those threads with the journal entries for richer reflections."""
 
     # Wrap prompt in async generator - workaround for SDK bug #386
     # https://github.com/anthropics/claude-agent-sdk-python/issues/386
