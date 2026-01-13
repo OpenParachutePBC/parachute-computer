@@ -1,0 +1,324 @@
+import 'dart:io';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_gemma/flutter_gemma.dart';
+import 'package:flutter_blue_plus/flutter_blue_plus.dart' as flutter_blue_plus;
+import 'package:opus_dart/opus_dart.dart' as opus_dart;
+import 'package:opus_flutter/opus_flutter.dart' as opus_flutter;
+
+import 'core/theme/app_theme.dart';
+import 'core/theme/design_tokens.dart';
+import 'core/providers/app_state_provider.dart';
+import 'core/services/logging_service.dart';
+import 'features/daily/home/screens/home_screen.dart';
+import 'features/chat/screens/chat_hub_screen.dart';
+import 'features/vault/screens/vault_browser_screen.dart';
+import 'features/settings/screens/settings_screen.dart';
+import 'features/onboarding/screens/onboarding_screen.dart';
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // Initialize logging
+  await logger.initialize();
+
+  logger.info('Main', 'Starting Parachute app...');
+
+  // Initialize background services
+  await _initializeServices();
+
+  // Set up global error handling
+  FlutterError.onError = (FlutterErrorDetails details) {
+    FlutterError.presentError(details);
+    logger.captureException(
+      details.exception,
+      stackTrace: details.stack,
+      tag: 'FlutterError',
+      extras: {
+        'library': details.library ?? 'unknown',
+        'context': details.context?.toString() ?? 'unknown',
+      },
+    );
+  };
+
+  PlatformDispatcher.instance.onError = (error, stack) {
+    logger.captureException(error, stackTrace: stack, tag: 'PlatformDispatcher');
+    return true;
+  };
+
+  runApp(const ProviderScope(child: ParachuteApp()));
+}
+
+/// Initialize services that should start before app renders
+Future<void> _initializeServices() async {
+  // Initialize Opus codec for Omi BLE audio decoding (iOS/Android only)
+  if (Platform.isIOS || Platform.isAndroid) {
+    try {
+      debugPrint('[Parachute] Initializing Opus codec...');
+      final opusLib = await opus_flutter.load();
+      opus_dart.initOpus(opusLib);
+      debugPrint('[Parachute] Opus codec initialized');
+    } catch (e) {
+      debugPrint('[Parachute] Failed to initialize Opus codec: $e');
+    }
+  }
+
+  // Disable verbose FlutterBluePlus logs
+  flutter_blue_plus.FlutterBluePlus.setLogLevel(
+    flutter_blue_plus.LogLevel.none,
+    color: false,
+  );
+
+  // Initialize Flutter Gemma for on-device AI (embeddings, title generation)
+  try {
+    debugPrint('[Parachute] Initializing FlutterGemma...');
+    await FlutterGemma.initialize();
+    debugPrint('[Parachute] FlutterGemma initialized');
+  } catch (e) {
+    debugPrint('[Parachute] Failed to initialize FlutterGemma: $e');
+  }
+
+  // Initialize transcription service in background (don't await)
+  _initializeTranscription();
+}
+
+/// Initialize transcription model in background for faster voice input
+void _initializeTranscription() async {
+  try {
+    debugPrint('[Parachute] Starting transcription model initialization...');
+    // TODO: Initialize unified TranscriptionAdapter once migrated
+    // final transcriptionService = TranscriptionAdapter();
+    // await transcriptionService.initialize(
+    //   onProgress: (progress) {
+    //     debugPrint('[Parachute] Transcription init: ${(progress * 100).toInt()}%');
+    //   },
+    // );
+    debugPrint('[Parachute] Transcription model ready');
+  } catch (e) {
+    debugPrint('[Parachute] Transcription init failed: $e');
+  }
+}
+
+class ParachuteApp extends StatelessWidget {
+  const ParachuteApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'Parachute',
+      debugShowCheckedModeBanner: false,
+      theme: AppTheme.lightTheme,
+      darkTheme: AppTheme.darkTheme,
+      themeMode: ThemeMode.system,
+      home: const MainShell(),
+      routes: {
+        '/settings': (context) => const SettingsScreen(),
+        '/onboarding': (context) => const OnboardingScreen(),
+      },
+    );
+  }
+}
+
+/// Main shell - handles onboarding and tab navigation
+class MainShell extends ConsumerStatefulWidget {
+  const MainShell({super.key});
+
+  @override
+  ConsumerState<MainShell> createState() => _MainShellState();
+}
+
+class _MainShellState extends ConsumerState<MainShell> {
+  @override
+  Widget build(BuildContext context) {
+    final onboardingCompleteAsync = ref.watch(onboardingCompleteProvider);
+
+    return onboardingCompleteAsync.when(
+      data: (isComplete) {
+        if (!isComplete) {
+          return const OnboardingScreen();
+        }
+        return const _TabShell();
+      },
+      loading: () => const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      ),
+      error: (_, __) => const _TabShell(), // On error, just show the app
+    );
+  }
+}
+
+/// Global navigator keys for each tab (for nested navigation)
+final chatNavigatorKey = GlobalKey<NavigatorState>();
+final dailyNavigatorKey = GlobalKey<NavigatorState>();
+final vaultNavigatorKey = GlobalKey<NavigatorState>();
+
+/// Tab navigation shell - Daily center, Chat/Vault conditional
+class _TabShell extends ConsumerStatefulWidget {
+  const _TabShell();
+
+  @override
+  ConsumerState<_TabShell> createState() => _TabShellState();
+}
+
+class _TabShellState extends ConsumerState<_TabShell> {
+  @override
+  Widget build(BuildContext context) {
+    final appMode = ref.watch(appModeProvider);
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+
+    // Determine visible tabs based on app mode
+    final showAllTabs = appMode == AppMode.full;
+
+    // Build tab destinations
+    final destinations = <NavigationDestination>[];
+    final screens = <Widget>[];
+
+    if (showAllTabs) {
+      destinations.add(NavigationDestination(
+        icon: Icon(
+          Icons.chat_bubble_outline,
+          color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+        ),
+        selectedIcon: Icon(
+          Icons.chat_bubble,
+          color: isDark ? BrandColors.nightTurquoise : BrandColors.turquoise,
+        ),
+        label: 'Chat',
+      ));
+      // Chat tab with nested navigator
+      screens.add(Navigator(
+        key: chatNavigatorKey,
+        onGenerateRoute: (settings) {
+          return MaterialPageRoute(
+            builder: (context) => const ChatHubScreen(),
+            settings: settings,
+          );
+        },
+      ));
+    }
+
+    // Daily is always in the middle (or only tab when server not configured)
+    destinations.add(NavigationDestination(
+      icon: Icon(
+        Icons.today_outlined,
+        color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+      ),
+      selectedIcon: Icon(
+        Icons.today,
+        color: isDark ? BrandColors.nightForest : BrandColors.forest,
+      ),
+      label: 'Daily',
+    ));
+    // Daily tab with nested navigator
+    screens.add(Navigator(
+      key: dailyNavigatorKey,
+      onGenerateRoute: (settings) {
+        return MaterialPageRoute(
+          builder: (context) => const HomeScreen(),
+          settings: settings,
+        );
+      },
+    ));
+
+    if (showAllTabs) {
+      destinations.add(NavigationDestination(
+        icon: Icon(
+          Icons.folder_outlined,
+          color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+        ),
+        selectedIcon: Icon(
+          Icons.folder,
+          color: isDark ? BrandColors.nightTurquoise : BrandColors.turquoise,
+        ),
+        label: 'Vault',
+      ));
+      // Vault tab with nested navigator
+      screens.add(Navigator(
+        key: vaultNavigatorKey,
+        onGenerateRoute: (settings) {
+          return MaterialPageRoute(
+            builder: (context) => const VaultBrowserScreen(),
+            settings: settings,
+          );
+        },
+      ));
+    }
+
+    // Current tab index - Daily is center
+    final currentIndex = ref.watch(currentTabIndexProvider);
+    // Clamp index to valid range when tabs change
+    final safeIndex = currentIndex.clamp(0, screens.length - 1);
+
+    // Only show navigation bar if there are multiple tabs
+    final showNavBar = screens.length > 1;
+
+    return Scaffold(
+      body: IndexedStack(
+        index: safeIndex,
+        children: screens,
+      ),
+      bottomNavigationBar: showNavBar
+          ? NavigationBar(
+              selectedIndex: safeIndex,
+              onDestinationSelected: (index) {
+                ref.read(currentTabIndexProvider.notifier).state = index;
+              },
+              backgroundColor: isDark ? BrandColors.nightSurfaceElevated : BrandColors.softWhite,
+              indicatorColor: isDark
+                  ? BrandColors.nightTurquoise.withValues(alpha: 0.2)
+                  : BrandColors.turquoise.withValues(alpha: 0.2),
+              destinations: destinations,
+            )
+          : null,
+    );
+  }
+}
+
+/// Placeholder screen for development
+class _PlaceholderScreen extends StatelessWidget {
+  final String title;
+  final IconData icon;
+
+  const _PlaceholderScreen({required this.title, required this.icon});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(title),
+        backgroundColor: isDark ? BrandColors.nightSurface : BrandColors.softWhite,
+      ),
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              icon,
+              size: 64,
+              color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              '$title Screen',
+              style: theme.textTheme.headlineSmall?.copyWith(
+                color: isDark ? BrandColors.nightText : BrandColors.ink,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Coming soon...',
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: BrandColors.driftwood,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
