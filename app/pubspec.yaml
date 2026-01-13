@@ -86,7 +86,7 @@ dependencies:
   flutter_foreground_task: ^8.13.2
 
   # Sherpa-ONNX for local ASR (Parakeet)
-  sherpa_onnx: ^1.12.12
+  sherpa_onnx: 1.12.20
 
   # Local LLM for embeddings & title generation
   flutter_gemma: ^0.11.8
@@ -143,3 +143,13 @@ flutter_launcher_icons:
   macos:
     generate: true
     image_path: "assets/icon/parachute_icon.png"
+
+# Force exact sherpa_onnx versions to match standalone Daily app
+# Version 1.12.21 has a native crash on Daylight DC-1 device
+dependency_overrides:
+  sherpa_onnx: 1.12.20
+  sherpa_onnx_android: 1.12.20
+  sherpa_onnx_ios: 1.12.20
+  sherpa_onnx_linux: 1.12.20
+  sherpa_onnx_macos: 1.12.20
+  sherpa_onnx_windows: 1.12.20

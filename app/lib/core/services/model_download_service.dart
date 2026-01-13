@@ -86,7 +86,9 @@ class ModelDownloadService {
   static const String _modelUrl =
       'https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2';
   static const String _prefsKeyDownloadComplete = 'parakeet_model_download_complete';
-  static const int _expectedModelSize = 465 * 1024 * 1024; // ~465MB
+  // The compressed archive is approximately 465MB (actual size varies slightly)
+  // Use a more accurate estimate based on actual downloads
+  static const int _expectedModelSize = 465000000; // ~465MB (465,000,000 bytes)
 
   final _stateController = StreamController<ModelDownloadState>.broadcast();
   Stream<ModelDownloadState> get stateStream => _stateController.stream;
@@ -102,16 +104,22 @@ class ModelDownloadService {
     try {
       final appDir = await getApplicationDocumentsDirectory();
       final modelDir = path.join(appDir.path, 'models', 'parakeet-v3');
+      debugPrint('[ModelDownloadService] Checking models in: $modelDir');
 
       final encoderFile = File(path.join(modelDir, 'encoder.int8.onnx'));
       final decoderFile = File(path.join(modelDir, 'decoder.int8.onnx'));
       final joinerFile = File(path.join(modelDir, 'joiner.int8.onnx'));
       final tokensFile = File(path.join(modelDir, 'tokens.txt'));
 
-      if (!await encoderFile.exists() ||
-          !await decoderFile.exists() ||
-          !await joinerFile.exists() ||
-          !await tokensFile.exists()) {
+      final encoderExists = await encoderFile.exists();
+      final decoderExists = await decoderFile.exists();
+      final joinerExists = await joinerFile.exists();
+      final tokensExists = await tokensFile.exists();
+
+      debugPrint('[ModelDownloadService] File exists: encoder=$encoderExists, decoder=$decoderExists, joiner=$joinerExists, tokens=$tokensExists');
+
+      if (!encoderExists || !decoderExists || !joinerExists || !tokensExists) {
+        debugPrint('[ModelDownloadService] Models NOT ready - files missing');
         return false;
       }
 
@@ -221,15 +229,18 @@ class ModelDownloadService {
 
     if (await archiveFile.exists()) {
       final existingSize = await archiveFile.length();
-      if (existingSize > 0 && existingSize < _expectedModelSize) {
+      final threshold99 = (_expectedModelSize * 0.99).toInt();
+      debugPrint('[ModelDownloadService] Archive check: size=$existingSize, expected=$_expectedModelSize, 99%threshold=$threshold99');
+
+      if (existingSize >= threshold99) {
+        // Archive looks complete, skip to extraction
+        debugPrint('[ModelDownloadService] Archive complete ($existingSize >= $threshold99), extracting...');
+        await _extractArchive(archivePath, modelDir);
+        return;
+      } else if (existingSize > 0) {
         // Partial download exists - try to resume
         startByte = existingSize;
         debugPrint('[ModelDownloadService] Resuming download from byte $startByte');
-      } else if (existingSize >= _expectedModelSize * 0.95) {
-        // Archive looks complete, skip to extraction
-        debugPrint('[ModelDownloadService] Archive exists, skipping to extraction');
-        await _extractArchive(archivePath, modelDir);
-        return;
       }
     }
 
@@ -299,11 +310,28 @@ class ModelDownloadService {
       statusMessage: 'Extracting models (this may take a minute)...',
     ));
 
-    // Extract in compute isolate to avoid blocking UI
-    await compute(_extractArchiveIsolate, {
-      'archivePath': archivePath,
-      'modelDir': modelDir,
-    });
+    try {
+      // Extract in compute isolate to avoid blocking UI
+      debugPrint('[ModelDownloadService] Starting extraction isolate...');
+      final result = await compute(_extractArchiveIsolate, {
+        'archivePath': archivePath,
+        'modelDir': modelDir,
+      });
+      debugPrint('[ModelDownloadService] Extraction isolate returned: $result');
+
+      if (result != 'success') {
+        throw Exception('Extraction failed: $result');
+      }
+    } catch (e, stackTrace) {
+      debugPrint('[ModelDownloadService] Extraction failed: $e');
+      debugPrint('[ModelDownloadService] Stack trace: $stackTrace');
+      // Delete the corrupt archive so we re-download next time
+      try {
+        await File(archivePath).delete();
+        debugPrint('[ModelDownloadService] Deleted corrupt archive');
+      } catch (_) {}
+      rethrow;
+    }
 
     _updateState(_currentState.copyWith(
       progress: 0.95,
@@ -311,37 +339,57 @@ class ModelDownloadService {
     ));
   }
 
-  static Future<void> _extractArchiveIsolate(Map<String, String> params) async {
+  static Future<String> _extractArchiveIsolate(Map<String, String> params) async {
     final archivePath = params['archivePath']!;
     final modelDir = params['modelDir']!;
 
-    debugPrint('[ModelDownloadService] Reading archive...');
-    final archiveBytes = await File(archivePath).readAsBytes();
+    try {
+      debugPrint('[ModelDownloadService:Isolate] Reading archive from $archivePath...');
+      final archiveFile = File(archivePath);
+      final archiveSize = await archiveFile.length();
+      debugPrint('[ModelDownloadService:Isolate] Archive size: $archiveSize bytes');
 
-    debugPrint('[ModelDownloadService] Decompressing BZip2...');
-    final decompressed = BZip2Decoder().decodeBytes(archiveBytes);
+      final archiveBytes = await archiveFile.readAsBytes();
+      debugPrint('[ModelDownloadService:Isolate] Read ${archiveBytes.length} bytes');
 
-    debugPrint('[ModelDownloadService] Extracting TAR...');
-    final archive = TarDecoder().decodeBytes(decompressed);
+      debugPrint('[ModelDownloadService:Isolate] Decompressing BZip2...');
+      final decompressed = BZip2Decoder().decodeBytes(archiveBytes);
+      debugPrint('[ModelDownloadService:Isolate] Decompressed to ${decompressed.length} bytes');
 
-    const targetFiles = [
-      'encoder.int8.onnx',
-      'decoder.int8.onnx',
-      'joiner.int8.onnx',
-      'tokens.txt',
-    ];
+      debugPrint('[ModelDownloadService:Isolate] Extracting TAR...');
+      final archive = TarDecoder().decodeBytes(decompressed);
+      debugPrint('[ModelDownloadService:Isolate] Archive has ${archive.length} entries');
 
-    for (final file in archive) {
-      if (file.isFile) {
-        final basename = path.basename(file.name);
-        if (targetFiles.contains(basename)) {
-          final outputPath = path.join(modelDir, basename);
-          final outputFile = File(outputPath);
-          await outputFile.create(recursive: true);
-          await outputFile.writeAsBytes(file.content as List<int>);
-          debugPrint('[ModelDownloadService] Extracted: $basename');
+      const targetFiles = [
+        'encoder.int8.onnx',
+        'decoder.int8.onnx',
+        'joiner.int8.onnx',
+        'tokens.txt',
+      ];
+
+      int extractedCount = 0;
+      for (final file in archive) {
+        if (file.isFile) {
+          final basename = path.basename(file.name);
+          if (targetFiles.contains(basename)) {
+            final outputPath = path.join(modelDir, basename);
+            final outputFile = File(outputPath);
+            await outputFile.create(recursive: true);
+            await outputFile.writeAsBytes(file.content as List<int>);
+            debugPrint('[ModelDownloadService:Isolate] Extracted: $basename (${(file.content as List<int>).length} bytes)');
+            extractedCount++;
+          }
         }
       }
+
+      if (extractedCount < targetFiles.length) {
+        return 'Only extracted $extractedCount of ${targetFiles.length} files';
+      }
+
+      return 'success';
+    } catch (e) {
+      debugPrint('[ModelDownloadService:Isolate] Error: $e');
+      return 'error: $e';
     }
   }
 

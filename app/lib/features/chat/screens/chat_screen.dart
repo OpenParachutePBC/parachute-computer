@@ -267,7 +267,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final currentSessionId = ref.watch(currentSessionIdProvider);
 
     // Auto-scroll when new messages arrive
+    // Guard with mounted check to avoid issues during disposal
     ref.listen(chatMessagesProvider, (previous, next) {
+      if (!mounted) return; // Don't process if widget is disposing
+
       final prevCount = previous?.messages.length ?? 0;
       final nextCount = next.messages.length;
 
@@ -1071,16 +1074,24 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   Future<void> _handleMenuAction(String action, String sessionId) async {
     switch (action) {
       case 'archive':
-        await ref.read(archiveSessionProvider)(sessionId);
+        // Capture the provider function before navigating to avoid accessing
+        // ref after the widget is disposed
+        final archiveFunc = ref.read(archiveSessionProvider);
         if (mounted) {
           Navigator.of(context).pop(); // Go back to hub
         }
+        // Small delay to let the navigation complete before invalidating providers
+        await Future.delayed(const Duration(milliseconds: 100));
+        await archiveFunc(sessionId);
         break;
       case 'delete':
         final confirmed = await _confirmDeleteSession();
         if (confirmed && mounted) {
-          await ref.read(deleteSessionProvider)(sessionId);
+          // Capture the provider function before navigating
+          final deleteFunc = ref.read(deleteSessionProvider);
           Navigator.of(context).pop(); // Go back to hub
+          await Future.delayed(const Duration(milliseconds: 100));
+          await deleteFunc(sessionId);
         }
         break;
     }

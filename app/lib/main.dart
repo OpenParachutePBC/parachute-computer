@@ -100,7 +100,13 @@ void _initializeTranscription() async {
   try {
     debugPrint('[Parachute] Checking transcription model status...');
     final downloadService = ModelDownloadService();
+
+    // Directly check if models are ready
+    final modelsReady = await downloadService.areModelsReady();
+    debugPrint('[Parachute] areModelsReady() returned: $modelsReady');
+
     await downloadService.initialize();
+    debugPrint('[Parachute] After initialize, state.isReady: ${downloadService.currentState.isReady}, status: ${downloadService.currentState.status}');
 
     if (downloadService.currentState.isReady) {
       debugPrint('[Parachute] Transcription models already downloaded');

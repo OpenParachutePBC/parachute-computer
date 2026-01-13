@@ -103,7 +103,7 @@ class BaseServerService {
   Future<DailyCuratorStatus?> getDailyCuratorStatus() async {
     try {
       final response = await http
-          .get(Uri.parse('${await getServerUrl()}/modules/daily/curator'))
+          .get(Uri.parse('${await getServerUrl()}/api/modules/daily/curator'))
           .timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200) {
@@ -136,7 +136,7 @@ class BaseServerService {
 
       final response = await http
           .post(
-            Uri.parse('${await getServerUrl()}/modules/daily/curate'),
+            Uri.parse('${await getServerUrl()}/api/modules/daily/curate'),
             headers: {'Content-Type': 'application/json'},
             body: json.encode(body),
           )
@@ -165,7 +165,7 @@ class BaseServerService {
   Future<CuratorTranscript?> getCuratorTranscript({int limit = 50}) async {
     try {
       final response = await http
-          .get(Uri.parse('${await getServerUrl()}/modules/daily/curator/transcript?limit=$limit'))
+          .get(Uri.parse('${await getServerUrl()}/api/modules/daily/curator/transcript?limit=$limit'))
           .timeout(const Duration(seconds: 15));
 
       if (response.statusCode == 200) {

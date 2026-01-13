@@ -119,8 +119,10 @@ class _JournalInputBarState extends ConsumerState<JournalInputBar> {
   Future<void> _startRecording() async {
     if (_isRecording || widget.onVoiceRecorded == null) return;
 
-    // On Android, check if transcription models are downloaded
+    // On Android, MUST check if transcription models are downloaded before proceeding
+    // This is a critical check to prevent native crashes
     if (Platform.isAndroid) {
+      // First check the sync state for download progress indication
       final downloadState = ref.read(modelDownloadCurrentStateProvider);
 
       if (downloadState.isDownloading) {
@@ -136,7 +138,13 @@ class _JournalInputBarState extends ConsumerState<JournalInputBar> {
         return;
       }
 
-      if (downloadState.needsDownload) {
+      // Always do an async disk check to be certain models are ready
+      // This prevents crashes when the provider state hasn't been updated yet
+      debugPrint('[JournalInputBar] Checking models on disk...');
+      final modelsReady = await checkModelsReady();
+      debugPrint('[JournalInputBar] Models ready: $modelsReady');
+
+      if (!modelsReady) {
         // Models not downloaded - start download and show message
         ref.read(modelDownloadServiceProvider).startDownload();
         if (mounted) {

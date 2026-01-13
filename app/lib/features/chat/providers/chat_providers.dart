@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 import '../models/chat_session.dart';
@@ -1729,9 +1730,12 @@ final archiveSessionProvider = Provider<Future<void> Function(String)>((ref) {
   final service = ref.watch(chatServiceProvider);
   return (String sessionId) async {
     await service.archiveSession(sessionId);
-    // Refresh sessions lists
-    ref.invalidate(chatSessionsProvider);
-    ref.invalidate(archivedSessionsProvider);
+    // Defer invalidation to next frame to avoid _dependents.isEmpty assertion
+    // This can happen if the widget watching these providers is being disposed
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      ref.invalidate(chatSessionsProvider);
+      ref.invalidate(archivedSessionsProvider);
+    });
   };
 });
 
@@ -1740,9 +1744,11 @@ final unarchiveSessionProvider = Provider<Future<void> Function(String)>((ref) {
   final service = ref.watch(chatServiceProvider);
   return (String sessionId) async {
     await service.unarchiveSession(sessionId);
-    // Refresh sessions lists
-    ref.invalidate(chatSessionsProvider);
-    ref.invalidate(archivedSessionsProvider);
+    // Defer invalidation to next frame to avoid _dependents.isEmpty assertion
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      ref.invalidate(chatSessionsProvider);
+      ref.invalidate(archivedSessionsProvider);
+    });
   };
 });
 

@@ -1701,8 +1701,11 @@ class _SafeMarkdownBody extends StatelessWidget {
 
     // Pre-check for problematic patterns before attempting to render
     // This catches patterns that cause flutter_markdown assertion errors
-    if (!_canSafelyParse(sanitizedText)) {
+    final isSafe = _canSafelyParse(sanitizedText);
+    debugPrint('[_SafeMarkdownBody] Checking ${text.length} chars, safe=$isSafe');
+    if (!isSafe) {
       debugPrint('[_SafeMarkdownBody] Falling back to plain text due to unsafe patterns');
+      debugPrint('[_SafeMarkdownBody] First 200 chars: ${text.substring(0, text.length > 200 ? 200 : text.length)}');
       return _buildPlainText();
     }
 

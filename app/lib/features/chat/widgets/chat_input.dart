@@ -200,8 +200,10 @@ class _ChatInputState extends ConsumerState<ChatInput>
 
   /// Streaming voice input (real-time transcription feedback)
   Future<void> _handleStreamingVoiceInput() async {
-    // On Android, check if transcription models are downloaded
+    // On Android, MUST check if transcription models are downloaded before proceeding
+    // This is a critical check to prevent native crashes
     if (Platform.isAndroid && !_isStreamingRecording) {
+      // First check the sync state for download progress indication
       final downloadState = ref.read(modelDownloadCurrentStateProvider);
 
       if (downloadState.isDownloading) {
@@ -217,7 +219,13 @@ class _ChatInputState extends ConsumerState<ChatInput>
         return;
       }
 
-      if (downloadState.needsDownload) {
+      // Always do an async disk check to be certain models are ready
+      // This prevents crashes when the provider state hasn't been updated yet
+      debugPrint('[ChatInput] Checking models on disk...');
+      final modelsReady = await checkModelsReady();
+      debugPrint('[ChatInput] Models ready: $modelsReady');
+
+      if (!modelsReady) {
         // Models not downloaded - start download and show message
         ref.read(modelDownloadServiceProvider).startDownload();
         if (mounted) {

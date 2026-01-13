@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
 import '../models/chat_message.dart';
 
@@ -165,29 +164,16 @@ class _CollapsibleThinkingSectionState extends State<CollapsibleThinkingSection>
             ),
           ),
           Expanded(
-            // Note: selectable: false because parent uses SelectionArea wrapper
-            // for proper multi-line selection across the entire message
-            child: MarkdownBody(
-              data: text,
-              selectable: false,
-              styleSheet: MarkdownStyleSheet(
-                p: TextStyle(
-                  color: widget.isDark
-                      ? BrandColors.nightTextSecondary
-                      : BrandColors.charcoal.withValues(alpha: 0.7),
-                  fontSize: TypographyTokens.bodySmall,
-                  height: TypographyTokens.lineHeightNormal,
-                ),
-                code: TextStyle(
-                  color: widget.isDark
-                      ? BrandColors.nightTurquoise
-                      : BrandColors.turquoiseDeep,
-                  fontSize: TypographyTokens.bodySmall - 1,
-                  fontFamily: 'monospace',
-                  backgroundColor: widget.isDark
-                      ? BrandColors.nightSurfaceElevated
-                      : BrandColors.softWhite,
-                ),
+            // Render thinking text as plain text to avoid flutter_markdown crashes
+            // Thinking blocks often contain XML-like tags that break the parser
+            child: Text(
+              text,
+              style: TextStyle(
+                color: widget.isDark
+                    ? BrandColors.nightTextSecondary
+                    : BrandColors.charcoal.withValues(alpha: 0.7),
+                fontSize: TypographyTokens.bodySmall,
+                height: TypographyTokens.lineHeightNormal,
               ),
             ),
           ),
