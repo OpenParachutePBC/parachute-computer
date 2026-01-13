@@ -2,7 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:parachute/core/services/transcription/audio_service.dart';
-import 'package:parachute/core/services/transcription/transcription_service_adapter.dart';
+import 'package:parachute/core/providers/voice_input_providers.dart';
 import 'package:parachute/features/daily/recorder/services/live_transcription_service_v3.dart';
 import 'package:parachute/features/daily/recorder/services/recording_post_processing_service.dart';
 
@@ -48,19 +48,13 @@ final audioServiceProvider = Provider<AudioService>((ref) {
 
 /// Provider for TranscriptionServiceAdapter
 ///
+/// Re-exports from voice_input_providers for consistency.
+/// Uses the same singleton instance across the app.
+///
 /// Platform-adaptive transcription using Parakeet v3:
 /// - iOS/macOS: FluidAudio (CoreML + Apple Neural Engine)
 /// - Android: Sherpa-ONNX (ONNX Runtime)
-final transcriptionServiceAdapterProvider =
-    Provider<TranscriptionServiceAdapter>((ref) {
-      final service = TranscriptionServiceAdapter();
-
-      ref.onDispose(() {
-        service.dispose();
-      });
-
-      return service;
-    });
+final transcriptionServiceAdapterProvider = transcriptionServiceProvider;
 
 /// Provider for RecordingPostProcessingService
 ///
