@@ -38,8 +38,9 @@ def create_curator_mcp_server(vault_path: Path):
     chat_log_dir = vault_path / "Daily" / "chat-log"
 
     def _get_today_path() -> tuple[Path, str, str]:
-        """Get today's log file path, date string, and current time."""
-        now = datetime.now(timezone.utc).astimezone()
+        """Get today's log file path, date string, and current time in local timezone."""
+        # Use local timezone since chat logs are organized by local calendar days
+        now = datetime.now().astimezone()
         today = now.strftime("%Y-%m-%d")
         time_str = now.strftime("%H:%M")
         path = chat_log_dir / f"{today}.md"

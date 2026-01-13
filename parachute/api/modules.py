@@ -322,26 +322,20 @@ async def get_module_curator_transcript(
     # SDK stores transcripts in ~/.claude/projects/{escaped-cwd}/{session_id}.jsonl
     claude_projects_dir = Path.home() / ".claude" / "projects"
 
-    # The curator runs from the base directory, so look for that path
-    base_dir = settings.vault_path / "projects" / "parachute" / "base"
-    escaped_cwd = str(base_dir).replace("/", "-").replace("\\", "-")
-    if escaped_cwd.startswith("-"):
-        escaped_cwd = escaped_cwd  # Keep leading dash
-
-    transcript_path = claude_projects_dir / escaped_cwd / f"{session_id}.jsonl"
-
-    if not transcript_path.exists():
-        # Try alternate paths - the SDK might use different cwd
-        possible_paths = list(claude_projects_dir.glob(f"*/{session_id}.jsonl"))
-        if possible_paths:
-            transcript_path = possible_paths[0]
-        else:
-            return {
-                "module": module_name,
-                "hasTranscript": False,
-                "sessionId": session_id,
-                "message": f"Transcript file not found for session {session_id}",
-            }
+    # The daily curator runs from the server's current working directory
+    # which is typically the base/ directory. Search for the transcript
+    # by session ID across all project directories.
+    transcript_path = None
+    possible_paths = list(claude_projects_dir.glob(f"*/{session_id}.jsonl"))
+    if possible_paths:
+        transcript_path = possible_paths[0]
+    else:
+        return {
+            "module": module_name,
+            "hasTranscript": False,
+            "sessionId": session_id,
+            "message": f"Transcript file not found for session {session_id}",
+        }
 
     # Parse the JSONL transcript
     messages = []

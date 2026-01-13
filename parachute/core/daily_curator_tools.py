@@ -117,7 +117,8 @@ def create_daily_curator_tools(
         days_back = args.get("days", 7)
         days_back = min(int(days_back), 30)  # Cap at 30 days
 
-        today = datetime.now().date()
+        # Use local timezone for calendar day calculation
+        today = datetime.now().astimezone().date()
         journals_found = []
 
         for i in range(1, days_back + 1):

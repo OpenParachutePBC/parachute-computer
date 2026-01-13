@@ -173,8 +173,10 @@ class ChatLogService:
         return f"---\n{fm_str}---\n\n{body}"
 
     def get_today_path(self) -> Path:
-        """Get path for today's log file."""
-        now = datetime.now(timezone.utc).astimezone()
+        """Get path for today's log file in local timezone."""
+        # Use local timezone for date calculation since chat logs are organized
+        # by local calendar days, not UTC days
+        now = datetime.now().astimezone()
         return self._get_log_path(now)
 
     def get_session_para_id(self, session_id: str) -> Optional[str]:
@@ -354,7 +356,8 @@ class ChatLogService:
         if not commits:
             return True
 
-        now = datetime.now(timezone.utc).astimezone()
+        # Use local timezone for timestamps in chat logs
+        now = datetime.now().astimezone()
         para_id = generate_para_id()
 
         # Build content
@@ -400,7 +403,8 @@ class ChatLogService:
         Returns:
             True if logged successfully
         """
-        now = datetime.now(timezone.utc).astimezone()
+        # Use local timezone for timestamps in chat logs
+        now = datetime.now().astimezone()
         para_id = generate_para_id()
 
         entry = ChatLogEntry(
