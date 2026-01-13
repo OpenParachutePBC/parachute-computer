@@ -918,6 +918,16 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
     return success;
   }
 
+  /// Clean up resources when notifier is disposed
+  @override
+  void dispose() {
+    _currentStreamSubscription?.cancel();
+    _currentStreamSubscription = null;
+    _pollTimer?.cancel();
+    _pollTimer = null;
+    super.dispose();
+  }
+
   /// Clear current session (for new chat)
   ///
   /// Also cancels any active stream by invalidating the stream session ID.
@@ -1684,7 +1694,14 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
 final chatMessagesProvider =
     StateNotifierProvider<ChatMessagesNotifier, ChatMessagesState>((ref) {
   final service = ref.watch(chatServiceProvider);
-  return ChatMessagesNotifier(service, ref);
+  final notifier = ChatMessagesNotifier(service, ref);
+
+  // Ensure proper cleanup when provider is disposed
+  ref.onDispose(() {
+    notifier.dispose();
+  });
+
+  return notifier;
 });
 
 // ============================================================

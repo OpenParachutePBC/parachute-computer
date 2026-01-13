@@ -1,6 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../services/voice_input_service.dart';
-import '../services/transcription_service.dart';
+import '../services/transcription/transcription_service_adapter.dart';
 
 /// Voice input state enum
 enum VoiceInputState {
@@ -19,8 +19,8 @@ final voiceInputServiceProvider = Provider<VoiceInputService>((ref) {
 });
 
 /// Transcription service singleton
-final transcriptionServiceProvider = Provider<TranscriptionService>((ref) {
-  final service = TranscriptionService();
+final transcriptionServiceProvider = Provider<TranscriptionServiceAdapter>((ref) {
+  final service = TranscriptionServiceAdapter();
   ref.onDispose(() => service.dispose());
   return service;
 });

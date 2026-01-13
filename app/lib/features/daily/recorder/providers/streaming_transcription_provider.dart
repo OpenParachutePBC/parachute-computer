@@ -110,39 +110,46 @@ class StreamingRecordingNotifier extends StateNotifier<StreamingRecordingState> 
       return null;
     }
 
-    _stopDurationTimer();
-
     if (_service == null) {
       debugPrint('[StreamingRecording] Service is null, returning null');
+      _stopDurationTimer();
       return null;
     }
 
-    debugPrint('[StreamingRecording] Calling service.stopRecording()...');
-    final audioPath = await _service!.stopRecording();
-    debugPrint('[StreamingRecording] Service returned audioPath: $audioPath');
+    try {
+      debugPrint('[StreamingRecording] Calling service.stopRecording()...');
+      final audioPath = await _service!.stopRecording();
+      debugPrint('[StreamingRecording] Service returned audioPath: $audioPath');
 
-    state = state.copyWith(
-      isRecording: false,
-      recordingStartTime: null,
-    );
+      state = state.copyWith(
+        isRecording: false,
+        recordingStartTime: null,
+      );
 
-    return audioPath;
+      return audioPath;
+    } finally {
+      // Always stop the timer, even if stopRecording throws
+      _stopDurationTimer();
+    }
   }
 
   /// Cancel recording without saving
   Future<void> cancelRecording() async {
     if (!state.isRecording) return;
 
-    _stopDurationTimer();
+    try {
+      if (_service != null) {
+        await _service!.cancelRecording();
+      }
 
-    if (_service != null) {
-      await _service!.cancelRecording();
+      state = state.copyWith(
+        isRecording: false,
+        recordingStartTime: null,
+      );
+    } finally {
+      // Always stop the timer, even if cancelRecording throws
+      _stopDurationTimer();
     }
-
-    state = state.copyWith(
-      isRecording: false,
-      recordingStartTime: null,
-    );
   }
 
   /// Get the current streaming transcript

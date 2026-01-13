@@ -6,7 +6,7 @@ import 'package:parachute/features/daily/journal/services/journal_service.dart';
 import 'package:parachute/features/daily/recorder/services/omi/models.dart';
 import 'package:parachute/features/daily/recorder/services/omi/omi_bluetooth_service.dart';
 import 'package:parachute/features/daily/recorder/services/omi/omi_connection.dart';
-import 'package:parachute/features/daily/recorder/services/transcription_service_adapter.dart';
+import 'package:parachute/core/services/transcription/transcription_service_adapter.dart';
 import 'package:parachute/features/daily/recorder/utils/audio/wav_bytes_util.dart';
 import 'package:parachute/core/services/file_system_service.dart';
 

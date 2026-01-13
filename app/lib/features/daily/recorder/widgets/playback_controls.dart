@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/features/daily/recorder/providers/service_providers.dart';
-import 'package:parachute/features/daily/recorder/services/audio_service.dart';
+import 'package:parachute/core/services/transcription/audio_service.dart';
 
 class PlaybackControls extends ConsumerStatefulWidget {
   final String filePath;

@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
 import '../../recorder/providers/service_providers.dart';
-import '../../recorder/services/audio_service.dart';
+import 'package:parachute/core/services/transcription/audio_service.dart';
 
 /// A mini audio player bar shown at the bottom of the journal screen when audio is playing.
 ///

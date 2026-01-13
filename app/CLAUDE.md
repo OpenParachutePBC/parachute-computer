@@ -19,17 +19,12 @@ User → Parachute App → Base Server → Claude SDK → AI
 
 ### Navigation
 
-Three tabs with Daily always centered:
-- **Chat** (left) - Server-powered AI conversations. Hidden until server configured.
-- **Daily** (center) - Voice journaling. Always available, works offline.
-- **Vault** (right) - Browse knowledge vault. Hidden until server configured.
+Three-tab layout with persistent bottom navigation:
+- **Chat** (left) - Server-powered AI conversations
+- **Daily** (center) - Voice journaling, works offline
+- **Vault** (right) - Browse knowledge vault
 
-```dart
-// Tab visibility based on server configuration
-final visibleTabs = serverConfigured
-    ? [AppTab.chat, AppTab.daily, AppTab.vault]
-    : [AppTab.daily];
-```
+Each tab has its own Navigator for independent navigation stacks.
 
 ---
 
@@ -37,39 +32,67 @@ final visibleTabs = serverConfigured
 
 ```
 lib/
-├── main.dart
-├── core/                           # Shared infrastructure
-│   ├── config/                     # App configuration
-│   ├── models/                     # Shared data models
-│   ├── providers/                  # Core Riverpod providers
-│   │   ├── app_state_provider.dart # Server config, app mode
-│   │   └── file_system_provider.dart
+├── main.dart                        # App entry, tab shell, global nav keys
+├── core/                            # Shared infrastructure
+│   ├── models/                      # Shared data models (speaker_segment.dart)
+│   ├── providers/                   # Core Riverpod providers
+│   │   ├── app_state_provider.dart  # Server config, app mode
+│   │   ├── voice_input_providers.dart
+│   │   └── streaming_voice_providers.dart
 │   ├── services/
-│   │   ├── file_system_service.dart    # Unified for Daily/Chat
-│   │   ├── transcription/              # Audio → text (shared)
+│   │   ├── file_system_service.dart # Unified for Daily/Chat
+│   │   ├── streaming_voice_service.dart
+│   │   ├── transcription/           # Audio → text (CANONICAL location)
 │   │   │   ├── audio_service.dart
-│   │   │   ├── streaming_transcription_service.dart
-│   │   │   ├── transcription_adapter.dart
-│   │   │   └── vad/
-│   │   ├── embedding/                  # Semantic search
-│   │   └── search/                     # Text search
+│   │   │   ├── transcription_service_adapter.dart
+│   │   │   ├── parakeet_service.dart
+│   │   │   ├── sherpa_onnx_service.dart
+│   │   │   └── sherpa_onnx_isolate.dart
+│   │   ├── vad/                     # Voice activity detection (CANONICAL)
+│   │   │   ├── simple_vad.dart
+│   │   │   └── smart_chunker.dart
+│   │   ├── audio_processing/        # Audio filters (CANONICAL)
+│   │   │   └── simple_noise_filter.dart
+│   │   ├── search/                  # Text search
+│   │   └── vision/                  # OCR (stub)
 │   ├── theme/
 │   │   ├── design_tokens.dart
 │   │   └── app_theme.dart
-│   └── widgets/                    # Shared UI components
+│   └── widgets/                     # Shared UI components
+│       └── error_boundary.dart
 └── features/
-    ├── daily/                      # Voice journaling (offline-capable)
-    │   ├── journal/                # Journal CRUD, display
-    │   ├── capture/                # Photo/handwriting input
-    │   ├── reflections/            # AI morning reflections
-    │   └── omi/                    # Omi pendant (feature-flagged)
-    ├── chat/                       # AI chat (requires server)
-    │   ├── sessions/               # Session management
-    │   ├── streaming/              # SSE message streaming
-    │   └── tools/                  # Tool call UI
-    ├── vault/                      # Knowledge browser (requires server)
-    ├── onboarding/                 # Setup flow
-    └── settings/                   # App settings
+    ├── chat/                        # AI chat (requires server)
+    │   ├── models/                  # ChatSession, ChatMessage, etc.
+    │   ├── providers/chat_providers.dart  # All chat state
+    │   ├── screens/                 # ChatHubScreen, ChatScreen
+    │   ├── services/                # ChatService, BackgroundStreamManager
+    │   └── widgets/                 # MessageBubble, ChatInput, etc.
+    ├── daily/                       # Voice journaling (offline-capable)
+    │   ├── journal/                 # Journal CRUD, display
+    │   │   ├── models/              # JournalEntry, JournalDay
+    │   │   ├── providers/
+    │   │   ├── screens/
+    │   │   ├── services/            # JournalService, ParaIdService
+    │   │   └── widgets/
+    │   ├── recorder/                # Audio recording & transcription
+    │   │   ├── providers/           # streaming_transcription_provider
+    │   │   ├── services/
+    │   │   │   ├── live_transcription_service_v3.dart
+    │   │   │   ├── background_recording_service.dart
+    │   │   │   └── omi/             # Omi pendant support
+    │   │   └── widgets/
+    │   ├── capture/                 # Photo/handwriting input
+    │   ├── reflections/             # AI morning reflections
+    │   └── search/screens/          # Journal search
+    ├── vault/                       # Knowledge browser (requires server)
+    │   ├── models/
+    │   ├── providers/
+    │   ├── screens/
+    │   └── services/
+    ├── onboarding/screens/          # Setup flow
+    └── settings/                    # App settings
+        ├── screens/
+        └── widgets/
 ```
 
 ---
@@ -81,38 +104,49 @@ lib/
 | Type | Use for | Example |
 |------|---------|---------|
 | `Provider<T>` | Singleton services | `fileSystemServiceProvider` |
-| `FutureProvider<T>` | Async initialization | `journalServiceProvider` |
+| `FutureProvider<T>.autoDispose` | Async data that should refresh | `chatSessionsProvider` |
 | `StateNotifierProvider` | Complex mutable state | `chatMessagesProvider` |
 | `StreamProvider` | Reactive streams | `streamingTranscriptionProvider` |
 | `StateProvider` | Simple UI state | `currentTabProvider` |
 
-### Service Initialization
+**Important**: Use `.autoDispose` for FutureProviders with dynamic/paginated content to prevent memory leaks.
 
-```dart
-class MyService {
-  MyService._({required this.config});
+### Service Location
 
-  static Future<MyService> create() async {
-    final config = await _loadConfig();
-    return MyService._(config: config);
-  }
-}
-```
+Audio processing services have a SINGLE canonical location:
+- VAD: `core/services/vad/`
+- Audio processing: `core/services/audio_processing/`
+- Transcription: `core/services/transcription/`
 
-### Feature Flags
-
-```dart
-// Check server availability before showing features
-final appMode = ref.watch(appModeProvider);
-if (appMode == AppMode.full) {
-  // Show chat/vault features
-}
-```
+Do NOT create duplicate services in feature directories.
 
 ### Debug Logging
 
 ```dart
 debugPrint('[ClassName] message');
+```
+
+### Resource Cleanup
+
+StateNotifiers must override `dispose()` to clean up:
+```dart
+@override
+void dispose() {
+  _subscription?.cancel();
+  _timer?.cancel();
+  super.dispose();
+}
+```
+
+Use `try-finally` for operations that must clean up even on error:
+```dart
+Future<void> stopRecording() async {
+  try {
+    await _service.stop();
+  } finally {
+    _stopTimer();  // Always runs
+  }
+}
 ```
 
 ---
@@ -123,9 +157,6 @@ debugPrint('[ClassName] message');
 |--------|------------|---------|
 | Daily | `~/Parachute/Daily/` | Journals, assets, reflections (synced) |
 | Chat | `~/Parachute/Chat/` | Sessions, contexts (server-managed) |
-
-Daily folder is offline-capable and will sync with server.
-Chat folder is managed by server.
 
 ---
 
@@ -145,8 +176,8 @@ Format: `para:{12-char-alphanumeric}` - unique across all modules.
 
 ## Platform Notes
 
-| Feature | Desktop | Mobile |
-|---------|---------|--------|
+| Feature | Desktop (macOS) | Mobile (Android/iOS) |
+|---------|-----------------|----------------------|
 | Transcription | FluidAudio (CoreML) | Sherpa-ONNX |
 | Embeddings | Ollama | flutter_gemma |
 | Omi pendant | Supported | Supported |
@@ -156,11 +187,23 @@ Format: `para:{12-char-alphanumeric}` - unique across all modules.
 ## Running
 
 ```bash
+# Run app
 flutter run -d macos
 flutter run -d android
-```
 
-Server (for Chat/Vault features):
-```bash
+# Server (for Chat/Vault features)
 cd ../base && ./parachute.sh start
 ```
+
+---
+
+## Key Files
+
+| Purpose | File |
+|---------|------|
+| App entry & navigation | `lib/main.dart` |
+| Chat state management | `lib/features/chat/providers/chat_providers.dart` |
+| Journal state | `lib/features/daily/journal/providers/journal_providers.dart` |
+| Live transcription | `lib/features/daily/recorder/services/live_transcription_service_v3.dart` |
+| Server communication | `lib/features/chat/services/chat_service.dart` |
+| Markdown rendering | `lib/features/chat/widgets/message_bubble.dart` |

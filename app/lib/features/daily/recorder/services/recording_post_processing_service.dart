@@ -1,5 +1,5 @@
 import 'package:flutter/foundation.dart';
-import 'package:parachute/features/daily/recorder/services/transcription_service_adapter.dart';
+import 'package:parachute/core/services/transcription/transcription_service_adapter.dart';
 
 /// Post-processing pipeline for recordings
 ///

@@ -8,7 +8,7 @@ import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
-import 'transcription_service.dart';
+import 'transcription/transcription_service_adapter.dart';
 import 'vad/smart_chunker.dart';
 import 'audio_processing/simple_noise_filter.dart';
 
@@ -85,7 +85,7 @@ class StreamingTranscriptionState {
 /// 4. On 1s silence → Finalize chunk → Confirmed text
 /// 5. On stop → Flush with 2s silence → Capture final words
 class StreamingVoiceService {
-  final TranscriptionService _transcriptionService;
+  final TranscriptionServiceAdapter _transcriptionService;
 
   // Recording state
   final AudioRecorder _recorder = AudioRecorder();

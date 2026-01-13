@@ -1,8 +1,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:parachute/features/daily/recorder/services/audio_service.dart';
-import 'package:parachute/features/daily/recorder/services/transcription_service_adapter.dart';
+import 'package:parachute/core/services/transcription/audio_service.dart';
+import 'package:parachute/core/services/transcription/transcription_service_adapter.dart';
 import 'package:parachute/features/daily/recorder/services/live_transcription_service_v3.dart';
 import 'package:parachute/features/daily/recorder/services/recording_post_processing_service.dart';
 
