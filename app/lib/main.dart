@@ -16,6 +16,7 @@ import 'core/services/model_download_service.dart';
 import 'core/widgets/model_download_banner.dart';
 import 'features/daily/home/screens/home_screen.dart';
 import 'features/chat/screens/chat_hub_screen.dart';
+import 'features/chat/widgets/message_bubble.dart' show currentlyRenderingMarkdown, markMarkdownAsFailed;
 import 'features/vault/screens/vault_browser_screen.dart';
 import 'features/settings/screens/settings_screen.dart';
 import 'features/onboarding/screens/onboarding_screen.dart';
@@ -33,6 +34,19 @@ void main() async {
 
   // Set up global error handling
   FlutterError.onError = (FlutterErrorDetails details) {
+    final errorString = details.toString().toLowerCase();
+
+    // Suppress flutter_markdown builder errors when we know what content caused them
+    if (errorString.contains('_inlines') ||
+        errorString.contains('flutter_markdown') ||
+        (errorString.contains('builder.dart') && errorString.contains('assertion'))) {
+      final currentMarkdown = currentlyRenderingMarkdown;
+      if (currentMarkdown != null) {
+        markMarkdownAsFailed(currentMarkdown.hashCode);
+        return; // Don't present - handled by error boundary
+      }
+    }
+
     FlutterError.presentError(details);
     logger.captureException(
       details.exception,

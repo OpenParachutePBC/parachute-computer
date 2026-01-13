@@ -61,6 +61,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   /// Track if user is scrolled away from bottom (to show scroll-to-bottom FAB)
   bool _showScrollToBottomFab = false;
 
+  /// Controlled listener subscription for chat messages
+  ProviderSubscription<ChatMessagesState>? _chatMessagesSubscription;
+
   @override
   void initState() {
     super.initState();
@@ -79,7 +82,49 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     // Scroll to bottom after first frame if messages are loaded
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _scrollToBottomInstant();
+      // Set up the chat messages listener after first frame
+      // Using listenManual gives us control over the subscription lifecycle
+      _setupChatMessagesListener();
     });
+  }
+
+  /// Set up a controlled listener for chat messages changes
+  void _setupChatMessagesListener() {
+    // Cancel any existing subscription
+    _chatMessagesSubscription?.close();
+
+    _chatMessagesSubscription = ref.listenManual(
+      chatMessagesProvider,
+      (previous, next) {
+        if (!mounted) return;
+
+        final prevCount = previous?.messages.length ?? 0;
+        final nextCount = next.messages.length;
+
+        if (nextCount != prevCount) {
+          // If loading a session (0 -> many messages), scroll instantly
+          // Otherwise animate for streaming/new messages
+          if (prevCount == 0 && nextCount > 1) {
+            _scrollToBottomInstant();
+          } else {
+            _scrollToBottom();
+          }
+        }
+
+        // Reset resume banner when session changes
+        if (previous?.sessionId != next.sessionId) {
+          setState(() {
+            _resumeBannerDismissed = false;
+          });
+        }
+
+        // Show session recovery dialog when session is unavailable
+        if (next.sessionUnavailable != null && previous?.sessionUnavailable == null) {
+          _showSessionRecoveryDialog(next.sessionUnavailable!);
+        }
+      },
+      fireImmediately: false,
+    );
   }
 
   void _onScroll() {
@@ -104,6 +149,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
   @override
   void dispose() {
+    // Close the chat messages subscription before disposing
+    // This prevents _dependents.isEmpty assertion errors
+    _chatMessagesSubscription?.close();
+    _chatMessagesSubscription = null;
+
     _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
     super.dispose();
@@ -266,34 +316,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final chatState = ref.watch(chatMessagesProvider);
     final currentSessionId = ref.watch(currentSessionIdProvider);
 
-    // Auto-scroll when new messages arrive
-    // Guard with mounted check to avoid issues during disposal
-    ref.listen(chatMessagesProvider, (previous, next) {
-      if (!mounted) return; // Don't process if widget is disposing
-
-      final prevCount = previous?.messages.length ?? 0;
-      final nextCount = next.messages.length;
-
-      if (nextCount != prevCount) {
-        // If loading a session (0 -> many messages), scroll instantly
-        // Otherwise animate for streaming/new messages
-        if (prevCount == 0 && nextCount > 1) {
-          _scrollToBottomInstant();
-        } else {
-          _scrollToBottom();
-        }
-      }
-
-      // Reset resume banner when session changes
-      if (previous?.sessionId != next.sessionId) {
-        _resumeBannerDismissed = false;
-      }
-
-      // Show session recovery dialog when session is unavailable
-      if (next.sessionUnavailable != null && previous?.sessionUnavailable == null) {
-        _showSessionRecoveryDialog(next.sessionUnavailable!);
-      }
-    });
+    // NOTE: Auto-scroll listener is set up via listenManual in initState
+    // This avoids _dependents.isEmpty assertion errors during disposal
 
     // Wrap in error boundary to catch rendering errors
     return ScreenErrorBoundary(
