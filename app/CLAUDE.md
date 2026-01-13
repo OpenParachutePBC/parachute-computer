@@ -2,7 +2,9 @@
 
 Unified Flutter app - voice journaling, AI chat, and knowledge vault.
 
-**Package**: `io.openparachute.app`
+**Package**: `io.openparachute.parachute`
+
+**Related**: [Base Server](../base/CLAUDE.md) | [Parent Project](../CLAUDE.md)
 
 ---
 
@@ -181,6 +183,12 @@ Format: `para:{12-char-alphanumeric}` - unique across all modules.
 | Transcription | FluidAudio (CoreML) | Sherpa-ONNX |
 | Embeddings | Ollama | flutter_gemma |
 | Omi pendant | Supported | Supported |
+
+### Sherpa-ONNX Version Pin
+
+**IMPORTANT**: The app uses `dependency_overrides` to pin sherpa_onnx to version **1.12.20**.
+
+Version 1.12.21 has a native library crash (SIGSEGV at 0x3f800000) on certain ARM devices (e.g., Daylight DC-1 with MediaTek chipset). Do NOT upgrade sherpa_onnx without testing on affected devices.
 
 ---
 
