@@ -10,7 +10,10 @@ import 'package:opus_flutter/opus_flutter.dart' as opus_flutter;
 import 'core/theme/app_theme.dart';
 import 'core/theme/design_tokens.dart';
 import 'core/providers/app_state_provider.dart';
+import 'core/providers/model_download_provider.dart';
 import 'core/services/logging_service.dart';
+import 'core/services/model_download_service.dart';
+import 'core/widgets/model_download_banner.dart';
 import 'features/daily/home/screens/home_screen.dart';
 import 'features/chat/screens/chat_hub_screen.dart';
 import 'features/vault/screens/vault_browser_screen.dart';
@@ -83,20 +86,36 @@ Future<void> _initializeServices() async {
   _initializeTranscription();
 }
 
-/// Initialize transcription model in background for faster voice input
+/// Initialize transcription model download in background
+///
+/// On Android, this downloads the Sherpa-ONNX Parakeet model (~465MB)
+/// The download continues in the background and the app remains usable.
 void _initializeTranscription() async {
+  // Only needed on Android - iOS/macOS use FluidAudio which handles its own models
+  if (!Platform.isAndroid) {
+    debugPrint('[Parachute] Skipping model download (not Android)');
+    return;
+  }
+
   try {
-    debugPrint('[Parachute] Starting transcription model initialization...');
-    // TODO: Initialize unified TranscriptionAdapter once migrated
-    // final transcriptionService = TranscriptionAdapter();
-    // await transcriptionService.initialize(
-    //   onProgress: (progress) {
-    //     debugPrint('[Parachute] Transcription init: ${(progress * 100).toInt()}%');
-    //   },
-    // );
-    debugPrint('[Parachute] Transcription model ready');
+    debugPrint('[Parachute] Checking transcription model status...');
+    final downloadService = ModelDownloadService();
+    await downloadService.initialize();
+
+    if (downloadService.currentState.isReady) {
+      debugPrint('[Parachute] Transcription models already downloaded');
+      return;
+    }
+
+    debugPrint('[Parachute] Starting transcription model download in background...');
+    // Start download in background - don't await
+    downloadService.startDownload().then((_) {
+      debugPrint('[Parachute] Transcription model download complete');
+    }).catchError((e) {
+      debugPrint('[Parachute] Transcription model download failed: $e');
+    });
   } catch (e) {
-    debugPrint('[Parachute] Transcription init failed: $e');
+    debugPrint('[Parachute] Transcription init error: $e');
   }
 }
 
@@ -255,9 +274,18 @@ class _TabShellState extends ConsumerState<_TabShell> {
     final showNavBar = screens.length > 1;
 
     return Scaffold(
-      body: IndexedStack(
-        index: safeIndex,
-        children: screens,
+      body: Column(
+        children: [
+          // Model download progress banner (only shows during download on Android)
+          const ModelDownloadBanner(),
+          // Main content
+          Expanded(
+            child: IndexedStack(
+              index: safeIndex,
+              children: screens,
+            ),
+          ),
+        ],
       ),
       bottomNavigationBar: showNavBar
           ? NavigationBar(

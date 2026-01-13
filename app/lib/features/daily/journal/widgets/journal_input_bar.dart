@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
+import 'package:parachute/core/providers/model_download_provider.dart';
+import 'package:parachute/core/services/model_download_service.dart';
 import '../../capture/providers/capture_providers.dart';
 import '../../capture/screens/handwriting_screen.dart';
 import '../../recorder/providers/service_providers.dart';
@@ -117,8 +119,39 @@ class _JournalInputBarState extends ConsumerState<JournalInputBar> {
   Future<void> _startRecording() async {
     if (_isRecording || widget.onVoiceRecorded == null) return;
 
-    // Always use streaming mode - it handles "model initializing" gracefully
-    // and will start transcribing as soon as the model is ready
+    // On Android, check if transcription models are downloaded
+    if (Platform.isAndroid) {
+      final downloadState = ref.read(modelDownloadCurrentStateProvider);
+
+      if (downloadState.isDownloading) {
+        // Download in progress - show message
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Voice model is downloading (${downloadState.progressText}). Please wait...'),
+              duration: const Duration(seconds: 3),
+            ),
+          );
+        }
+        return;
+      }
+
+      if (downloadState.needsDownload) {
+        // Models not downloaded - start download and show message
+        ref.read(modelDownloadServiceProvider).startDownload();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Starting voice model download. This is a one-time ~465MB download.'),
+              duration: Duration(seconds: 5),
+            ),
+          );
+        }
+        return;
+      }
+    }
+
+    // Check if transcription service is ready
     final transcriptionAdapter = ref.read(transcriptionServiceAdapterProvider);
     final isModelReady = await transcriptionAdapter.isReady();
 

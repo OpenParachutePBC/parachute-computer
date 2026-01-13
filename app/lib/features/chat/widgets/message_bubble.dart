@@ -1465,14 +1465,46 @@ class _SafeMarkdownBody extends StatelessWidget {
       }
     }
 
-    // Pattern 2: Unclosed image syntax ![ at end of string (streaming)
+    // Pattern 2: Any angle-bracket tags that look like XML/HTML but aren't standard HTML
+    // flutter_markdown struggles with these when they're not in code blocks
+    // e.g., <function_calls>, <example>, <user>, <assistant>, etc.
+    final customTags = RegExp(r'</?[a-zA-Z][a-zA-Z0-9_-]*(?:\s[^>]*)?>');
+    for (final match in customTags.allMatches(input)) {
+      final tag = match.group(0)!.toLowerCase();
+      // Allow standard HTML tags that flutter_markdown handles
+      final standardHtmlTags = {
+        '<br>', '<br/>', '<br />', '<hr>', '<hr/>', '<hr />',
+        '<b>', '</b>', '<i>', '</i>', '<u>', '</u>',
+        '<strong>', '</strong>', '<em>', '</em>',
+        '<code>', '</code>', '<pre>', '</pre>',
+        '<p>', '</p>', '<div>', '</div>', '<span>', '</span>',
+        '<a', '</a>', '<img', '<h1>', '</h1>', '<h2>', '</h2>',
+        '<h3>', '</h3>', '<h4>', '</h4>', '<h5>', '</h5>', '<h6>', '</h6>',
+        '<ul>', '</ul>', '<ol>', '</ol>', '<li>', '</li>',
+        '<table>', '</table>', '<tr>', '</tr>', '<td>', '</td>', '<th>', '</th>',
+        '<thead>', '</thead>', '<tbody>', '</tbody>',
+        '<blockquote>', '</blockquote>', '<sup>', '</sup>', '<sub>', '</sub>',
+      };
+
+      // Check if it's a standard tag (need to check prefix for tags with attributes)
+      final isStandard = standardHtmlTags.any((std) =>
+        tag == std || tag.startsWith(std.replaceAll('>', ' ')) || tag.startsWith(std.replaceAll('>', '>'))
+      );
+
+      if (!isStandard && !_isInCodeBlock(input, match.start)) {
+        debugPrint('[_SafeMarkdownBody] Blocked by pattern 2 (custom XML tag): ${match.group(0)}');
+        return true;
+      }
+    }
+
+    // Pattern 3: Unclosed image syntax ![ at end of string (streaming)
     final unclosedImage = RegExp(r'!\[[^\]]*$');
     if (unclosedImage.hasMatch(input)) {
-      debugPrint('[_SafeMarkdownBody] Blocked by pattern 2 (unclosed image)');
+      debugPrint('[_SafeMarkdownBody] Blocked by pattern 3 (unclosed image)');
       return true;
     }
 
-    // Pattern 3: Unclosed emphasis at end (streaming) - only trailing unclosed
+    // Pattern 4: Unclosed emphasis at end (streaming) - only trailing unclosed
     // e.g., "text **bold" or "text *italic" at the very end
     final trailingUnclosedEmphasis = RegExp(r'(?<!\*)\*{1,2}[^*\n]+$');
     if (trailingUnclosedEmphasis.hasMatch(input)) {
@@ -1484,7 +1516,18 @@ class _SafeMarkdownBody extends StatelessWidget {
           ? RegExp(r'\*\*').allMatches(textAfter).length
           : RegExp(r'(?<!\*)\*(?!\*)').allMatches(textAfter).length;
       if (closingMarkers % 2 != 0) {
-        debugPrint('[_SafeMarkdownBody] Blocked by pattern 3 (trailing unclosed emphasis)');
+        debugPrint('[_SafeMarkdownBody] Blocked by pattern 4 (trailing unclosed emphasis)');
+        return true;
+      }
+    }
+
+    // Pattern 5: Nested brackets that can confuse the parser
+    // e.g., [[text]] or [text [nested] more]
+    final nestedBrackets = RegExp(r'\[[^\]]*\[[^\]]*\]');
+    if (nestedBrackets.hasMatch(input)) {
+      final match = nestedBrackets.firstMatch(input)!;
+      if (!_isInCodeBlock(input, match.start)) {
+        debugPrint('[_SafeMarkdownBody] Blocked by pattern 5 (nested brackets): ${match.group(0)}');
         return true;
       }
     }
@@ -1656,6 +1699,13 @@ class _SafeMarkdownBody extends StatelessWidget {
     // First sanitize the markdown (close unclosed fences, etc.)
     final sanitizedText = _sanitizeMarkdown(text);
 
+    // Pre-check for problematic patterns before attempting to render
+    // This catches patterns that cause flutter_markdown assertion errors
+    if (!_canSafelyParse(sanitizedText)) {
+      debugPrint('[_SafeMarkdownBody] Falling back to plain text due to unsafe patterns');
+      return _buildPlainText();
+    }
+
     // Try to render markdown, fall back to plain text only on actual errors
     // We use an ErrorWidget.builder approach via a custom error boundary
     return _MarkdownErrorBoundary(
@@ -1667,7 +1717,10 @@ class _SafeMarkdownBody extends StatelessWidget {
 }
 
 /// Error boundary that catches flutter_markdown rendering errors
-/// and falls back to plain text
+/// and falls back to plain text.
+///
+/// This uses a custom ErrorWidget.builder to catch Flutter assertion errors
+/// that propagate through the framework rather than as exceptions.
 class _MarkdownErrorBoundary extends StatefulWidget {
   final String markdown;
   final Widget Function() markdownBuilder;
@@ -1685,13 +1738,17 @@ class _MarkdownErrorBoundary extends StatefulWidget {
 
 class _MarkdownErrorBoundaryState extends State<_MarkdownErrorBoundary> {
   bool _hasError = false;
+  Widget? _cachedWidget;
+  String? _cachedMarkdown;
 
   @override
   void didUpdateWidget(_MarkdownErrorBoundary oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // Reset error state when markdown content changes
+    // Reset error state and cache when markdown content changes
     if (oldWidget.markdown != widget.markdown) {
       _hasError = false;
+      _cachedWidget = null;
+      _cachedMarkdown = null;
     }
   }
 
@@ -1701,22 +1758,27 @@ class _MarkdownErrorBoundaryState extends State<_MarkdownErrorBoundary> {
       return widget.fallbackBuilder();
     }
 
-    // Wrap in error handler
-    return Builder(
-      builder: (context) {
-        try {
-          return widget.markdownBuilder();
-        } catch (e) {
-          debugPrint('[_MarkdownErrorBoundary] Markdown render error: $e');
-          // Schedule state update for next frame to avoid setState during build
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted && !_hasError) {
-              setState(() => _hasError = true);
-            }
-          });
-          return widget.fallbackBuilder();
+    // Return cached widget if markdown hasn't changed
+    if (_cachedMarkdown == widget.markdown && _cachedWidget != null) {
+      return _cachedWidget!;
+    }
+
+    // Build markdown with error catching
+    try {
+      final markdownWidget = widget.markdownBuilder();
+      _cachedWidget = markdownWidget;
+      _cachedMarkdown = widget.markdown;
+      return markdownWidget;
+    } catch (e, stackTrace) {
+      debugPrint('[_MarkdownErrorBoundary] Markdown render error: $e');
+      debugPrint('[_MarkdownErrorBoundary] Stack: $stackTrace');
+      // Schedule state update for next frame to avoid setState during build
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && !_hasError) {
+          setState(() => _hasError = true);
         }
-      },
-    );
+      });
+      return widget.fallbackBuilder();
+    }
   }
 }

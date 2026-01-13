@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/core/providers/voice_input_providers.dart';
 import 'package:parachute/core/providers/streaming_voice_providers.dart';
+import 'package:parachute/core/providers/model_download_provider.dart';
 import 'package:parachute/core/services/voice_input_service.dart';
 import 'package:parachute/core/services/streaming_voice_service.dart';
 import '../models/attachment.dart';
@@ -199,6 +200,38 @@ class _ChatInputState extends ConsumerState<ChatInput>
 
   /// Streaming voice input (real-time transcription feedback)
   Future<void> _handleStreamingVoiceInput() async {
+    // On Android, check if transcription models are downloaded
+    if (Platform.isAndroid && !_isStreamingRecording) {
+      final downloadState = ref.read(modelDownloadCurrentStateProvider);
+
+      if (downloadState.isDownloading) {
+        // Download in progress - show message
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Voice model is downloading (${downloadState.progressText}). Please wait...'),
+              duration: const Duration(seconds: 3),
+            ),
+          );
+        }
+        return;
+      }
+
+      if (downloadState.needsDownload) {
+        // Models not downloaded - start download and show message
+        ref.read(modelDownloadServiceProvider).startDownload();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Starting voice model download. This is a one-time ~465MB download.'),
+              duration: Duration(seconds: 5),
+            ),
+          );
+        }
+        return;
+      }
+    }
+
     final streamingService = ref.read(streamingVoiceServiceProvider);
 
     if (_isStreamingRecording) {
