@@ -8,11 +8,12 @@ import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/core/providers/app_state_provider.dart';
 import 'package:parachute/core/providers/feature_flags_provider.dart';
 import 'package:parachute/core/providers/file_system_provider.dart';
+import 'package:parachute/features/daily/journal/providers/journal_providers.dart';
 
 /// Simple onboarding flow for first-time users
 ///
 /// Steps:
-/// 1. Welcome + Choose Daily folder
+/// 1. Welcome + Choose Parachute vault folder
 /// 2. (Optional) Configure server for Chat/Vault
 /// 3. Ready to go
 class OnboardingScreen extends ConsumerStatefulWidget {
@@ -24,7 +25,7 @@ class OnboardingScreen extends ConsumerStatefulWidget {
 
 class _OnboardingScreenState extends ConsumerState<OnboardingScreen> with WidgetsBindingObserver {
   int _currentStep = 0;
-  String? _dailyPath;
+  String? _vaultPath;
   final _serverUrlController = TextEditingController();
   bool _isSettingUpFolder = false;
   bool _wantsServer = false;
@@ -89,7 +90,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> with Widget
     }
   }
 
-  Future<void> _setupDailyFolder() async {
+  Future<void> _setupVaultFolder() async {
     setState(() => _isSettingUpFolder = true);
 
     try {
@@ -118,9 +119,9 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> with Widget
       final useCustom = await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
-          title: const Text('Choose Daily Folder'),
+          title: const Text('Choose Parachute Folder'),
           content: const Text(
-            'Your journal entries will be stored locally in this folder.\n\n'
+            'Your Parachute vault will be stored locally in this folder.\n\n'
             'Would you like to use the default location or choose a custom folder?',
           ),
           actions: [
@@ -138,21 +139,25 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> with Widget
 
       if (useCustom == true) {
         selectedPath = await FilePicker.platform.getDirectoryPath(
-          dialogTitle: 'Choose Daily Folder',
+          dialogTitle: 'Choose Parachute Folder',
         );
       }
 
       // Initialize the folder (uses default if selectedPath is null)
       if (selectedPath != null) {
-        await service.setRootPath(selectedPath, migrateFiles: false);
+        await service.setVaultPath(selectedPath, migrateFiles: false);
       } else {
         await service.initialize();
       }
 
-      final displayPath = await service.getRootPathDisplay();
+      final displayPath = await service.getVaultPathDisplay();
+
+      // Invalidate providers so they use the new path
+      ref.invalidate(journalServiceFutureProvider);
+      ref.invalidate(dailyRootPathProvider);
 
       setState(() {
-        _dailyPath = displayPath;
+        _vaultPath = displayPath;
         _isSettingUpFolder = false;
       });
 
@@ -178,10 +183,14 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> with Widget
       await service.initialize();
       await service.markAsConfigured();
 
-      final displayPath = await service.getRootPathDisplay();
+      final displayPath = await service.getVaultPathDisplay();
+
+      // Invalidate providers so they use the new path
+      ref.invalidate(journalServiceFutureProvider);
+      ref.invalidate(dailyRootPathProvider);
 
       setState(() {
-        _dailyPath = displayPath;
+        _vaultPath = displayPath;
         _isSettingUpFolder = false;
       });
 
@@ -378,7 +387,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> with Widget
           ],
 
           Text(
-            'First, let\'s set up where your journal entries will be stored.',
+            'First, let\'s set up where your data will be stored.',
             style: TextStyle(
               fontSize: TypographyTokens.bodyMedium,
               color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
@@ -392,7 +401,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> with Widget
           else ...[
             // Choose folder button
             FilledButton.icon(
-              onPressed: _setupDailyFolder,
+              onPressed: _setupVaultFolder,
               icon: const Icon(Icons.folder),
               label: const Text('Choose Folder'),
               style: FilledButton.styleFrom(
@@ -417,7 +426,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> with Widget
               ),
               child: Text(
                 Platform.isMacOS || Platform.isLinux
-                    ? 'Use default (~/Parachute/Daily)'
+                    ? 'Use default (~/Parachute)'
                     : 'Use default location',
               ),
             ),
@@ -567,7 +576,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> with Widget
                   SizedBox(width: Spacing.sm),
                   Expanded(
                     child: Text(
-                      _dailyPath ?? '~/Parachute/Daily',
+                      _vaultPath ?? '~/Parachute',
                       style: TextStyle(
                         fontFamily: 'monospace',
                         fontSize: TypographyTokens.bodySmall,

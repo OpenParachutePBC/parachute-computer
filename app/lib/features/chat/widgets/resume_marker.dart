@@ -15,10 +15,14 @@ class ResumeMarker extends StatelessWidget {
   /// Messages from the original session
   final List<ChatMessage> priorMessages;
 
+  /// Vault path for resolving asset paths
+  final String? vaultPath;
+
   const ResumeMarker({
     super.key,
     required this.originalSession,
     required this.priorMessages,
+    this.vaultPath,
   });
 
   @override
@@ -32,7 +36,7 @@ class ResumeMarker extends StatelessWidget {
         _buildHeader(isDark),
 
         // Prior messages as regular chat bubbles
-        ...priorMessages.map((msg) => MessageBubble(message: msg)),
+        ...priorMessages.map((msg) => MessageBubble(message: msg, vaultPath: vaultPath)),
 
         // Divider between prior and new messages
         _buildDivider(isDark),

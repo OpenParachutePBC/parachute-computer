@@ -39,6 +39,7 @@ class _ChatInputState extends ConsumerState<ChatInput>
     with SingleTickerProviderStateMixin {
   late TextEditingController _controller;
   final FocusNode _focusNode = FocusNode();
+  final FocusNode _keyboardListenerFocusNode = FocusNode();
   bool _hasText = false;
 
   // Animation for recording pulse
@@ -72,6 +73,7 @@ class _ChatInputState extends ConsumerState<ChatInput>
     _controller.removeListener(_onTextChanged);
     _controller.dispose();
     _focusNode.dispose();
+    _keyboardListenerFocusNode.dispose();
     _pulseController.dispose();
     super.dispose();
   }
@@ -402,7 +404,7 @@ class _ChatInputState extends ConsumerState<ChatInput>
                       ),
                     ),
                     child: KeyboardListener(
-                      focusNode: FocusNode(),
+                      focusNode: _keyboardListenerFocusNode,
                       onKeyEvent: (event) {
                         // Send on Enter (without Shift)
                         if (event is KeyDownEvent &&

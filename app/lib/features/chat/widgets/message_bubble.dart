@@ -3,36 +3,30 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
-import 'package:markdown/markdown.dart' as md;
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
-import 'package:parachute/core/providers/file_system_provider.dart';
-import 'package:parachute/core/providers/backend_health_provider.dart';
 import 'package:parachute/core/services/performance_service.dart';
 import '../models/chat_message.dart';
 import 'inline_audio_player.dart';
 import 'collapsible_thinking_section.dart';
 import 'collapsible_compact_summary.dart';
-import 'collapsible_code_block.dart';
-
-/// Intent for copying message text
-class CopyMessageIntent extends Intent {
-  const CopyMessageIntent();
-}
+// NOTE: CollapsibleCodeBlockBuilder removed due to flutter_markdown bug
+// import 'collapsible_code_block.dart';
 
 /// A chat message bubble with support for text, tool calls, and inline assets
-class MessageBubble extends ConsumerWidget {
+class MessageBubble extends StatelessWidget {
   final ChatMessage message;
+  final String? vaultPath;
 
   const MessageBubble({
     super.key,
     required this.message,
+    this.vaultPath,
   });
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final trace = perf.trace('MessageBubble.build', metadata: {
       'role': message.role.name,
       'contentLength': message.textContent.length,
@@ -43,10 +37,6 @@ class MessageBubble extends ConsumerWidget {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
 
-    // Get vault path for resolving relative asset paths
-    final vaultPath = ref.watch(vaultPathProvider).valueOrNull;
-
-    // Build the widget (synchronous part)
     final widget = _buildWidget(context, isUser, isDark, vaultPath);
     trace.end();
     return widget;
@@ -794,28 +784,6 @@ class _MessageContentWithCopy extends StatefulWidget {
 }
 
 class _MessageContentWithCopyState extends State<_MessageContentWithCopy> {
-  final _focusNode = FocusNode();
-
-  @override
-  void dispose() {
-    _focusNode.dispose();
-    super.dispose();
-  }
-
-  void _copyToClipboard() {
-    final text = widget.getFullText();
-    if (text.isNotEmpty) {
-      Clipboard.setData(ClipboardData(text: text));
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Message copied to clipboard'),
-          duration: Duration(seconds: 2),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-    }
-  }
-
   void _showContextMenu(BuildContext context, Offset position) {
     final text = widget.getFullText();
     if (text.isEmpty) return;
@@ -846,7 +814,16 @@ class _MessageContentWithCopyState extends State<_MessageContentWithCopy> {
       ],
     ).then((value) {
       if (value == 'copy') {
-        _copyToClipboard();
+        Clipboard.setData(ClipboardData(text: text));
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Message copied to clipboard'),
+              duration: Duration(seconds: 2),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
       }
     });
   }
@@ -855,43 +832,18 @@ class _MessageContentWithCopyState extends State<_MessageContentWithCopy> {
   Widget build(BuildContext context) {
     final text = widget.getFullText();
 
-    return Shortcuts(
-      shortcuts: <ShortcutActivator, Intent>{
-        // Cmd+C / Ctrl+C to copy
-        LogicalKeySet(LogicalKeyboardKey.meta, LogicalKeyboardKey.keyC): const CopyMessageIntent(),
-        LogicalKeySet(LogicalKeyboardKey.control, LogicalKeyboardKey.keyC): const CopyMessageIntent(),
-      },
-      child: Actions(
-        actions: <Type, Action<Intent>>{
-          CopyMessageIntent: CallbackAction<CopyMessageIntent>(
-            onInvoke: (_) {
-              _copyToClipboard();
-              return null;
-            },
-          ),
-        },
-        child: GestureDetector(
-          onSecondaryTapUp: (details) => _showContextMenu(context, details.globalPosition),
-          onLongPressStart: (details) => _showContextMenu(context, details.globalPosition),
-          child: Focus(
-            focusNode: _focusNode,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Message content with selection support
-                SelectionArea(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: widget.contentBuilder(),
-                  ),
-                ),
-                // Copy button row
-                if (text.isNotEmpty)
-                  widget.buildActionRow(),
-              ],
-            ),
-          ),
-        ),
+    return GestureDetector(
+      onSecondaryTapUp: (details) => _showContextMenu(context, details.globalPosition),
+      onLongPressStart: (details) => _showContextMenu(context, details.globalPosition),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Message content
+          ...widget.contentBuilder(),
+          // Copy button row
+          if (text.isNotEmpty)
+            widget.buildActionRow(),
+        ],
       ),
     );
   }
@@ -1399,8 +1351,8 @@ class _RemoteImagePreviewOverlayState extends State<_RemoteImagePreviewOverlay> 
 /// Safe markdown renderer that handles edge cases
 /// flutter_markdown can throw assertion errors on certain edge cases
 /// (unclosed inline elements, streaming partial content, etc.)
-/// This widget pre-parses markdown and falls back to plain text if needed.
-class _SafeMarkdownBody extends StatelessWidget {
+/// This widget catches errors and falls back to plain text.
+class _SafeMarkdownBody extends StatefulWidget {
   final String text;
   final Color textColor;
   final bool isUser;
@@ -1419,222 +1371,103 @@ class _SafeMarkdownBody extends StatelessWidget {
     required this.onLinkTap,
   });
 
-  /// Check if markdown content can be safely parsed
-  /// Returns true if the markdown is safe to render, false if we should fall back to plain text
-  static bool _canSafelyParse(String input) {
-    try {
-      // Try parsing with the markdown package
-      final document = md.Document(
-        extensionSet: md.ExtensionSet.gitHubFlavored,
-      );
-      final nodes = document.parseLines(input.split('\n'));
+  @override
+  State<_SafeMarkdownBody> createState() => _SafeMarkdownBodyState();
+}
 
-      // Check for patterns that cause the _inlines.isEmpty assertion
-      // This happens when inline elements are not properly closed
-      if (!_checkNodesForProblems(nodes)) {
-        return false;
-      }
+/// Global cache of markdown content hashes that have caused render failures
+final Set<int> _failedMarkdownHashes = {};
 
-      // Additional heuristic checks for patterns known to crash flutter_markdown
-      // These patterns can parse fine but still cause builder issues
-      if (_hasProblematicPatterns(input)) {
-        return false;
-      }
+/// Callbacks to notify widgets when their content fails (for triggering rebuild)
+final Map<int, VoidCallback> _failureCallbacks = {};
 
-      return true;
-    } catch (e) {
-      debugPrint('[_SafeMarkdownBody] Parse error: $e');
-      return false;
+/// Track currently rendering markdown for global error handler attribution
+String? currentlyRenderingMarkdown;
+
+/// Mark a markdown hash as failed (called from global error handler)
+void markMarkdownAsFailed(int hash) {
+  _failedMarkdownHashes.add(hash);
+  // Notify the widget if it registered a callback
+  _failureCallbacks[hash]?.call();
+  _failureCallbacks.remove(hash);
+}
+
+class _SafeMarkdownBodyState extends State<_SafeMarkdownBody> {
+  bool _hasError = false;
+  Widget? _cachedMarkdown;
+  int? _cachedHash;
+
+  @override
+  void initState() {
+    super.initState();
+    _hasError = _failedMarkdownHashes.contains(widget.text.hashCode);
+    _registerCallback();
+  }
+
+  @override
+  void didUpdateWidget(_SafeMarkdownBody oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.text != widget.text) {
+      _unregisterCallback(oldWidget.text.hashCode);
+      _hasError = _failedMarkdownHashes.contains(widget.text.hashCode);
+      _registerCallback();
     }
   }
 
-  /// Check for patterns that are known to cause flutter_markdown builder failures
-  /// even when the markdown parses correctly.
-  static bool _hasProblematicPatterns(String input) {
-    // Pattern 1: XML-like tags with colons (e.g., <invoke>)
-    final xmlTagsWithColon = RegExp(r'<[a-zA-Z]+:[a-zA-Z_]+[^>]*>');
-    if (xmlTagsWithColon.hasMatch(input)) {
-      final match = xmlTagsWithColon.firstMatch(input)!;
-      if (!_isInCodeBlock(input, match.start)) {
-        return true;
-      }
-    }
-
-    // Pattern 2: Non-standard HTML/XML tags outside code blocks
-    final customTags = RegExp(r'</?[a-zA-Z][a-zA-Z0-9_-]*(?:\s[^>]*)?>');
-    for (final match in customTags.allMatches(input)) {
-      final tag = match.group(0)!.toLowerCase();
-      final standardHtmlTags = {
-        '<br>', '<br/>', '<br />', '<hr>', '<hr/>', '<hr />',
-        '<b>', '</b>', '<i>', '</i>', '<u>', '</u>',
-        '<strong>', '</strong>', '<em>', '</em>',
-        '<code>', '</code>', '<pre>', '</pre>',
-        '<p>', '</p>', '<div>', '</div>', '<span>', '</span>',
-        '<a', '</a>', '<img', '<h1>', '</h1>', '<h2>', '</h2>',
-        '<h3>', '</h3>', '<h4>', '</h4>', '<h5>', '</h5>', '<h6>', '</h6>',
-        '<ul>', '</ul>', '<ol>', '</ol>', '<li>', '</li>',
-        '<table>', '</table>', '<tr>', '</tr>', '<td>', '</td>', '<th>', '</th>',
-        '<thead>', '</thead>', '<tbody>', '</tbody>',
-        '<blockquote>', '</blockquote>', '<sup>', '</sup>', '<sub>', '</sub>',
-      };
-
-      final isStandard = standardHtmlTags.any((std) =>
-        tag == std || tag.startsWith(std.replaceAll('>', ' ')) || tag.startsWith(std.replaceAll('>', '>'))
-      );
-
-      if (!isStandard && !_isInCodeBlock(input, match.start)) {
-        return true;
-      }
-    }
-
-    // Pattern 3: Unclosed image syntax at end (streaming)
-    if (RegExp(r'!\[[^\]]*$').hasMatch(input)) {
-      return true;
-    }
-
-    // Pattern 4: Trailing unclosed emphasis (streaming)
-    final trailingUnclosedEmphasis = RegExp(r'(?<!\*)\*{1,2}[^*\n]+$');
-    if (trailingUnclosedEmphasis.hasMatch(input)) {
-      final match = trailingUnclosedEmphasis.firstMatch(input)!;
-      final markerCount = match.group(0)!.startsWith('**') ? 2 : 1;
-      final textAfter = input.substring(match.start);
-      final closingMarkers = markerCount == 2
-          ? RegExp(r'\*\*').allMatches(textAfter).length
-          : RegExp(r'(?<!\*)\*(?!\*)').allMatches(textAfter).length;
-      if (closingMarkers % 2 != 0) {
-        return true;
-      }
-    }
-
-    // Pattern 5: Nested brackets outside code blocks
-    final nestedBrackets = RegExp(r'\[[^\]]*\[[^\]]*\]');
-    if (nestedBrackets.hasMatch(input)) {
-      final match = nestedBrackets.firstMatch(input)!;
-      if (!_isInCodeBlock(input, match.start)) {
-        return true;
-      }
-    }
-
-    // Pattern 6: Horizontal rule followed by header
-    if (RegExp(r'^---\s*\n+##', multiLine: true).hasMatch(input)) {
-      return true;
-    }
-
-    // Pattern 7: Consecutive horizontal rules
-    if (RegExp(r'^---\s*\n+---', multiLine: true).hasMatch(input)) {
-      return true;
-    }
-
-    // Pattern 8: Code spans inside links
-    final codeInLink = RegExp(r'\[`[^`]+`\]\([^)]+\)');
-    if (codeInLink.hasMatch(input)) {
-      final match = codeInLink.firstMatch(input)!;
-      if (!_isInCodeBlock(input, match.start)) {
-        return true;
-      }
-    }
-
-    // Pattern 9: Emphasis immediately after code spans
-    final codeFollowedByEmphasis = RegExp(r'`[^`]+`\*{1,2}\w');
-    if (codeFollowedByEmphasis.hasMatch(input)) {
-      final match = codeFollowedByEmphasis.firstMatch(input)!;
-      if (!_isInCodeBlock(input, match.start)) {
-        return true;
-      }
-    }
-
-    // Pattern 10: Parentheses in link URLs
-    final parenInUrl = RegExp(r'\]\([^)]*\([^)]*\)[^)]*\)');
-    if (parenInUrl.hasMatch(input)) {
-      final match = parenInUrl.firstMatch(input)!;
-      if (!_isInCodeBlock(input, match.start)) {
-        return true;
-      }
-    }
-
-    // Pattern 11: Previously failed content
-    if (_failedMarkdownHashes.contains(input.hashCode)) {
-      return true;
-    }
-
-    return false;
+  @override
+  void dispose() {
+    _unregisterCallback(widget.text.hashCode);
+    super.dispose();
   }
 
-  /// Check if a position in the text is inside a code block or inline code
-  static bool _isInCodeBlock(String text, int position) {
-    // Check for fenced code blocks
-    final beforePosition = text.substring(0, position);
-    final codeFenceCount = RegExp(r'^```', multiLine: true).allMatches(beforePosition).length;
-    if (codeFenceCount % 2 == 1) {
-      return true; // Inside a fenced code block
+  void _registerCallback() {
+    if (!_hasError) {
+      _failureCallbacks[widget.text.hashCode] = _onError;
     }
-
-    // Check for inline code on the same line
-    final lineStart = beforePosition.lastIndexOf('\n') + 1;
-    final lineBeforePosition = beforePosition.substring(lineStart);
-    final backtickCount = '`'.allMatches(lineBeforePosition).length;
-    if (backtickCount % 2 == 1) {
-      return true; // Inside inline code
-    }
-
-    return false;
   }
 
-  /// Recursively check AST nodes for problematic patterns
-  static bool _checkNodesForProblems(List<md.Node> nodes) {
-    for (final node in nodes) {
-      if (node is md.Element) {
-        // Check children recursively
-        if (!_checkNodesForProblems(node.children ?? [])) {
-          return false;
-        }
-      }
-    }
-    return true;
+  void _unregisterCallback(int hash) {
+    _failureCallbacks.remove(hash);
   }
 
-  /// Sanitize markdown to fix common issues that cause parser failures
-  static String _sanitizeMarkdown(String input) {
+  void _onError() {
+    if (mounted && !_hasError) {
+      setState(() => _hasError = true);
+    }
+  }
+
+  /// Sanitize markdown for streaming (close unclosed fences)
+  String _sanitizeForStreaming(String input) {
     var result = input;
 
-    // Handle unclosed code fences (```) - common during streaming
+    // Close unclosed code fences (common during streaming)
     final codeFencePattern = RegExp(r'^```', multiLine: true);
     final codeFenceCount = codeFencePattern.allMatches(result).length;
     if (codeFenceCount % 2 != 0) {
       result = '$result\n```';
     }
 
-    // Handle trailing unclosed inline code
-    // Count backticks outside of code fences
+    // Close unclosed inline code
     final lines = result.split('\n');
     var inCodeFence = false;
     var backtickCount = 0;
-
     for (final line in lines) {
       if (line.startsWith('```')) {
         inCodeFence = !inCodeFence;
         continue;
       }
       if (!inCodeFence) {
-        // Count backticks in this line
         backtickCount += '`'.allMatches(line).length;
       }
     }
-
-    // If odd number of backticks, add one to close
     if (backtickCount % 2 != 0) {
       result = '$result`';
     }
 
-    // Handle unclosed links [text](url - common during streaming
+    // Close unclosed links
     final unclosedLinkPattern = RegExp(r'\[[^\]]*\]\([^)]*$');
     if (unclosedLinkPattern.hasMatch(result)) {
       result = '$result)';
-    }
-
-    // Handle unclosed brackets at end
-    if (result.endsWith('[')) {
-      result = '${result.substring(0, result.length - 1)}\\[';
     }
 
     return result;
@@ -1642,9 +1475,9 @@ class _SafeMarkdownBody extends StatelessWidget {
 
   Widget _buildPlainText() {
     return Text(
-      text,
+      widget.text,
       style: TextStyle(
-        color: textColor,
+        color: widget.textColor,
         fontSize: TypographyTokens.bodyMedium,
         height: TypographyTokens.lineHeightNormal,
       ),
@@ -1653,46 +1486,51 @@ class _SafeMarkdownBody extends StatelessWidget {
 
   Widget _buildMarkdown(String content) {
     return MarkdownBody(
+      // Use a key based on content to prevent rebuilds with stale builder state
+      key: ValueKey(content.hashCode),
       data: content,
       selectable: false,
-      builders: {
-        'pre': CollapsibleCodeBlockBuilder(isDark: isDark),
-      },
+      // NOTE: Custom builders removed due to flutter_markdown bug.
+      // Using custom builders causes '_inlines.isEmpty' assertion errors
+      // when navigating away from screens (the library doesn't properly
+      // reset internal state during didChangeDependencies).
+      // Code blocks will render with default styling until this is fixed upstream.
+      // See: https://github.com/flutter/flutter/issues/
       // ignore: deprecated_member_use
       imageBuilder: (uri, title, alt) =>
-          onImageBuild(uri, title, alt, vaultPath, isDark),
-      onTapLink: onLinkTap,
+          widget.onImageBuild(uri, title, alt, widget.vaultPath, widget.isDark),
+      onTapLink: widget.onLinkTap,
       styleSheet: MarkdownStyleSheet(
         p: TextStyle(
-          color: textColor,
+          color: widget.textColor,
           fontSize: TypographyTokens.bodyMedium,
           height: TypographyTokens.lineHeightNormal,
         ),
         a: TextStyle(
-          color: isUser
+          color: widget.isUser
               ? Colors.white
-              : (isDark ? BrandColors.nightTurquoise : BrandColors.turquoise),
+              : (widget.isDark ? BrandColors.nightTurquoise : BrandColors.turquoise),
           decoration: TextDecoration.underline,
-          decorationColor: isUser
+          decorationColor: widget.isUser
               ? Colors.white.withValues(alpha: 0.7)
-              : (isDark ? BrandColors.nightTurquoise : BrandColors.turquoise),
+              : (widget.isDark ? BrandColors.nightTurquoise : BrandColors.turquoise),
         ),
         code: TextStyle(
-          color: isDark ? BrandColors.nightText : BrandColors.charcoal,
-          backgroundColor: isDark
+          color: widget.isDark ? BrandColors.nightText : BrandColors.charcoal,
+          backgroundColor: widget.isDark
               ? BrandColors.nightSurface
               : BrandColors.cream,
           fontFamily: 'monospace',
           fontSize: TypographyTokens.bodySmall,
         ),
         codeblockDecoration: BoxDecoration(
-          color: isDark ? BrandColors.nightSurface : BrandColors.cream,
+          color: widget.isDark ? BrandColors.nightSurface : BrandColors.cream,
           borderRadius: Radii.badge,
         ),
         blockquoteDecoration: BoxDecoration(
           border: Border(
             left: BorderSide(
-              color: isDark
+              color: widget.isDark
                   ? BrandColors.nightForest
                   : BrandColors.forest,
               width: 3,
@@ -1700,170 +1538,51 @@ class _SafeMarkdownBody extends StatelessWidget {
           ),
         ),
         h1: TextStyle(
-          color: textColor,
+          color: widget.textColor,
           fontSize: TypographyTokens.headlineLarge,
           fontWeight: FontWeight.bold,
         ),
         h2: TextStyle(
-          color: textColor,
+          color: widget.textColor,
           fontSize: TypographyTokens.headlineMedium,
           fontWeight: FontWeight.bold,
         ),
         h3: TextStyle(
-          color: textColor,
+          color: widget.textColor,
           fontSize: TypographyTokens.headlineSmall,
           fontWeight: FontWeight.bold,
         ),
-        listBullet: TextStyle(color: textColor),
+        listBullet: TextStyle(color: widget.textColor),
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    // First sanitize the markdown (close unclosed fences, etc.)
-    final sanitizedText = _sanitizeMarkdown(text);
-
-    // Pre-check for problematic patterns before attempting to render
-    // This catches patterns that cause flutter_markdown assertion errors
-    if (!_canSafelyParse(sanitizedText)) {
+    // Skip markdown for previously failed content
+    if (_hasError) {
       return _buildPlainText();
     }
 
-    // Try to render markdown, fall back to plain text only on actual errors
-    // We use an ErrorWidget.builder approach via a custom error boundary
-    return _MarkdownErrorBoundary(
-      markdown: sanitizedText,
-      markdownBuilder: () => _buildMarkdown(sanitizedText),
-      fallbackBuilder: () => _buildPlainText(),
-    );
-  }
-}
+    final sanitized = _sanitizeForStreaming(widget.text);
+    final contentHash = sanitized.hashCode;
 
-/// Global cache of markdown content hashes that have caused render failures
-/// This allows us to avoid re-attempting to render known-bad content
-final Set<int> _failedMarkdownHashes = {};
-
-/// Track currently rendering markdown content for error attribution
-/// When an error occurs, we can mark the current content as failed
-String? _currentlyRenderingMarkdown;
-
-/// Add a markdown hash to the failed list
-void markMarkdownAsFailed(int hash) {
-  _failedMarkdownHashes.add(hash);
-}
-
-/// Get the currently rendering markdown (for error attribution)
-String? get currentlyRenderingMarkdown => _currentlyRenderingMarkdown;
-
-/// Error boundary that catches flutter_markdown rendering errors
-/// and falls back to plain text.
-///
-/// This uses a custom ErrorWidget.builder to catch Flutter assertion errors
-/// that propagate through the framework rather than as exceptions.
-class _MarkdownErrorBoundary extends StatefulWidget {
-  final String markdown;
-  final Widget Function() markdownBuilder;
-  final Widget Function() fallbackBuilder;
-
-  const _MarkdownErrorBoundary({
-    required this.markdown,
-    required this.markdownBuilder,
-    required this.fallbackBuilder,
-  });
-
-  @override
-  State<_MarkdownErrorBoundary> createState() => _MarkdownErrorBoundaryState();
-}
-
-class _MarkdownErrorBoundaryState extends State<_MarkdownErrorBoundary> {
-  bool _hasError = false;
-  Widget? _cachedWidget;
-  String? _cachedMarkdown;
-
-  @override
-  void initState() {
-    super.initState();
-    // Check if this content previously failed
-    if (_failedMarkdownHashes.contains(widget.markdown.hashCode)) {
-      _hasError = true;
-    }
-  }
-
-  @override
-  void didUpdateWidget(_MarkdownErrorBoundary oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    // Reset error state and cache when markdown content changes
-    if (oldWidget.markdown != widget.markdown) {
-      _cachedWidget = null;
-      _cachedMarkdown = null;
-      // Check if new content previously failed
-      _hasError = _failedMarkdownHashes.contains(widget.markdown.hashCode);
-    }
-  }
-
-  void _markAsFailed() {
-    _failedMarkdownHashes.add(widget.markdown.hashCode);
-    if (mounted && !_hasError) {
-      setState(() => _hasError = true);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    // If previously failed or marked as failed, use fallback
-    if (_hasError) {
-      return widget.fallbackBuilder();
+    // Return cached widget if content hasn't changed
+    // This prevents flutter_markdown from re-parsing on didChangeDependencies
+    // which can cause _inlines.isEmpty assertion errors
+    if (_cachedMarkdown != null && _cachedHash == contentHash) {
+      return _cachedMarkdown!;
     }
 
-    // Return cached widget if markdown hasn't changed
-    if (_cachedMarkdown == widget.markdown && _cachedWidget != null) {
-      return _cachedWidget!;
-    }
-
-    // Build markdown with error catching via temporary FlutterError.onError handler
-    Widget result;
-    var caughtError = false;
-
-    // Track what we're rendering for error attribution by global handler
-    _currentlyRenderingMarkdown = widget.markdown;
-
-    // Save and replace error handler to catch markdown builder assertions
-    final previousErrorHandler = FlutterError.onError;
-    FlutterError.onError = (FlutterErrorDetails details) {
-      final errorString = details.toString().toLowerCase();
-      if (errorString.contains('_inlines') ||
-          errorString.contains('flutter_markdown') ||
-          errorString.contains('builder.dart')) {
-        caughtError = true;
-        _markAsFailed();
-      } else {
-        previousErrorHandler?.call(details);
-      }
-    };
-
+    // Track what we're rendering so global error handler can attribute errors
+    currentlyRenderingMarkdown = widget.text;
     try {
-      result = widget.markdownBuilder();
-      _cachedWidget = result;
-      _cachedMarkdown = widget.markdown;
-    } catch (e) {
-      caughtError = true;
-      result = widget.fallbackBuilder();
+      _cachedMarkdown = _buildMarkdown(sanitized);
+      _cachedHash = contentHash;
+      return _cachedMarkdown!;
     } finally {
-      FlutterError.onError = previousErrorHandler;
-      _currentlyRenderingMarkdown = null;
+      currentlyRenderingMarkdown = null;
     }
-
-    if (caughtError) {
-      // Schedule state update for next frame if not already marked
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted && !_hasError) {
-          setState(() => _hasError = true);
-        }
-      });
-      return widget.fallbackBuilder();
-    }
-
-    return result;
   }
 }
+

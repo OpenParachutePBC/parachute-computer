@@ -259,11 +259,23 @@ class StreamingVoiceService {
       _totalSamplesWritten = 0;
       _lastVadPauseTime = null;
 
-      // Set initial model status
+      // Set initial model status and trigger initialization if needed
       final isModelReady = await _transcriptionService.isReady();
-      _modelStatus = isModelReady
-          ? TranscriptionModelStatus.ready
-          : TranscriptionModelStatus.initializing;
+      if (!isModelReady) {
+        _modelStatus = TranscriptionModelStatus.initializing;
+        debugPrint('[StreamingVoice] Model not ready, triggering initialization...');
+
+        // Trigger lazy initialization in background
+        _transcriptionService.initialize().then((_) {
+          debugPrint('[StreamingVoice] Model initialized during recording!');
+          _updateModelStatus(TranscriptionModelStatus.ready);
+        }).catchError((e) {
+          debugPrint('[StreamingVoice] Model initialization failed: $e');
+          _updateModelStatus(TranscriptionModelStatus.error);
+        });
+      } else {
+        _modelStatus = TranscriptionModelStatus.ready;
+      }
       debugPrint('[StreamingVoice] Initial model status: $_modelStatus');
 
       // NOTE: Re-transcription loop disabled - using richardtate VAD-only approach
@@ -688,6 +700,41 @@ class StreamingVoiceService {
     return pos < interim.length ? interim.substring(pos).trim() : '';
   }
 
+  /// Fallback: transcribe directly from the saved audio file
+  /// Used when VAD discards all audio but we need to produce some output
+  /// Note: WAV file must be finalized before calling this
+  Future<void> _transcribeFromFile() async {
+    if (_audioFilePath == null) return;
+
+    try {
+      final file = File(_audioFilePath!);
+      if (!await file.exists()) {
+        debugPrint('[StreamingVoice] Audio file not found for fallback transcription');
+        return;
+      }
+
+      final fileSize = await file.length();
+      if (fileSize < 1000) { // Essentially empty WAV
+        debugPrint('[StreamingVoice] Audio file too small for transcription');
+        return;
+      }
+
+      debugPrint('[StreamingVoice] Fallback: transcribing from file: $_audioFilePath ($fileSize bytes)');
+
+      final result = await _transcriptionService.transcribeAudio(_audioFilePath!);
+
+      final transcribedText = result.text.trim();
+      if (transcribedText.isNotEmpty) {
+        _confirmedSegments.add(transcribedText);
+        debugPrint('[StreamingVoice] Fallback transcription: "$transcribedText"');
+      }
+
+      _emitStreamingState();
+    } catch (e) {
+      debugPrint('[StreamingVoice] Fallback transcription failed: $e');
+    }
+  }
+
   /// Final transcription for any remaining audio in rolling buffer
   /// Simple: just transcribe what's there and add to confirmedSegments
   Future<void> _doFinalTranscription() async {
@@ -915,6 +962,10 @@ class StreamingVoiceService {
       // Wait for stream to settle
       await Future.delayed(const Duration(milliseconds: 300));
 
+      // Store buffer length before flush (flush may clear it via _handleChunk)
+      final bufferLengthBeforeFlush = _rollingAudioBuffer.length;
+      debugPrint('[StreamingVoice] Buffer before flush: $bufferLengthBeforeFlush samples (${bufferLengthBeforeFlush / 16000}s)');
+
       // Flush chunker FIRST - this triggers _handleChunk for any remaining audio
       // The chunker holds audio that hasn't hit a VAD pause yet
       if (_chunker != null) {
@@ -929,7 +980,12 @@ class StreamingVoiceService {
       }
 
       // If there's still audio in rolling buffer (after VAD flush), transcribe it
-      // This catches edge cases where flush didn't produce a chunk
+      // This catches edge cases where:
+      // 1. flush() didn't produce a chunk due to insufficient speech
+      // 2. The audio was recorded but VAD never triggered
+      final bufferAfterFlush = _rollingAudioBuffer.length;
+      debugPrint('[StreamingVoice] Buffer after flush: $bufferAfterFlush samples');
+
       if (_rollingAudioBuffer.length > 8000) { // At least 0.5s of audio
         debugPrint('[StreamingVoice] Transcribing remaining buffer: ${_rollingAudioBuffer.length} samples');
         await _doFinalTranscription();
@@ -943,8 +999,15 @@ class StreamingVoiceService {
       _emitStreamingState();
       _recordingStartTime = null;
 
-      // Finalize WAV file
+      // Finalize WAV file BEFORE fallback transcription (file must be valid)
       await _finalizeStreamingWavFile();
+
+      // Fallback: if VAD discarded all audio and we have no transcription,
+      // transcribe directly from the saved file
+      if (_confirmedSegments.isEmpty && bufferLengthBeforeFlush > 8000) {
+        debugPrint('[StreamingVoice] No segments but had $bufferLengthBeforeFlush samples - using fallback transcription');
+        await _transcribeFromFile();
+      }
 
       // Disable wakelock
       try {

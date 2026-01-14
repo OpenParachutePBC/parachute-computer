@@ -14,7 +14,7 @@ import '../../recorder/widgets/playback_controls.dart';
 import '../models/journal_day.dart';
 import '../models/journal_entry.dart';
 import '../providers/journal_providers.dart';
-import '../widgets/chat_log_section.dart';
+import '../widgets/collapsible_chat_log_section.dart';
 import '../widgets/curator_trigger_card.dart';
 import '../widgets/journal_entry_row.dart';
 import '../widgets/journal_input_bar.dart';
@@ -822,6 +822,15 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
                 ),
               ),
 
+            // AI Conversations (if available) - collapsible section at top
+            if (hasChatLog)
+              SliverToBoxAdapter(
+                child: CollapsibleChatLogSection(
+                  chatLog: chatLogAsync.value!,
+                  initiallyExpanded: false,
+                ),
+              ),
+
             // Journal section header (if there are entries)
             if (hasJournalEntries && (hasReflection || hasChatLog))
               SliverToBoxAdapter(
@@ -905,14 +914,6 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
                 ),
               ),
             ),
-
-            // Chat Log section (if available)
-            if (hasChatLog)
-              SliverToBoxAdapter(
-                child: ChatLogSection(
-                  chatLog: chatLogAsync.value!,
-                ),
-              ),
 
             // Bottom padding
             const SliverPadding(padding: EdgeInsets.only(bottom: 16)),

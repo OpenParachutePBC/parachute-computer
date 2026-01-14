@@ -8,20 +8,22 @@ import 'package:macos_secure_bookmarks/macos_secure_bookmarks.dart';
 
 /// Module type for the file system service
 enum ModuleType {
-  /// Daily module - ~/Parachute/Daily (offline-capable, synced)
+  /// Daily module - ~/Parachute with 'Daily' subfolder (offline-capable, synced)
   daily,
 
-  /// Chat module - ~/Parachute/Chat (server-managed)
+  /// Chat module - ~/Parachute with 'Chat' subfolder (server-managed)
   chat,
 }
 
 /// Unified file system service for Parachute
 ///
-/// Manages modular vault structures:
+/// Manages modular vault structures within a single Parachute vault:
 /// - ~/Parachute/Daily/ - Daily journals, assets, reflections (local, synced)
 /// - ~/Parachute/Chat/ - Chat sessions, contexts, artifacts (server-managed)
 ///
-/// Each module has its own instance with separate paths and preferences.
+/// The vault root (~/Parachute) is shared across modules, with each module
+/// having its own subfolder. This allows users to configure one vault location
+/// while keeping module data organized.
 ///
 /// Philosophy: Files are the source of truth, databases are indexes.
 class FileSystemService {
@@ -54,7 +56,12 @@ class FileSystemService {
   // SharedPreferences key prefix
   String get _keyPrefix => 'parachute_${_moduleType.name}_';
 
-  String get _rootPathKey => '${_keyPrefix}root_path';
+  /// Key for vault root path (shared concept, but stored per-module for flexibility)
+  String get _vaultPathKey => '${_keyPrefix}vault_path';
+
+  /// Legacy key - kept for migration from old versions
+  String get _legacyRootPathKey => '${_keyPrefix}root_path';
+
   String get _secureBookmarkKey => '${_keyPrefix}secure_bookmark';
   String get _userConfiguredKey => '${_keyPrefix}user_configured';
 
@@ -73,7 +80,12 @@ class FileSystemService {
   // Private State
   // ============================================================
 
-  String? _rootFolderPath;
+  /// The vault root path (e.g., ~/Parachute)
+  String? _vaultPath;
+
+  /// The module folder name within the vault (e.g., "Daily" or "Chat")
+  String? _moduleFolderName;
+
   String? _tempAudioPath;
   final Map<String, String> _folderNames = {};
   bool _isInitialized = false;
@@ -87,7 +99,15 @@ class FileSystemService {
   // Folder Configuration by Module
   // ============================================================
 
+  /// Get the default module folder name (Daily or Chat)
+  String get _defaultModuleFolderName =>
+      _moduleType == ModuleType.daily ? 'Daily' : 'Chat';
+
+  /// SharedPreferences key for the module folder name
+  String get _moduleFolderKey => '${_keyPrefix}module_folder';
+
   /// Get default folder configuration for this module
+  /// Note: These are subfolders within the module folder (e.g., Daily/journals)
   Map<String, _FolderConfig> get _folderConfigs {
     switch (_moduleType) {
       case ModuleType.daily:
@@ -165,14 +185,39 @@ class FileSystemService {
       debugPrint('[FileSystemService:${_moduleType.name}] Starting initialization...');
       final prefs = await SharedPreferences.getInstance();
 
-      _rootFolderPath = prefs.getString(_rootPathKey);
+      // Try to load vault path from new key, then check for legacy migration
+      _vaultPath = prefs.getString(_vaultPathKey);
+      _moduleFolderName = prefs.getString(_moduleFolderKey) ?? _defaultModuleFolderName;
 
-      if (_rootFolderPath == null) {
-        _rootFolderPath = await _getDefaultRootPath();
-        debugPrint('[FileSystemService:${_moduleType.name}] Set default root: $_rootFolderPath');
-        await prefs.setString(_rootPathKey, _rootFolderPath!);
+      // Migration: check for legacy root_path key
+      if (_vaultPath == null) {
+        final legacyRootPath = prefs.getString(_legacyRootPathKey);
+        if (legacyRootPath != null) {
+          // Legacy path was like ~/Parachute/Daily, extract vault path
+          final moduleSuffix = '/$_defaultModuleFolderName';
+          if (legacyRootPath.endsWith(moduleSuffix)) {
+            _vaultPath = legacyRootPath.substring(0, legacyRootPath.length - moduleSuffix.length);
+            debugPrint('[FileSystemService:${_moduleType.name}] Migrated legacy path: $legacyRootPath -> vault: $_vaultPath');
+          } else {
+            // Legacy path doesn't match expected pattern, use as-is and treat as vault
+            _vaultPath = legacyRootPath;
+            _moduleFolderName = ''; // No subfolder, data is directly in this path
+            debugPrint('[FileSystemService:${_moduleType.name}] Legacy path without module suffix: $_vaultPath');
+          }
+          await prefs.setString(_vaultPathKey, _vaultPath!);
+          await prefs.setString(_moduleFolderKey, _moduleFolderName!);
+        }
+      }
+
+      // If still no vault path, use default
+      if (_vaultPath == null) {
+        _vaultPath = await _getDefaultVaultPath();
+        _moduleFolderName = _defaultModuleFolderName;
+        debugPrint('[FileSystemService:${_moduleType.name}] Set default vault: $_vaultPath, module folder: $_moduleFolderName');
+        await prefs.setString(_vaultPathKey, _vaultPath!);
+        await prefs.setString(_moduleFolderKey, _moduleFolderName!);
       } else {
-        debugPrint('[FileSystemService:${_moduleType.name}] Loaded saved root: $_rootFolderPath');
+        debugPrint('[FileSystemService:${_moduleType.name}] Loaded vault: $_vaultPath, module folder: $_moduleFolderName');
 
         // macOS: restore security-scoped bookmark
         if (Platform.isMacOS && _secureBookmarks != null) {
@@ -186,9 +231,9 @@ class FileSystemService {
               _isAccessingSecurityScopedResource = true;
 
               final resolvedPath = resolvedEntity.path;
-              if (resolvedPath != _rootFolderPath) {
-                _rootFolderPath = resolvedPath;
-                await prefs.setString(_rootPathKey, _rootFolderPath!);
+              if (resolvedPath != _vaultPath) {
+                _vaultPath = resolvedPath;
+                await prefs.setString(_vaultPathKey, _vaultPath!);
               }
             } catch (e) {
               debugPrint(
@@ -197,9 +242,10 @@ class FileSystemService {
           }
         }
 
-        // Verify access
+        // Verify access to the full module path
+        final modulePath = _getModulePath();
         if (!_isAccessingSecurityScopedResource) {
-          final savedDir = Directory(_rootFolderPath!);
+          final savedDir = Directory(modulePath);
           bool hasAccess = false;
 
           try {
@@ -215,8 +261,10 @@ class FileSystemService {
           }
 
           if (!hasAccess && (Platform.isMacOS || Platform.isIOS)) {
-            _rootFolderPath = await _getDefaultRootPath();
-            await prefs.setString(_rootPathKey, _rootFolderPath!);
+            _vaultPath = await _getDefaultVaultPath();
+            _moduleFolderName = _defaultModuleFolderName;
+            await prefs.setString(_vaultPathKey, _vaultPath!);
+            await prefs.setString(_moduleFolderKey, _moduleFolderName!);
           }
         }
       }
@@ -243,27 +291,58 @@ class FileSystemService {
     }
   }
 
-  // ============================================================
-  // Public API - Root Path
-  // ============================================================
-
-  /// Get the root folder path
-  Future<String> getRootPath() async {
-    await initialize();
-    return _rootFolderPath!;
+  /// Get the full module path (vault + module folder)
+  String _getModulePath() {
+    if (_moduleFolderName == null || _moduleFolderName!.isEmpty) {
+      return _vaultPath!;
+    }
+    return '$_vaultPath/$_moduleFolderName';
   }
 
-  /// Get user-friendly root path display (with ~ for home)
+  // ============================================================
+  // Public API - Path Access
+  // ============================================================
+
+  /// Get the module root folder path (e.g., ~/Parachute/Daily)
+  /// This is the path where all module data is stored.
+  Future<String> getRootPath() async {
+    await initialize();
+    return _getModulePath();
+  }
+
+  /// Get the vault root path (e.g., ~/Parachute)
+  /// This is the parent folder that contains all modules.
+  Future<String> getVaultPath() async {
+    await initialize();
+    return _vaultPath!;
+  }
+
+  /// Get the module folder name (e.g., "Daily" or "Chat")
+  Future<String> getModuleFolderName() async {
+    await initialize();
+    return _moduleFolderName ?? _defaultModuleFolderName;
+  }
+
+  /// Get user-friendly vault path display (with ~ for home)
+  Future<String> getVaultPathDisplay() async {
+    final path = await getVaultPath();
+    return _formatPathForDisplay(path);
+  }
+
+  /// Get user-friendly module root path display (with ~ for home)
   Future<String> getRootPathDisplay() async {
     final path = await getRootPath();
+    return _formatPathForDisplay(path);
+  }
 
+  /// Format a path for display (replace home with ~)
+  String _formatPathForDisplay(String path) {
     if (Platform.isMacOS || Platform.isLinux) {
       final home = Platform.environment['HOME'];
       if (home != null && path.startsWith(home)) {
         return path.replaceFirst(home, '~');
       }
     }
-
     return path;
   }
 
@@ -279,32 +358,45 @@ class FileSystemService {
     await prefs.setBool(_userConfiguredKey, true);
   }
 
-  /// Set custom root path with optional file migration
-  Future<bool> setRootPath(String path, {bool migrateFiles = true}) async {
+  /// Set the vault root path (e.g., ~/Parachute).
+  /// The module folder (Daily/Chat) will be created inside this path.
+  Future<bool> setVaultPath(String vaultPath, {bool migrateFiles = true}) async {
     try {
-      final oldRootPath = _rootFolderPath;
+      final oldModulePath = _getModulePath();
 
-      final newDir = Directory(path);
-      if (!await newDir.exists()) {
-        await newDir.create(recursive: true);
+      // Ensure vault directory exists
+      final vaultDir = Directory(vaultPath);
+      if (!await vaultDir.exists()) {
+        await vaultDir.create(recursive: true);
+      }
+
+      // Calculate new module path
+      final newModulePath = _moduleFolderName != null && _moduleFolderName!.isNotEmpty
+          ? '$vaultPath/$_moduleFolderName'
+          : vaultPath;
+
+      // Ensure module directory exists
+      final newModuleDir = Directory(newModulePath);
+      if (!await newModuleDir.exists()) {
+        await newModuleDir.create(recursive: true);
       }
 
       // Migrate files if requested
-      if (migrateFiles && oldRootPath != null && oldRootPath != path) {
-        final oldDir = Directory(oldRootPath);
+      if (migrateFiles && oldModulePath != newModulePath) {
+        final oldDir = Directory(oldModulePath);
         if (await oldDir.exists()) {
           debugPrint(
-              '[FileSystemService:${_moduleType.name}] Migrating files from $oldRootPath to $path');
-          await _copyDirectory(oldDir, Directory(path));
+              '[FileSystemService:${_moduleType.name}] Migrating files from $oldModulePath to $newModulePath');
+          await _copyDirectory(oldDir, newModuleDir);
         }
       }
 
-      // macOS: create security-scoped bookmark
+      // macOS: create security-scoped bookmark for vault
       if (Platform.isMacOS && _secureBookmarks != null) {
         try {
-          if (_isAccessingSecurityScopedResource && _rootFolderPath != null) {
+          if (_isAccessingSecurityScopedResource && _vaultPath != null) {
             try {
-              final oldDir = Directory(_rootFolderPath!);
+              final oldDir = Directory(_vaultPath!);
               await _secureBookmarks.stopAccessingSecurityScopedResource(oldDir);
             } catch (e) {
               debugPrint(
@@ -313,12 +405,12 @@ class FileSystemService {
             _isAccessingSecurityScopedResource = false;
           }
 
-          final bookmarkData = await _secureBookmarks.bookmark(newDir);
+          final bookmarkData = await _secureBookmarks.bookmark(vaultDir);
 
           final prefs = await SharedPreferences.getInstance();
           await prefs.setString(_secureBookmarkKey, bookmarkData);
 
-          await _secureBookmarks.startAccessingSecurityScopedResource(newDir);
+          await _secureBookmarks.startAccessingSecurityScopedResource(vaultDir);
           _isAccessingSecurityScopedResource = true;
         } catch (e) {
           debugPrint(
@@ -326,24 +418,42 @@ class FileSystemService {
         }
       }
 
-      _rootFolderPath = path;
+      _vaultPath = vaultPath;
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(_rootPathKey, path);
+      await prefs.setString(_vaultPathKey, vaultPath);
       await prefs.setBool(_userConfiguredKey, true);
 
       await _ensureFolderStructure();
 
       return true;
     } catch (e) {
-      debugPrint('[FileSystemService:${_moduleType.name}] Error setting root path: $e');
+      debugPrint('[FileSystemService:${_moduleType.name}] Error setting vault path: $e');
       return false;
     }
   }
 
+  /// Set custom root path with optional file migration (legacy API, calls setVaultPath)
+  @Deprecated('Use setVaultPath instead for clarity')
+  Future<bool> setRootPath(String path, {bool migrateFiles = true}) async {
+    // For backwards compatibility: if the path ends with the module folder name,
+    // extract the vault path. Otherwise, treat as vault path.
+    final moduleSuffix = '/$_defaultModuleFolderName';
+    String vaultPath;
+    if (path.endsWith(moduleSuffix)) {
+      vaultPath = path.substring(0, path.length - moduleSuffix.length);
+    } else {
+      vaultPath = path;
+    }
+    return setVaultPath(vaultPath, migrateFiles: migrateFiles);
+  }
+
   /// Reset to default path
   Future<bool> resetToDefaultPath() async {
-    final defaultPath = await _getDefaultRootPath();
-    return setRootPath(defaultPath, migrateFiles: false);
+    final defaultVaultPath = await _getDefaultVaultPath();
+    _moduleFolderName = _defaultModuleFolderName;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_moduleFolderKey, _moduleFolderName!);
+    return setVaultPath(defaultVaultPath, migrateFiles: false);
   }
 
   // ============================================================
@@ -821,40 +931,52 @@ class FileSystemService {
   // Private Helpers
   // ============================================================
 
-  Future<String> _getDefaultRootPath() async {
-    final moduleName = _moduleType == ModuleType.daily ? 'Daily' : 'Chat';
-
+  /// Get the default vault root path (~/Parachute).
+  /// The module subfolder (Daily/Chat) is handled separately via folder config.
+  Future<String> _getDefaultVaultPath() async {
     if (Platform.isMacOS) {
       final home = Platform.environment['HOME'];
       if (home != null) {
-        final preferredPath = '$home/Parachute/$moduleName';
+        final preferredPath = '$home/Parachute';
         final preferredDir = Directory(preferredPath);
         try {
+          // Try to create the directory
           if (!await preferredDir.exists()) {
             await preferredDir.create(recursive: true);
           }
-          return preferredPath;
+          // Verify it was actually created where we expect (not sandbox-redirected)
+          // by checking that the resolved path matches our expected path
+          final resolvedPath = await preferredDir.resolveSymbolicLinks();
+          if (resolvedPath == preferredPath) {
+            debugPrint('[FileSystemService:${_moduleType.name}] Using real path: $preferredPath');
+            return preferredPath;
+          } else {
+            debugPrint(
+                '[FileSystemService:${_moduleType.name}] Path was sandboxed: $preferredPath -> $resolvedPath');
+          }
         } catch (e) {
           debugPrint(
-              '[FileSystemService:${_moduleType.name}] Cannot access ~/Parachute/$moduleName: $e');
+              '[FileSystemService:${_moduleType.name}] Cannot access ~/Parachute: $e');
         }
       }
+      // Fall back to app container
       final appDir = await getApplicationDocumentsDirectory();
-      return '${appDir.path}/Parachute/$moduleName';
+      debugPrint('[FileSystemService:${_moduleType.name}] Using container path: ${appDir.path}/Parachute');
+      return '${appDir.path}/Parachute';
     }
 
     if (Platform.isLinux) {
       final home = Platform.environment['HOME'];
-      if (home != null) return '$home/Parachute/$moduleName';
+      if (home != null) return '$home/Parachute';
       final appDir = await getApplicationDocumentsDirectory();
-      return '${appDir.path}/Parachute/$moduleName';
+      return '${appDir.path}/Parachute';
     }
 
     if (Platform.isAndroid) {
       try {
         final externalDir = await getExternalStorageDirectory();
         if (externalDir != null) {
-          return '${externalDir.path}/Parachute/$moduleName';
+          return '${externalDir.path}/Parachute';
         }
       } catch (e) {
         debugPrint('[FileSystemService:${_moduleType.name}] Error getting external storage: $e');
@@ -863,35 +985,49 @@ class FileSystemService {
 
     if (Platform.isIOS) {
       final appDir = await getApplicationDocumentsDirectory();
-      return '${appDir.path}/Parachute/$moduleName';
+      return '${appDir.path}/Parachute';
     }
 
     final appDir = await getApplicationDocumentsDirectory();
-    return '${appDir.path}/Parachute/$moduleName';
+    return '${appDir.path}/Parachute';
   }
 
   Future<void> _ensureFolderStructure() async {
     debugPrint('[FileSystemService:${_moduleType.name}] Ensuring folder structure...');
 
-    final root = Directory(_rootFolderPath!);
+    // Ensure vault root exists
+    final vault = Directory(_vaultPath!);
     try {
-      if (!await root.exists()) {
-        await root.create(recursive: true);
-        debugPrint('[FileSystemService:${_moduleType.name}] Created root: ${root.path}');
+      if (!await vault.exists()) {
+        await vault.create(recursive: true);
+        debugPrint('[FileSystemService:${_moduleType.name}] Created vault: ${vault.path}');
       }
     } catch (e) {
-      debugPrint('[FileSystemService:${_moduleType.name}] Could not create root: $e');
-      if (!await root.exists()) rethrow;
+      debugPrint('[FileSystemService:${_moduleType.name}] Could not create vault: $e');
+      if (!await vault.exists()) rethrow;
     }
 
-    // Create required folders
+    // Ensure module folder exists (if we have one)
+    final modulePath = _getModulePath();
+    final moduleDir = Directory(modulePath);
+    try {
+      if (!await moduleDir.exists()) {
+        await moduleDir.create(recursive: true);
+        debugPrint('[FileSystemService:${_moduleType.name}] Created module folder: $modulePath');
+      }
+    } catch (e) {
+      debugPrint('[FileSystemService:${_moduleType.name}] Could not create module folder: $e');
+      if (!await moduleDir.exists()) rethrow;
+    }
+
+    // Create required subfolders within module folder
     for (final entry in _folderConfigs.entries) {
       if (!entry.value.required) continue;
 
       final name = _folderNames[entry.key] ?? entry.value.defaultName;
       if (name.isEmpty) continue;
 
-      final folder = Directory('${root.path}/$name');
+      final folder = Directory('$modulePath/$name');
       if (!await folder.exists()) {
         await folder.create(recursive: true);
         debugPrint(

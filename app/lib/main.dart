@@ -36,7 +36,7 @@ void main() async {
   FlutterError.onError = (FlutterErrorDetails details) {
     final errorString = details.toString().toLowerCase();
 
-    // Suppress flutter_markdown builder errors when we know what content caused them
+    // Catch flutter_markdown builder errors and trigger fallback to plain text
     if (errorString.contains('_inlines') ||
         errorString.contains('flutter_markdown') ||
         (errorString.contains('builder.dart') && errorString.contains('assertion'))) {

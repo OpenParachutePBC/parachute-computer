@@ -8,14 +8,14 @@ import 'package:parachute/core/providers/app_state_provider.dart';
 import 'package:parachute/core/providers/file_system_provider.dart';
 import 'package:parachute/core/providers/feature_flags_provider.dart';
 import 'package:parachute/core/services/backend_health_service.dart';
+import 'package:parachute/features/daily/journal/providers/journal_providers.dart';
 import '../widgets/omi_device_section.dart';
 
 /// Unified Settings screen for Parachute
 ///
 /// Sections:
 /// - Server Connection (enables Chat/Vault)
-/// - Daily Storage
-/// - Chat Storage (when server enabled)
+/// - Parachute Vault (storage location)
 /// - About
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -27,8 +27,9 @@ class SettingsScreen extends ConsumerStatefulWidget {
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   final _serverUrlController = TextEditingController();
   bool _isLoading = true;
-  String _dailyPath = '';
-  String _chatPath = '';
+  String _vaultPath = '';
+  String _dailyFolderName = '';
+  String _chatFolderName = '';
 
   @override
   void initState() {
@@ -48,14 +49,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final serverUrl = await featureFlags.getAiServerUrl();
     _serverUrlController.text = serverUrl;
 
-    // Load paths
+    // Load vault path and folder names
     final dailyService = ref.read(dailyFileSystemServiceProvider);
     await dailyService.initialize();
-    _dailyPath = await dailyService.getRootPathDisplay();
+    _vaultPath = await dailyService.getVaultPathDisplay();
+    _dailyFolderName = await dailyService.getModuleFolderName();
 
     final chatService = ref.read(chatFileSystemServiceProvider);
     await chatService.initialize();
-    _chatPath = await chatService.getRootPathDisplay();
+    _chatFolderName = await chatService.getModuleFolderName();
 
     if (mounted) {
       setState(() => _isLoading = false);
@@ -197,14 +199,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     }
   }
 
-  Future<void> _changeDailyFolder() async {
-    final service = ref.read(dailyFileSystemServiceProvider);
+  Future<void> _changeVaultFolder() async {
+    final dailyService = ref.read(dailyFileSystemServiceProvider);
+    final chatService = ref.read(chatFileSystemServiceProvider);
 
     // Handle Android permissions
     if (Platform.isAndroid) {
-      final hasPermission = await service.hasStoragePermission();
+      final hasPermission = await dailyService.hasStoragePermission();
       if (!hasPermission) {
-        final granted = await service.requestStoragePermission();
+        final granted = await dailyService.requestStoragePermission();
         if (!granted) {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
@@ -219,66 +222,58 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       }
     }
 
-    final selectedDirectory = await FilePicker.platform.getDirectoryPath(
-      dialogTitle: 'Choose Daily Folder',
-    );
+    debugPrint('[Settings] Opening folder picker...');
 
-    if (selectedDirectory != null) {
-      final success = await service.setRootPath(selectedDirectory, migrateFiles: false);
-      if (success) {
-        final displayPath = await service.getRootPathDisplay();
-        setState(() => _dailyPath = displayPath);
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Daily folder: $displayPath'),
-              backgroundColor: BrandColors.success,
-            ),
-          );
-        }
-      }
-    }
-  }
+    try {
+      final selectedDirectory = await FilePicker.platform.getDirectoryPath(
+        dialogTitle: 'Choose Parachute Folder',
+      );
 
-  Future<void> _changeChatFolder() async {
-    final service = ref.read(chatFileSystemServiceProvider);
+      debugPrint('[Settings] Folder picker returned: $selectedDirectory');
 
-    // Handle Android permissions
-    if (Platform.isAndroid) {
-      final hasPermission = await service.hasStoragePermission();
-      if (!hasPermission) {
-        final granted = await service.requestStoragePermission();
-        if (!granted) {
+      if (selectedDirectory != null) {
+        // Update both services to use the same vault location
+        final dailySuccess = await dailyService.setVaultPath(selectedDirectory, migrateFiles: false);
+        final chatSuccess = await chatService.setVaultPath(selectedDirectory, migrateFiles: false);
+
+        if (dailySuccess && chatSuccess) {
+          final displayPath = await dailyService.getVaultPathDisplay();
+          setState(() => _vaultPath = displayPath);
+
+          // Invalidate all providers that depend on file paths so they refresh
+          ref.invalidate(journalServiceFutureProvider);
+          ref.invalidate(todayJournalProvider);
+          ref.invalidate(selectedJournalProvider);
+          ref.invalidate(journalDatesProvider);
+          ref.invalidate(chatLogServiceFutureProvider);
+          ref.invalidate(selectedChatLogProvider);
+          ref.invalidate(reflectionServiceFutureProvider);
+          ref.invalidate(selectedReflectionProvider);
+          ref.invalidate(dailyRootPathProvider);
+          ref.invalidate(chatRootPathProvider);
+
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
-                content: const Text('Storage permission required'),
-                backgroundColor: BrandColors.error,
+                content: Text('Parachute vault: $displayPath'),
+                backgroundColor: BrandColors.success,
               ),
             );
           }
-          return;
         }
+      } else {
+        debugPrint('[Settings] User cancelled folder picker or picker failed');
       }
-    }
-
-    final selectedDirectory = await FilePicker.platform.getDirectoryPath(
-      dialogTitle: 'Choose Chat Folder',
-    );
-
-    if (selectedDirectory != null) {
-      final success = await service.setRootPath(selectedDirectory, migrateFiles: false);
-      if (success) {
-        final displayPath = await service.getRootPathDisplay();
-        setState(() => _chatPath = displayPath);
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Chat folder: $displayPath'),
-              backgroundColor: BrandColors.success,
-            ),
-          );
-        }
+    } catch (e, stackTrace) {
+      debugPrint('[Settings] Error in folder picker: $e');
+      debugPrint('[Settings] Stack trace: $stackTrace');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error opening folder picker: $e'),
+            backgroundColor: BrandColors.error,
+          ),
+        );
       }
     }
   }
@@ -287,7 +282,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final appMode = ref.watch(appModeProvider);
-    final showChatSettings = appMode == AppMode.full;
+    final showChatFolder = appMode == AppMode.full;
 
     if (_isLoading) {
       return Scaffold(
@@ -317,8 +312,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
           SizedBox(height: Spacing.xl),
 
-          // Daily Storage Section
-          _buildDailyStorageSection(isDark),
+          // Parachute Vault Section (unified storage)
+          _buildVaultSection(isDark, showChatFolder),
 
           // Omi Device Section (iOS/Android only)
           if (Platform.isIOS || Platform.isAndroid) ...[
@@ -327,12 +322,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               isDark: isDark,
               child: const OmiDeviceSection(),
             ),
-          ],
-
-          // Chat Storage Section (only when server configured)
-          if (showChatSettings) ...[
-            SizedBox(height: Spacing.xl),
-            _buildChatStorageSection(isDark),
           ],
 
           SizedBox(height: Spacing.xl),
@@ -427,7 +416,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
-  Widget _buildDailyStorageSection(bool isDark) {
+  Widget _buildVaultSection(bool isDark, bool showChatFolder) {
     return _SettingsCard(
       isDark: isDark,
       child: Column(
@@ -436,12 +425,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           Row(
             children: [
               Icon(
-                Icons.wb_sunny,
+                Icons.folder_special,
                 color: isDark ? BrandColors.nightForest : BrandColors.forest,
               ),
               SizedBox(width: Spacing.sm),
               Text(
-                'Daily Storage',
+                'Parachute Vault',
                 style: TextStyle(
                   fontWeight: FontWeight.bold,
                   fontSize: TypographyTokens.bodyLarge,
@@ -452,7 +441,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
           SizedBox(height: Spacing.sm),
           Text(
-            'Your journal entries, voice recordings, and reflections are stored here.',
+            'Your Parachute data is stored locally in this folder.',
             style: TextStyle(
               fontSize: TypographyTokens.bodySmall,
               color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
@@ -460,6 +449,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
           SizedBox(height: Spacing.lg),
 
+          // Vault path display
           Container(
             padding: EdgeInsets.all(Spacing.md),
             decoration: BoxDecoration(
@@ -476,7 +466,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 SizedBox(width: Spacing.sm),
                 Expanded(
                   child: Text(
-                    _dailyPath,
+                    _vaultPath,
                     style: TextStyle(
                       fontFamily: 'monospace',
                       fontSize: TypographyTokens.bodySmall,
@@ -487,13 +477,46 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               ],
             ),
           ),
+          SizedBox(height: Spacing.md),
+
+          // Subfolder info
+          Container(
+            padding: EdgeInsets.all(Spacing.sm),
+            decoration: BoxDecoration(
+              color: (isDark ? BrandColors.nightSurface : BrandColors.cream)
+                  .withValues(alpha: 0.5),
+              borderRadius: BorderRadius.circular(Radii.sm),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _FolderInfoRow(
+                  icon: Icons.wb_sunny,
+                  iconColor: isDark ? BrandColors.nightForest : BrandColors.forest,
+                  folderName: _dailyFolderName,
+                  description: 'journals & recordings',
+                  isDark: isDark,
+                ),
+                if (showChatFolder) ...[
+                  SizedBox(height: Spacing.xs),
+                  _FolderInfoRow(
+                    icon: Icons.chat_bubble,
+                    iconColor: isDark ? BrandColors.nightTurquoise : BrandColors.turquoise,
+                    folderName: _chatFolderName,
+                    description: 'AI sessions & content',
+                    isDark: isDark,
+                  ),
+                ],
+              ],
+            ),
+          ),
           SizedBox(height: Spacing.lg),
 
           Row(
             children: [
               Expanded(
                 child: OutlinedButton.icon(
-                  onPressed: _changeDailyFolder,
+                  onPressed: _changeVaultFolder,
                   icon: const Icon(Icons.folder, size: 18),
                   label: const Text('Change'),
                 ),
@@ -501,100 +524,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               SizedBox(width: Spacing.sm),
               Expanded(
                 child: FilledButton.icon(
-                  onPressed: () => _openFolder(_dailyPath),
+                  onPressed: () => _openFolder(_vaultPath),
                   icon: const Icon(Icons.open_in_new, size: 18),
                   label: const Text('Open'),
                   style: FilledButton.styleFrom(
                     backgroundColor: isDark ? BrandColors.nightForest : BrandColors.forest,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildChatStorageSection(bool isDark) {
-    return _SettingsCard(
-      isDark: isDark,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(
-                Icons.chat_bubble,
-                color: isDark ? BrandColors.nightTurquoise : BrandColors.turquoise,
-              ),
-              SizedBox(width: Spacing.sm),
-              Text(
-                'Chat Storage',
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: TypographyTokens.bodyLarge,
-                  color: isDark ? BrandColors.nightText : BrandColors.charcoal,
-                ),
-              ),
-            ],
-          ),
-          SizedBox(height: Spacing.sm),
-          Text(
-            'AI chat sessions and generated content are stored here.',
-            style: TextStyle(
-              fontSize: TypographyTokens.bodySmall,
-              color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
-            ),
-          ),
-          SizedBox(height: Spacing.lg),
-
-          Container(
-            padding: EdgeInsets.all(Spacing.md),
-            decoration: BoxDecoration(
-              color: (isDark ? BrandColors.nightTurquoise : BrandColors.turquoise)
-                  .withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(Radii.sm),
-              border: Border.all(
-                color: isDark ? BrandColors.nightTurquoise : BrandColors.turquoise,
-              ),
-            ),
-            child: Row(
-              children: [
-                const Icon(Icons.folder_open, size: 20),
-                SizedBox(width: Spacing.sm),
-                Expanded(
-                  child: Text(
-                    _chatPath,
-                    style: TextStyle(
-                      fontFamily: 'monospace',
-                      fontSize: TypographyTokens.bodySmall,
-                      color: isDark ? BrandColors.nightText : BrandColors.charcoal,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          SizedBox(height: Spacing.lg),
-
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: _changeChatFolder,
-                  icon: const Icon(Icons.folder, size: 18),
-                  label: const Text('Change'),
-                ),
-              ),
-              SizedBox(width: Spacing.sm),
-              Expanded(
-                child: FilledButton.icon(
-                  onPressed: () => _openFolder(_chatPath),
-                  icon: const Icon(Icons.open_in_new, size: 18),
-                  label: const Text('Open'),
-                  style: FilledButton.styleFrom(
-                    backgroundColor: isDark ? BrandColors.nightTurquoise : BrandColors.turquoise,
                   ),
                 ),
               ),
@@ -706,6 +640,60 @@ class _AboutRow extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Row showing module folder info within the vault
+class _FolderInfoRow extends StatelessWidget {
+  final IconData icon;
+  final Color iconColor;
+  final String folderName;
+  final String description;
+  final bool isDark;
+
+  const _FolderInfoRow({
+    required this.icon,
+    required this.iconColor,
+    required this.folderName,
+    required this.description,
+    required this.isDark,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Icon(icon, size: 16, color: iconColor),
+        SizedBox(width: Spacing.xs),
+        Text(
+          folderName,
+          style: TextStyle(
+            fontFamily: 'monospace',
+            fontWeight: FontWeight.w500,
+            fontSize: TypographyTokens.bodySmall,
+            color: isDark ? BrandColors.nightText : BrandColors.charcoal,
+          ),
+        ),
+        Text(
+          '/',
+          style: TextStyle(
+            fontSize: TypographyTokens.bodySmall,
+            color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+          ),
+        ),
+        SizedBox(width: Spacing.sm),
+        Expanded(
+          child: Text(
+            description,
+            style: TextStyle(
+              fontSize: TypographyTokens.labelSmall,
+              color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+            ),
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      ],
     );
   }
 }
