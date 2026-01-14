@@ -22,6 +22,11 @@ from parachute.core.curator_service import init_curator_service, stop_curator_se
 from parachute.core.scheduler import init_scheduler, stop_scheduler
 from parachute.db.database import Database, init_database, close_database
 from parachute.lib.logger import setup_logging, get_logger
+from parachute.lib.server_config import (
+    init_server_config,
+    get_server_config,
+    AuthMode,
+)
 
 logger = get_logger(__name__)
 
@@ -40,6 +45,12 @@ async def lifespan(app: FastAPI):
     # Ensure vault directories exist
     settings.vault_path.mkdir(parents=True, exist_ok=True)
     (settings.vault_path / ".parachute").mkdir(exist_ok=True)
+
+    # Initialize server config (API keys, auth settings)
+    server_config = init_server_config(settings.vault_path)
+    app.state.server_config = server_config
+    logger.info(f"Auth mode: {server_config.security.require_auth.value}")
+    logger.info(f"API keys configured: {len(server_config.security.api_keys)}")
 
     # Initialize database
     db = await init_database(settings.database_path)
@@ -77,6 +88,7 @@ async def lifespan(app: FastAPI):
     app.state.database = None
     app.state.curator = None
     app.state.scheduler = None
+    app.state.server_config = None
 
 
 def get_orchestrator() -> Orchestrator:
@@ -162,16 +174,64 @@ app.add_middleware(
 )
 
 
-# Optional API key authentication
+# Helper to check if request is from localhost
+def _is_localhost(request: Request) -> bool:
+    """Check if request originates from localhost."""
+    client = request.client
+    if not client:
+        return False
+
+    host = client.host
+    return host in ("127.0.0.1", "::1", "localhost")
+
+
+# API key authentication with localhost bypass
 @app.middleware("http")
 async def api_key_middleware(request: Request, call_next):
-    settings = get_settings()
+    server_config = get_server_config()
 
-    # Skip auth for health check and static files
+    # Skip auth for health check and non-API routes
     if request.url.path in ["/api/health", "/"] or not request.url.path.startswith("/api"):
         return await call_next(request)
 
-    # Check API key if configured
+    # Skip auth for auth management endpoints from localhost (bootstrap case)
+    if request.url.path.startswith("/api/auth") and _is_localhost(request):
+        return await call_next(request)
+
+    # Determine if auth is required
+    if server_config:
+        auth_mode = server_config.security.require_auth
+
+        # Disabled mode: no auth required
+        if auth_mode == AuthMode.DISABLED:
+            return await call_next(request)
+
+        # Remote mode: localhost bypasses auth
+        if auth_mode == AuthMode.REMOTE and _is_localhost(request):
+            return await call_next(request)
+
+        # Always mode or remote request: check API key
+        if server_config.security.api_keys:
+            provided_key = (
+                request.headers.get("x-api-key")
+                or request.headers.get("authorization", "").replace("Bearer ", "")
+            )
+
+            if provided_key:
+                matched_key = server_config.validate_key(provided_key)
+                if matched_key:
+                    # Store matched key info in request state for logging
+                    request.state.api_key = matched_key
+                    return await call_next(request)
+
+            # Key required but not provided or invalid
+            return JSONResponse(
+                status_code=401,
+                content={"error": "Unauthorized", "message": "Valid API key required"},
+            )
+
+    # Fallback: check legacy single API key from env var
+    settings = get_settings()
     if settings.api_key:
         provided_key = (
             request.headers.get("x-api-key")
