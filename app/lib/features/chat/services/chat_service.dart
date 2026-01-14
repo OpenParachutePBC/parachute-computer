@@ -872,7 +872,8 @@ class ChatService {
       Uri.parse('$baseUrl/api/chat'),
     );
 
-    request.headers['Content-Type'] = 'application/json';
+    // Use default headers which includes API key
+    request.headers.addAll(_defaultHeaders);
     final requestBody = {
       'message': message,
       'sessionId': sessionId ?? 'new',  // 'new' tells server to create new session

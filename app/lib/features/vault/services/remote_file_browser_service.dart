@@ -37,10 +37,15 @@ class RemoteFileBrowserService {
 
   /// List contents of a folder via the remote API
   /// Returns items sorted: folders first, then files, alphabetically
-  Future<List<FileItem>> listFolder(String path) async {
+  /// Set [includeHidden] to true to show hidden files/folders (starting with .)
+  Future<List<FileItem>> listFolder(String path, {bool includeHidden = false}) async {
     try {
+      final queryParams = <String, String>{};
+      if (path.isNotEmpty) queryParams['path'] = path;
+      if (includeHidden) queryParams['includeHidden'] = 'true';
+
       final uri = Uri.parse('$baseUrl/api/ls').replace(
-        queryParameters: path.isNotEmpty ? {'path': path} : null,
+        queryParameters: queryParams.isNotEmpty ? queryParams : null,
       );
 
       debugPrint('[RemoteFileBrowser] Fetching: $uri');

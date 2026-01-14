@@ -78,10 +78,34 @@ class BundledServerService {
     }
 
     debugPrint('[BundledServerService] Found bundled server at: $binary');
+
+    // Check if a server is already running on our port
+    // This prevents conflicts when running in dev mode with ./parachute.sh already started
+    if (await _isPortInUse()) {
+      debugPrint('[BundledServerService] Port $port already in use - assuming external server is running');
+      debugPrint('[BundledServerService] Will use existing server instead of starting bundled one');
+      _updateStatus(ServerStatus.notBundled); // Treat as externally managed
+      return;
+    }
+
     _updateStatus(ServerStatus.stopped);
 
     if (autoStart) {
       await start();
+    }
+  }
+
+  /// Check if the target port is already in use (another server running)
+  Future<bool> _isPortInUse() async {
+    try {
+      final response = await http
+          .get(Uri.parse('$serverUrl/api/health'))
+          .timeout(const Duration(seconds: 2));
+      // If we get a response, the port is in use
+      return response.statusCode == 200;
+    } catch (e) {
+      // Connection refused or timeout = port not in use
+      return false;
     }
   }
 

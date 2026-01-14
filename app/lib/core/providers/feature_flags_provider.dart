@@ -2,7 +2,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../services/feature_flags_service.dart';
 import '../services/bundled_server_service.dart';
 import 'server_providers.dart';
-import 'app_state_provider.dart';
 
 /// Provider for the feature flags service
 final featureFlagsServiceProvider = Provider<FeatureFlagsService>((ref) {

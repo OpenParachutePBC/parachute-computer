@@ -16,13 +16,17 @@ final remoteFileBrowserServiceProvider = Provider.family<RemoteFileBrowserServic
 /// Current remote browse path
 final remoteCurrentPathProvider = StateProvider<String>((ref) => '');
 
+/// Whether to show hidden files in the vault browser
+final remoteShowHiddenFilesProvider = StateProvider<bool>((ref) => false);
+
 /// Remote folder contents
 final remoteFolderContentsProvider = FutureProvider.family<List<FileItem>, String>((ref, serverUrl) async {
   final service = ref.watch(remoteFileBrowserServiceProvider(serverUrl));
   if (service == null) return [];
 
   final path = ref.watch(remoteCurrentPathProvider);
-  return service.listFolder(path);
+  final includeHidden = ref.watch(remoteShowHiddenFilesProvider);
+  return service.listFolder(path, includeHidden: includeHidden);
 });
 
 /// File browser screen for navigating the remote vault
@@ -178,6 +182,21 @@ class _RemoteFilesScreenState extends ConsumerState<RemoteFilesScreen> {
               ],
             ),
             actions: [
+              IconButton(
+                icon: Icon(
+                  ref.watch(remoteShowHiddenFilesProvider)
+                      ? Icons.visibility
+                      : Icons.visibility_off,
+                  color: isDark ? BrandColors.nightText : BrandColors.charcoal,
+                ),
+                onPressed: () {
+                  ref.read(remoteShowHiddenFilesProvider.notifier).state =
+                      !ref.read(remoteShowHiddenFilesProvider);
+                },
+                tooltip: ref.watch(remoteShowHiddenFilesProvider)
+                    ? 'Hide hidden files'
+                    : 'Show hidden files',
+              ),
               IconButton(
                 icon: Icon(
                   Icons.refresh,

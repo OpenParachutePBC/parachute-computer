@@ -43,38 +43,8 @@ final isBundledServerRunningProvider = Provider<bool>((ref) {
   return status == ServerStatus.running;
 });
 
-/// The effective server URL to use.
-///
-/// Priority:
-/// 1. If bundled and running, use bundled server URL
-/// 2. Otherwise use configured server URL from settings
-final aiServerUrlProvider = Provider<AsyncValue<String?>>((ref) {
-  final isBundled = ref.watch(isBundledAppProvider);
-  final serverStatus = ref.watch(serverStatusProvider);
-  final service = ref.watch(bundledServerServiceProvider);
-
-  // If bundled and running, use local server
-  if (isBundled && serverStatus == ServerStatus.running) {
-    return AsyncData(service.serverUrl);
-  }
-
-  // If bundled but not running, wait for it
-  if (isBundled && serverStatus == ServerStatus.starting) {
-    return const AsyncLoading();
-  }
-
-  // If bundled but errored, return null (no server available)
-  if (isBundled && serverStatus == ServerStatus.error) {
-    return AsyncError(
-      service.lastError ?? 'Server failed to start',
-      StackTrace.current,
-    );
-  }
-
-  // Not bundled - use external server URL from settings
-  // This import would need to be added, but we'll handle it in chat_providers
-  return const AsyncData(null); // Signal to use configured URL
-});
+// Note: aiServerUrlProvider is defined in feature_flags_provider.dart
+// It prioritizes bundled server URL when running, otherwise uses configured URL
 
 /// Initialize bundled server on app start.
 ///
