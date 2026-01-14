@@ -317,24 +317,76 @@ class BundledServerService {
       }
       debugPrint('[BundledServerService] Dev server not found at: $devServerPath');
     } else if (Platform.isLinux) {
-      // Linux: server next to executable
+      // Linux bundle structure:
+      // parachute-linux-x64/parachute (executable)
+      // parachute-linux-x64/lib/parachute-server/parachute-server (server)
+      final bundleDir = path.dirname(execPath);
       final serverPath = path.join(
-        path.dirname(execPath),
+        bundleDir,
+        'lib',
         'parachute-server',
         'parachute-server',
       );
+      debugPrint('[BundledServerService] Checking Linux bundled path: $serverPath');
       if (File(serverPath).existsSync()) {
+        debugPrint('[BundledServerService] Found bundled server at: $serverPath');
         return serverPath;
       }
+
+      // Dev mode: check sibling base directory
+      // .../app/build/linux/x64/release/bundle/parachute -> .../base/dist/parachute-server/
+      var current = bundleDir;
+      for (var i = 0; i < 6; i++) {
+        current = path.dirname(current);
+      }
+      final projectRoot = path.dirname(current);
+      final devServerPath = path.join(
+        projectRoot,
+        'base',
+        'dist',
+        'parachute-server',
+        'parachute-server',
+      );
+      debugPrint('[BundledServerService] Checking Linux dev path: $devServerPath');
+      if (File(devServerPath).existsSync()) {
+        debugPrint('[BundledServerService] Found dev server at: $devServerPath');
+        return devServerPath;
+      }
     } else if (Platform.isWindows) {
-      // Windows: server next to executable
+      // Windows bundle structure:
+      // parachute-windows-x64/parachute.exe (executable)
+      // parachute-windows-x64/data/parachute-server/parachute-server.exe (server)
+      final bundleDir = path.dirname(execPath);
       final serverPath = path.join(
-        path.dirname(execPath),
+        bundleDir,
+        'data',
         'parachute-server',
         'parachute-server.exe',
       );
+      debugPrint('[BundledServerService] Checking Windows bundled path: $serverPath');
       if (File(serverPath).existsSync()) {
+        debugPrint('[BundledServerService] Found bundled server at: $serverPath');
         return serverPath;
+      }
+
+      // Dev mode: check sibling base directory
+      // .../app/build/windows/x64/runner/Release/parachute.exe -> .../base/dist/parachute-server/
+      var current = bundleDir;
+      for (var i = 0; i < 6; i++) {
+        current = path.dirname(current);
+      }
+      final projectRoot = path.dirname(current);
+      final devServerPath = path.join(
+        projectRoot,
+        'base',
+        'dist',
+        'parachute-server',
+        'parachute-server.exe',
+      );
+      debugPrint('[BundledServerService] Checking Windows dev path: $devServerPath');
+      if (File(devServerPath).existsSync()) {
+        debugPrint('[BundledServerService] Found dev server at: $devServerPath');
+        return devServerPath;
       }
     }
 
