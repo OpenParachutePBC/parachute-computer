@@ -103,10 +103,25 @@ class BundledServerService {
     _lastError = null;
 
     try {
-      // Get vault path (default to ~/Parachute)
-      final home = Platform.environment['HOME'] ?? '/tmp';
-      final vaultPath = Platform.environment['PARACHUTE_VAULT_PATH'] ??
-          path.join(home, 'Parachute');
+      // Get vault path
+      // Use PARACHUTE_VAULT_PATH env var if set, otherwise use real user home
+      // Note: On macOS sandboxed apps, HOME points to container, so we detect the real home
+      String vaultPath;
+      if (Platform.environment.containsKey('PARACHUTE_VAULT_PATH')) {
+        vaultPath = Platform.environment['PARACHUTE_VAULT_PATH']!;
+      } else {
+        // Get real user home directory (not sandboxed container)
+        // On macOS, we can use /Users/<username> directly
+        final home = Platform.environment['HOME'] ?? '/tmp';
+        if (Platform.isMacOS && home.contains('/Library/Containers/')) {
+          // Extract real home from sandboxed path
+          // /Users/username/Library/Containers/... -> /Users/username
+          final match = RegExp(r'^(/Users/[^/]+)').firstMatch(home);
+          vaultPath = path.join(match?.group(1) ?? home, 'Parachute');
+        } else {
+          vaultPath = path.join(home, 'Parachute');
+        }
+      }
 
       // Ensure vault directory exists
       final vaultDir = Directory(vaultPath);
@@ -118,18 +133,30 @@ class BundledServerService {
       debugPrint('[BundledServerService] Starting server: $binary');
       debugPrint('[BundledServerService] Vault path: $vaultPath');
       debugPrint('[BundledServerService] Port: $port');
+      debugPrint('[BundledServerService] Working dir: ${path.dirname(binary)}');
 
-      _serverProcess = await Process.start(
-        binary,
-        [],
-        environment: {
-          'VAULT_PATH': vaultPath,
-          'PORT': port.toString(),
-          // Inherit PATH for any external tools
-          'PATH': Platform.environment['PATH'] ?? '',
-        },
-        workingDirectory: path.dirname(binary),
-      );
+      try {
+        _serverProcess = await Process.start(
+          binary,
+          [],
+          environment: {
+            'VAULT_PATH': vaultPath,
+            'PORT': port.toString(),
+            // Inherit PATH for any external tools
+            'PATH': Platform.environment['PATH'] ?? '',
+            // Pass HOME explicitly for tools that need it
+            'HOME': Platform.environment['HOME'] ?? '/tmp',
+          },
+          workingDirectory: path.dirname(binary),
+        );
+
+        debugPrint('[BundledServerService] Process started with PID: ${_serverProcess!.pid}');
+      } catch (procError) {
+        debugPrint('[BundledServerService] Process.start failed: $procError');
+        _lastError = 'Failed to start server process: $procError';
+        _updateStatus(ServerStatus.error);
+        return false;
+      }
 
       // Log stdout/stderr
       _serverProcess!.stdout.transform(utf8.decoder).listen((data) {
@@ -231,21 +258,40 @@ class BundledServerService {
         'parachute-server',
       );
 
+      debugPrint('[BundledServerService] Checking bundled path: $serverPath');
       if (File(serverPath).existsSync()) {
+        debugPrint('[BundledServerService] Found bundled server at: $serverPath');
         return serverPath;
       }
+      debugPrint('[BundledServerService] Bundled server not found at: $serverPath');
 
       // Also check for development mode (server in sibling directory)
+      // When running from Xcode/flutter run, the executable is at:
+      // .../app/build/macos/Build/Products/Debug/parachute.app/Contents/MacOS/parachute
+      // And we need to get to:
+      // .../base/dist/parachute-server/parachute-server
+      //
+      // Count up from executable: MacOS -> Contents -> parachute.app -> Debug -> Products -> Build -> macos -> build -> app
+      // Then go to: ../base/dist/parachute-server/parachute-server
+      var current = path.dirname(execPath); // MacOS
+      for (var i = 0; i < 8; i++) {
+        current = path.dirname(current);
+      }
+      // Now we should be at the 'app' directory
+      final projectRoot = path.dirname(current); // parent of 'app' is project root
       final devServerPath = path.join(
-        path.dirname(path.dirname(path.dirname(execPath))),
+        projectRoot,
         'base',
         'dist',
         'parachute-server',
         'parachute-server',
       );
+      debugPrint('[BundledServerService] Checking dev path: $devServerPath');
       if (File(devServerPath).existsSync()) {
+        debugPrint('[BundledServerService] Found dev server at: $devServerPath');
         return devServerPath;
       }
+      debugPrint('[BundledServerService] Dev server not found at: $devServerPath');
     } else if (Platform.isLinux) {
       // Linux: server next to executable
       final serverPath = path.join(
