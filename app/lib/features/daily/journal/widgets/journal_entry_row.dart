@@ -6,6 +6,16 @@ import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/core/providers/file_system_provider.dart';
 import '../models/journal_entry.dart';
 
+/// Save state for journal entry editing
+enum EntrySaveState {
+  /// No unsaved changes
+  saved,
+  /// Changes pending save (debounce timer running)
+  saving,
+  /// Draft saved to local storage
+  draftSaved,
+}
+
 /// Minimal, markdown-native entry display
 ///
 /// Displays entries as document sections rather than cards,
@@ -28,6 +38,7 @@ class JournalEntryRow extends ConsumerStatefulWidget {
   final bool isEnhancing;
   final double? enhancementProgress; // 0.0-1.0, null for indeterminate
   final String? enhancementStatus; // Status message during enhancement
+  final EntrySaveState saveState; // Current save state when editing
 
   const JournalEntryRow({
     super.key,
@@ -48,6 +59,7 @@ class JournalEntryRow extends ConsumerStatefulWidget {
     this.isEnhancing = false,
     this.enhancementProgress,
     this.enhancementStatus,
+    this.saveState = EntrySaveState.saved,
   });
 
   @override
@@ -164,8 +176,10 @@ class _JournalEntryRowState extends ConsumerState<JournalEntryRow> {
     return Padding(
       padding: const EdgeInsets.only(top: 12),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.end,
         children: [
+          // Save state indicator
+          _buildSaveStateIndicator(isDark),
+          const Spacer(),
           TextButton.icon(
             onPressed: widget.onEditingComplete,
             icon: Icon(
@@ -190,6 +204,53 @@ class _JournalEntryRowState extends ConsumerState<JournalEntryRow> {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildSaveStateIndicator(bool isDark) {
+    final IconData icon;
+    final String label;
+    final Color color;
+
+    switch (widget.saveState) {
+      case EntrySaveState.saved:
+        icon = Icons.check_circle_outline;
+        label = 'Saved';
+        color = BrandColors.forest;
+      case EntrySaveState.saving:
+        icon = Icons.sync;
+        label = 'Saving...';
+        color = BrandColors.driftwood;
+      case EntrySaveState.draftSaved:
+        icon = Icons.save_outlined;
+        label = 'Draft saved';
+        color = BrandColors.turquoise;
+    }
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (widget.saveState == EntrySaveState.saving)
+          SizedBox(
+            width: 14,
+            height: 14,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              color: color,
+            ),
+          )
+        else
+          Icon(icon, size: 14, color: color),
+        const SizedBox(width: 4),
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 12,
+            color: color,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+      ],
     );
   }
 
@@ -587,12 +648,51 @@ class _JournalEntryRowState extends ConsumerState<JournalEntryRow> {
       );
     }
 
-    return Text(
-      widget.entry.content,
-      style: theme.textTheme.bodyMedium?.copyWith(
-        color: isDark ? BrandColors.stone : BrandColors.charcoal,
-        height: 1.6,
-      ),
+    // Truncate long content in list view (show 4 lines max)
+    const maxLines = 4;
+    final contentStyle = theme.textTheme.bodyMedium?.copyWith(
+      color: isDark ? BrandColors.stone : BrandColors.charcoal,
+      height: 1.6,
+    );
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // Create a text painter to measure if we need truncation
+        final textSpan = TextSpan(
+          text: widget.entry.content,
+          style: contentStyle,
+        );
+        final textPainter = TextPainter(
+          text: textSpan,
+          maxLines: maxLines,
+          textDirection: TextDirection.ltr,
+        )..layout(maxWidth: constraints.maxWidth);
+
+        final isOverflowing = textPainter.didExceedMaxLines;
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              widget.entry.content,
+              style: contentStyle,
+              maxLines: maxLines,
+              overflow: TextOverflow.ellipsis,
+            ),
+            if (isOverflowing)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  'Tap to read more',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: BrandColors.turquoise,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
     );
   }
 

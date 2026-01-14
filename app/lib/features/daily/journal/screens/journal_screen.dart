@@ -16,6 +16,7 @@ import '../models/journal_entry.dart';
 import '../providers/journal_providers.dart';
 import '../widgets/collapsible_chat_log_section.dart';
 import '../widgets/curator_trigger_card.dart';
+import '../widgets/entry_edit_modal.dart';
 import '../widgets/journal_entry_row.dart';
 import '../widgets/journal_input_bar.dart';
 import '../widgets/mini_audio_player.dart';
@@ -33,7 +34,8 @@ class JournalScreen extends ConsumerStatefulWidget {
   ConsumerState<JournalScreen> createState() => _JournalScreenState();
 }
 
-class _JournalScreenState extends ConsumerState<JournalScreen> {
+class _JournalScreenState extends ConsumerState<JournalScreen>
+    with WidgetsBindingObserver {
   final ScrollController _scrollController = ScrollController();
 
   // Editing state
@@ -70,6 +72,17 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
   Timer? _draftSaveTimer;
   static const _draftKeyPrefix = 'journal_draft_';
 
+  // Save state tracking for UI feedback
+  bool _isSaving = false;
+  bool _hasDraftSaved = false;
+
+  /// Get current save state for UI indicator
+  EntrySaveState get _currentSaveState {
+    if (_isSaving) return EntrySaveState.saving;
+    if (_hasDraftSaved) return EntrySaveState.draftSaved;
+    return EntrySaveState.saved;
+  }
+
   // Local journal cache to avoid loading flash on updates
   JournalDay? _cachedJournal;
   DateTime? _cachedJournalDate;
@@ -77,15 +90,39 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     // Check for any pending drafts on startup
     _checkForPendingDrafts();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    // Flush any pending draft before disposing
+    _flushPendingDraft();
     _draftSaveTimer?.cancel();
     _scrollController.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Save draft when app goes to background
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive) {
+      _flushPendingDraft();
+    }
+  }
+
+  /// Immediately save any pending draft (call before dispose or background)
+  void _flushPendingDraft() {
+    if (_editingEntryId != null &&
+        (_editingEntryContent != null || _editingEntryTitle != null)) {
+      _draftSaveTimer?.cancel();
+      // Fire and forget - we're disposing so can't await
+      _saveDraft(_editingEntryId!, _editingEntryContent, _editingEntryTitle);
+      debugPrint('[JournalScreen] Flushed pending draft for ${_editingEntryId}');
+    }
   }
 
   /// Check if there are any pending drafts and offer to restore them
@@ -100,6 +137,13 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
   /// Save draft for an entry (debounced)
   void _saveDraftDebounced(String entryId, String? content, String? title) {
     _draftSaveTimer?.cancel();
+    // Show "saving" state immediately
+    if (mounted) {
+      setState(() {
+        _isSaving = true;
+        _hasDraftSaved = false;
+      });
+    }
     _draftSaveTimer = Timer(const Duration(milliseconds: 500), () {
       _saveDraft(entryId, content, title);
     });
@@ -116,6 +160,14 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
     final draftValue = '${title ?? ''}|||${content ?? ''}';
     await prefs.setString(key, draftValue);
     debugPrint('[JournalScreen] Draft saved for entry $entryId');
+
+    // Update save state
+    if (mounted) {
+      setState(() {
+        _isSaving = false;
+        _hasDraftSaved = true;
+      });
+    }
   }
 
   /// Load draft for an entry
@@ -891,6 +943,7 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
                           entry: entry,
                           audioPath: journal.getAudioPath(entry.id),
                           isEditing: isEditing,
+                          saveState: isEditing ? _currentSaveState : EntrySaveState.saved,
                           // Show transcribing for both manual transcribe and background transcription
                           isTranscribing: _transcribingEntryIds.contains(entry.id) ||
                               _pendingTranscriptionEntryId == entry.id,
@@ -959,6 +1012,9 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
     // Start editing this entry
     setState(() {
       _editingEntryId = entry.id;
+      // Reset save state
+      _isSaving = false;
+      _hasDraftSaved = hasUnsavedDraft; // Show "Draft saved" if we restored a draft
       // Use draft content if available, otherwise use entry content
       if (hasUnsavedDraft) {
         _editingEntryContent = draft.content ?? entry.content;
@@ -1007,6 +1063,9 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
       _editingEntryId = null;
       _editingEntryContent = null;
       _editingEntryTitle = null;
+      // Reset save state
+      _isSaving = false;
+      _hasDraftSaved = false;
     });
 
     // Only save if we have content changes
@@ -1423,139 +1482,25 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
   }
 
   void _showEntryDetail(BuildContext context, JournalEntry entry) {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final canEdit = entry.id != 'preamble' && !entry.id.startsWith('plain_');
 
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (sheetContext) => DraggableScrollableSheet(
-        initialChildSize: 0.7,
-        minChildSize: 0.5,
-        maxChildSize: 0.95,
-        builder: (context, scrollController) => Container(
-          decoration: BoxDecoration(
-            color: isDark ? BrandColors.nightSurface : BrandColors.softWhite,
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-          ),
-          child: Column(
-            children: [
-              // Handle bar
-              Container(
-                margin: const EdgeInsets.only(top: 12),
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: isDark ? BrandColors.charcoal : BrandColors.stone,
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-
-              // Header
-              Padding(
-                padding: const EdgeInsets.all(20),
-                child: Row(
-                  children: [
-                    // Type icon
-                    Container(
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                        color: _getEntryColor(entry.type).withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Icon(
-                        _getEntryIcon(entry.type),
-                        color: _getEntryColor(entry.type),
-                        size: 24,
-                      ),
-                    ),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            entry.title.isNotEmpty ? entry.title : 'Untitled',
-                            style: theme.textTheme.titleLarge?.copyWith(
-                              color: isDark ? BrandColors.softWhite : BrandColors.ink,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                          if (entry.durationSeconds != null && entry.durationSeconds! > 0)
-                            Text(
-                              _formatDuration(entry.durationSeconds!),
-                              style: theme.textTheme.bodySmall?.copyWith(
-                                color: BrandColors.driftwood,
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-                    // Edit button
-                    if (canEdit)
-                      IconButton(
-                        icon: Icon(Icons.edit_outlined, color: BrandColors.forest),
-                        tooltip: 'Edit',
-                        onPressed: () {
-                          Navigator.pop(sheetContext);
-                          _startEditing(entry);
-                        },
-                      ),
-                    IconButton(
-                      icon: const Icon(Icons.close),
-                      color: BrandColors.driftwood,
-                      onPressed: () => Navigator.pop(sheetContext),
-                    ),
-                  ],
-                ),
-              ),
-
-              const Divider(height: 1),
-
-              // Audio player for voice entries
-              if (entry.hasAudio)
-                _buildAudioPlayer(context, entry, isDark),
-
-              // Content
-              Expanded(
-                child: SingleChildScrollView(
-                  controller: scrollController,
-                  padding: const EdgeInsets.all(20),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // Image for photo/handwriting entries
-                      if (entry.hasImage)
-                        _buildDetailImage(context, entry, isDark),
-
-                      if (entry.content.isNotEmpty) ...[
-                        if (entry.hasImage) const SizedBox(height: 16),
-                        SelectableText(
-                          entry.content,
-                          style: theme.textTheme.bodyLarge?.copyWith(
-                            color: isDark ? BrandColors.stone : BrandColors.charcoal,
-                            height: 1.6,
-                          ),
-                        ),
-                      ] else if (entry.isLinked && entry.linkedFilePath != null)
-                        _buildLinkedFileInfo(context, entry.linkedFilePath!)
-                      else if (!entry.hasImage)
-                        Text(
-                          'No content',
-                          style: theme.textTheme.bodyMedium?.copyWith(
-                            color: BrandColors.driftwood,
-                            fontStyle: FontStyle.italic,
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
+      builder: (sheetContext) => EntryEditModal(
+        entry: entry,
+        canEdit: canEdit,
+        audioPlayer: entry.hasAudio
+            ? _buildAudioPlayer(context, entry, isDark)
+            : null,
+        onSave: (updatedEntry) async {
+          final service = await ref.read(journalServiceFutureProvider.future);
+          final selectedDate = ref.read(selectedJournalDateProvider);
+          await service.updateEntry(selectedDate, updatedEntry);
+          ref.invalidate(selectedJournalProvider);
+        },
       ),
     );
   }
