@@ -10,6 +10,7 @@ import 'package:parachute/core/providers/feature_flags_provider.dart';
 import 'package:parachute/core/services/backend_health_service.dart';
 import 'package:parachute/features/daily/journal/providers/journal_providers.dart';
 import '../widgets/omi_device_section.dart';
+import '../widgets/api_key_section.dart';
 
 /// Unified Settings screen for Parachute
 ///
@@ -314,6 +315,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
           // Parachute Vault Section (unified storage)
           _buildVaultSection(isDark, showChatFolder),
+
+          // API Keys Section (for multi-device auth)
+          if (showChatFolder) ...[
+            SizedBox(height: Spacing.xl),
+            _SettingsCard(
+              isDark: isDark,
+              child: const ApiKeySection(),
+            ),
+          ],
 
           // Omi Device Section (iOS/Android only)
           if (Platform.isIOS || Platform.isAndroid) ...[

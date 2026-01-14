@@ -19,6 +19,7 @@ import '../services/local_session_reader.dart';
 import '../services/chat_import_service.dart';
 import '../services/background_stream_manager.dart';
 import 'package:parachute/core/providers/feature_flags_provider.dart';
+import 'package:parachute/core/providers/app_state_provider.dart';
 import 'package:parachute/core/services/file_system_service.dart';
 import 'package:parachute/core/providers/file_system_provider.dart';
 import 'package:parachute/core/services/logging_service.dart';
@@ -33,14 +34,18 @@ import 'package:parachute/core/services/performance_service.dart';
 
 /// Provider for ChatService
 ///
-/// Creates a new ChatService instance with the configured server URL.
+/// Creates a new ChatService instance with the configured server URL and API key.
 /// The service handles all communication with the parachute-agent backend.
 final chatServiceProvider = Provider<ChatService>((ref) {
   // Watch the server URL - this will rebuild ChatService when URL changes
   final urlAsync = ref.watch(aiServerUrlProvider);
   final baseUrl = urlAsync.valueOrNull ?? 'http://localhost:3333';
 
-  final service = ChatService(baseUrl: baseUrl);
+  // Watch the API key - this will rebuild ChatService when key changes
+  final apiKeyAsync = ref.watch(apiKeyProvider);
+  final apiKey = apiKeyAsync.valueOrNull;
+
+  final service = ChatService(baseUrl: baseUrl, apiKey: apiKey);
 
   ref.onDispose(() {
     service.dispose();

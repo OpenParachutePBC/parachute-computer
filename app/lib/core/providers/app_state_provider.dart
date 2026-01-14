@@ -77,6 +77,33 @@ final isServerConfiguredProvider = Provider<bool>((ref) {
   return ref.watch(appModeProvider) == AppMode.full;
 });
 
+/// Notifier for API key with persistence
+class ApiKeyNotifier extends AsyncNotifier<String?> {
+  static const _key = 'parachute_api_key';
+
+  @override
+  Future<String?> build() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_key);
+  }
+
+  Future<void> setApiKey(String? key) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (key != null && key.isNotEmpty) {
+      await prefs.setString(_key, key);
+      state = AsyncData(key);
+    } else {
+      await prefs.remove(_key);
+      state = const AsyncData(null);
+    }
+  }
+}
+
+/// API key provider with notifier for updates
+final apiKeyProvider = AsyncNotifierProvider<ApiKeyNotifier, String?>(() {
+  return ApiKeyNotifier();
+});
+
 /// Notifier for onboarding completion state
 class OnboardingNotifier extends AsyncNotifier<bool> {
   static const _key = 'parachute_onboarding_complete';
