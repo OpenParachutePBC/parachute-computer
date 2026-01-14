@@ -11,6 +11,7 @@ import 'core/theme/app_theme.dart';
 import 'core/theme/design_tokens.dart';
 import 'core/providers/app_state_provider.dart';
 import 'core/providers/model_download_provider.dart';
+import 'core/providers/server_providers.dart';
 import 'core/services/logging_service.dart';
 import 'core/services/model_download_service.dart';
 import 'core/widgets/model_download_banner.dart';
@@ -64,7 +65,22 @@ void main() async {
     return true;
   };
 
-  runApp(const ProviderScope(child: ParachuteApp()));
+  // Create provider container for early initialization
+  final container = ProviderContainer();
+
+  // Initialize bundled server on desktop platforms
+  // This checks if the app has a bundled server binary and starts it
+  if (Platform.isMacOS || Platform.isLinux || Platform.isWindows) {
+    debugPrint('[Parachute] Checking for bundled server...');
+    await initializeBundledServer(container);
+  }
+
+  runApp(
+    UncontrolledProviderScope(
+      container: container,
+      child: const ParachuteApp(),
+    ),
+  );
 }
 
 /// Initialize services that should start before app renders

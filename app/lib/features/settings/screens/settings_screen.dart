@@ -11,6 +11,7 @@ import 'package:parachute/core/services/backend_health_service.dart';
 import 'package:parachute/features/daily/journal/providers/journal_providers.dart';
 import '../widgets/omi_device_section.dart';
 import '../widgets/api_key_section.dart';
+import '../widgets/bundled_server_section.dart';
 
 /// Unified Settings screen for Parachute
 ///
@@ -308,6 +309,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       body: ListView(
         padding: EdgeInsets.all(Spacing.lg),
         children: [
+          // Bundled Server Section (desktop only - shows when server is bundled)
+          if (Platform.isMacOS || Platform.isLinux || Platform.isWindows) ...[
+            _SettingsCard(
+              isDark: isDark,
+              child: const BundledServerSection(),
+            ),
+            SizedBox(height: Spacing.xl),
+          ],
+
           // Server Connection Section
           _buildServerSection(isDark),
 

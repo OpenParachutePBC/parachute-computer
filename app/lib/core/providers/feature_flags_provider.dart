@@ -1,5 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../services/feature_flags_service.dart';
+import '../services/bundled_server_service.dart';
+import 'server_providers.dart';
 import 'app_state_provider.dart';
 
 /// Provider for the feature flags service
@@ -21,9 +23,23 @@ final aiChatEnabledProvider = FutureProvider<bool>((ref) async {
 
 /// Provider for AI server URL
 ///
-/// Reads from FeatureFlagsService (same as the working chat app).
-/// Falls back to localhost if not configured.
+/// Priority:
+/// 1. If bundled server is running → use bundled server URL (localhost:3333)
+/// 2. Otherwise → fall back to configured URL from FeatureFlagsService
+///
+/// This enables the "Parachute Computer" experience where the app bundles
+/// the server on desktop platforms.
 final aiServerUrlProvider = FutureProvider<String>((ref) async {
+  // Check if bundled server is available and running
+  final serverStatus = ref.watch(serverStatusProvider);
+  final bundledService = ref.watch(bundledServerServiceProvider);
+
+  if (serverStatus == ServerStatus.running) {
+    // Bundled server is running - use it
+    return bundledService.serverUrl;
+  }
+
+  // Fall back to configured URL from feature flags service
   final service = ref.watch(featureFlagsServiceProvider);
   return service.getAiServerUrl();
 });
