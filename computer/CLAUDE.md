@@ -109,4 +109,3 @@ Sync Service → Reflection Agent → Content-Scout → Creative-Director
 - The pointer architecture means session.db is metadata only
 - Curator is a long-running agent with its own state file
 - `VAULT_PATH` env var defaults to `./sample-vault` (set to `~/Parachute` in prod)
-- OAuth MCP state is currently in-memory only (consider persisting for production)

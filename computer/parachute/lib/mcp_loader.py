@@ -10,8 +10,7 @@ Supports two types of MCP servers:
 
 Remote servers can use different auth methods:
 - none: No authentication required
-- bearer: Static API key/token
-- oauth: OAuth 2.1 flow (requires token management)
+- bearer: Static API key/token (configured in headers)
 """
 
 import json
@@ -28,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 
 # Valid auth types for remote MCP servers
-AuthType = Literal["none", "bearer", "oauth"]
+AuthType = Literal["none", "bearer"]
 
 
 def _get_builtin_mcp_servers(vault_path: Path) -> dict[str, dict[str, Any]]:
@@ -98,7 +97,7 @@ def _process_config(config: dict[str, Any]) -> dict[str, Any]:
 
 
 async def load_mcp_servers(
-    vault_path: Path, raw: bool = False, attach_tokens: bool = False
+    vault_path: Path, raw: bool = False
 ) -> dict[str, dict[str, Any]]:
     """
     Load MCP server configurations.
@@ -109,7 +108,6 @@ async def load_mcp_servers(
     Args:
         vault_path: Path to the vault
         raw: If True, don't substitute environment variables
-        attach_tokens: If True, attach OAuth tokens to HTTP servers (for SDK use)
 
     Returns:
         Dictionary mapping server names to their configurations
@@ -118,9 +116,8 @@ async def load_mcp_servers(
 
     mcp_path = vault_path / ".mcp.json"
 
-    # Check cache (invalidate if path changed or tokens requested)
-    # Don't use cache when attaching tokens since they may have changed
-    if not raw and not attach_tokens and _mcp_cache_path == mcp_path and _mcp_cache:
+    # Check cache
+    if not raw and _mcp_cache_path == mcp_path and _mcp_cache:
         return _mcp_cache
 
     # Start with built-in servers
@@ -162,56 +159,12 @@ async def load_mcp_servers(
 
         processed[name] = processed_config
 
-    # Attach OAuth tokens to HTTP servers if requested
-    if attach_tokens:
-        processed = await _attach_oauth_tokens(processed)
-
-    # Update cache (only if not attaching tokens)
-    if not attach_tokens:
-        _mcp_cache = processed
-        _mcp_cache_path = mcp_path
+    # Update cache
+    _mcp_cache = processed
+    _mcp_cache_path = mcp_path
 
     logger.debug(f"Total MCP servers available: {len(processed)}")
     return processed
-
-
-async def _attach_oauth_tokens(servers: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    """
-    Attach OAuth tokens to HTTP servers that require authentication.
-
-    The Claude SDK needs the Authorization header set for HTTP MCP servers.
-    """
-    from parachute.db.database import get_database
-
-    result = {}
-    db = await get_database()
-
-    for name, config in servers.items():
-        server_type = _get_server_type(config)
-
-        if server_type == "http":
-            # Check if we have a stored OAuth token for this server
-            try:
-                token = await db.get_oauth_token(name)
-                if token and token.get("access_token"):
-                    # Check if token is expired
-                    is_expired = await db.is_token_expired(name)
-                    if not is_expired:
-                        # Add Authorization header
-                        config = dict(config)  # Make a copy
-                        headers = dict(config.get("headers", {}))
-                        token_type = token.get("token_type", "Bearer")
-                        headers["Authorization"] = f"{token_type} {token['access_token']}"
-                        config["headers"] = headers
-                        logger.info(f"Attached OAuth token to MCP server '{name}'")
-                    else:
-                        logger.warning(f"OAuth token expired for MCP server '{name}'")
-            except Exception as e:
-                logger.warning(f"Failed to get OAuth token for {name}: {e}")
-
-        result[name] = config
-
-    return result
 
 
 def _validate_remote_server(name: str, config: dict[str, Any]) -> list[str]:
@@ -229,17 +182,11 @@ def _validate_remote_server(name: str, config: dict[str, Any]) -> list[str]:
         errors.append(f"Server '{name}': url must start with http:// or https://")
 
     auth = config.get("auth", "none")
-    if auth not in ("none", "bearer", "oauth"):
-        errors.append(f"Server '{name}': invalid auth type '{auth}' (must be none, bearer, or oauth)")
+    if auth not in ("none", "bearer"):
+        errors.append(f"Server '{name}': invalid auth type '{auth}' (must be none or bearer)")
 
-    if auth == "bearer" and not config.get("token"):
-        errors.append(f"Server '{name}': bearer auth requires 'token' field")
-
-    if auth == "oauth":
-        # OAuth servers may optionally specify scopes
-        scopes = config.get("scopes", [])
-        if scopes and not isinstance(scopes, list):
-            errors.append(f"Server '{name}': 'scopes' must be a list of strings")
+    if auth == "bearer" and not config.get("headers", {}).get("Authorization"):
+        errors.append(f"Server '{name}': bearer auth requires 'Authorization' header")
 
     return errors
 
