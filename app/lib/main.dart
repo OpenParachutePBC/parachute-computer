@@ -12,6 +12,7 @@ import 'core/theme/design_tokens.dart';
 import 'core/providers/app_state_provider.dart';
 import 'core/providers/model_download_provider.dart';
 import 'core/providers/server_providers.dart';
+import 'core/providers/sync_provider.dart';
 import 'core/services/logging_service.dart';
 import 'core/services/model_download_service.dart';
 import 'core/widgets/model_download_banner.dart';
@@ -216,7 +217,44 @@ class _TabShell extends ConsumerStatefulWidget {
   ConsumerState<_TabShell> createState() => _TabShellState();
 }
 
-class _TabShellState extends ConsumerState<_TabShell> {
+class _TabShellState extends ConsumerState<_TabShell> with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    // Eagerly initialize sync provider so it's ready when journal entries are created
+    // Access the notifier directly - it handles its own async server check internally
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      debugPrint('[MainShell] Eagerly initializing sync provider');
+      ref.read(syncProvider.notifier);
+    });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final syncAvailable = ref.read(syncAvailableProvider);
+    if (!syncAvailable) return;
+
+    final syncNotifier = ref.read(syncProvider.notifier);
+    switch (state) {
+      case AppLifecycleState.resumed:
+        syncNotifier.onAppResumed();
+        break;
+      case AppLifecycleState.paused:
+      case AppLifecycleState.inactive:
+        syncNotifier.onAppPaused();
+        break;
+      default:
+        break;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final appMode = ref.watch(appModeProvider);

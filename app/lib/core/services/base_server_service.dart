@@ -180,6 +180,94 @@ class BaseServerService {
     }
   }
 
+  // ============================================================
+  // Daily Agents
+  // ============================================================
+
+  /// Get the list of configured daily agents
+  ///
+  /// Returns all agents discovered in Daily/.agents/ with their
+  /// configuration and state.
+  Future<List<DailyAgentInfo>?> getDailyAgents() async {
+    try {
+      final response = await http
+          .get(Uri.parse('${await getServerUrl()}/api/modules/daily/agents'))
+          .timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body) as Map<String, dynamic>;
+        final agentsList = data['agents'] as List<dynamic>? ?? [];
+        return agentsList
+            .map((a) => DailyAgentInfo.fromJson(a as Map<String, dynamic>))
+            .toList();
+      }
+      debugPrint('[BaseServerService] Get agents error: ${response.statusCode}');
+      return null;
+    } catch (e) {
+      debugPrint('[BaseServerService] Error getting daily agents: $e');
+      return null;
+    }
+  }
+
+  /// Get details for a specific daily agent
+  Future<DailyAgentInfo?> getDailyAgent(String agentName) async {
+    try {
+      final response = await http
+          .get(Uri.parse('${await getServerUrl()}/api/modules/daily/agents/$agentName'))
+          .timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body) as Map<String, dynamic>;
+        return DailyAgentInfo.fromJson(data);
+      }
+      debugPrint('[BaseServerService] Get agent error: ${response.statusCode}');
+      return null;
+    } catch (e) {
+      debugPrint('[BaseServerService] Error getting agent $agentName: $e');
+      return null;
+    }
+  }
+
+  /// Trigger a daily agent to run
+  ///
+  /// Parameters:
+  /// - [agentName]: Name of the agent (e.g., "curator", "content-scout")
+  /// - [date]: Optional date in YYYY-MM-DD format (defaults to yesterday)
+  /// - [force]: Force run even if already processed
+  Future<AgentRunResult> triggerDailyAgent(
+    String agentName, {
+    String? date,
+    bool force = false,
+  }) async {
+    try {
+      final body = <String, dynamic>{};
+      if (date != null) body['date'] = date;
+      if (force) body['force'] = true;
+
+      final response = await http
+          .post(
+            Uri.parse('${await getServerUrl()}/api/modules/daily/agents/$agentName/run'),
+            headers: {'Content-Type': 'application/json'},
+            body: json.encode(body),
+          )
+          .timeout(const Duration(seconds: 180)); // Agents can take a while
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body) as Map<String, dynamic>;
+        return AgentRunResult.fromJson(data);
+      } else {
+        final error = _parseError(response);
+        return AgentRunResult(success: false, status: 'error', error: error);
+      }
+    } on SocketException catch (e) {
+      return AgentRunResult(success: false, status: 'error', error: 'Server not reachable: $e');
+    } on http.ClientException catch (e) {
+      return AgentRunResult(success: false, status: 'error', error: 'Connection error: $e');
+    } catch (e) {
+      return AgentRunResult(success: false, status: 'error', error: 'Error triggering agent: $e');
+    }
+  }
+
   String _parseError(http.Response response) {
     try {
       final data = json.decode(response.body) as Map<String, dynamic>;
@@ -363,4 +451,90 @@ class TranscriptBlock {
   bool get isText => type == 'text';
   bool get isToolUse => type == 'tool_use';
   bool get isToolResult => type == 'tool_result';
+}
+
+// ============================================================
+// Daily Agent Models
+// ============================================================
+
+/// Configuration for a daily agent
+class DailyAgentInfo {
+  final String name;
+  final String displayName;
+  final String description;
+  final bool scheduleEnabled;
+  final String scheduleTime;
+  final String outputPath;
+  final String? lastRunAt;
+  final String? lastProcessedDate;
+  final int runCount;
+
+  DailyAgentInfo({
+    required this.name,
+    required this.displayName,
+    required this.description,
+    required this.scheduleEnabled,
+    required this.scheduleTime,
+    required this.outputPath,
+    this.lastRunAt,
+    this.lastProcessedDate,
+    this.runCount = 0,
+  });
+
+  factory DailyAgentInfo.fromJson(Map<String, dynamic> json) {
+    final schedule = json['schedule'] as Map<String, dynamic>? ?? {};
+    final state = json['state'] as Map<String, dynamic>? ?? {};
+
+    return DailyAgentInfo(
+      name: json['name'] as String? ?? '',
+      displayName: json['displayName'] as String? ?? json['name'] as String? ?? '',
+      description: json['description'] as String? ?? '',
+      scheduleEnabled: schedule['enabled'] as bool? ?? true,
+      scheduleTime: schedule['time'] as String? ?? '03:00',
+      outputPath: json['outputPath'] as String? ?? '',
+      lastRunAt: state['lastRunAt'] as String?,
+      lastProcessedDate: state['lastProcessedDate'] as String?,
+      runCount: state['runCount'] as int? ?? 0,
+    );
+  }
+
+  /// Get the output directory name from the output path (e.g., "reflections" from "Daily/reflections/{date}.md")
+  String get outputDirectory {
+    final parts = outputPath.split('/');
+    if (parts.length >= 2) {
+      return parts[1];
+    }
+    return name;
+  }
+}
+
+/// Result of triggering a daily agent
+class AgentRunResult {
+  final bool success;
+  final String status;
+  final String? outputPath;
+  final String? error;
+  final String? journalDate;
+  final String? outputDate;
+
+  AgentRunResult({
+    required this.success,
+    required this.status,
+    this.outputPath,
+    this.error,
+    this.journalDate,
+    this.outputDate,
+  });
+
+  factory AgentRunResult.fromJson(Map<String, dynamic> json) {
+    final status = json['status'] as String? ?? 'unknown';
+    return AgentRunResult(
+      success: status == 'completed' || status == 'completed_no_output' || status == 'skipped',
+      status: status,
+      outputPath: json['output_path'] as String?,
+      error: json['error'] as String?,
+      journalDate: json['journal_date'] as String?,
+      outputDate: json['output_date'] as String?,
+    );
+  }
 }

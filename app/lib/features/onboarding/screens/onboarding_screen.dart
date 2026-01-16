@@ -6,15 +6,24 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/core/providers/app_state_provider.dart';
-import 'package:parachute/core/providers/feature_flags_provider.dart';
 import 'package:parachute/core/providers/file_system_provider.dart';
+import 'package:parachute/core/providers/server_providers.dart';
 import 'package:parachute/features/daily/journal/providers/journal_providers.dart';
+import '../widgets/claude_auth_step.dart';
+import '../widgets/server_connection_step.dart';
 
-/// Simple onboarding flow for first-time users
+/// Adaptive onboarding flow for first-time users
 ///
-/// Steps:
-/// 1. Welcome + Choose Parachute vault folder
-/// 2. (Optional) Configure server for Chat/Vault
+/// Flow varies by platform:
+///
+/// **Parachute Computer (bundled server):**
+/// 1. Welcome + Choose vault folder
+/// 2. Claude authentication (via `claude setup-token`)
+/// 3. Ready to go
+///
+/// **Mobile/Remote clients:**
+/// 1. Welcome + Choose vault folder
+/// 2. Server URL + API key
 /// 3. Ready to go
 class OnboardingScreen extends ConsumerStatefulWidget {
   const OnboardingScreen({super.key});
@@ -28,8 +37,11 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> with Widget
   String? _vaultPath;
   final _serverUrlController = TextEditingController();
   bool _isSettingUpFolder = false;
-  bool _wantsServer = false;
   bool _needsManageStoragePermission = false;
+
+  /// Whether this is a bundled Parachute Computer (has embedded server)
+  /// Detected on first build
+  bool? _isBundledApp;
 
   @override
   void initState() {
@@ -208,21 +220,6 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> with Widget
     }
   }
 
-  Future<void> _saveServerUrl() async {
-    final url = _serverUrlController.text.trim();
-    if (url.isNotEmpty) {
-      // Save to FeatureFlagsService (same key as working chat app)
-      final featureFlags = ref.read(featureFlagsServiceProvider);
-      await featureFlags.setAiServerUrl(url);
-      featureFlags.clearCache();
-      ref.invalidate(aiServerUrlProvider);
-
-      // Also update serverUrlProvider for app mode detection
-      await ref.read(serverUrlProvider.notifier).setServerUrl(url);
-    }
-    _nextStep();
-  }
-
   void _nextStep() {
     if (_currentStep < 2) {
       setState(() => _currentStep++);
@@ -286,11 +283,25 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> with Widget
   }
 
   Widget _buildStep(bool isDark) {
+    // Detect bundled mode on first build (lazy initialization)
+    _isBundledApp ??= ref.read(isBundledAppProvider);
+
     switch (_currentStep) {
       case 0:
         return _buildWelcomeStep(isDark);
       case 1:
-        return _buildServerStep(isDark);
+        // Step 2 varies by platform:
+        // - Bundled app (Parachute Computer): Skip (Claude auth via `claude login` in terminal)
+        // - Mobile/remote: Server URL + API key
+        if (_isBundledApp == true) {
+          // For bundled apps, go straight to ready step
+          return _buildReadyStep(isDark);
+        } else {
+          return ServerConnectionStep(
+            onNext: _nextStep,
+            onSkip: _nextStep,
+          );
+        }
       case 2:
         return _buildReadyStep(isDark);
       default:
@@ -433,107 +444,6 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> with Widget
           ],
         ],
       ),
-    );
-  }
-
-  Widget _buildServerStep(bool isDark) {
-    return Column(
-      key: const ValueKey('server'),
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        Icon(
-          Icons.cloud_outlined,
-          size: 80,
-          color: isDark ? BrandColors.nightTurquoise : BrandColors.turquoise,
-        ),
-        SizedBox(height: Spacing.xl),
-        Text(
-          'Connect to Server?',
-          style: TextStyle(
-            fontSize: 28,
-            fontWeight: FontWeight.bold,
-            color: isDark ? BrandColors.nightText : BrandColors.charcoal,
-          ),
-          textAlign: TextAlign.center,
-        ),
-        SizedBox(height: Spacing.md),
-        Text(
-          'Connect to a Parachute Base server for AI Chat and file browsing.',
-          style: TextStyle(
-            fontSize: TypographyTokens.bodyMedium,
-            color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
-          ),
-          textAlign: TextAlign.center,
-        ),
-        SizedBox(height: Spacing.xxl),
-
-        // Toggle for server setup
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text(
-              'Enable Chat & Vault',
-              style: TextStyle(
-                color: isDark ? BrandColors.nightText : BrandColors.charcoal,
-              ),
-            ),
-            SizedBox(width: Spacing.md),
-            Switch(
-              value: _wantsServer,
-              onChanged: (value) => setState(() => _wantsServer = value),
-              activeColor: BrandColors.turquoise,
-            ),
-          ],
-        ),
-
-        if (_wantsServer) ...[
-          SizedBox(height: Spacing.lg),
-          Padding(
-            padding: EdgeInsets.symmetric(horizontal: Spacing.lg),
-            child: TextField(
-              controller: _serverUrlController,
-              decoration: InputDecoration(
-                labelText: 'Server URL',
-                hintText: 'http://localhost:3333',
-                border: const OutlineInputBorder(),
-                prefixIcon: const Icon(Icons.link),
-              ),
-              keyboardType: TextInputType.url,
-            ),
-          ),
-        ],
-
-        SizedBox(height: Spacing.xxl),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            OutlinedButton(
-              onPressed: _nextStep,
-              style: OutlinedButton.styleFrom(
-                padding: EdgeInsets.symmetric(
-                  horizontal: Spacing.xl,
-                  vertical: Spacing.md,
-                ),
-              ),
-              child: const Text('Skip for Now'),
-            ),
-            if (_wantsServer) ...[
-              SizedBox(width: Spacing.md),
-              FilledButton(
-                onPressed: _saveServerUrl,
-                style: FilledButton.styleFrom(
-                  backgroundColor: BrandColors.turquoise,
-                  padding: EdgeInsets.symmetric(
-                    horizontal: Spacing.xl,
-                    vertical: Spacing.md,
-                  ),
-                ),
-                child: const Text('Save & Continue'),
-              ),
-            ],
-          ],
-        ),
-      ],
     );
   }
 

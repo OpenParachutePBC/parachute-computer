@@ -649,50 +649,41 @@ class _JournalEntryRowState extends ConsumerState<JournalEntryRow> {
     }
 
     // Truncate long content in list view (show 4 lines max)
+    // Use a simple character threshold to show "read more" hint
+    // This avoids expensive TextPainter layout calculations during scroll
     const maxLines = 4;
+    const charThresholdForReadMore = 200; // Approximate chars before truncation likely
     final contentStyle = theme.textTheme.bodyMedium?.copyWith(
       color: isDark ? BrandColors.stone : BrandColors.charcoal,
       height: 1.6,
     );
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        // Create a text painter to measure if we need truncation
-        final textSpan = TextSpan(
-          text: widget.entry.content,
+    final content = widget.entry.content;
+    final likelyTruncated = content.length > charThresholdForReadMore ||
+        content.contains('\n\n') ||
+        '\n'.allMatches(content).length >= maxLines;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          content,
           style: contentStyle,
-        );
-        final textPainter = TextPainter(
-          text: textSpan,
           maxLines: maxLines,
-          textDirection: TextDirection.ltr,
-        )..layout(maxWidth: constraints.maxWidth);
-
-        final isOverflowing = textPainter.didExceedMaxLines;
-
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              widget.entry.content,
-              style: contentStyle,
-              maxLines: maxLines,
-              overflow: TextOverflow.ellipsis,
-            ),
-            if (isOverflowing)
-              Padding(
-                padding: const EdgeInsets.only(top: 4),
-                child: Text(
-                  'Tap to read more',
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: BrandColors.turquoise,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
+          overflow: TextOverflow.ellipsis,
+        ),
+        if (likelyTruncated)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(
+              'Tap to read more',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: BrandColors.turquoise,
+                fontWeight: FontWeight.w500,
               ),
-          ],
-        );
-      },
+            ),
+          ),
+      ],
     );
   }
 

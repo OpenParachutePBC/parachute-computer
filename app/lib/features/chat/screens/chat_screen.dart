@@ -133,10 +133,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final position = _scrollController.position;
     // Show FAB if scrolled more than 200 pixels from bottom
     final isNearBottom = position.maxScrollExtent - position.pixels < 200;
+    final shouldShowFab = !isNearBottom;
 
-    if (_showScrollToBottomFab == isNearBottom) {
+    // Only call setState if the value actually changed
+    if (_showScrollToBottomFab != shouldShowFab) {
       setState(() {
-        _showScrollToBottomFab = !isNearBottom;
+        _showScrollToBottomFab = shouldShowFab;
       });
     }
   }
@@ -173,10 +175,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
   /// Scroll to bottom instantly (no animation) - for initial load
   void _scrollToBottomInstant() {
-    // Use multiple post-frame callbacks to ensure layout is complete
-    // This handles cases where ListView hasn't attached yet or content is still rendering
+    // Use post-frame callbacks to ensure layout is complete
+    // Reduced from 5 to 2 attempts to minimize frame overhead
     int attempts = 0;
-    const maxAttempts = 5;
+    const maxAttempts = 2;
 
     void tryScroll() {
       if (!mounted) return;
@@ -186,7 +188,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         final maxExtent = _scrollController.position.maxScrollExtent;
         _scrollController.jumpTo(maxExtent);
 
-        // Schedule another check in case content is still loading
+        // Schedule one more check in case content is still loading
         if (attempts < maxAttempts) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted && _scrollController.hasClients) {
@@ -526,6 +528,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                     : ListView.builder(
                         controller: _scrollController,
                         padding: const EdgeInsets.all(Spacing.md),
+                        // Increase cache extent to pre-build items off-screen
+                        // This reduces jank when scrolling by having more items ready
+                        cacheExtent: 500,
+                        // Let MessageBubble handle its own RepaintBoundary
+                        addRepaintBoundaries: false,
                         itemCount: chatState.messages.length +
                             (chatState.isContinuation ? 1 : 0) +
                             (chatState.hasEarlierSegments ? 1 : 0),
@@ -547,8 +554,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                             );
                           }
                           final msgIndex = chatState.isContinuation ? adjustedIndex - 1 : adjustedIndex;
+                          final message = chatState.messages[msgIndex];
                           return MessageBubble(
-                            message: chatState.messages[msgIndex],
+                            key: ValueKey(message.id),
+                            message: message,
                           );
                         },
                       ),

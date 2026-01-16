@@ -7,11 +7,15 @@ import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/core/providers/app_state_provider.dart';
 import 'package:parachute/core/providers/file_system_provider.dart';
 import 'package:parachute/core/providers/feature_flags_provider.dart';
+import 'package:parachute/core/providers/server_providers.dart';
+import 'package:parachute/core/providers/sync_provider.dart';
+import 'package:parachute/core/services/sync_service.dart';
 import 'package:parachute/core/services/backend_health_service.dart';
 import 'package:parachute/features/daily/journal/providers/journal_providers.dart';
 import '../widgets/omi_device_section.dart';
 import '../widgets/api_key_section.dart';
 import '../widgets/bundled_server_section.dart';
+import '../widgets/claude_auth_section.dart';
 
 /// Unified Settings screen for Parachute
 ///
@@ -79,6 +83,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
     // Also update serverUrlProvider for app mode detection
     await ref.read(serverUrlProvider.notifier).setServerUrl(url.isEmpty ? null : url);
+
+    // Reinitialize sync with new server URL
+    if (url.isNotEmpty) {
+      final apiKey = await ref.read(apiKeyProvider.future);
+      await ref.read(syncProvider.notifier).reinitialize(url, apiKey: apiKey);
+    }
 
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -285,6 +295,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final appMode = ref.watch(appModeProvider);
     final showChatFolder = appMode == AppMode.full;
+    final isBundled = ref.watch(isBundledAppProvider);
 
     if (_isLoading) {
       return Scaffold(
@@ -316,6 +327,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               child: const BundledServerSection(),
             ),
             SizedBox(height: Spacing.xl),
+
+            // Claude Authentication Section (desktop only - shows when bundled)
+            _SettingsCard(
+              isDark: isDark,
+              child: const ClaudeAuthSection(),
+            ),
+            SizedBox(height: Spacing.xl),
           ],
 
           // Server Connection Section
@@ -325,6 +343,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
           // Parachute Vault Section (unified storage)
           _buildVaultSection(isDark, showChatFolder),
+
+          // Sync Section (only for remote clients - not needed for bundled apps
+          // since server and app share the same filesystem)
+          if (showChatFolder && !isBundled) ...[
+            SizedBox(height: Spacing.xl),
+            _buildSyncSection(isDark),
+          ],
 
           // API Keys Section (for multi-device auth)
           if (showChatFolder) ...[
@@ -557,6 +582,236 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         ],
       ),
     );
+  }
+
+  Widget _buildSyncSection(bool isDark) {
+    final syncState = ref.watch(syncProvider);
+    final syncNotifier = ref.read(syncProvider.notifier);
+    final syncModeAsync = ref.watch(syncModeProvider);
+    final syncModeNotifier = ref.read(syncModeProvider.notifier);
+
+    return _SettingsCard(
+      isDark: isDark,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.sync,
+                color: isDark ? BrandColors.nightTurquoise : BrandColors.turquoise,
+              ),
+              SizedBox(width: Spacing.sm),
+              Text(
+                'Daily Sync',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: TypographyTokens.bodyLarge,
+                  color: isDark ? BrandColors.nightText : BrandColors.charcoal,
+                ),
+              ),
+              const Spacer(),
+              if (syncState.isSyncing)
+                SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    valueColor: AlwaysStoppedAnimation<Color>(
+                      isDark ? BrandColors.nightTurquoise : BrandColors.turquoise,
+                    ),
+                  ),
+                )
+              else if (syncState.status == SyncStatus.success)
+                Icon(Icons.check_circle, color: BrandColors.success, size: 20)
+              else if (syncState.hasError)
+                Icon(Icons.error, color: BrandColors.error, size: 20),
+            ],
+          ),
+          SizedBox(height: Spacing.sm),
+          Text(
+            'Sync your Daily journals with your Parachute Base server.',
+            style: TextStyle(
+              fontSize: TypographyTokens.bodySmall,
+              color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+            ),
+          ),
+          SizedBox(height: Spacing.lg),
+
+          // Sync Mode Toggle
+          syncModeAsync.when(
+            data: (syncMode) => Container(
+              padding: EdgeInsets.all(Spacing.md),
+              decoration: BoxDecoration(
+                color: (isDark ? BrandColors.nightTurquoise : BrandColors.turquoise)
+                    .withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(Radii.sm),
+                border: Border.all(
+                  color: (isDark ? BrandColors.nightTurquoise : BrandColors.turquoise)
+                      .withValues(alpha: 0.3),
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'Include media files',
+                        style: TextStyle(
+                          fontSize: TypographyTokens.bodyMedium,
+                          fontWeight: FontWeight.w500,
+                          color: isDark ? BrandColors.nightText : BrandColors.charcoal,
+                        ),
+                      ),
+                      Switch(
+                        value: syncMode == SyncMode.full,
+                        onChanged: (value) {
+                          syncModeNotifier.setSyncMode(
+                            value ? SyncMode.full : SyncMode.textOnly,
+                          );
+                        },
+                        activeColor: isDark ? BrandColors.nightTurquoise : BrandColors.turquoise,
+                      ),
+                    ],
+                  ),
+                  SizedBox(height: Spacing.xs),
+                  Text(
+                    syncMode == SyncMode.full
+                        ? 'Syncing all files including audio and images (uses more bandwidth)'
+                        : 'Syncing text files only (faster, less bandwidth)',
+                    style: TextStyle(
+                      fontSize: TypographyTokens.bodySmall,
+                      color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            loading: () => const SizedBox.shrink(),
+            error: (_, __) => const SizedBox.shrink(),
+          ),
+          SizedBox(height: Spacing.md),
+
+          // Last sync info
+          if (syncState.lastSyncTime != null) ...[
+            Container(
+              padding: EdgeInsets.all(Spacing.sm),
+              decoration: BoxDecoration(
+                color: (isDark ? BrandColors.nightTurquoise : BrandColors.turquoise)
+                    .withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(Radii.sm),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.history,
+                    size: 16,
+                    color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+                  ),
+                  SizedBox(width: Spacing.xs),
+                  Expanded(
+                    child: Text(
+                      _formatLastSync(syncState.lastSyncTime!, syncState.lastResult),
+                      style: TextStyle(
+                        fontSize: TypographyTokens.bodySmall,
+                        color: isDark ? BrandColors.nightText : BrandColors.charcoal,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            SizedBox(height: Spacing.md),
+          ],
+
+          // Error message
+          if (syncState.hasError && syncState.errorMessage != null) ...[
+            Container(
+              padding: EdgeInsets.all(Spacing.sm),
+              decoration: BoxDecoration(
+                color: BrandColors.error.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(Radii.sm),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.error_outline, size: 16, color: BrandColors.error),
+                  SizedBox(width: Spacing.xs),
+                  Expanded(
+                    child: Text(
+                      syncState.errorMessage!,
+                      style: TextStyle(
+                        fontSize: TypographyTokens.bodySmall,
+                        color: BrandColors.error,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            SizedBox(height: Spacing.md),
+          ],
+
+          // Sync button
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: syncState.isSyncing
+                  ? null
+                  : () async {
+                      final result = await syncNotifier.sync(pattern: '*');
+                      if (mounted && result.success) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              'Synced: ${result.pushed} pushed, ${result.pulled} pulled',
+                            ),
+                            backgroundColor: BrandColors.success,
+                          ),
+                        );
+                      }
+                    },
+              icon: syncState.isSyncing
+                  ? SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation<Color>(BrandColors.softWhite),
+                      ),
+                    )
+                  : const Icon(Icons.sync, size: 18),
+              label: Text(syncState.isSyncing ? 'Syncing...' : 'Sync Now'),
+              style: FilledButton.styleFrom(
+                backgroundColor: isDark ? BrandColors.nightTurquoise : BrandColors.turquoise,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _formatLastSync(DateTime time, SyncResult? result) {
+    final now = DateTime.now();
+    final diff = now.difference(time);
+
+    String timeAgo;
+    if (diff.inMinutes < 1) {
+      timeAgo = 'just now';
+    } else if (diff.inMinutes < 60) {
+      timeAgo = '${diff.inMinutes}m ago';
+    } else if (diff.inHours < 24) {
+      timeAgo = '${diff.inHours}h ago';
+    } else {
+      timeAgo = '${diff.inDays}d ago';
+    }
+
+    if (result != null && result.success) {
+      return 'Last sync: $timeAgo (↑${result.pushed} ↓${result.pulled})';
+    }
+    return 'Last sync: $timeAgo';
   }
 
   Widget _buildAboutSection(bool isDark) {

@@ -1,14 +1,20 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/providers/file_system_provider.dart';
+import 'package:parachute/core/providers/sync_provider.dart';
+import 'package:parachute/core/providers/base_server_provider.dart';
+import 'package:parachute/core/services/base_server_service.dart';
 import '../models/chat_log.dart';
 import '../models/journal_day.dart';
 import '../models/journal_entry.dart';
 import '../models/reflection.dart';
+import '../models/agent_output.dart';
 import '../services/chat_log_service.dart';
 import '../services/para_id_service.dart';
 import '../services/journal_service.dart';
 import '../services/reflection_service.dart';
+import '../services/agent_output_service.dart';
+import '../services/local_agent_config_service.dart';
 
 /// Async provider that properly initializes the journal service
 ///
@@ -28,6 +34,16 @@ final journalServiceFutureProvider = FutureProvider<JournalService>((ref) async 
   );
 
   await journalService.ensureDirectoryExists();
+
+  // Wire up sync trigger for all journal data changes
+  journalService.onDataChanged = () {
+    debugPrint('[JournalService] Data changed, scheduling sync...');
+    try {
+      ref.read(syncProvider.notifier).scheduleSync();
+    } catch (e) {
+      debugPrint('[JournalService] Failed to schedule sync: $e');
+    }
+  };
 
   return journalService;
 });
@@ -109,6 +125,88 @@ final selectedReflectionProvider = FutureProvider<Reflection?>((ref) async {
   final reflectionService = await ref.watch(reflectionServiceFutureProvider.future);
   return reflectionService.loadReflection(date);
 });
+
+// ============================================================================
+// Daily Agent Providers
+// ============================================================================
+
+/// Provider for the LocalAgentConfigService (reads agent configs from Daily/.agents/)
+final localAgentConfigServiceFutureProvider = FutureProvider<LocalAgentConfigService>((ref) async {
+  final fileSystemService = ref.watch(fileSystemServiceProvider);
+  await fileSystemService.initialize();
+  return LocalAgentConfigService.create(fileSystemService: fileSystemService);
+});
+
+/// Provider for the AgentOutputService
+final agentOutputServiceFutureProvider = FutureProvider<AgentOutputService>((ref) async {
+  final fileSystemService = ref.watch(fileSystemServiceProvider);
+  await fileSystemService.initialize();
+  return AgentOutputService.create(fileSystemService: fileSystemService);
+});
+
+/// Provider for the list of configured daily agents (reads locally from Daily/.agents/)
+///
+/// This works offline - no server connection needed.
+final localAgentConfigsProvider = FutureProvider<List<DailyAgentConfig>>((ref) async {
+  ref.watch(journalRefreshTriggerProvider);
+
+  final service = await ref.watch(localAgentConfigServiceFutureProvider.future);
+  return service.discoverAgents();
+});
+
+/// Provider for a specific agent's outputs
+final agentOutputsProvider = FutureProvider.family<List<AgentOutput>, String>((ref, agentName) async {
+  ref.watch(journalRefreshTriggerProvider);
+
+  final service = await ref.watch(agentOutputServiceFutureProvider.future);
+  final agents = await ref.watch(localAgentConfigsProvider.future);
+
+  final agentConfig = agents.where((a) => a.name == agentName).firstOrNull;
+  if (agentConfig == null) {
+    return [];
+  }
+
+  return service.listAgentOutputs(agentName, agentConfig.outputDirectory);
+});
+
+/// Provider for all agent outputs for a specific date
+final agentOutputsForDateProvider = FutureProvider.family<List<AgentOutput>, DateTime>((ref, date) async {
+  ref.watch(journalRefreshTriggerProvider);
+
+  final service = await ref.watch(agentOutputServiceFutureProvider.future);
+  final agents = await ref.watch(localAgentConfigsProvider.future);
+
+  return service.listOutputsForDate(agents, date);
+});
+
+/// State notifier for triggering agent runs
+class AgentTriggerNotifier extends StateNotifier<AsyncValue<AgentRunResult?>> {
+  final String agentName;
+  final Ref _ref;
+
+  AgentTriggerNotifier(this.agentName, this._ref) : super(const AsyncValue.data(null));
+
+  Future<void> trigger({String? date, bool force = false}) async {
+    state = const AsyncValue.loading();
+
+    try {
+      final server = BaseServerService();
+      final result = await server.triggerDailyAgent(agentName, date: date, force: force);
+      state = AsyncValue.data(result);
+
+      // Trigger refresh to pick up new output
+      if (result.success) {
+        _ref.read(journalRefreshTriggerProvider.notifier).state++;
+      }
+    } catch (e, st) {
+      state = AsyncValue.error(e, st);
+    }
+  }
+
+  void reset() {
+    state = const AsyncValue.data(null);
+  }
+}
 
 /// State notifier for managing journal entry operations
 class JournalNotifier extends StateNotifier<AsyncValue<JournalDay>> {
@@ -285,6 +383,14 @@ class JournalNotifier extends StateNotifier<AsyncValue<JournalDay>> {
 
   void _triggerRefresh() {
     _ref.read(journalRefreshTriggerProvider.notifier).state++;
+    // Schedule a sync after local changes
+    debugPrint('[JournalNotifier] Triggering sync after local change...');
+    try {
+      _ref.read(syncProvider.notifier).scheduleSync();
+      debugPrint('[JournalNotifier] Sync scheduled successfully');
+    } catch (e) {
+      debugPrint('[JournalNotifier] Failed to schedule sync: $e');
+    }
   }
 }
 

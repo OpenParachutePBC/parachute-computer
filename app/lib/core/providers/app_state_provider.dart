@@ -104,6 +104,37 @@ final apiKeyProvider = AsyncNotifierProvider<ApiKeyNotifier, String?>(() {
   return ApiKeyNotifier();
 });
 
+/// Sync mode - whether to sync all files or just text
+enum SyncMode {
+  /// Only sync text files (markdown, configs) - faster, less bandwidth
+  textOnly,
+  /// Sync all files including audio and images
+  full,
+}
+
+/// Notifier for sync mode preference
+class SyncModeNotifier extends AsyncNotifier<SyncMode> {
+  static const _key = 'parachute_sync_mode';
+
+  @override
+  Future<SyncMode> build() async {
+    final prefs = await SharedPreferences.getInstance();
+    final value = prefs.getString(_key);
+    return value == 'full' ? SyncMode.full : SyncMode.textOnly;
+  }
+
+  Future<void> setSyncMode(SyncMode mode) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_key, mode == SyncMode.full ? 'full' : 'textOnly');
+    state = AsyncData(mode);
+  }
+}
+
+/// Sync mode provider
+final syncModeProvider = AsyncNotifierProvider<SyncModeNotifier, SyncMode>(() {
+  return SyncModeNotifier();
+});
+
 /// Notifier for onboarding completion state
 class OnboardingNotifier extends AsyncNotifier<bool> {
   static const _key = 'parachute_onboarding_complete';

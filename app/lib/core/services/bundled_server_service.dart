@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as path;
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// Status of the bundled server
 enum ServerStatus {
@@ -127,12 +128,21 @@ class BundledServerService {
     _lastError = null;
 
     try {
-      // Get vault path
-      // Use PARACHUTE_VAULT_PATH env var if set, otherwise use real user home
-      // Note: On macOS sandboxed apps, HOME points to container, so we detect the real home
+      // Get vault path from SharedPreferences (user's choice from onboarding/settings)
+      // Fall back to env var or default ~/Parachute
       String vaultPath;
-      if (Platform.environment.containsKey('PARACHUTE_VAULT_PATH')) {
+      final prefs = await SharedPreferences.getInstance();
+
+      // Check SharedPreferences first (matches FileSystemService key pattern)
+      final savedVaultPath = prefs.getString('daily_vault_path') ??
+                             prefs.getString('chat_vault_path');
+
+      if (savedVaultPath != null && savedVaultPath.isNotEmpty) {
+        vaultPath = savedVaultPath;
+        debugPrint('[BundledServerService] Using saved vault path: $vaultPath');
+      } else if (Platform.environment.containsKey('PARACHUTE_VAULT_PATH')) {
         vaultPath = Platform.environment['PARACHUTE_VAULT_PATH']!;
+        debugPrint('[BundledServerService] Using env var vault path: $vaultPath');
       } else {
         // Get real user home directory (not sandboxed container)
         // On macOS, we can use /Users/<username> directly
@@ -145,6 +155,7 @@ class BundledServerService {
         } else {
           vaultPath = path.join(home, 'Parachute');
         }
+        debugPrint('[BundledServerService] Using default vault path: $vaultPath');
       }
 
       // Ensure vault directory exists

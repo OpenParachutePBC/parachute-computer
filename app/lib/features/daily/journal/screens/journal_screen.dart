@@ -9,10 +9,13 @@ import 'package:parachute/core/services/file_system_service.dart';
 import 'package:parachute/core/providers/base_server_provider.dart';
 import 'package:parachute/core/providers/file_system_provider.dart';
 import 'package:parachute/core/providers/vision_provider.dart';
+import 'package:parachute/core/providers/sync_provider.dart';
+import 'package:parachute/core/services/sync_service.dart' show SyncStatus;
 import '../../recorder/providers/service_providers.dart';
 import '../../recorder/widgets/playback_controls.dart';
 import '../models/journal_day.dart';
 import '../models/journal_entry.dart';
+import '../models/reflection.dart';
 import '../providers/journal_providers.dart';
 import '../widgets/collapsible_chat_log_section.dart';
 import '../widgets/curator_trigger_card.dart';
@@ -21,6 +24,8 @@ import '../widgets/journal_entry_row.dart';
 import '../widgets/journal_input_bar.dart';
 import '../widgets/mini_audio_player.dart';
 import '../widgets/morning_reflection_header.dart';
+import '../widgets/agent_output_header.dart';
+import '../models/agent_output.dart';
 import 'package:parachute/features/settings/screens/settings_screen.dart';
 
 /// Main journal screen showing today's journal entries
@@ -86,6 +91,9 @@ class _JournalScreenState extends ConsumerState<JournalScreen>
   // Local journal cache to avoid loading flash on updates
   JournalDay? _cachedJournal;
   DateTime? _cachedJournalDate;
+
+  // Track last known pull counter to detect changes
+  int? _lastPullCounter;
 
   @override
   void initState() {
@@ -200,7 +208,13 @@ class _JournalScreenState extends ConsumerState<JournalScreen>
   }
 
   Future<void> _refreshJournal() async {
+    // Refresh from disk immediately
     ref.invalidate(selectedJournalProvider);
+    ref.invalidate(selectedReflectionProvider);
+
+    // Fire off a background sync (don't await) - UI will auto-refresh when pull completes
+    debugPrint('[JournalScreen] Refreshing - starting background sync...');
+    ref.read(syncProvider.notifier).sync(); // No await - runs in background
   }
 
   void _scrollToBottom() {
@@ -225,6 +239,20 @@ class _JournalScreenState extends ConsumerState<JournalScreen>
     final journalAsync = ref.watch(selectedJournalProvider);
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
+
+    // Check if sync pulled new files - refresh providers if so
+    final pullCounter = ref.watch(syncPullCounterProvider);
+    if (_lastPullCounter != null && pullCounter > _lastPullCounter!) {
+      debugPrint('[JournalScreen] Sync pulled files, refreshing providers...');
+      // Schedule the invalidation for after build completes
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          ref.invalidate(selectedJournalProvider);
+          ref.invalidate(selectedReflectionProvider);
+        }
+      });
+    }
+    _lastPullCounter = pullCounter;
 
     // Check if viewing today
     final now = DateTime.now();
@@ -318,6 +346,10 @@ class _JournalScreenState extends ConsumerState<JournalScreen>
       // Also refresh provider in background (won't cause loading flash due to cache)
       ref.invalidate(selectedJournalProvider);
       ref.read(journalRefreshTriggerProvider.notifier).state++;
+
+      // Schedule sync after local change
+      debugPrint('[JournalScreen] Scheduling sync after text entry...');
+      ref.read(syncProvider.notifier).scheduleSync();
     } catch (e, st) {
       debugPrint('[JournalScreen] Error adding text entry: $e');
       debugPrint('$st');
@@ -358,6 +390,10 @@ class _JournalScreenState extends ConsumerState<JournalScreen>
       // Also refresh provider in background (won't cause loading flash due to cache)
       ref.invalidate(selectedJournalProvider);
       ref.read(journalRefreshTriggerProvider.notifier).state++;
+
+      // Schedule sync after local change
+      debugPrint('[JournalScreen] Scheduling sync after voice entry...');
+      ref.read(syncProvider.notifier).scheduleSync();
     } catch (e, st) {
       debugPrint('[JournalScreen] Error adding voice entry: $e');
       debugPrint('$st');
@@ -386,6 +422,10 @@ class _JournalScreenState extends ConsumerState<JournalScreen>
 
       // Run OCR in background
       _runOcrInBackground(result.entry);
+
+      // Schedule sync after local change
+      debugPrint('[JournalScreen] Scheduling sync after photo entry...');
+      ref.read(syncProvider.notifier).scheduleSync();
     } catch (e, st) {
       debugPrint('[JournalScreen] Error adding photo entry: $e');
       debugPrint('$st');
@@ -426,6 +466,10 @@ class _JournalScreenState extends ConsumerState<JournalScreen>
 
       // Run OCR in background
       _runOcrInBackground(result.entry);
+
+      // Schedule sync after local change
+      debugPrint('[JournalScreen] Scheduling sync after handwriting entry...');
+      ref.read(syncProvider.notifier).scheduleSync();
     } catch (e, st) {
       debugPrint('[JournalScreen] Error adding handwriting entry: $e');
       debugPrint('$st');
@@ -760,16 +804,8 @@ class _JournalScreenState extends ConsumerState<JournalScreen>
                   },
           ),
 
-          // Refresh button (desktop only - mobile uses pull-to-refresh)
-          if (Platform.isMacOS || Platform.isWindows || Platform.isLinux)
-            IconButton(
-              icon: Icon(
-                Icons.refresh,
-                color: isDark ? BrandColors.driftwood : BrandColors.charcoal,
-              ),
-              tooltip: 'Refresh',
-              onPressed: _refreshJournal,
-            ),
+          // Sync/Refresh button with status indicator
+          _buildSyncButton(isDark),
 
           // Settings button
           IconButton(
@@ -790,6 +826,86 @@ class _JournalScreenState extends ConsumerState<JournalScreen>
         ],
       ),
     );
+  }
+
+  /// Build sync button with status indicator
+  Widget _buildSyncButton(bool isDark) {
+    final syncState = ref.watch(syncProvider);
+    final syncAvailable = ref.watch(syncAvailableProvider);
+
+    // Don't show if sync not configured
+    if (!syncAvailable) {
+      return const SizedBox.shrink();
+    }
+
+    final color = isDark ? BrandColors.driftwood : BrandColors.charcoal;
+    final successColor = isDark ? BrandColors.nightTurquoise : BrandColors.turquoise;
+
+    Widget icon;
+    String tooltip;
+
+    if (syncState.isSyncing) {
+      // Syncing - show progress indicator
+      final progress = syncState.progress;
+      if (progress != null && progress.total > 0) {
+        // Show determinate progress
+        icon = SizedBox(
+          width: 20,
+          height: 20,
+          child: CircularProgressIndicator(
+            value: progress.percentage,
+            strokeWidth: 2,
+            valueColor: AlwaysStoppedAnimation<Color>(color),
+            backgroundColor: color.withValues(alpha: 0.2),
+          ),
+        );
+        tooltip = syncState.progressText ?? 'Syncing...';
+      } else {
+        // Show indeterminate progress
+        icon = SizedBox(
+          width: 20,
+          height: 20,
+          child: CircularProgressIndicator(
+            strokeWidth: 2,
+            valueColor: AlwaysStoppedAnimation<Color>(color),
+          ),
+        );
+        tooltip = 'Syncing...';
+      }
+    } else if (syncState.status == SyncStatus.success) {
+      // Just completed - show checkmark
+      icon = Icon(Icons.cloud_done, color: successColor);
+      tooltip = 'Synced';
+    } else if (syncState.hasError) {
+      // Error - show warning
+      icon = Icon(Icons.cloud_off, color: BrandColors.error);
+      tooltip = 'Sync error: ${syncState.errorMessage ?? "Unknown"}';
+    } else {
+      // Idle - show sync icon
+      icon = Icon(Icons.sync, color: color);
+      tooltip = syncState.lastSyncTime != null
+          ? 'Last sync: ${_formatSyncTime(syncState.lastSyncTime!)}'
+          : 'Tap to sync';
+    }
+
+    return IconButton(
+      icon: icon,
+      tooltip: tooltip,
+      onPressed: syncState.isSyncing ? null : _refreshJournal,
+    );
+  }
+
+  String _formatSyncTime(DateTime time) {
+    final now = DateTime.now();
+    final diff = now.difference(time);
+
+    if (diff.inSeconds < 60) {
+      return 'just now';
+    } else if (diff.inMinutes < 60) {
+      return '${diff.inMinutes}m ago';
+    } else {
+      return '${diff.inHours}h ago';
+    }
   }
 
   Future<void> _showDatePicker(BuildContext context) async {
@@ -814,8 +930,8 @@ class _JournalScreenState extends ConsumerState<JournalScreen>
         selectedDate.day == now.day;
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    // Watch reflection and chat log for the selected date
-    final reflectionAsync = ref.watch(selectedReflectionProvider);
+    // Watch agent outputs and chat log for the selected date
+    final agentOutputsAsync = ref.watch(agentOutputsForDateProvider(selectedDate));
     final chatLogAsync = ref.watch(selectedChatLogProvider);
 
     // Handle scroll to bottom after new entry is added
@@ -828,9 +944,10 @@ class _JournalScreenState extends ConsumerState<JournalScreen>
 
     // Check if we have any content at all
     final hasJournalEntries = journal.entries.isNotEmpty;
-    final hasReflection = reflectionAsync.valueOrNull?.hasContent ?? false;
+    final agentOutputs = agentOutputsAsync.valueOrNull ?? [];
+    final hasAgentOutputs = agentOutputs.isNotEmpty;
     final hasChatLog = chatLogAsync.valueOrNull?.hasContent ?? false;
-    final hasAnyContent = hasJournalEntries || hasReflection || hasChatLog;
+    final hasAnyContent = hasJournalEntries || hasAgentOutputs || hasChatLog;
 
     if (!hasAnyContent) {
       // Wrap empty state in RefreshIndicator with scrollable child
@@ -863,15 +980,11 @@ class _JournalScreenState extends ConsumerState<JournalScreen>
         child: CustomScrollView(
           controller: _scrollController,
           slivers: [
-            // Morning Reflection (if available)
-            // Note: Reflections sync naturally via file system, no need to show
-            // a trigger card when there's no reflection yet
-            if (hasReflection)
+            // Agent Outputs (reflections, content ideas, etc.)
+            // These are shown at the top, each in their own expandable header
+            if (hasAgentOutputs)
               SliverToBoxAdapter(
-                child: MorningReflectionHeader(
-                  reflection: reflectionAsync.value!,
-                  initiallyExpanded: false,
-                ),
+                child: _buildAgentOutputsSection(context, agentOutputs, selectedDate),
               ),
 
             // AI Conversations (if available) - collapsible section at top
@@ -884,7 +997,7 @@ class _JournalScreenState extends ConsumerState<JournalScreen>
               ),
 
             // Journal section header (if there are entries)
-            if (hasJournalEntries && (hasReflection || hasChatLog))
+            if (hasJournalEntries && (hasAgentOutputs || hasChatLog))
               SliverToBoxAdapter(
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
@@ -973,6 +1086,47 @@ class _JournalScreenState extends ConsumerState<JournalScreen>
           ],
         ),
       ),
+    );
+  }
+
+  /// Build the section showing all agent outputs for the selected date
+  Widget _buildAgentOutputsSection(
+    BuildContext context,
+    List<AgentOutput> outputs,
+    DateTime date,
+  ) {
+    // Get agent configs from local files (works offline)
+    final agentsAsync = ref.watch(localAgentConfigsProvider);
+    final agents = agentsAsync.valueOrNull ?? [];
+
+    // Build a map of agent name -> agent config
+    final agentMap = <String, DailyAgentConfig>{};
+    for (final agent in agents) {
+      agentMap[agent.name] = agent;
+    }
+
+    return Column(
+      children: outputs.map((output) {
+        // Find the agent config for this output
+        final agentConfig = agentMap[output.agentName];
+        if (agentConfig == null) {
+          // Fallback if agent config not found
+          return MorningReflectionHeader(
+            reflection: Reflection(
+              date: output.date,
+              content: output.content,
+              generatedAt: output.generatedAt,
+            ),
+            initiallyExpanded: false,
+          );
+        }
+
+        return AgentOutputHeader(
+          output: output,
+          agentConfig: agentConfig,
+          initiallyExpanded: false,
+        );
+      }).toList(),
     );
   }
 
@@ -1855,6 +2009,10 @@ class _JournalScreenState extends ConsumerState<JournalScreen>
         // Refresh to show changes
         ref.invalidate(selectedJournalProvider);
         ref.read(journalRefreshTriggerProvider.notifier).state++;
+
+        // Schedule sync after delete
+        debugPrint('[JournalScreen] Scheduling sync after delete...');
+        ref.read(syncProvider.notifier).scheduleSync();
       } catch (e, st) {
         debugPrint('[JournalScreen] Error deleting entry: $e');
         debugPrint('$st');

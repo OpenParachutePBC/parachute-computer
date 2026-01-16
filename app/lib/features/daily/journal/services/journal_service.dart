@@ -7,6 +7,9 @@ import '../models/journal_day.dart';
 import '../models/journal_entry.dart';
 import 'para_id_service.dart';
 
+/// Callback type for journal data changes
+typedef JournalChangeCallback = void Function();
+
 /// Service for reading and writing journal files.
 ///
 /// Handles parsing markdown files with YAML frontmatter and H1-delimited
@@ -20,11 +23,15 @@ class JournalService {
   final FileSystemService _fileSystemService;
   final _log = logger.createLogger('JournalService');
 
+  /// Optional callback triggered when journal data changes (add/update/delete)
+  JournalChangeCallback? onDataChanged;
+
   JournalService._({
     required String vaultPath,
     required String journalFolderName,
     required ParaIdService paraIdService,
     required FileSystemService fileSystemService,
+    this.onDataChanged,
   })  : _vaultPath = vaultPath,
         _journalFolderName = journalFolderName,
         _paraIdService = paraIdService,
@@ -163,6 +170,9 @@ class JournalService {
 
     // Reload the journal to get updated state
     final journal = await loadDay(date);
+
+    // Notify listeners of data change
+    onDataChanged?.call();
 
     return (entry: entry, journal: journal);
   }
@@ -310,6 +320,7 @@ class JournalService {
   /// Update an existing entry (uses surgical file edit)
   Future<void> updateEntry(DateTime date, JournalEntry entry) async {
     await updateEntryInFile(date, entry);
+    onDataChanged?.call();
   }
 
   /// Update transcription status for an entry
@@ -334,6 +345,7 @@ class JournalService {
       'date': _formatDate(date),
       'id': entryId,
     });
+    onDataChanged?.call();
   }
 
   // ============================================================

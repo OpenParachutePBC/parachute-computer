@@ -6,7 +6,6 @@ import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
-import 'package:parachute/core/services/performance_service.dart';
 import '../models/chat_message.dart';
 import 'inline_audio_player.dart';
 import 'collapsible_thinking_section.dart';
@@ -27,22 +26,19 @@ class MessageBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final trace = perf.trace('MessageBubble.build', metadata: {
-      'role': message.role.name,
-      'contentLength': message.textContent.length,
-      'isStreaming': message.isStreaming,
-    });
-
     final isUser = message.role == MessageRole.user;
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
 
-    final widget = _buildWidget(context, isUser, isDark, vaultPath);
-    trace.end();
-    return widget;
+    // Wrap in RepaintBoundary to isolate paint operations during scroll
+    return RepaintBoundary(
+      child: _buildWidget(context, isUser, isDark, vaultPath),
+    );
   }
 
   Widget _buildWidget(BuildContext context, bool isUser, bool isDark, String? vaultPath) {
+    // Use LayoutBuilder instead of MediaQuery to avoid rebuild on keyboard/orientation
+    // and cache the constraints at the message level
     final messageBubble = Padding(
       padding: EdgeInsets.only(
         left: isUser ? 48 : 0,
@@ -51,9 +47,10 @@ class MessageBubble extends StatelessWidget {
       ),
       child: Align(
         alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
-        child: Container(
+        child: LayoutBuilder(
+          builder: (context, constraints) => Container(
           constraints: BoxConstraints(
-            maxWidth: MediaQuery.of(context).size.width * 0.85,
+            maxWidth: constraints.maxWidth * 0.85,
           ),
           decoration: BoxDecoration(
             color: isUser
@@ -77,7 +74,7 @@ class MessageBubble extends StatelessWidget {
             getFullText: _getFullText,
             buildActionRow: () => _buildActionRow(context, isDark, isUser),
           ),
-        ),
+        )),
       ),
     );
 
@@ -674,89 +671,37 @@ class MessageBubble extends StatelessWidget {
 
 
   Widget _buildStreamingIndicator(BuildContext context, bool isDark) {
+    // Use a simple, efficient streaming indicator instead of multiple animated dots
+    // This reduces animation overhead from 3 controllers to 1 built-in widget
     return Padding(
       padding: Spacing.cardPadding,
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          _PulsingDot(color: isDark ? BrandColors.nightTurquoise : BrandColors.turquoise),
-          const SizedBox(width: 4),
-          _PulsingDot(
-            color: isDark ? BrandColors.nightTurquoise : BrandColors.turquoise,
-            delay: const Duration(milliseconds: 150),
+          SizedBox(
+            width: 14,
+            height: 14,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              valueColor: AlwaysStoppedAnimation<Color>(
+                isDark ? BrandColors.nightTurquoise : BrandColors.turquoise,
+              ),
+            ),
           ),
-          const SizedBox(width: 4),
-          _PulsingDot(
-            color: isDark ? BrandColors.nightTurquoise : BrandColors.turquoise,
-            delay: const Duration(milliseconds: 300),
+          const SizedBox(width: 8),
+          Text(
+            'Thinking...',
+            style: TextStyle(
+              color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+              fontSize: TypographyTokens.labelSmall,
+              fontStyle: FontStyle.italic,
+            ),
           ),
         ],
       ),
     );
   }
 
-}
-
-/// Animated pulsing dot for streaming indicator
-class _PulsingDot extends StatefulWidget {
-  final Color color;
-  final Duration delay;
-
-  const _PulsingDot({
-    required this.color,
-    this.delay = Duration.zero,
-  });
-
-  @override
-  State<_PulsingDot> createState() => _PulsingDotState();
-}
-
-class _PulsingDotState extends State<_PulsingDot>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-  late Animation<double> _animation;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-      duration: const Duration(milliseconds: 600),
-      vsync: this,
-    );
-
-    _animation = Tween<double>(begin: 0.3, end: 1.0).animate(
-      CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
-    );
-
-    Future.delayed(widget.delay, () {
-      if (mounted) {
-        _controller.repeat(reverse: true);
-      }
-    });
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _animation,
-      builder: (context, child) {
-        return Container(
-          width: 6,
-          height: 6,
-          decoration: BoxDecoration(
-            color: widget.color.withValues(alpha: _animation.value),
-            shape: BoxShape.circle,
-          ),
-        );
-      },
-    );
-  }
 }
 
 /// Message content wrapper with keyboard shortcuts and context menu for copying
@@ -1392,6 +1337,74 @@ void markMarkdownAsFailed(int hash) {
   _failureCallbacks.remove(hash);
 }
 
+/// Cache for MarkdownStyleSheet to avoid rebuilding on every frame
+/// Key is combination of isDark, isUser, and textColor
+final Map<int, MarkdownStyleSheet> _styleSheetCache = {};
+
+MarkdownStyleSheet _getOrCreateStyleSheet({
+  required bool isDark,
+  required bool isUser,
+  required Color textColor,
+}) {
+  // Create a cache key from the parameters
+  final key = Object.hash(isDark, isUser, textColor.toARGB32());
+
+  return _styleSheetCache.putIfAbsent(key, () => MarkdownStyleSheet(
+    p: TextStyle(
+      color: textColor,
+      fontSize: TypographyTokens.bodyMedium,
+      height: TypographyTokens.lineHeightNormal,
+    ),
+    a: TextStyle(
+      color: isUser
+          ? Colors.white
+          : (isDark ? BrandColors.nightTurquoise : BrandColors.turquoise),
+      decoration: TextDecoration.underline,
+      decorationColor: isUser
+          ? Colors.white.withValues(alpha: 0.7)
+          : (isDark ? BrandColors.nightTurquoise : BrandColors.turquoise),
+    ),
+    code: TextStyle(
+      color: isDark ? BrandColors.nightText : BrandColors.charcoal,
+      backgroundColor: isDark
+          ? BrandColors.nightSurface
+          : BrandColors.cream,
+      fontFamily: 'monospace',
+      fontSize: TypographyTokens.bodySmall,
+    ),
+    codeblockDecoration: BoxDecoration(
+      color: isDark ? BrandColors.nightSurface : BrandColors.cream,
+      borderRadius: Radii.badge,
+    ),
+    blockquoteDecoration: BoxDecoration(
+      border: Border(
+        left: BorderSide(
+          color: isDark
+              ? BrandColors.nightForest
+              : BrandColors.forest,
+          width: 3,
+        ),
+      ),
+    ),
+    h1: TextStyle(
+      color: textColor,
+      fontSize: TypographyTokens.headlineLarge,
+      fontWeight: FontWeight.bold,
+    ),
+    h2: TextStyle(
+      color: textColor,
+      fontSize: TypographyTokens.headlineMedium,
+      fontWeight: FontWeight.bold,
+    ),
+    h3: TextStyle(
+      color: textColor,
+      fontSize: TypographyTokens.headlineSmall,
+      fontWeight: FontWeight.bold,
+    ),
+    listBullet: TextStyle(color: textColor),
+  ));
+}
+
 class _SafeMarkdownBodyState extends State<_SafeMarkdownBody> {
   bool _hasError = false;
   Widget? _cachedMarkdown;
@@ -1485,6 +1498,13 @@ class _SafeMarkdownBodyState extends State<_SafeMarkdownBody> {
   }
 
   Widget _buildMarkdown(String content) {
+    // Use cached stylesheet to avoid recreating TextStyle objects on every build
+    final styleSheet = _getOrCreateStyleSheet(
+      isDark: widget.isDark,
+      isUser: widget.isUser,
+      textColor: widget.textColor,
+    );
+
     return MarkdownBody(
       // Use a key based on content to prevent rebuilds with stale builder state
       key: ValueKey(content.hashCode),
@@ -1500,60 +1520,7 @@ class _SafeMarkdownBodyState extends State<_SafeMarkdownBody> {
       imageBuilder: (uri, title, alt) =>
           widget.onImageBuild(uri, title, alt, widget.vaultPath, widget.isDark),
       onTapLink: widget.onLinkTap,
-      styleSheet: MarkdownStyleSheet(
-        p: TextStyle(
-          color: widget.textColor,
-          fontSize: TypographyTokens.bodyMedium,
-          height: TypographyTokens.lineHeightNormal,
-        ),
-        a: TextStyle(
-          color: widget.isUser
-              ? Colors.white
-              : (widget.isDark ? BrandColors.nightTurquoise : BrandColors.turquoise),
-          decoration: TextDecoration.underline,
-          decorationColor: widget.isUser
-              ? Colors.white.withValues(alpha: 0.7)
-              : (widget.isDark ? BrandColors.nightTurquoise : BrandColors.turquoise),
-        ),
-        code: TextStyle(
-          color: widget.isDark ? BrandColors.nightText : BrandColors.charcoal,
-          backgroundColor: widget.isDark
-              ? BrandColors.nightSurface
-              : BrandColors.cream,
-          fontFamily: 'monospace',
-          fontSize: TypographyTokens.bodySmall,
-        ),
-        codeblockDecoration: BoxDecoration(
-          color: widget.isDark ? BrandColors.nightSurface : BrandColors.cream,
-          borderRadius: Radii.badge,
-        ),
-        blockquoteDecoration: BoxDecoration(
-          border: Border(
-            left: BorderSide(
-              color: widget.isDark
-                  ? BrandColors.nightForest
-                  : BrandColors.forest,
-              width: 3,
-            ),
-          ),
-        ),
-        h1: TextStyle(
-          color: widget.textColor,
-          fontSize: TypographyTokens.headlineLarge,
-          fontWeight: FontWeight.bold,
-        ),
-        h2: TextStyle(
-          color: widget.textColor,
-          fontSize: TypographyTokens.headlineMedium,
-          fontWeight: FontWeight.bold,
-        ),
-        h3: TextStyle(
-          color: widget.textColor,
-          fontSize: TypographyTokens.headlineSmall,
-          fontWeight: FontWeight.bold,
-        ),
-        listBullet: TextStyle(color: widget.textColor),
-      ),
+      styleSheet: styleSheet,
     );
   }
 
