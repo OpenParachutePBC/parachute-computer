@@ -67,9 +67,46 @@ parachute/
 
 ---
 
+## Authentication
+
+API key authentication for multi-device access:
+
+| Mode | Behavior | Use Case |
+|------|----------|----------|
+| `remote` (default) | Localhost bypasses, remote requires key | Development |
+| `always` | All requests require valid API key | Production |
+| `disabled` | No authentication | Local-only |
+
+**Key endpoints:**
+- `POST /api/auth/keys` - Create new API key
+- `GET /api/auth/keys` - List keys (hashed)
+- `DELETE /api/auth/keys/{key_id}` - Revoke key
+
+Keys are SHA-256 hashed before storage. The raw key is only shown once at creation.
+
+---
+
+## Multi-Agent Pipeline
+
+Agents process Daily journal entries:
+
+```
+Sync Service → Reflection Agent → Content-Scout → Creative-Director
+                    ↓                  ↓                 ↓
+            Daily/reflection/   Daily/content-scout/   (media)
+```
+
+**Key files:**
+- `parachute/core/sync_service.py` - Watches vault, triggers agents
+- `parachute/core/agent_runner.py` - Executes agent pipelines
+- Agent definitions: `~/Parachute/.claude/agents/`
+
+---
+
 ## Gotchas
 
 - SDK session IDs are stored in SQLite, but transcripts live in `~/.claude/projects/`
 - The pointer architecture means session.db is metadata only
 - Curator is a long-running agent with its own state file
 - `VAULT_PATH` env var defaults to `./sample-vault` (set to `~/Parachute` in prod)
+- OAuth MCP state is currently in-memory only (consider persisting for production)
