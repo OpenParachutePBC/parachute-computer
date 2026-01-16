@@ -6,8 +6,15 @@ import 'package:parachute/features/vault/models/file_item.dart';
 /// Service for browsing the vault folder structure via the remote Base server API
 class RemoteFileBrowserService {
   final String baseUrl;
+  final String? apiKey;
 
-  RemoteFileBrowserService({required this.baseUrl});
+  RemoteFileBrowserService({required this.baseUrl, this.apiKey});
+
+  /// Standard headers for all requests - includes API key for authentication
+  Map<String, String> get _defaultHeaders => {
+    'Content-Type': 'application/json',
+    if (apiKey != null && apiKey!.isNotEmpty) 'X-API-Key': apiKey!,
+  };
 
   /// Get the initial path (vault root - empty string for remote)
   String getInitialPath() => '';
@@ -50,7 +57,7 @@ class RemoteFileBrowserService {
 
       debugPrint('[RemoteFileBrowser] Fetching: $uri');
 
-      final response = await http.get(uri).timeout(
+      final response = await http.get(uri, headers: _defaultHeaders).timeout(
         const Duration(seconds: 10),
         onTimeout: () {
           throw Exception('Connection timeout');
@@ -108,7 +115,7 @@ class RemoteFileBrowserService {
 
       debugPrint('[RemoteFileBrowser] Reading: $uri');
 
-      final response = await http.get(uri).timeout(
+      final response = await http.get(uri, headers: _defaultHeaders).timeout(
         const Duration(seconds: 10),
       );
 
@@ -134,7 +141,7 @@ class RemoteFileBrowserService {
 
       final response = await http.put(
         uri,
-        headers: {'Content-Type': 'application/json'},
+        headers: _defaultHeaders,
         body: json.encode({
           'path': path,
           'content': content,

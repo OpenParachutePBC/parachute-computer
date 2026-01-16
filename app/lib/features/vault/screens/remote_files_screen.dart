@@ -2,15 +2,20 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/core/providers/feature_flags_provider.dart';
+import 'package:parachute/core/providers/app_state_provider.dart';
 import 'package:parachute/features/vault/models/file_item.dart';
 import 'package:parachute/features/vault/services/remote_file_browser_service.dart';
 import 'package:parachute/features/vault/screens/remote_markdown_viewer_screen.dart';
 import 'package:parachute/features/settings/screens/settings_screen.dart';
 
 /// Provider for remote file browser service
-final remoteFileBrowserServiceProvider = Provider.family<RemoteFileBrowserService?, String?>((ref, serverUrl) {
+/// Watches both server URL and API key to create authenticated service
+final remoteFileBrowserServiceProvider = Provider<RemoteFileBrowserService?>((ref) {
+  final serverUrl = ref.watch(aiServerUrlProvider).valueOrNull;
+  final apiKey = ref.watch(apiKeyProvider).valueOrNull;
+
   if (serverUrl == null || serverUrl.isEmpty) return null;
-  return RemoteFileBrowserService(baseUrl: serverUrl);
+  return RemoteFileBrowserService(baseUrl: serverUrl, apiKey: apiKey);
 });
 
 /// Current remote browse path
@@ -20,8 +25,8 @@ final remoteCurrentPathProvider = StateProvider<String>((ref) => '');
 final remoteShowHiddenFilesProvider = StateProvider<bool>((ref) => false);
 
 /// Remote folder contents
-final remoteFolderContentsProvider = FutureProvider.family<List<FileItem>, String>((ref, serverUrl) async {
-  final service = ref.watch(remoteFileBrowserServiceProvider(serverUrl));
+final remoteFolderContentsProvider = FutureProvider<List<FileItem>>((ref) async {
+  final service = ref.watch(remoteFileBrowserServiceProvider);
   if (service == null) return [];
 
   final path = ref.watch(remoteCurrentPathProvider);
@@ -44,10 +49,7 @@ class _RemoteFilesScreenState extends ConsumerState<RemoteFilesScreen> {
 
   void _navigateBack() {
     final currentPath = ref.read(remoteCurrentPathProvider);
-    final serverUrl = ref.read(aiServerUrlProvider).valueOrNull;
-    if (serverUrl == null) return;
-
-    final service = ref.read(remoteFileBrowserServiceProvider(serverUrl));
+    final service = ref.read(remoteFileBrowserServiceProvider);
     if (service == null) return;
 
     final parentPath = service.getParentPath(currentPath);
@@ -123,121 +125,108 @@ class _RemoteFilesScreenState extends ConsumerState<RemoteFilesScreen> {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final serverUrlAsync = ref.watch(aiServerUrlProvider);
     final currentPath = ref.watch(remoteCurrentPathProvider);
+    final service = ref.watch(remoteFileBrowserServiceProvider);
 
-    return serverUrlAsync.when(
-      data: (serverUrl) {
-        // aiServerUrlProvider always returns a non-null URL (defaults to localhost)
-        if (serverUrl.isEmpty) {
-          return _buildNoServerState(isDark);
-        }
+    // Check if service is available (requires server URL)
+    if (service == null) {
+      return _buildNoServerState(isDark);
+    }
 
-        final service = ref.watch(remoteFileBrowserServiceProvider(serverUrl));
-        if (service == null) {
-          return _buildNoServerState(isDark);
-        }
+    final folderContents = ref.watch(remoteFolderContentsProvider);
+    final isAtRoot = service.isAtRoot(currentPath);
+    final displayPath = service.getDisplayPath(currentPath);
+    final folderName = service.getFolderName(currentPath);
 
-        final folderContents = ref.watch(remoteFolderContentsProvider(serverUrl));
-        final isAtRoot = service.isAtRoot(currentPath);
-        final displayPath = service.getDisplayPath(currentPath);
-        final folderName = service.getFolderName(currentPath);
-
-        return Scaffold(
-          backgroundColor: isDark ? BrandColors.nightSurface : BrandColors.cream,
-          appBar: AppBar(
-            backgroundColor: isDark ? BrandColors.nightSurface : BrandColors.cream,
-            surfaceTintColor: Colors.transparent,
-            leading: isAtRoot
-                ? null
-                : IconButton(
-                    icon: Icon(
-                      Icons.arrow_back,
-                      color: isDark ? BrandColors.nightText : BrandColors.charcoal,
-                    ),
-                    onPressed: _navigateBack,
-                  ),
-            title: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  folderName,
-                  style: TextStyle(
-                    fontSize: TypographyTokens.titleMedium,
-                    fontWeight: FontWeight.bold,
-                    color: isDark ? BrandColors.nightText : BrandColors.charcoal,
-                  ),
+    return Scaffold(
+      backgroundColor: isDark ? BrandColors.nightSurface : BrandColors.cream,
+      appBar: AppBar(
+        backgroundColor: isDark ? BrandColors.nightSurface : BrandColors.cream,
+        surfaceTintColor: Colors.transparent,
+        leading: isAtRoot
+            ? null
+            : IconButton(
+                icon: Icon(
+                  Icons.arrow_back,
+                  color: isDark ? BrandColors.nightText : BrandColors.charcoal,
                 ),
-                Text(
-                  displayPath,
-                  style: TextStyle(
-                    fontSize: TypographyTokens.labelSmall,
-                    color: isDark
-                        ? BrandColors.nightTextSecondary
-                        : BrandColors.driftwood,
-                    fontFamily: 'monospace',
-                  ),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
+                onPressed: _navigateBack,
+              ),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              folderName,
+              style: TextStyle(
+                fontSize: TypographyTokens.titleMedium,
+                fontWeight: FontWeight.bold,
+                color: isDark ? BrandColors.nightText : BrandColors.charcoal,
+              ),
             ),
-            actions: [
-              IconButton(
-                icon: Icon(
-                  ref.watch(remoteShowHiddenFilesProvider)
-                      ? Icons.visibility
-                      : Icons.visibility_off,
-                  color: isDark ? BrandColors.nightText : BrandColors.charcoal,
-                ),
-                onPressed: () {
-                  ref.read(remoteShowHiddenFilesProvider.notifier).state =
-                      !ref.read(remoteShowHiddenFilesProvider);
-                },
-                tooltip: ref.watch(remoteShowHiddenFilesProvider)
-                    ? 'Hide hidden files'
-                    : 'Show hidden files',
+            Text(
+              displayPath,
+              style: TextStyle(
+                fontSize: TypographyTokens.labelSmall,
+                color: isDark
+                    ? BrandColors.nightTextSecondary
+                    : BrandColors.driftwood,
+                fontFamily: 'monospace',
               ),
-              IconButton(
-                icon: Icon(
-                  Icons.refresh,
-                  color: isDark ? BrandColors.nightText : BrandColors.charcoal,
-                ),
-                onPressed: _refresh,
-              ),
-              IconButton(
-                icon: Icon(
-                  Icons.settings_outlined,
-                  color: isDark ? BrandColors.driftwood : BrandColors.charcoal,
-                ),
-                onPressed: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => const SettingsScreen()),
-                ),
-                tooltip: 'Settings',
-              ),
-            ],
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+        ),
+        actions: [
+          IconButton(
+            icon: Icon(
+              ref.watch(remoteShowHiddenFilesProvider)
+                  ? Icons.visibility
+                  : Icons.visibility_off,
+              color: isDark ? BrandColors.nightText : BrandColors.charcoal,
+            ),
+            onPressed: () {
+              ref.read(remoteShowHiddenFilesProvider.notifier).state =
+                  !ref.read(remoteShowHiddenFilesProvider);
+            },
+            tooltip: ref.watch(remoteShowHiddenFilesProvider)
+                ? 'Hide hidden files'
+                : 'Show hidden files',
           ),
-          body: folderContents.when(
-            data: (items) => items.isEmpty
-                ? _buildEmptyState(isDark)
-                : RefreshIndicator(
-                    onRefresh: () async => _refresh(),
-                    child: ListView.builder(
-                      padding: EdgeInsets.symmetric(vertical: Spacing.sm),
-                      itemCount: items.length,
-                      itemBuilder: (context, index) =>
-                          _buildFileItem(items[index], isDark),
-                    ),
-                  ),
-            loading: () => const Center(child: CircularProgressIndicator()),
-            error: (error, _) => _buildErrorState(isDark, error.toString()),
+          IconButton(
+            icon: Icon(
+              Icons.refresh,
+              color: isDark ? BrandColors.nightText : BrandColors.charcoal,
+            ),
+            onPressed: _refresh,
           ),
-        );
-      },
-      loading: () => const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
+          IconButton(
+            icon: Icon(
+              Icons.settings_outlined,
+              color: isDark ? BrandColors.driftwood : BrandColors.charcoal,
+            ),
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => const SettingsScreen()),
+            ),
+            tooltip: 'Settings',
+          ),
+        ],
       ),
-      error: (e, _) => _buildNoServerState(isDark),
+      body: folderContents.when(
+        data: (items) => items.isEmpty
+            ? _buildEmptyState(isDark)
+            : RefreshIndicator(
+                onRefresh: () async => _refresh(),
+                child: ListView.builder(
+                  padding: EdgeInsets.symmetric(vertical: Spacing.sm),
+                  itemCount: items.length,
+                  itemBuilder: (context, index) =>
+                      _buildFileItem(items[index], isDark),
+                ),
+              ),
+        loading: () => const Center(child: CircularProgressIndicator()),
+        error: (error, _) => _buildErrorState(isDark, error.toString()),
+      ),
     );
   }
 

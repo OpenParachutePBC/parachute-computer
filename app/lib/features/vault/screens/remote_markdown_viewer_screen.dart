@@ -3,7 +3,6 @@ import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:yaml/yaml.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
-import 'package:parachute/core/providers/feature_flags_provider.dart';
 import '../models/file_item.dart';
 import 'remote_files_screen.dart';
 
@@ -49,14 +48,9 @@ class _RemoteMarkdownViewerScreenState extends ConsumerState<RemoteMarkdownViewe
 
   Future<void> _loadFile() async {
     try {
-      final serverUrl = ref.read(aiServerUrlProvider).valueOrNull;
-      if (serverUrl == null || serverUrl.isEmpty) {
-        throw Exception('No server configured');
-      }
-
-      final service = ref.read(remoteFileBrowserServiceProvider(serverUrl));
+      final service = ref.read(remoteFileBrowserServiceProvider);
       if (service == null) {
-        throw Exception('Could not connect to server');
+        throw Exception('No server configured');
       }
 
       final content = await service.readFile(widget.file.path);
@@ -182,14 +176,9 @@ class _RemoteMarkdownViewerScreenState extends ConsumerState<RemoteMarkdownViewe
     setState(() => _isSaving = true);
 
     try {
-      final serverUrl = ref.read(aiServerUrlProvider).valueOrNull;
-      if (serverUrl == null || serverUrl.isEmpty) {
-        throw Exception('No server configured');
-      }
-
-      final service = ref.read(remoteFileBrowserServiceProvider(serverUrl));
+      final service = ref.read(remoteFileBrowserServiceProvider);
       if (service == null) {
-        throw Exception('Could not connect to server');
+        throw Exception('No server configured');
       }
 
       final success = await service.writeFile(widget.file.path, _editController.text);
