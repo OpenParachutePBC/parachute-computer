@@ -72,6 +72,10 @@ class _JournalEntryRowState extends ConsumerState<JournalEntryRow> {
   final FocusNode _contentFocusNode = FocusNode();
   final FocusNode _titleFocusNode = FocusNode();
 
+  // Cache truncation result to avoid regex on every build
+  bool? _cachedLikelyTruncated;
+  String? _cachedContentForTruncation;
+
   @override
   void initState() {
     super.initState();
@@ -120,7 +124,9 @@ class _JournalEntryRowState extends ConsumerState<JournalEntryRow> {
     // Preamble entries have no header
     final showHeader = entry.id != 'preamble';
 
-    return GestureDetector(
+    // Wrap in RepaintBoundary to isolate paint operations during scroll
+    return RepaintBoundary(
+      child: GestureDetector(
       onTap: widget.onTap,
       onLongPress: widget.onLongPress,
       behavior: HitTestBehavior.opaque,
@@ -169,6 +175,7 @@ class _JournalEntryRowState extends ConsumerState<JournalEntryRow> {
           ],
         ),
       ),
+    ),
     );
   }
 
@@ -659,9 +666,17 @@ class _JournalEntryRowState extends ConsumerState<JournalEntryRow> {
     );
 
     final content = widget.entry.content;
-    final likelyTruncated = content.length > charThresholdForReadMore ||
-        content.contains('\n\n') ||
-        '\n'.allMatches(content).length >= maxLines;
+    // Use cached truncation result if content hasn't changed
+    final bool likelyTruncated;
+    if (_cachedContentForTruncation == content && _cachedLikelyTruncated != null) {
+      likelyTruncated = _cachedLikelyTruncated!;
+    } else {
+      likelyTruncated = content.length > charThresholdForReadMore ||
+          content.contains('\n\n') ||
+          '\n'.allMatches(content).length >= maxLines;
+      _cachedContentForTruncation = content;
+      _cachedLikelyTruncated = likelyTruncated;
+    }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -752,10 +767,12 @@ class _JournalEntryRowState extends ConsumerState<JournalEntryRow> {
   Widget _buildImageThumbnail(BuildContext context, bool isDark) {
     if (widget.entry.imagePath == null) return const SizedBox.shrink();
 
-    return FutureBuilder<String>(
-      future: _getFullImagePath(),
+    // Use FutureBuilder that checks path AND existence asynchronously
+    return FutureBuilder<File?>(
+      // Cache the future to prevent re-creation on every rebuild
+      future: _resolveImageFile(),
       builder: (context, snapshot) {
-        if (!snapshot.hasData) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
           return Padding(
             padding: const EdgeInsets.only(top: 12),
             child: Container(
@@ -775,9 +792,9 @@ class _JournalEntryRowState extends ConsumerState<JournalEntryRow> {
           );
         }
 
-        final file = File(snapshot.data!);
+        final file = snapshot.data;
 
-        if (!file.existsSync()) {
+        if (file == null) {
           return Padding(
             padding: const EdgeInsets.only(top: 12),
             child: Container(
@@ -939,6 +956,32 @@ class _JournalEntryRowState extends ConsumerState<JournalEntryRow> {
         ),
       ),
     );
+  }
+
+  // Cache the resolved file to avoid re-resolving on every build
+  Future<File?>? _cachedImageFileFuture;
+  String? _cachedImagePath;
+
+  Future<File?> _resolveImageFile() {
+    // Return cached future if image path hasn't changed
+    if (_cachedImageFileFuture != null && _cachedImagePath == widget.entry.imagePath) {
+      return _cachedImageFileFuture!;
+    }
+    _cachedImagePath = widget.entry.imagePath;
+    _cachedImageFileFuture = _doResolveImageFile();
+    return _cachedImageFileFuture!;
+  }
+
+  Future<File?> _doResolveImageFile() async {
+    final fileSystemService = ref.read(fileSystemServiceProvider);
+    final vaultPath = await fileSystemService.getRootPath();
+    final fullPath = '$vaultPath/${widget.entry.imagePath}';
+    final file = File(fullPath);
+    // Use async exists() instead of blocking existsSync()
+    if (await file.exists()) {
+      return file;
+    }
+    return null;
   }
 
   Future<String> _getFullImagePath() async {

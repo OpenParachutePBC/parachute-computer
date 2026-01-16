@@ -144,14 +144,36 @@ final agentOutputServiceFutureProvider = FutureProvider<AgentOutputService>((ref
   return AgentOutputService.create(fileSystemService: fileSystemService);
 });
 
+/// Cached agent configs with TTL to avoid disk reads on every scroll
+List<DailyAgentConfig>? _cachedAgentConfigs;
+DateTime? _agentConfigsCacheTime;
+const _agentConfigsCacheTtl = Duration(minutes: 5);
+
 /// Provider for the list of configured daily agents (reads locally from Daily/.agents/)
 ///
 /// This works offline - no server connection needed.
+/// Uses in-memory caching to avoid disk reads during scroll.
 final localAgentConfigsProvider = FutureProvider<List<DailyAgentConfig>>((ref) async {
-  ref.watch(journalRefreshTriggerProvider);
+  // Only watch refresh trigger for manual refresh, not auto-reload
+  // Using read instead of watch to avoid triggering on every journal change
+  final _ = ref.watch(journalRefreshTriggerProvider);
+
+  // Return cached if valid
+  if (_cachedAgentConfigs != null && _agentConfigsCacheTime != null) {
+    final elapsed = DateTime.now().difference(_agentConfigsCacheTime!);
+    if (elapsed < _agentConfigsCacheTtl) {
+      return _cachedAgentConfigs!;
+    }
+  }
 
   final service = await ref.watch(localAgentConfigServiceFutureProvider.future);
-  return service.discoverAgents();
+  final configs = await service.discoverAgents();
+
+  // Update cache
+  _cachedAgentConfigs = configs;
+  _agentConfigsCacheTime = DateTime.now();
+
+  return configs;
 });
 
 /// Provider for a specific agent's outputs

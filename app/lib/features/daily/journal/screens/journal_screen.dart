@@ -61,6 +61,10 @@ class _JournalScreenState extends ConsumerState<JournalScreen>
   final Set<String> _transcribingEntryIds = {};
   // Track transcription progress per entry (0.0-1.0)
   final Map<String, double> _transcriptionProgress = {};
+  // Debounce timer for progress updates to avoid excessive rebuilds
+  Timer? _progressDebounceTimer;
+  // Pending progress values to apply on next debounce tick
+  final Map<String, double> _pendingProgress = {};
 
   // Track entries that are being AI-enhanced
   final Set<String> _enhancingEntryIds = {};
@@ -109,8 +113,24 @@ class _JournalScreenState extends ConsumerState<JournalScreen>
     // Flush any pending draft before disposing
     _flushPendingDraft();
     _draftSaveTimer?.cancel();
+    _progressDebounceTimer?.cancel();
     _scrollController.dispose();
     super.dispose();
+  }
+
+  /// Update transcription progress with debouncing to avoid excessive rebuilds
+  void _updateTranscriptionProgress(String entryId, double progress) {
+    _pendingProgress[entryId] = progress;
+    // Debounce to max 5 updates per second (200ms)
+    _progressDebounceTimer ??= Timer(const Duration(milliseconds: 200), () {
+      _progressDebounceTimer = null;
+      if (mounted && _pendingProgress.isNotEmpty) {
+        setState(() {
+          _transcriptionProgress.addAll(_pendingProgress);
+          _pendingProgress.clear();
+        });
+      }
+    });
   }
 
   @override
@@ -979,6 +999,7 @@ class _JournalScreenState extends ConsumerState<JournalScreen>
         },
         child: CustomScrollView(
           controller: _scrollController,
+          cacheExtent: 500, // Cache more entries for smoother scrolling
           slivers: [
             // Agent Outputs (reflections, content ideas, etc.)
             // These are shown at the top, each in their own expandable header
@@ -1053,6 +1074,7 @@ class _JournalScreenState extends ConsumerState<JournalScreen>
                           ),
 
                         JournalEntryRow(
+                          key: ValueKey(entry.id),
                           entry: entry,
                           audioPath: journal.getAudioPath(entry.id),
                           isEditing: isEditing,
@@ -1345,16 +1367,14 @@ class _JournalScreenState extends ConsumerState<JournalScreen>
         throw Exception('Audio file not found at $fullAudioPath');
       }
 
-      // Transcribe with progress tracking
+      // Transcribe with progress tracking (debounced to avoid excessive rebuilds)
       final postProcessingService = ref.read(recordingPostProcessingProvider);
       final result = await postProcessingService.process(
         audioPath: fullAudioPath,
         onProgress: (status, progress) {
-          // Update progress in UI
+          // Update progress with debouncing
           if (mounted) {
-            setState(() {
-              _transcriptionProgress[entry.id] = progress;
-            });
+            _updateTranscriptionProgress(entry.id, progress);
           }
         },
       );
