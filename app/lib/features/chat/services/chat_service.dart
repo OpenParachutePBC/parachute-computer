@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import '../models/chat_session.dart';
 import '../models/chat_message.dart';
+import '../models/claude_usage.dart';
 import '../models/context_file.dart';
 import '../models/context_folder.dart';
 import '../models/prompt_metadata.dart';
@@ -1852,4 +1853,36 @@ class CuratorUpdate {
 
   bool get updatedTitle => newTitle != null;
   bool get updatedContext => actions.any((a) => !a.startsWith('Updated title'));
+}
+
+// ============================================================
+// Usage Extension
+// ============================================================
+
+/// Extension to add usage fetching to ChatService
+extension ChatServiceUsage on ChatService {
+  /// Fetch Claude usage limits
+  ///
+  /// Returns usage data for 5-hour and 7-day windows.
+  /// This data comes from Claude Code's OAuth credentials.
+  Future<ClaudeUsage> getUsage() async {
+    try {
+      final response = await http.Client().get(
+        Uri.parse('$baseUrl/api/usage'),
+        headers: _defaultHeaders,
+      ).timeout(ChatService.requestTimeout);
+
+      if (response.statusCode != 200) {
+        return ClaudeUsage(
+          error: 'Failed to fetch usage: ${response.statusCode}',
+        );
+      }
+
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      return ClaudeUsage.fromJson(data);
+    } catch (e) {
+      debugPrint('[ChatService] Error fetching usage: $e');
+      return ClaudeUsage(error: e.toString());
+    }
+  }
 }

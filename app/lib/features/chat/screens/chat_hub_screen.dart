@@ -6,6 +6,7 @@ import 'package:parachute/features/settings/screens/settings_screen.dart';
 import '../providers/chat_providers.dart';
 import '../models/chat_session.dart';
 import '../widgets/session_list_item.dart';
+import '../widgets/usage_bar.dart';
 import 'chat_screen.dart';
 
 /// Chat Hub Screen - shows list of chat sessions
@@ -88,7 +89,13 @@ class _ChatHubScreenState extends ConsumerState<ChatHubScreen> {
           if (serverUrl.isEmpty) {
             return _buildNoServerState(context, isDark);
           }
-          return _buildChatList(context, ref, isDark, serverUrl);
+          // Show usage bar at top when server is connected
+          return Column(
+            children: [
+              const UsageBar(),
+              Expanded(child: _buildChatList(context, ref, isDark, serverUrl)),
+            ],
+          );
         },
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (e, _) => _buildErrorState(context, isDark, e),
