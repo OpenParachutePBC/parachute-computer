@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 import '../models/chat_session.dart';
 import '../models/chat_message.dart';
+import '../models/claude_usage.dart';
 import '../models/context_file.dart';
 import '../models/context_folder.dart';
 import '../models/stream_event.dart';
@@ -75,7 +76,7 @@ final chatImportServiceProvider = Provider<ChatImportService>((ref) {
 ///
 /// Tries to fetch from the server first. If server is unavailable,
 /// falls back to reading local session files from the vault.
-final chatSessionsProvider = FutureProvider<List<ChatSession>>((ref) async {
+final chatSessionsProvider = FutureProvider.autoDispose<List<ChatSession>>((ref) async {
   final service = ref.watch(chatServiceProvider);
   final localReader = ref.watch(localSessionReaderProvider);
 
@@ -100,7 +101,7 @@ final chatSessionsProvider = FutureProvider<List<ChatSession>>((ref) async {
 });
 
 /// Provider for fetching archived chat sessions
-final archivedSessionsProvider = FutureProvider<List<ChatSession>>((ref) async {
+final archivedSessionsProvider = FutureProvider.autoDispose<List<ChatSession>>((ref) async {
   final service = ref.watch(chatServiceProvider);
   final localReader = ref.watch(localSessionReaderProvider);
 
@@ -124,6 +125,30 @@ final archivedSessionsProvider = FutureProvider<List<ChatSession>>((ref) async {
   }
 });
 
+// ============================================================
+// Usage Provider
+// ============================================================
+
+/// Provider for Claude usage limits
+///
+/// Fetches current usage data from the server (which reads from Claude Code's OAuth).
+/// Refreshes automatically every 2 minutes when the provider is being watched.
+final claudeUsageProvider = FutureProvider.autoDispose<ClaudeUsage>((ref) async {
+  final service = ref.watch(chatServiceProvider);
+
+  try {
+    final usage = await service.getUsage();
+    return usage;
+  } catch (e) {
+    debugPrint('[ChatProviders] Error fetching Claude usage: $e');
+    return ClaudeUsage(error: e.toString());
+  }
+});
+
+// ============================================================
+// Session Providers
+// ============================================================
+
 /// Provider for the current session ID
 ///
 /// When null, indicates a new chat should be started.
@@ -132,7 +157,7 @@ final currentSessionIdProvider = StateProvider<String?>((ref) => null);
 
 /// Provider for fetching a specific session with messages
 final sessionWithMessagesProvider =
-    FutureProvider.family<ChatSessionWithMessages?, String>((ref, sessionId) async {
+    FutureProvider.autoDispose.family<ChatSessionWithMessages?, String>((ref, sessionId) async {
   final service = ref.watch(chatServiceProvider);
   try {
     return await service.getSession(sessionId);
@@ -1822,7 +1847,7 @@ final continueSessionProvider = Provider<Future<void> Function(ChatSession)>((re
 /// - ref.watch(vaultDirectoryProvider('')) - vault root
 /// - ref.watch(vaultDirectoryProvider('Projects')) - Projects folder
 /// - ref.watch(vaultDirectoryProvider('Projects/myapp')) - specific project
-final vaultDirectoryProvider = FutureProvider.family<List<VaultEntry>, String>((ref, path) async {
+final vaultDirectoryProvider = FutureProvider.autoDispose.family<List<VaultEntry>, String>((ref, path) async {
   final service = ref.watch(chatServiceProvider);
   return service.listDirectory(path: path);
 });
@@ -1844,7 +1869,7 @@ final selectedWorkingDirectoryProvider = StateProvider<String?>((ref) => null);
 ///
 /// Fetches context files from Chat/contexts/ directory.
 /// Returns empty list if server is unavailable (graceful degradation).
-final availableContextsProvider = FutureProvider<List<ContextFile>>((ref) async {
+final availableContextsProvider = FutureProvider.autoDispose<List<ContextFile>>((ref) async {
   final service = ref.watch(chatServiceProvider);
   try {
     return await service.getContexts();
@@ -1871,7 +1896,7 @@ final selectedContextsProvider = StateProvider<List<String>>((ref) {
 ///
 /// Fetches folders with CLAUDE.md files that can be
 /// selected as context for a session.
-final contextFoldersProvider = FutureProvider<List<ContextFolder>>((ref) async {
+final contextFoldersProvider = FutureProvider.autoDispose<List<ContextFolder>>((ref) async {
   final service = ref.watch(chatServiceProvider);
   try {
     return await service.getContextFolders();
@@ -1895,7 +1920,7 @@ final selectedContextFoldersProvider = StateProvider<List<String>>((ref) {
 /// Pass folder paths as comma-separated string (e.g., ",Projects/parachute")
 /// Empty string "" represents root folder.
 final contextChainProvider =
-    FutureProvider.family<ContextChain, String>((ref, foldersParam) async {
+    FutureProvider.autoDispose.family<ContextChain, String>((ref, foldersParam) async {
   final service = ref.watch(chatServiceProvider);
   try {
     if (foldersParam.isEmpty) {
@@ -1914,7 +1939,7 @@ final contextChainProvider =
 ///
 /// Fetches the context folders configured for the current session.
 final sessionContextFoldersProvider =
-    FutureProvider.family<List<String>, String>((ref, sessionId) async {
+    FutureProvider.autoDispose.family<List<String>, String>((ref, sessionId) async {
   final service = ref.watch(chatServiceProvider);
   return await service.getSessionContextFolders(sessionId);
 });
@@ -1928,7 +1953,7 @@ final sessionContextFoldersProvider =
 /// Fetches curator session data and recent task history.
 /// Use with .family to specify the session ID:
 /// - ref.watch(curatorInfoProvider(sessionId))
-final curatorInfoProvider = FutureProvider.family<CuratorInfo, String>((ref, sessionId) async {
+final curatorInfoProvider = FutureProvider.autoDispose.family<CuratorInfo, String>((ref, sessionId) async {
   final service = ref.watch(chatServiceProvider);
   return service.getCuratorInfo(sessionId);
 });
@@ -1940,7 +1965,7 @@ final curatorInfoProvider = FutureProvider.family<CuratorInfo, String>((ref, ses
 /// The curator is a persistent SDK session, so we can view its transcript.
 /// Use with .family to specify the session ID:
 /// - ref.watch(curatorMessagesProvider(sessionId))
-final curatorMessagesProvider = FutureProvider.family<CuratorMessages, String>((ref, sessionId) async {
+final curatorMessagesProvider = FutureProvider.autoDispose.family<CuratorMessages, String>((ref, sessionId) async {
   final service = ref.watch(chatServiceProvider);
   return service.getCuratorMessages(sessionId);
 });
@@ -1969,7 +1994,7 @@ final triggerCuratorProvider = Provider<Future<int> Function(String)>((ref) {
 ///
 /// Fetches recent context file updates and title changes.
 /// Auto-refreshes every 30 seconds when watched.
-final curatorActivityProvider = FutureProvider<CuratorActivityInfo>((ref) async {
+final curatorActivityProvider = FutureProvider.autoDispose<CuratorActivityInfo>((ref) async {
   final service = ref.watch(chatServiceProvider);
   try {
     return await service.getRecentCuratorActivity(limit: 10);
@@ -1987,7 +2012,7 @@ final curatorActivityProvider = FutureProvider<CuratorActivityInfo>((ref) async 
 ///
 /// Returns structured info about each context file including
 /// fact counts, history entries, and last modified time.
-final contextFilesInfoProvider = FutureProvider<ContextFilesInfo>((ref) async {
+final contextFilesInfoProvider = FutureProvider.autoDispose<ContextFilesInfo>((ref) async {
   final service = ref.watch(chatServiceProvider);
   try {
     return await service.getContextFilesInfo();

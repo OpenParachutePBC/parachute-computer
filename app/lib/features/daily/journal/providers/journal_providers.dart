@@ -20,7 +20,7 @@ import '../services/local_agent_config_service.dart';
 ///
 /// Use this when you need the fully initialized service.
 /// Uses FileSystemService to get the configured journal folder name.
-final journalServiceFutureProvider = FutureProvider<JournalService>((ref) async {
+final journalServiceFutureProvider = FutureProvider.autoDispose<JournalService>((ref) async {
   final fileSystemService = ref.watch(fileSystemServiceProvider);
   await fileSystemService.initialize();
   final journalPath = await fileSystemService.getJournalPath();
@@ -59,7 +59,7 @@ final journalRefreshTriggerProvider = StateProvider<int>((ref) => 0);
 /// Provider for today's journal
 ///
 /// Automatically refreshes when the refresh trigger changes.
-final todayJournalProvider = FutureProvider<JournalDay>((ref) async {
+final todayJournalProvider = FutureProvider.autoDispose<JournalDay>((ref) async {
   // Watch the refresh trigger to enable manual refreshes
   ref.watch(journalRefreshTriggerProvider);
 
@@ -70,7 +70,7 @@ final todayJournalProvider = FutureProvider<JournalDay>((ref) async {
 /// Provider for a specific date's journal
 ///
 /// Uses the selected date from selectedJournalDateProvider.
-final selectedJournalProvider = FutureProvider<JournalDay>((ref) async {
+final selectedJournalProvider = FutureProvider.autoDispose<JournalDay>((ref) async {
   final date = ref.watch(selectedJournalDateProvider);
   ref.watch(journalRefreshTriggerProvider);
 
@@ -79,7 +79,7 @@ final selectedJournalProvider = FutureProvider<JournalDay>((ref) async {
 });
 
 /// Provider for the list of available journal dates
-final journalDatesProvider = FutureProvider<List<DateTime>>((ref) async {
+final journalDatesProvider = FutureProvider.autoDispose<List<DateTime>>((ref) async {
   ref.watch(journalRefreshTriggerProvider);
 
   final journalService = await ref.watch(journalServiceFutureProvider.future);
@@ -91,14 +91,14 @@ final journalDatesProvider = FutureProvider<List<DateTime>>((ref) async {
 // ============================================================================
 
 /// Async provider for ChatLogService
-final chatLogServiceFutureProvider = FutureProvider<ChatLogService>((ref) async {
+final chatLogServiceFutureProvider = FutureProvider.autoDispose<ChatLogService>((ref) async {
   final fileSystemService = ref.watch(fileSystemServiceProvider);
   await fileSystemService.initialize();
   return ChatLogService.create(fileSystemService: fileSystemService);
 });
 
 /// Provider for the selected date's chat log
-final selectedChatLogProvider = FutureProvider<ChatLog?>((ref) async {
+final selectedChatLogProvider = FutureProvider.autoDispose<ChatLog?>((ref) async {
   final date = ref.watch(selectedJournalDateProvider);
   ref.watch(journalRefreshTriggerProvider);
 
@@ -111,14 +111,14 @@ final selectedChatLogProvider = FutureProvider<ChatLog?>((ref) async {
 // ============================================================================
 
 /// Async provider for ReflectionService
-final reflectionServiceFutureProvider = FutureProvider<ReflectionService>((ref) async {
+final reflectionServiceFutureProvider = FutureProvider.autoDispose<ReflectionService>((ref) async {
   final fileSystemService = ref.watch(fileSystemServiceProvider);
   await fileSystemService.initialize();
   return ReflectionService.create(fileSystemService: fileSystemService);
 });
 
 /// Provider for the selected date's reflection (morning reflection for that day)
-final selectedReflectionProvider = FutureProvider<Reflection?>((ref) async {
+final selectedReflectionProvider = FutureProvider.autoDispose<Reflection?>((ref) async {
   final date = ref.watch(selectedJournalDateProvider);
   ref.watch(journalRefreshTriggerProvider);
 
@@ -131,14 +131,14 @@ final selectedReflectionProvider = FutureProvider<Reflection?>((ref) async {
 // ============================================================================
 
 /// Provider for the LocalAgentConfigService (reads agent configs from Daily/.agents/)
-final localAgentConfigServiceFutureProvider = FutureProvider<LocalAgentConfigService>((ref) async {
+final localAgentConfigServiceFutureProvider = FutureProvider.autoDispose<LocalAgentConfigService>((ref) async {
   final fileSystemService = ref.watch(fileSystemServiceProvider);
   await fileSystemService.initialize();
   return LocalAgentConfigService.create(fileSystemService: fileSystemService);
 });
 
 /// Provider for the AgentOutputService
-final agentOutputServiceFutureProvider = FutureProvider<AgentOutputService>((ref) async {
+final agentOutputServiceFutureProvider = FutureProvider.autoDispose<AgentOutputService>((ref) async {
   final fileSystemService = ref.watch(fileSystemServiceProvider);
   await fileSystemService.initialize();
   return AgentOutputService.create(fileSystemService: fileSystemService);
@@ -153,7 +153,7 @@ const _agentConfigsCacheTtl = Duration(minutes: 5);
 ///
 /// This works offline - no server connection needed.
 /// Uses in-memory caching to avoid disk reads during scroll.
-final localAgentConfigsProvider = FutureProvider<List<DailyAgentConfig>>((ref) async {
+final localAgentConfigsProvider = FutureProvider.autoDispose<List<DailyAgentConfig>>((ref) async {
   // Only watch refresh trigger for manual refresh, not auto-reload
   // Using read instead of watch to avoid triggering on every journal change
   final _ = ref.watch(journalRefreshTriggerProvider);
@@ -177,7 +177,7 @@ final localAgentConfigsProvider = FutureProvider<List<DailyAgentConfig>>((ref) a
 });
 
 /// Provider for a specific agent's outputs
-final agentOutputsProvider = FutureProvider.family<List<AgentOutput>, String>((ref, agentName) async {
+final agentOutputsProvider = FutureProvider.autoDispose.family<List<AgentOutput>, String>((ref, agentName) async {
   ref.watch(journalRefreshTriggerProvider);
 
   final service = await ref.watch(agentOutputServiceFutureProvider.future);
@@ -192,7 +192,7 @@ final agentOutputsProvider = FutureProvider.family<List<AgentOutput>, String>((r
 });
 
 /// Provider for all agent outputs for a specific date
-final agentOutputsForDateProvider = FutureProvider.family<List<AgentOutput>, DateTime>((ref, date) async {
+final agentOutputsForDateProvider = FutureProvider.autoDispose.family<List<AgentOutput>, DateTime>((ref, date) async {
   ref.watch(journalRefreshTriggerProvider);
 
   final service = await ref.watch(agentOutputServiceFutureProvider.future);
@@ -429,7 +429,7 @@ final journalNotifierProvider =
 });
 
 /// Family provider for journal notifier that properly initializes
-final journalNotifierFamilyProvider = FutureProvider.family<JournalNotifier, DateTime>(
+final journalNotifierFamilyProvider = FutureProvider.autoDispose.family<JournalNotifier, DateTime>(
   (ref, date) async {
     final journalService = await ref.watch(journalServiceFutureProvider.future);
     return JournalNotifier(journalService, ref, date);
