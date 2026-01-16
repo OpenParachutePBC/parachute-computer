@@ -190,11 +190,13 @@ async def run_daily_curator(
         now = datetime.now().astimezone()
         yesterday = now - timedelta(days=1)
         date = yesterday.strftime("%Y-%m-%d")
+        # Reflection is written for "today" (the day after the journal)
+        reflection_date = now.strftime("%Y-%m-%d")
     else:
-        now = datetime.now().astimezone()
-
-    # Today's date for the reflection file and prompt context (local timezone)
-    today = now.strftime("%Y-%m-%d")
+        # Manual catch-up: reflection goes to the day AFTER the journal date
+        journal_date_obj = datetime.strptime(date, "%Y-%m-%d")
+        reflection_date_obj = journal_date_obj + timedelta(days=1)
+        reflection_date = reflection_date_obj.strftime("%Y-%m-%d")
 
     # Load state
     state = DailyCuratorState(vault_path)
@@ -238,7 +240,7 @@ async def run_daily_curator(
     logger.info(f"Daily curator running with MCPs: {list(all_mcp_servers.keys())}")
 
     # Build the prompt - this is what we send each day
-    prompt_text = f"""Today is {today}. Please create my morning reflection based on yesterday ({date}).
+    prompt_text = f"""Today is {reflection_date}. Please create my morning reflection based on yesterday ({date}).
 
 Please:
 
@@ -251,7 +253,7 @@ Then create:
 - A song using Suno that captures the energy for today
 - An image using Glif that visualizes the current state/theme
 
-Use `write_reflection` with date "{today}" to save everything. Embed the song and image URLs directly in the markdown.
+Use `write_reflection` with date "{reflection_date}" to save everything. Embed the song and image URLs directly in the markdown.
 
 Remember: Be genuine and warm. Notice patterns across days. The chat logs often reveal what I'm most engaged with - connect those threads with the journal entries for richer reflections."""
 
@@ -262,11 +264,16 @@ Remember: Be genuine and warm. Notice patterns across days. The chat logs often 
         yield {"type": "user", "message": {"role": "user", "content": prompt_text}}
 
     # Build options
+    # IMPORTANT: Set cwd to vault_path so SDK sessions are stored consistently
+    # regardless of which directory the server is running from. This ensures
+    # session files go to ~/.claude/projects/-Users-...-Parachute/ not
+    # ~/.claude/projects/-Users-...-Parachute-projects-parachute-base/
     options_kwargs = {
         "system_prompt": system_prompt,
         "max_turns": 20,  # More turns for creative work
         "mcp_servers": all_mcp_servers,
         "permission_mode": "bypassPermissions",
+        "cwd": vault_path,
     }
 
     # Resume existing session if available (for continuity)
@@ -314,9 +321,9 @@ Remember: Be genuine and warm. Notice patterns across days. The chat logs often 
         result["sdk_session_id"] = new_session_id
         result["model"] = model_used
         result["reflection_written"] = reflection_written
-        result["reflection_path"] = f"Daily/reflections/{today}.md" if reflection_written else None
+        result["reflection_path"] = f"Daily/reflections/{reflection_date}.md" if reflection_written else None
         result["journal_date"] = date  # Yesterday's journal we read
-        result["reflection_date"] = today  # Today's reflection we wrote
+        result["reflection_date"] = reflection_date  # The reflection date (day after journal)
 
         logger.info(f"Daily curator completed for {date}: reflection_written={reflection_written}")
 

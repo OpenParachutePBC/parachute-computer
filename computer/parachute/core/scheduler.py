@@ -2,11 +2,14 @@
 Scheduler for automated tasks.
 
 Uses APScheduler to run background jobs like:
-- Daily curator at a configured time (default: 3am)
+- Daily agents at configured times (from Daily/.agents/*.md)
 - Future: Weekly summaries, cleanup tasks, etc.
 
-Configuration is read from the curator agent files themselves:
-- Daily curator: Daily/.agents/curator.md (schedule field in frontmatter)
+Configuration is read from agent markdown files with YAML frontmatter:
+- Daily agents: Daily/.agents/{name}.md (schedule field in frontmatter)
+
+Each agent can have its own schedule time. The scheduler discovers all
+agents and schedules them according to their configuration.
 """
 
 import logging
@@ -37,91 +40,47 @@ def _parse_time(time_str: str) -> tuple[int, int]:
         return (3, 0)
 
 
-def _load_daily_curator_config(vault_path: Path) -> Optional[dict[str, Any]]:
-    """
-    Load daily curator config from Daily/.agents/curator.md frontmatter.
+# =============================================================================
+# Generic Daily Agent Scheduling
+# =============================================================================
 
-    Returns None if the file doesn't exist (curator is disabled).
-    Returns config dict with schedule info if file exists.
-    """
-    curator_file = vault_path / "Daily" / ".agents" / "curator.md"
-
-    if not curator_file.exists():
-        logger.info("Daily curator agent file not found, curator disabled")
-        return None
-
-    try:
-        import frontmatter
-        post = frontmatter.loads(curator_file.read_text())
-        metadata = post.metadata
-
-        # Get schedule config from frontmatter
-        schedule = metadata.get("schedule", {})
-
-        # Support both dict format and simple time string
-        if isinstance(schedule, str):
-            hour, minute = _parse_time(schedule)
-            enabled = True
-        elif isinstance(schedule, dict):
-            enabled = schedule.get("enabled", True)
-            time_str = schedule.get("time", "3:00")
-            hour, minute = _parse_time(time_str)
-        else:
-            # Default: enabled at 3:00
-            enabled = True
-            hour, minute = 3, 0
-
-        return {
-            "enabled": enabled,
-            "hour": hour,
-            "minute": minute,
-            "source": str(curator_file),
-        }
-
-    except Exception as e:
-        logger.warning(f"Error reading curator config: {e}, using defaults")
-        return {
-            "enabled": True,
-            "hour": 3,
-            "minute": 0,
-            "source": str(curator_file),
-        }
-
-
-async def _run_daily_curator_job():
-    """Job function that runs the daily curator."""
+async def _run_daily_agent_job(agent_name: str):
+    """Job function that runs a daily agent."""
     global _vault_path
 
     if _vault_path is None:
-        logger.error("Scheduler: vault_path not set, skipping daily curator")
+        logger.error(f"Scheduler: vault_path not set, skipping agent '{agent_name}'")
         return
 
-    # Check if curator still exists (user might have deleted it)
-    curator_file = _vault_path / "Daily" / ".agents" / "curator.md"
-    if not curator_file.exists():
-        logger.info("Scheduler: Daily curator agent file not found, skipping")
+    # Check if agent still exists
+    agent_file = _vault_path / "Daily" / ".agents" / f"{agent_name}.md"
+    if not agent_file.exists():
+        logger.info(f"Scheduler: Agent '{agent_name}' file not found, skipping")
         return
 
-    logger.info("Scheduler: Running daily curator job")
+    logger.info(f"Scheduler: Running daily agent '{agent_name}'")
 
     try:
-        from parachute.core.daily_curator import run_daily_curator
-
-        result = await run_daily_curator(
+        # Use generic agent runner for all agents
+        from parachute.core.daily_agent import run_daily_agent
+        result = await run_daily_agent(
             vault_path=_vault_path,
-            date=None,  # Today
+            agent_name=agent_name,
+            date=None,
             force=False,
         )
 
-        logger.info(f"Scheduler: Daily curator completed: {result.get('status')}")
+        logger.info(f"Scheduler: Agent '{agent_name}' completed: {result.get('status')}")
 
     except Exception as e:
-        logger.error(f"Scheduler: Daily curator job failed: {e}", exc_info=True)
+        logger.error(f"Scheduler: Agent '{agent_name}' job failed: {e}", exc_info=True)
 
 
-def _schedule_daily_curator(scheduler: AsyncIOScheduler, vault_path: Path) -> bool:
-    """Schedule or update the daily curator job based on curator.md config."""
-    job_id = "daily_curator"
+def _schedule_daily_agent(scheduler: AsyncIOScheduler, vault_path: Path, agent_name: str) -> bool:
+    """Schedule a daily agent based on its config file."""
+    from parachute.core.daily_agent import get_daily_agent_config
+
+    job_id = f"daily_{agent_name}"
 
     # Remove existing job if present
     try:
@@ -129,33 +88,80 @@ def _schedule_daily_curator(scheduler: AsyncIOScheduler, vault_path: Path) -> bo
     except JobLookupError:
         pass
 
-    # Load config from curator.md
-    config = _load_daily_curator_config(vault_path)
+    # Load config from agent file
+    config = get_daily_agent_config(vault_path, agent_name)
 
     if config is None:
-        logger.info("Scheduler: Daily curator not configured (no curator.md)")
+        logger.info(f"Scheduler: Agent '{agent_name}' not found")
         return False
 
-    if not config.get("enabled", True):
-        logger.info("Scheduler: Daily curator disabled in config")
+    if not config.schedule_enabled:
+        logger.info(f"Scheduler: Agent '{agent_name}' disabled in config")
         return False
 
-    hour = config.get("hour", 3)
-    minute = config.get("minute", 0)
+    hour, minute = config.get_schedule_hour_minute()
 
     trigger = CronTrigger(hour=hour, minute=minute)
 
+    # Create a closure to capture agent_name
+    async def job_func():
+        await _run_daily_agent_job(agent_name)
+
     scheduler.add_job(
-        _run_daily_curator_job,
+        job_func,
         trigger=trigger,
         id=job_id,
-        name="Daily Curator",
+        name=config.display_name,
         replace_existing=True,
     )
 
-    logger.info(f"Scheduler: Daily curator scheduled for {hour:02d}:{minute:02d}")
+    logger.info(f"Scheduler: Agent '{agent_name}' scheduled for {hour:02d}:{minute:02d}")
     return True
 
+
+def _schedule_all_daily_agents(scheduler: AsyncIOScheduler, vault_path: Path) -> dict[str, bool]:
+    """Discover and schedule all daily agents."""
+    from parachute.core.daily_agent import discover_daily_agents
+
+    results = {}
+    agents = discover_daily_agents(vault_path)
+
+    for config in agents:
+        scheduled = _schedule_daily_agent(scheduler, vault_path, config.name)
+        results[config.name] = scheduled
+
+    return results
+
+
+# =============================================================================
+# Legacy Support (for backward compatibility)
+# =============================================================================
+
+def _load_daily_reflection_config(vault_path: Path) -> Optional[dict[str, Any]]:
+    """
+    Load daily reflection config from Daily/.agents/reflection.md frontmatter.
+
+    Returns None if the file doesn't exist (reflection agent is disabled).
+    Returns config dict with schedule info if file exists.
+    """
+    from parachute.core.daily_agent import get_daily_agent_config
+
+    config = get_daily_agent_config(vault_path, "reflection")
+    if config is None:
+        return None
+
+    hour, minute = config.get_schedule_hour_minute()
+    return {
+        "enabled": config.schedule_enabled,
+        "hour": hour,
+        "minute": minute,
+        "source": str(config.source_file) if config.source_file else None,
+    }
+
+
+# =============================================================================
+# Scheduler Lifecycle
+# =============================================================================
 
 async def init_scheduler(vault_path: Path) -> AsyncIOScheduler:
     """Initialize and start the scheduler."""
@@ -170,8 +176,9 @@ async def init_scheduler(vault_path: Path) -> AsyncIOScheduler:
     # Create scheduler
     _scheduler = AsyncIOScheduler()
 
-    # Schedule jobs based on what's configured in the vault
-    _schedule_daily_curator(_scheduler, vault_path)
+    # Schedule all daily agents
+    results = _schedule_all_daily_agents(_scheduler, vault_path)
+    logger.info(f"Scheduled daily agents: {results}")
 
     # Start the scheduler
     _scheduler.start()
@@ -199,14 +206,30 @@ def get_scheduler_status(vault_path: Path) -> dict[str, Any]:
     """Get the current scheduler status."""
     global _scheduler
 
-    # Load config from curator.md
-    daily_config = _load_daily_curator_config(vault_path)
+    from parachute.core.daily_agent import discover_daily_agents
+
+    # Discover all agents
+    agents = discover_daily_agents(vault_path)
+    agents_config = {}
+    for agent in agents:
+        hour, minute = agent.get_schedule_hour_minute()
+        agents_config[agent.name] = {
+            "enabled": agent.schedule_enabled,
+            "hour": hour,
+            "minute": minute,
+            "display_name": agent.display_name,
+            "description": agent.description,
+            "output_path": agent.output_path,
+            "source": str(agent.source_file) if agent.source_file else None,
+        }
 
     status = {
         "running": _scheduler is not None and _scheduler.running if _scheduler else False,
         "jobs": [],
+        "agents": agents_config,
+        # Legacy field for backward compatibility
         "config": {
-            "daily_curator": daily_config,
+            "daily_reflection": agents_config.get("reflection"),
         },
     }
 
@@ -224,19 +247,29 @@ def get_scheduler_status(vault_path: Path) -> dict[str, Any]:
 
 
 def reload_scheduler(vault_path: Path) -> dict[str, Any]:
-    """Reload scheduler configuration from curator files."""
+    """Reload scheduler configuration from agent files."""
     global _scheduler
 
     if not _scheduler or not _scheduler.running:
         return {"success": False, "error": "Scheduler not running"}
 
-    # Re-schedule daily curator
-    scheduled = _schedule_daily_curator(_scheduler, vault_path)
+    # Re-schedule all daily agents
+    results = _schedule_all_daily_agents(_scheduler, vault_path)
+
+    # Build response with next run times
+    agents_scheduled = {}
+    for name, scheduled in results.items():
+        agents_scheduled[name] = {
+            "scheduled": scheduled,
+            "next_run": _get_next_run(f"daily_{name}"),
+        }
 
     return {
         "success": True,
-        "daily_curator_scheduled": scheduled,
-        "next_run": _get_next_run("daily_curator"),
+        "agents": agents_scheduled,
+        # Legacy field
+        "daily_reflection_scheduled": results.get("reflection", False),
+        "next_run": _get_next_run("daily_reflection"),
     }
 
 
@@ -259,14 +292,41 @@ def _get_next_run(job_id: str) -> Optional[str]:
 
 async def trigger_job_now(job_id: str, vault_path: Path) -> dict[str, Any]:
     """Manually trigger a scheduled job immediately."""
-    if job_id == "daily_curator":
-        global _vault_path
-        _vault_path = vault_path
+    global _vault_path
+    _vault_path = vault_path
 
-        try:
-            await _run_daily_curator_job()
-            return {"success": True, "job_id": job_id, "message": "Job executed"}
-        except Exception as e:
-            return {"success": False, "job_id": job_id, "error": str(e)}
+    # Handle legacy job_id format
+    if job_id == "daily_reflection":
+        agent_name = "reflection"
+    elif job_id.startswith("daily_"):
+        agent_name = job_id[6:]  # Remove "daily_" prefix
+    else:
+        agent_name = job_id
 
-    return {"success": False, "job_id": job_id, "error": f"Unknown job: {job_id}"}
+    try:
+        await _run_daily_agent_job(agent_name)
+        return {"success": True, "job_id": job_id, "agent": agent_name, "message": "Job executed"}
+    except Exception as e:
+        return {"success": False, "job_id": job_id, "agent": agent_name, "error": str(e)}
+
+
+async def trigger_agent_now(agent_name: str, vault_path: Path, date: Optional[str] = None, force: bool = False) -> dict[str, Any]:
+    """
+    Manually trigger a daily agent immediately.
+
+    Args:
+        agent_name: Name of the agent to run
+        vault_path: Path to the vault
+        date: Optional date override (YYYY-MM-DD)
+        force: Force run even if already processed
+
+    Returns:
+        Result dict from the agent run
+    """
+    from parachute.core.daily_agent import run_daily_agent
+    return await run_daily_agent(
+        vault_path=vault_path,
+        agent_name=agent_name,
+        date=date,
+        force=force,
+    )

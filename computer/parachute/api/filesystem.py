@@ -34,6 +34,7 @@ def get_vault_path(request: Request) -> Path:
 async def list_directory(
     request: Request,
     path: Optional[str] = Query(None, description="Relative path within vault"),
+    includeHidden: bool = Query(False, description="Include hidden files/folders"),
 ) -> dict[str, Any]:
     """
     List directory contents in the vault.
@@ -68,8 +69,8 @@ async def list_directory(
     entries = []
     try:
         for item in sorted(target_path.iterdir()):
-            # Skip hidden files except CLAUDE.md
-            if item.name.startswith(".") and item.name != ".parachute":
+            # Skip hidden files unless includeHidden is True
+            if item.name.startswith(".") and not includeHidden:
                 continue
 
             relative_path = str(item.relative_to(vault_path))

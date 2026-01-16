@@ -184,7 +184,7 @@ async def get_module_stats(mod: str) -> dict[str, Any]:
 
 
 # =============================================================================
-# Module Curator Endpoints
+# Module Curator Endpoints (Legacy + Generic Agent Support)
 # =============================================================================
 
 
@@ -194,13 +194,19 @@ class CurateRequest(BaseModel):
     force: bool = False  # Run even if already processed
 
 
+class AgentRunRequest(BaseModel):
+    """Request body for running a daily agent."""
+    date: Optional[str] = None  # YYYY-MM-DD, defaults to yesterday
+    force: bool = False  # Run even if already processed
+
+
 @router.post("/modules/{mod}/curate")
 async def curate_module(mod: str, body: Optional[CurateRequest] = None) -> dict[str, Any]:
     """
     Trigger a curator run for a module.
 
     Currently supported modules:
-    - daily: Creates a reflection based on journal entries
+    - daily: Creates a reflection based on journal entries (runs the 'curator' agent)
 
     Query params:
     - date: Date to process (YYYY-MM-DD), defaults to today
@@ -217,7 +223,7 @@ async def curate_module(mod: str, body: Optional[CurateRequest] = None) -> dict[
         force = body.force
 
     if module_name == "daily":
-        # Use the daily curator
+        # Use the daily curator (backward compatibility)
         from parachute.core.daily_curator import run_daily_curator
 
         try:
@@ -239,6 +245,144 @@ async def curate_module(mod: str, body: Optional[CurateRequest] = None) -> dict[
             status_code=400,
             detail=f"Module '{mod}' does not support curation. Supported: daily"
         )
+
+
+# =============================================================================
+# Generic Daily Agent Endpoints
+# =============================================================================
+
+
+@router.get("/modules/daily/agents")
+async def list_daily_agents() -> dict[str, Any]:
+    """
+    List all configured daily agents.
+
+    Returns information about each agent including:
+    - name: Agent identifier
+    - display_name: Human-readable name
+    - description: What the agent does
+    - schedule: When it runs (if enabled)
+    - output_path: Where output is written
+    """
+    settings = get_settings()
+
+    from parachute.core.daily_agent import discover_daily_agents, DailyAgentState
+
+    agents = discover_daily_agents(settings.vault_path)
+    result = []
+
+    for config in agents:
+        # Get state for this agent
+        state = DailyAgentState(settings.vault_path, config.name)
+        state_data = state.load()
+
+        hour, minute = config.get_schedule_hour_minute()
+
+        result.append({
+            "name": config.name,
+            "displayName": config.display_name,
+            "description": config.description,
+            "schedule": {
+                "enabled": config.schedule_enabled,
+                "time": f"{hour:02d}:{minute:02d}",
+            },
+            "outputPath": config.output_path,
+            "state": {
+                "lastRunAt": state_data.get("last_run_at"),
+                "lastProcessedDate": state_data.get("last_processed_date"),
+                "runCount": state_data.get("run_count", 0),
+            },
+        })
+
+    return {"agents": result}
+
+
+@router.get("/modules/daily/agents/{agent_name}")
+async def get_daily_agent(agent_name: str) -> dict[str, Any]:
+    """
+    Get details about a specific daily agent.
+
+    Returns configuration, state, and whether output exists for today.
+    """
+    settings = get_settings()
+
+    from parachute.core.daily_agent import get_daily_agent_config, DailyAgentState
+
+    config = get_daily_agent_config(settings.vault_path, agent_name)
+    if not config:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found")
+
+    # Get state
+    state = DailyAgentState(settings.vault_path, agent_name)
+    state_data = state.load()
+
+    # Check if there's output for today
+    today = datetime.now().strftime("%Y-%m-%d")
+    output_path = config.get_output_path(today)
+    output_file = settings.vault_path / output_path
+    has_today_output = output_file.exists()
+
+    hour, minute = config.get_schedule_hour_minute()
+
+    return {
+        "name": config.name,
+        "displayName": config.display_name,
+        "description": config.description,
+        "schedule": {
+            "enabled": config.schedule_enabled,
+            "time": f"{hour:02d}:{minute:02d}",
+        },
+        "outputPath": config.output_path,
+        "state": state_data,
+        "hasTodayOutput": has_today_output,
+        "todayOutputPath": output_path if has_today_output else None,
+    }
+
+
+@router.post("/modules/daily/agents/{agent_name}/run")
+async def run_daily_agent(agent_name: str, body: Optional[AgentRunRequest] = None) -> dict[str, Any]:
+    """
+    Trigger a daily agent to run.
+
+    Args:
+        agent_name: Name of the agent (e.g., "curator", "content-scout")
+
+    Body:
+        date: Date to process (YYYY-MM-DD), defaults to yesterday
+        force: Run even if already processed
+    """
+    settings = get_settings()
+
+    from parachute.core.daily_agent import get_daily_agent_config
+
+    # Verify agent exists
+    config = get_daily_agent_config(settings.vault_path, agent_name)
+    if not config:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found")
+
+    # Parse request body
+    date = None
+    force = False
+    if body:
+        date = body.date
+        force = body.force
+
+    try:
+        from parachute.core.scheduler import trigger_agent_now
+
+        result = await trigger_agent_now(
+            agent_name=agent_name,
+            vault_path=settings.vault_path,
+            date=date,
+            force=force,
+        )
+        return {
+            "agent": agent_name,
+            **result,
+        }
+    except Exception as e:
+        logger.error(f"Error running agent '{agent_name}': {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Agent error: {str(e)}")
 
 
 @router.get("/modules/{mod}/curator")

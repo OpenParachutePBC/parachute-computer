@@ -4,7 +4,7 @@ API routes for Parachute server.
 
 from fastapi import APIRouter
 
-from parachute.api import auth, chat, sessions, modules, health, filesystem, claude_code, mcp, skills, imports, prompts, curator, context_folders, scheduler
+from parachute.api import auth, chat, sessions, modules, health, filesystem, claude_code, mcp, skills, imports, prompts, curator, context_folders, scheduler, sync
 
 # Create main API router
 api_router = APIRouter(prefix="/api")
@@ -24,3 +24,4 @@ api_router.include_router(prompts.router, tags=["prompts"])
 api_router.include_router(curator.router, tags=["curator"])
 api_router.include_router(context_folders.router, prefix="/contexts", tags=["contexts"])
 api_router.include_router(scheduler.router, tags=["scheduler"])
+api_router.include_router(sync.router, tags=["sync"])

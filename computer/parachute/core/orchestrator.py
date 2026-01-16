@@ -692,15 +692,16 @@ class Orchestrator:
                 session_finalized = True
                 logger.info(f"Finalized session: {captured_session_id[:8]}...")
 
-            # Update message count
-            if session.id != "pending":
-                await self.session_manager.increment_message_count(session.id, 2)
+            # Update message count - use captured_session_id for new sessions
+            # (session.id is "pending" for new sessions until finalized)
+            final_session_id = captured_session_id or session.id
+            if final_session_id and final_session_id != "pending":
+                await self.session_manager.increment_message_count(final_session_id, 2)
 
             duration_ms = int((time.time() - start_time) * 1000)
 
             # Queue curator task for background processing BEFORE yielding done
             # (code after yield may not execute if consumer stops iterating)
-            final_session_id = captured_session_id or session.id
             logger.info(f"About to queue curator: final_session_id={final_session_id}, is_pending={final_session_id == 'pending'}")
             if final_session_id and final_session_id != "pending":
                 await self._queue_curator_task(
