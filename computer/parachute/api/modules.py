@@ -385,6 +385,131 @@ async def run_daily_agent(agent_name: str, body: Optional[AgentRunRequest] = Non
         raise HTTPException(status_code=500, detail=f"Agent error: {str(e)}")
 
 
+@router.get("/modules/daily/agents/{agent_name}/transcript")
+async def get_daily_agent_transcript(
+    agent_name: str,
+    limit: int = Query(50, ge=1, le=200, description="Max messages to return"),
+) -> dict[str, Any]:
+    """
+    Get a daily agent's conversation transcript.
+
+    Returns the recent messages from the agent's session,
+    including tool calls, responses, and reasoning.
+    """
+    settings = get_settings()
+
+    from parachute.core.daily_agent import get_daily_agent_config, DailyAgentState
+    import json
+    from pathlib import Path
+
+    # Verify agent exists
+    config = get_daily_agent_config(settings.vault_path, agent_name)
+    if not config:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found")
+
+    # Get state to find session ID
+    state = DailyAgentState(settings.vault_path, agent_name)
+    state_data = state.load()
+
+    session_id = state_data.get("sdk_session_id")
+    if not session_id:
+        return {
+            "agent": agent_name,
+            "hasTranscript": False,
+            "message": f"No session exists yet for agent '{agent_name}'",
+        }
+
+    # Find the transcript file
+    # SDK stores transcripts in ~/.claude/projects/{escaped-cwd}/{session_id}.jsonl
+    claude_projects_dir = Path.home() / ".claude" / "projects"
+
+    transcript_path = None
+    possible_paths = list(claude_projects_dir.glob(f"*/{session_id}.jsonl"))
+    if possible_paths:
+        transcript_path = possible_paths[0]
+    else:
+        return {
+            "agent": agent_name,
+            "hasTranscript": False,
+            "sessionId": session_id,
+            "message": f"Transcript file not found for session {session_id}",
+        }
+
+    # Parse the JSONL transcript
+    messages = []
+    try:
+        with open(transcript_path, "r") as f:
+            for line in f:
+                if line.strip():
+                    try:
+                        entry = json.loads(line)
+                        msg_type = entry.get("type")
+                        message = entry.get("message", {})
+
+                        if msg_type == "user" or (message and message.get("role")):
+                            parsed = {
+                                "type": msg_type or message.get("role"),
+                                "timestamp": entry.get("timestamp"),
+                            }
+
+                            content = message.get("content")
+                            if isinstance(content, str):
+                                parsed["content"] = content[:2000]
+                            elif isinstance(content, list):
+                                parsed["blocks"] = []
+                                for block in content[:10]:
+                                    block_type = block.get("type")
+                                    if block_type == "text":
+                                        parsed["blocks"].append({
+                                            "type": "text",
+                                            "text": block.get("text", "")[:1000]
+                                        })
+                                    elif block_type == "tool_use":
+                                        parsed["blocks"].append({
+                                            "type": "tool_use",
+                                            "name": block.get("name"),
+                                            "input": str(block.get("input", {}))[:500]
+                                        })
+                                    elif block_type == "tool_result":
+                                        result_content = block.get("content", [])
+                                        text = ""
+                                        if isinstance(result_content, list) and result_content:
+                                            text = result_content[0].get("text", "")[:500]
+                                        parsed["blocks"].append({
+                                            "type": "tool_result",
+                                            "tool_use_id": block.get("tool_use_id"),
+                                            "text": text
+                                        })
+
+                            if message.get("model"):
+                                parsed["model"] = message.get("model")
+
+                            messages.append(parsed)
+
+                    except json.JSONDecodeError:
+                        continue
+
+    except Exception as e:
+        logger.error(f"Error reading agent transcript for '{agent_name}': {e}")
+        return {
+            "agent": agent_name,
+            "hasTranscript": False,
+            "sessionId": session_id,
+            "error": str(e),
+        }
+
+    recent_messages = messages[-limit:] if len(messages) > limit else messages
+
+    return {
+        "agent": agent_name,
+        "hasTranscript": True,
+        "sessionId": session_id,
+        "transcriptPath": str(transcript_path),
+        "totalMessages": len(messages),
+        "messages": recent_messages,
+    }
+
+
 @router.get("/modules/{mod}/curator")
 async def get_module_curator_status(mod: str) -> dict[str, Any]:
     """
