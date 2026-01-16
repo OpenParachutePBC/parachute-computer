@@ -17,9 +17,11 @@ class BaseServerService {
 
   // Use same key as app_state_provider.dart ServerUrlNotifier for consistency
   static const String _serverUrlKey = 'parachute_server_url';
+  static const String _apiKeyKey = 'parachute_api_key';
   static const String _defaultServerUrl = 'http://localhost:3333';
 
   String? _serverUrl;
+  String? _apiKey;
   bool _isInitialized = false;
 
   /// Get the configured server URL
@@ -30,14 +32,30 @@ class BaseServerService {
     return _serverUrl!;
   }
 
+  /// Get HTTP headers including auth if configured
+  Future<Map<String, String>> _getHeaders({bool json = false}) async {
+    if (!_isInitialized) {
+      await initialize();
+    }
+    final headers = <String, String>{};
+    if (json) {
+      headers['Content-Type'] = 'application/json';
+    }
+    if (_apiKey != null && _apiKey!.isNotEmpty) {
+      headers['Authorization'] = 'Bearer $_apiKey';
+    }
+    return headers;
+  }
+
   /// Initialize the service
   Future<void> initialize() async {
     if (_isInitialized) return;
 
     final prefs = await SharedPreferences.getInstance();
     _serverUrl = prefs.getString(_serverUrlKey) ?? _defaultServerUrl;
+    _apiKey = prefs.getString(_apiKeyKey);
     _isInitialized = true;
-    debugPrint('[BaseServerService] Initialized with URL: $_serverUrl');
+    debugPrint('[BaseServerService] Initialized with URL: $_serverUrl, hasApiKey: ${_apiKey != null && _apiKey!.isNotEmpty}');
   }
 
   /// Set a custom server URL
@@ -176,6 +194,34 @@ class BaseServerService {
       return null;
     } catch (e) {
       debugPrint('[BaseServerService] Error getting transcript: $e');
+      return null;
+    }
+  }
+
+  /// Get a daily agent's conversation transcript
+  ///
+  /// Returns the recent messages from the agent's session,
+  /// including tool calls and responses.
+  Future<CuratorTranscript?> getAgentTranscript(String agentName, {int limit = 50}) async {
+    try {
+      final url = '${await getServerUrl()}/api/modules/daily/agents/$agentName/transcript?limit=$limit';
+      debugPrint('[BaseServerService] Fetching agent transcript from: $url');
+
+      final response = await http
+          .get(Uri.parse(url), headers: await _getHeaders())
+          .timeout(const Duration(seconds: 15));
+
+      debugPrint('[BaseServerService] Agent transcript response: ${response.statusCode}');
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body) as Map<String, dynamic>;
+        debugPrint('[BaseServerService] Agent transcript data: hasTranscript=${data['hasTranscript']}, messages=${(data['messages'] as List?)?.length ?? 0}');
+        return CuratorTranscript.fromJson(data);
+      }
+      debugPrint('[BaseServerService] Agent transcript error: ${response.statusCode} - ${response.body}');
+      return null;
+    } catch (e) {
+      debugPrint('[BaseServerService] Error getting agent transcript: $e');
       return null;
     }
   }

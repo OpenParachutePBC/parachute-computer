@@ -5,6 +5,7 @@ import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
 import '../models/agent_output.dart';
+import '../screens/curator_log_screen.dart';
 import '../../../chat/widgets/inline_audio_player.dart';
 
 /// Expandable header showing output from a daily agent
@@ -142,6 +143,28 @@ class _AgentOutputHeaderState extends State<AgentOutputHeader>
                       ],
                     ),
                   ),
+                  // View log button - shows agent session transcript
+                  IconButton(
+                    icon: Icon(
+                      Icons.history,
+                      size: 20,
+                      color: BrandColors.driftwood,
+                    ),
+                    onPressed: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (context) => CuratorLogScreen(
+                            agentName: widget.agentConfig.name,
+                            displayName: widget.agentConfig.displayName,
+                          ),
+                        ),
+                      );
+                    },
+                    tooltip: 'View ${widget.agentConfig.displayName} log',
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                  ),
+                  const SizedBox(width: 8),
                   RotationTransition(
                     turns: _iconRotation,
                     child: Icon(

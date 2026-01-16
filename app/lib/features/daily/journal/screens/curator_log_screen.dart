@@ -1,17 +1,28 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/services/base_server_service.dart';
 import 'package:parachute/core/providers/base_server_provider.dart';
 
-/// Screen showing the daily curator's conversation transcript.
+/// Screen showing a daily agent's conversation transcript.
 ///
 /// Design principles (matching chat app patterns):
 /// - Collapse verbose context/tool results by default
-/// - Highlight curator responses prominently
+/// - Highlight agent responses prominently
 /// - Tool calls shown with expandable details
 /// - Clean preview for collapsed content
 class CuratorLogScreen extends ConsumerStatefulWidget {
-  const CuratorLogScreen({super.key});
+  /// The agent name. If null, shows the curator log (for backwards compatibility).
+  final String? agentName;
+
+  /// Display name for the agent (used in title).
+  final String? displayName;
+
+  const CuratorLogScreen({
+    super.key,
+    this.agentName,
+    this.displayName,
+  });
 
   @override
   ConsumerState<CuratorLogScreen> createState() => _CuratorLogScreenState();
@@ -22,6 +33,19 @@ class _CuratorLogScreenState extends ConsumerState<CuratorLogScreen> {
   bool _isLoading = true;
   String? _error;
 
+  String get _title => widget.displayName != null
+      ? '${widget.displayName} Log'
+      : widget.agentName != null
+          ? '${_formatAgentName(widget.agentName!)} Log'
+          : 'Curator Log';
+
+  String _formatAgentName(String name) {
+    return name
+        .split('-')
+        .map((word) => word.isEmpty ? '' : '${word[0].toUpperCase()}${word.substring(1)}')
+        .join(' ');
+  }
+
   @override
   void initState() {
     super.initState();
@@ -29,6 +53,7 @@ class _CuratorLogScreenState extends ConsumerState<CuratorLogScreen> {
   }
 
   Future<void> _loadTranscript() async {
+    debugPrint('[CuratorLogScreen] Loading transcript for agent: ${widget.agentName}');
     setState(() {
       _isLoading = true;
       _error = null;
@@ -36,13 +61,23 @@ class _CuratorLogScreenState extends ConsumerState<CuratorLogScreen> {
 
     try {
       final service = ref.read(baseServerServiceProvider);
-      final transcript = await service.getCuratorTranscript(limit: 100);
+      final CuratorTranscript? transcript;
+
+      if (widget.agentName != null) {
+        transcript = await service.getAgentTranscript(widget.agentName!, limit: 100);
+      } else {
+        // Legacy path for when no agent name specified
+        transcript = await service.getCuratorTranscript(limit: 100);
+      }
+
+      debugPrint('[CuratorLogScreen] Got transcript: hasTranscript=${transcript?.hasTranscript}, messages=${transcript?.messages.length}');
 
       setState(() {
         _transcript = transcript;
         _isLoading = false;
       });
     } catch (e) {
+      debugPrint('[CuratorLogScreen] Error: $e');
       setState(() {
         _error = e.toString();
         _isLoading = false;
@@ -57,7 +92,7 @@ class _CuratorLogScreenState extends ConsumerState<CuratorLogScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Curator Log'),
+        title: Text(_title),
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
@@ -84,7 +119,7 @@ class _CuratorLogScreenState extends ConsumerState<CuratorLogScreen> {
             children: [
               Icon(Icons.error_outline, size: 48, color: colorScheme.error),
               const SizedBox(height: 16),
-              Text('Error loading transcript', style: theme.textTheme.titleMedium),
+              Text('Error loading session log', style: theme.textTheme.titleMedium),
               const SizedBox(height: 8),
               Text(_error!, style: theme.textTheme.bodySmall),
               const SizedBox(height: 16),
@@ -99,6 +134,7 @@ class _CuratorLogScreenState extends ConsumerState<CuratorLogScreen> {
     }
 
     if (_transcript == null || !_transcript!.hasTranscript) {
+      final agentLabel = widget.displayName ?? widget.agentName ?? 'agent';
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(24),
@@ -108,12 +144,12 @@ class _CuratorLogScreenState extends ConsumerState<CuratorLogScreen> {
               Icon(Icons.history, size: 48, color: colorScheme.outline),
               const SizedBox(height: 16),
               Text(
-                'No curator history yet',
+                'No $agentLabel history yet',
                 style: theme.textTheme.titleMedium,
               ),
               const SizedBox(height: 8),
               Text(
-                _transcript?.message ?? 'The curator hasn\'t run yet.',
+                _transcript?.message ?? 'The $agentLabel hasn\'t run yet.',
                 style: theme.textTheme.bodySmall,
                 textAlign: TextAlign.center,
               ),
@@ -129,6 +165,7 @@ class _CuratorLogScreenState extends ConsumerState<CuratorLogScreen> {
         // Header with stats
         _SessionHeader(
           transcript: _transcript!,
+          agentDisplayName: widget.displayName,
           colorScheme: colorScheme,
           theme: theme,
         ),
@@ -148,17 +185,23 @@ class _CuratorLogScreenState extends ConsumerState<CuratorLogScreen> {
 /// Header showing session info
 class _SessionHeader extends StatelessWidget {
   final CuratorTranscript transcript;
+  final String? agentDisplayName;
   final ColorScheme colorScheme;
   final ThemeData theme;
 
   const _SessionHeader({
     required this.transcript,
+    this.agentDisplayName,
     required this.colorScheme,
     required this.theme,
   });
 
   @override
   Widget build(BuildContext context) {
+    final sessionLabel = agentDisplayName != null
+        ? '$agentDisplayName Session'
+        : 'Agent Session';
+
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -169,7 +212,7 @@ class _SessionHeader extends StatelessWidget {
               children: [
                 Icon(Icons.auto_awesome, color: colorScheme.primary),
                 const SizedBox(width: 8),
-                Text('Daily Curator Session', style: theme.textTheme.titleMedium),
+                Text(sessionLabel, style: theme.textTheme.titleMedium),
               ],
             ),
             const SizedBox(height: 8),
@@ -181,7 +224,7 @@ class _SessionHeader extends StatelessWidget {
               ),
             ),
             Text(
-              '${transcript.totalMessages} messages in conversation',
+              '${transcript.totalMessages} messages',
               style: theme.textTheme.bodySmall?.copyWith(
                 color: colorScheme.outline,
               ),

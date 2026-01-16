@@ -6,7 +6,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/core/services/file_system_service.dart';
-import 'package:parachute/core/providers/base_server_provider.dart';
 import 'package:parachute/core/providers/file_system_provider.dart';
 import 'package:parachute/core/providers/vision_provider.dart';
 import 'package:parachute/core/providers/sync_provider.dart';
@@ -15,15 +14,12 @@ import '../../recorder/providers/service_providers.dart';
 import '../../recorder/widgets/playback_controls.dart';
 import '../models/journal_day.dart';
 import '../models/journal_entry.dart';
-import '../models/reflection.dart';
 import '../providers/journal_providers.dart';
 import '../widgets/collapsible_chat_log_section.dart';
-import '../widgets/curator_trigger_card.dart';
 import '../widgets/entry_edit_modal.dart';
 import '../widgets/journal_entry_row.dart';
 import '../widgets/journal_input_bar.dart';
 import '../widgets/mini_audio_player.dart';
-import '../widgets/morning_reflection_header.dart';
 import '../widgets/agent_output_header.dart';
 import '../models/agent_output.dart';
 import 'package:parachute/features/settings/screens/settings_screen.dart';
@@ -1129,19 +1125,16 @@ class _JournalScreenState extends ConsumerState<JournalScreen>
 
     return Column(
       children: outputs.map((output) {
-        // Find the agent config for this output
-        final agentConfig = agentMap[output.agentName];
-        if (agentConfig == null) {
-          // Fallback if agent config not found
-          return MorningReflectionHeader(
-            reflection: Reflection(
-              date: output.date,
-              content: output.content,
-              generatedAt: output.generatedAt,
-            ),
-            initiallyExpanded: false,
-          );
-        }
+        // Find the agent config for this output, or create a fallback
+        final agentConfig = agentMap[output.agentName] ??
+            DailyAgentConfig(
+              name: output.agentName,
+              displayName: _formatAgentDisplayName(output.agentName),
+              description: '',
+              scheduleEnabled: false,
+              scheduleTime: '',
+              outputPath: '',
+            );
 
         return AgentOutputHeader(
           output: output,
@@ -1150,6 +1143,14 @@ class _JournalScreenState extends ConsumerState<JournalScreen>
         );
       }).toList(),
     );
+  }
+
+  /// Format agent name to display name (e.g., "content-scout" -> "Content Scout")
+  String _formatAgentDisplayName(String agentName) {
+    return agentName
+        .split('-')
+        .map((word) => word.isEmpty ? '' : '${word[0].toUpperCase()}${word.substring(1)}')
+        .join(' ');
   }
 
   void _handleEntryTap(JournalEntry entry) {
