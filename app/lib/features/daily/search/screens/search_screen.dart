@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
-import 'package:parachute/core/providers/search_providers.dart';
-import 'package:parachute/core/services/search/simple_text_search.dart';
+import '../providers/search_providers.dart';
+import '../services/simple_text_search.dart';
 
 /// Search screen for keyword search across journal entries
 class SearchScreen extends ConsumerStatefulWidget {

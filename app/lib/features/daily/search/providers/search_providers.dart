@@ -1,6 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:parachute/core/services/search/simple_text_search.dart';
-import 'package:parachute/features/daily/journal/providers/journal_providers.dart';
+import '../services/simple_text_search.dart';
+import '../../journal/providers/journal_providers.dart';
 
 /// Provider for the simple text search service
 /// Uses AsyncValue since JournalService requires async initialization

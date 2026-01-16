@@ -1,5 +1,5 @@
 import 'package:flutter/foundation.dart';
-import 'package:parachute/features/daily/journal/services/journal_service.dart';
+import '../../journal/services/journal_service.dart';
 
 /// Simple text search result
 class SimpleSearchResult {
