@@ -2,9 +2,38 @@
 API request models.
 """
 
+from pathlib import Path
 from typing import Any, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+
+# Allowed file extensions for attachments (security whitelist)
+ALLOWED_ATTACHMENT_EXTENSIONS = {
+    # Images
+    ".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".bmp", ".ico",
+    # Documents
+    ".pdf", ".txt", ".md", ".markdown", ".rtf",
+    # Code/data
+    ".json", ".xml", ".yaml", ".yml", ".toml", ".csv", ".tsv",
+    ".py", ".js", ".ts", ".jsx", ".tsx", ".html", ".css", ".scss",
+    ".java", ".kt", ".swift", ".go", ".rs", ".c", ".cpp", ".h", ".hpp",
+    ".rb", ".php", ".sh", ".bash", ".zsh", ".fish",
+    ".sql", ".graphql", ".proto",
+    ".dart", ".vue", ".svelte",
+    # Config
+    ".env", ".ini", ".conf", ".cfg",
+    ".dockerfile", ".gitignore", ".editorconfig",
+}
+
+# Blocked extensions (executable/dangerous - explicit blocklist for clarity)
+BLOCKED_ATTACHMENT_EXTENSIONS = {
+    ".exe", ".dll", ".so", ".dylib",  # Executables
+    ".bat", ".cmd", ".ps1", ".vbs",   # Scripts
+    ".app", ".dmg", ".pkg", ".msi",   # Installers
+    ".jar", ".war", ".ear",           # Java archives
+    ".scr", ".com", ".pif",           # Windows executables
+}
 
 
 class Attachment(BaseModel):
@@ -19,6 +48,28 @@ class Attachment(BaseModel):
     base64Data: Optional[str] = Field(alias="base64Data", default=None, description="Base64 encoded data")
 
     model_config = {"populate_by_name": True}
+
+    @field_validator("fileName")
+    @classmethod
+    def validate_filename(cls, v: str) -> str:
+        """Validate filename has allowed extension."""
+        ext = Path(v).suffix.lower()
+
+        # Check explicit blocklist first
+        if ext in BLOCKED_ATTACHMENT_EXTENSIONS:
+            raise ValueError(f"File type '{ext}' is not allowed for security reasons")
+
+        # If extension is not in whitelist, check if it's likely safe
+        # Allow files without extensions (may be text files)
+        if ext and ext not in ALLOWED_ATTACHMENT_EXTENSIONS:
+            # Log warning but allow unknown extensions (may be legitimate)
+            # The orchestrator will handle them as generic files
+            import logging
+            logging.getLogger(__name__).warning(
+                f"Attachment with uncommon extension '{ext}' - allowing but treating as generic file"
+            )
+
+        return v
 
 
 class ChatRequest(BaseModel):
