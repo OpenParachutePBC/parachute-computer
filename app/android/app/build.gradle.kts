@@ -21,7 +21,7 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
+        // Base application ID - overridden by flavors
         applicationId = "io.openparachute.parachute"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
@@ -29,6 +29,21 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+    }
+
+    // Product flavors for Daily-only vs Full app
+    flavorDimensions += "version"
+    productFlavors {
+        create("daily") {
+            dimension = "version"
+            applicationId = "io.openparachute.daily"
+            resValue("string", "app_name", "Parachute Daily")
+        }
+        create("full") {
+            dimension = "version"
+            applicationId = "io.openparachute.parachute"
+            resValue("string", "app_name", "Parachute")
+        }
     }
 
     buildTypes {

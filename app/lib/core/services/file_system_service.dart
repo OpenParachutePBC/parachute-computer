@@ -362,7 +362,15 @@ class FileSystemService {
   /// The module folder (Daily/Chat) will be created inside this path.
   Future<bool> setVaultPath(String vaultPath, {bool migrateFiles = true}) async {
     try {
-      final oldModulePath = _getModulePath();
+      debugPrint('[FileSystemService:${_moduleType.name}] setVaultPath called with: $vaultPath');
+
+      // Ensure module folder name is set (initialize if needed)
+      if (_moduleFolderName == null) {
+        _moduleFolderName = _defaultModuleFolderName;
+        debugPrint('[FileSystemService:${_moduleType.name}] Set default module folder: $_moduleFolderName');
+      }
+
+      final oldModulePath = _vaultPath != null ? _getModulePath() : null;
 
       // Ensure vault directory exists
       final vaultDir = Directory(vaultPath);
@@ -382,7 +390,7 @@ class FileSystemService {
       }
 
       // Migrate files if requested
-      if (migrateFiles && oldModulePath != newModulePath) {
+      if (migrateFiles && oldModulePath != null && oldModulePath != newModulePath) {
         final oldDir = Directory(oldModulePath);
         if (await oldDir.exists()) {
           debugPrint(

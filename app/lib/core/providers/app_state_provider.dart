@@ -1,6 +1,13 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+/// App flavor set at compile time via --dart-define=FLAVOR=daily|full
+/// Defaults to 'full' if not specified
+const String appFlavor = String.fromEnvironment('FLAVOR', defaultValue: 'full');
+
+/// Whether the app was built as the Daily-only flavor
+bool get isDailyOnlyFlavor => appFlavor == 'daily';
+
 /// App mode determines which features are available
 enum AppMode {
   /// Daily only - no server configured, works offline
@@ -44,8 +51,17 @@ final serverUrlProvider = AsyncNotifierProvider<ServerUrlNotifier, String?>(() {
   return ServerUrlNotifier();
 });
 
-/// App mode based on server configuration
+/// App mode based on flavor and server configuration
+///
+/// - Daily flavor: Always dailyOnly (Chat/Vault not available)
+/// - Full flavor: Full if server configured, dailyOnly if not
 final appModeProvider = Provider<AppMode>((ref) {
+  // Daily-only flavor is always in daily mode regardless of server
+  if (isDailyOnlyFlavor) {
+    return AppMode.dailyOnly;
+  }
+
+  // Full flavor checks server configuration
   final serverUrlAsync = ref.watch(serverUrlProvider);
 
   return serverUrlAsync.when(

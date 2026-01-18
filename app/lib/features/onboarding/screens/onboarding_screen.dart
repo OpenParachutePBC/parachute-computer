@@ -12,16 +12,23 @@ import 'package:parachute/features/daily/journal/providers/journal_providers.dar
 import '../widgets/claude_auth_step.dart';
 import '../widgets/server_connection_step.dart';
 
+// Import flavor detection
+export 'package:parachute/core/providers/app_state_provider.dart' show isDailyOnlyFlavor;
+
 /// Adaptive onboarding flow for first-time users
 ///
-/// Flow varies by platform:
+/// Flow varies by flavor and platform:
 ///
-/// **Parachute Computer (bundled server):**
+/// **Parachute Daily (daily flavor):**
+/// 1. Welcome + Choose vault folder
+/// 2. Ready to go (no server needed!)
+///
+/// **Parachute Full - Computer (bundled server):**
 /// 1. Welcome + Choose vault folder
 /// 2. Claude authentication (via `claude setup-token`)
 /// 3. Ready to go
 ///
-/// **Mobile/Remote clients:**
+/// **Parachute Full - Mobile/Remote:**
 /// 1. Welcome + Choose vault folder
 /// 2. Server URL + API key
 /// 3. Ready to go
@@ -157,12 +164,18 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> with Widget
 
       // Initialize the folder (uses default if selectedPath is null)
       if (selectedPath != null) {
+        debugPrint('[Onboarding] Setting custom vault path: $selectedPath');
         await service.setVaultPath(selectedPath, migrateFiles: false);
       } else {
+        debugPrint('[Onboarding] Using default vault path');
         await service.initialize();
       }
 
+      // Mark as configured so onboarding knows it's done
+      await service.markAsConfigured();
+
       final displayPath = await service.getVaultPathDisplay();
+      debugPrint('[Onboarding] Vault path set to: $displayPath');
 
       // Invalidate providers so they use the new path
       ref.invalidate(journalServiceFutureProvider);
@@ -220,8 +233,11 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> with Widget
     }
   }
 
+  /// Total number of steps depends on flavor
+  int get _totalSteps => isDailyOnlyFlavor ? 2 : 3;
+
   void _nextStep() {
-    if (_currentStep < 2) {
+    if (_currentStep < _totalSteps - 1) {
       setState(() => _currentStep++);
     } else {
       _completeOnboarding();
@@ -250,7 +266,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> with Widget
             children: [
               // Progress indicator
               Row(
-                children: List.generate(3, (index) {
+                children: List.generate(_totalSteps, (index) {
                   final isActive = index <= _currentStep;
                   return Expanded(
                     child: Container(
@@ -286,11 +302,18 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> with Widget
     // Detect bundled mode on first build (lazy initialization)
     _isBundledApp ??= ref.read(isBundledAppProvider);
 
+    debugPrint('[Onboarding] _buildStep: step=$_currentStep, flavor=$appFlavor, isDailyOnly=$isDailyOnlyFlavor, totalSteps=$_totalSteps');
+
     switch (_currentStep) {
       case 0:
         return _buildWelcomeStep(isDark);
       case 1:
-        // Step 2 varies by platform:
+        // Daily flavor: Skip server setup entirely, go straight to ready
+        if (isDailyOnlyFlavor) {
+          debugPrint('[Onboarding] Daily flavor detected, showing ready step');
+          return _buildReadyStep(isDark);
+        }
+        // Full flavor step 2 varies by platform:
         // - Bundled app (Parachute Computer): Skip (Claude auth via `claude login` in terminal)
         // - Mobile/remote: Server URL + API key
         if (_isBundledApp == true) {
@@ -322,7 +345,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> with Widget
           ),
           SizedBox(height: Spacing.xl),
           Text(
-            'Welcome to Parachute',
+            isDailyOnlyFlavor ? 'Welcome to Parachute Daily' : 'Welcome to Parachute',
             style: TextStyle(
               fontSize: 28,
               fontWeight: FontWeight.bold,
@@ -332,7 +355,9 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> with Widget
           ),
           SizedBox(height: Spacing.md),
           Text(
-            'Your extended mind, locally stored.',
+            isDailyOnlyFlavor
+                ? 'Voice journaling, locally stored.'
+                : 'Your extended mind, locally stored.',
             style: TextStyle(
               fontSize: TypographyTokens.bodyLarge,
               color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,

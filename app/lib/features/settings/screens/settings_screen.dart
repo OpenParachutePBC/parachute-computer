@@ -16,6 +16,7 @@ import '../widgets/omi_device_section.dart';
 import '../widgets/api_key_section.dart';
 import '../widgets/bundled_server_section.dart';
 import '../widgets/claude_auth_section.dart';
+import '../widgets/lima_vm_section.dart';
 
 /// Unified Settings screen for Parachute
 ///
@@ -297,6 +298,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final showChatFolder = appMode == AppMode.full;
     final isBundled = ref.watch(isBundledAppProvider);
 
+    // Daily flavor: Hide all server-related UI
+    final showServerSettings = !isDailyOnlyFlavor;
+
     if (_isLoading) {
       return Scaffold(
         appBar: AppBar(title: const Text('Settings')),
@@ -320,8 +324,19 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       body: ListView(
         padding: EdgeInsets.all(Spacing.lg),
         children: [
-          // Bundled Server Section (desktop only - shows when server is bundled)
-          if (Platform.isMacOS || Platform.isLinux || Platform.isWindows) ...[
+          // Lima VM Section (macOS/Linux only, full flavor only)
+          // This is the recommended way to run Parachute Computer with isolation
+          if (showServerSettings && (Platform.isMacOS || Platform.isLinux)) ...[
+            _SettingsCard(
+              isDark: isDark,
+              child: const LimaVMSection(),
+            ),
+            SizedBox(height: Spacing.xl),
+          ],
+
+          // Bundled Server Section (desktop only, full flavor only)
+          // Legacy PyInstaller approach - shown as alternative
+          if (showServerSettings && (Platform.isMacOS || Platform.isLinux || Platform.isWindows)) ...[
             _SettingsCard(
               isDark: isDark,
               child: const BundledServerSection(),
@@ -336,23 +351,23 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             SizedBox(height: Spacing.xl),
           ],
 
-          // Server Connection Section
-          _buildServerSection(isDark),
+          // Server Connection Section (full flavor only)
+          if (showServerSettings) ...[
+            _buildServerSection(isDark),
+            SizedBox(height: Spacing.xl),
+          ],
 
-          SizedBox(height: Spacing.xl),
-
-          // Parachute Vault Section (unified storage)
+          // Parachute Vault Section (unified storage) - always shown
           _buildVaultSection(isDark, showChatFolder),
 
-          // Sync Section (only for remote clients - not needed for bundled apps
-          // since server and app share the same filesystem)
-          if (showChatFolder && !isBundled) ...[
+          // Sync Section (only for remote clients with server configured)
+          if (showServerSettings && showChatFolder && !isBundled) ...[
             SizedBox(height: Spacing.xl),
             _buildSyncSection(isDark),
           ],
 
-          // API Keys Section (for multi-device auth)
-          if (showChatFolder) ...[
+          // API Keys Section (for multi-device auth, full flavor only)
+          if (showServerSettings && showChatFolder) ...[
             SizedBox(height: Spacing.xl),
             _SettingsCard(
               isDark: isDark,
@@ -360,7 +375,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             ),
           ],
 
-          // Omi Device Section (iOS/Android only)
+          // Omi Device Section (iOS/Android only) - always shown (offline feature)
           if (Platform.isIOS || Platform.isAndroid) ...[
             SizedBox(height: Spacing.xl),
             _SettingsCard(
@@ -610,6 +625,28 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   color: isDark ? BrandColors.nightText : BrandColors.charcoal,
                 ),
               ),
+              // Conflict badge
+              if (syncState.hasConflicts) ...[
+                SizedBox(width: Spacing.xs),
+                Container(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: Spacing.xs,
+                    vertical: 2,
+                  ),
+                  decoration: BoxDecoration(
+                    color: BrandColors.warning,
+                    borderRadius: BorderRadius.circular(Radii.sm),
+                  ),
+                  child: Text(
+                    '${syncState.unresolvedConflicts.length}',
+                    style: TextStyle(
+                      fontSize: TypographyTokens.labelSmall,
+                      fontWeight: FontWeight.bold,
+                      color: BrandColors.softWhite,
+                    ),
+                  ),
+                ),
+              ],
               const Spacer(),
               if (syncState.isSyncing)
                 SizedBox(
@@ -622,6 +659,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     ),
                   ),
                 )
+              else if (syncState.hasConflicts)
+                Icon(Icons.warning_amber_rounded, color: BrandColors.warning, size: 20)
               else if (syncState.status == SyncStatus.success)
                 Icon(Icons.check_circle, color: BrandColors.success, size: 20)
               else if (syncState.hasError)
@@ -753,6 +792,85 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             SizedBox(height: Spacing.md),
           ],
 
+          // Conflicts info
+          if (syncState.hasConflicts) ...[
+            Container(
+              padding: EdgeInsets.all(Spacing.sm),
+              decoration: BoxDecoration(
+                color: BrandColors.warning.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(Radii.sm),
+                border: Border.all(
+                  color: BrandColors.warning.withValues(alpha: 0.3),
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.warning_amber_rounded, size: 16, color: BrandColors.warning),
+                      SizedBox(width: Spacing.xs),
+                      Text(
+                        '${syncState.unresolvedConflicts.length} conflict${syncState.unresolvedConflicts.length == 1 ? '' : 's'} detected',
+                        style: TextStyle(
+                          fontSize: TypographyTokens.bodySmall,
+                          fontWeight: FontWeight.w600,
+                          color: BrandColors.warning,
+                        ),
+                      ),
+                    ],
+                  ),
+                  SizedBox(height: Spacing.xs),
+                  Text(
+                    'Conflicting edits were saved with .sync-conflict suffix. Check your Daily folder for conflict files.',
+                    style: TextStyle(
+                      fontSize: TypographyTokens.labelSmall,
+                      color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+                    ),
+                  ),
+                  SizedBox(height: Spacing.sm),
+                  // Show conflict file list (truncated)
+                  ...syncState.unresolvedConflicts.take(3).map((conflict) => Padding(
+                    padding: EdgeInsets.only(top: Spacing.xs),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.description_outlined,
+                          size: 12,
+                          color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+                        ),
+                        SizedBox(width: Spacing.xs),
+                        Expanded(
+                          child: Text(
+                            conflict.split('/').last,
+                            style: TextStyle(
+                              fontSize: TypographyTokens.labelSmall,
+                              color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                  )),
+                  if (syncState.unresolvedConflicts.length > 3)
+                    Padding(
+                      padding: EdgeInsets.only(top: Spacing.xs),
+                      child: Text(
+                        '+${syncState.unresolvedConflicts.length - 3} more',
+                        style: TextStyle(
+                          fontSize: TypographyTokens.labelSmall,
+                          fontStyle: FontStyle.italic,
+                          color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            SizedBox(height: Spacing.md),
+          ],
+
           // Sync button
           SizedBox(
             width: double.infinity,
@@ -762,12 +880,19 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   : () async {
                       final result = await syncNotifier.sync(pattern: '*');
                       if (mounted && result.success) {
+                        // Build message with optional conflict info
+                        final mergedStr = result.merged > 0 ? ', ${result.merged} merged' : '';
+                        final conflictStr = result.conflicts.isNotEmpty
+                            ? ' (${result.conflicts.length} conflict${result.conflicts.length == 1 ? '' : 's'})'
+                            : '';
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(
                             content: Text(
-                              'Synced: ${result.pushed} pushed, ${result.pulled} pulled',
+                              'Synced: ${result.pushed} pushed, ${result.pulled} pulled$mergedStr$conflictStr',
                             ),
-                            backgroundColor: BrandColors.success,
+                            backgroundColor: result.conflicts.isNotEmpty
+                                ? BrandColors.warning
+                                : BrandColors.success,
                           ),
                         );
                       }
@@ -839,13 +964,19 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
           SizedBox(height: Spacing.lg),
 
-          _AboutRow(label: 'App', value: 'Parachute', isDark: isDark),
+          _AboutRow(
+            label: 'App',
+            value: isDailyOnlyFlavor ? 'Parachute Daily' : 'Parachute',
+            isDark: isDark,
+          ),
           _AboutRow(label: 'Version', value: '0.1.0', isDark: isDark),
           _AboutRow(label: 'Company', value: 'Open Parachute, PBC', isDark: isDark),
 
           SizedBox(height: Spacing.lg),
           Text(
-            'Open & interoperable extended mind technology',
+            isDailyOnlyFlavor
+                ? 'Simple voice journaling, locally stored'
+                : 'Open & interoperable extended mind technology',
             style: TextStyle(
               fontSize: TypographyTokens.bodySmall,
               fontStyle: FontStyle.italic,
