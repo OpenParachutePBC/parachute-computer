@@ -12,6 +12,12 @@ import 'transcription/transcription_service_adapter.dart';
 import 'vad/smart_chunker.dart';
 import 'audio_processing/simple_noise_filter.dart';
 
+/// Top-level function for compute() to build WAV bytes off main thread
+/// Must be top-level or static for compute() to work
+Uint8List _buildWavBytesIsolate(List<int> samples) {
+  return StreamingVoiceService._buildWavBytes(samples);
+}
+
 /// Transcription model status
 enum TranscriptionModelStatus {
   notInitialized, // Model not yet initialized
@@ -371,15 +377,17 @@ class StreamingVoiceService {
   }
 
   /// Stream audio samples to disk
+  /// Uses typed data for efficient int16 to bytes conversion
   void _streamAudioToDisk(List<int> samples) {
-    if (_audioFileSink == null) return;
+    if (_audioFileSink == null || samples.isEmpty) return;
 
-    final bytes = Uint8List(samples.length * 2);
-    for (int i = 0; i < samples.length; i++) {
-      final sample = samples[i];
-      bytes[i * 2] = sample & 0xFF;
-      bytes[i * 2 + 1] = (sample >> 8) & 0xFF;
+    // Use Int16List for efficient byte conversion
+    final int16List = Int16List(samples.length);
+    for (var i = 0; i < samples.length; i++) {
+      int16List[i] = samples[i];
     }
+    // Get raw bytes view (zero-copy)
+    final bytes = Uint8List.view(int16List.buffer);
     _audioFileSink!.add(bytes);
     _totalSamplesWritten += samples.length;
   }
@@ -878,7 +886,25 @@ class StreamingVoiceService {
   }
 
   /// Save samples to WAV file
+  /// Uses compute() to build the byte array off the main thread for large buffers
   Future<void> _saveSamplesToWav(List<int> samples, String filePath) async {
+    // For small buffers (< 1 second of audio), just do it inline
+    // For larger buffers, use compute() to avoid blocking the main thread
+    if (samples.length < 16000) {
+      // Small buffer - inline is fine
+      final wavBytes = _buildWavBytes(samples);
+      final file = File(filePath);
+      await file.writeAsBytes(wavBytes);
+    } else {
+      // Large buffer - use compute() to build bytes off main thread
+      final wavBytes = await compute(_buildWavBytesIsolate, samples);
+      final file = File(filePath);
+      await file.writeAsBytes(wavBytes);
+    }
+  }
+
+  /// Build WAV bytes from samples (for inline use)
+  static Uint8List _buildWavBytes(List<int> samples) {
     const sampleRate = 16000;
     const numChannels = 1;
     const bitsPerSample = 16;
@@ -886,61 +912,89 @@ class StreamingVoiceService {
     final dataSize = samples.length * 2;
     final fileSize = 36 + dataSize;
 
-    final bytes = BytesBuilder();
+    // Pre-allocate the exact size needed
+    final bytes = Uint8List(44 + dataSize);
+    var offset = 0;
 
     // RIFF header
-    bytes.add('RIFF'.codeUnits);
-    bytes.add(_int32ToBytes(fileSize));
-    bytes.add('WAVE'.codeUnits);
+    bytes[offset++] = 0x52; // 'R'
+    bytes[offset++] = 0x49; // 'I'
+    bytes[offset++] = 0x46; // 'F'
+    bytes[offset++] = 0x46; // 'F'
+    bytes[offset++] = fileSize & 0xFF;
+    bytes[offset++] = (fileSize >> 8) & 0xFF;
+    bytes[offset++] = (fileSize >> 16) & 0xFF;
+    bytes[offset++] = (fileSize >> 24) & 0xFF;
+    bytes[offset++] = 0x57; // 'W'
+    bytes[offset++] = 0x41; // 'A'
+    bytes[offset++] = 0x56; // 'V'
+    bytes[offset++] = 0x45; // 'E'
 
     // fmt chunk
-    bytes.add('fmt '.codeUnits);
-    bytes.add(_int32ToBytes(16));
-    bytes.add(_int16ToBytes(1));
-    bytes.add(_int16ToBytes(numChannels));
-    bytes.add(_int32ToBytes(sampleRate));
-    bytes.add(_int32ToBytes(sampleRate * numChannels * bitsPerSample ~/ 8));
-    bytes.add(_int16ToBytes(numChannels * bitsPerSample ~/ 8));
-    bytes.add(_int16ToBytes(bitsPerSample));
+    bytes[offset++] = 0x66; // 'f'
+    bytes[offset++] = 0x6D; // 'm'
+    bytes[offset++] = 0x74; // 't'
+    bytes[offset++] = 0x20; // ' '
+    bytes[offset++] = 16; bytes[offset++] = 0; bytes[offset++] = 0; bytes[offset++] = 0; // chunk size
+    bytes[offset++] = 1; bytes[offset++] = 0; // format (PCM)
+    bytes[offset++] = numChannels; bytes[offset++] = 0; // channels
+    bytes[offset++] = sampleRate & 0xFF;
+    bytes[offset++] = (sampleRate >> 8) & 0xFF;
+    bytes[offset++] = (sampleRate >> 16) & 0xFF;
+    bytes[offset++] = (sampleRate >> 24) & 0xFF;
+    final byteRate = sampleRate * numChannels * bitsPerSample ~/ 8;
+    bytes[offset++] = byteRate & 0xFF;
+    bytes[offset++] = (byteRate >> 8) & 0xFF;
+    bytes[offset++] = (byteRate >> 16) & 0xFF;
+    bytes[offset++] = (byteRate >> 24) & 0xFF;
+    final blockAlign = numChannels * bitsPerSample ~/ 8;
+    bytes[offset++] = blockAlign; bytes[offset++] = 0; // block align
+    bytes[offset++] = bitsPerSample; bytes[offset++] = 0; // bits per sample
 
-    // data chunk
-    bytes.add('data'.codeUnits);
-    bytes.add(_int32ToBytes(dataSize));
+    // data chunk header
+    bytes[offset++] = 0x64; // 'd'
+    bytes[offset++] = 0x61; // 'a'
+    bytes[offset++] = 0x74; // 't'
+    bytes[offset++] = 0x61; // 'a'
+    bytes[offset++] = dataSize & 0xFF;
+    bytes[offset++] = (dataSize >> 8) & 0xFF;
+    bytes[offset++] = (dataSize >> 16) & 0xFF;
+    bytes[offset++] = (dataSize >> 24) & 0xFF;
 
+    // Audio data
     for (final sample in samples) {
-      bytes.add(_int16ToBytes(sample));
+      final clamped = sample.clamp(-32768, 32767);
+      final unsigned = clamped < 0 ? clamped + 65536 : clamped;
+      bytes[offset++] = unsigned & 0xFF;
+      bytes[offset++] = (unsigned >> 8) & 0xFF;
     }
 
-    final file = File(filePath);
-    await file.writeAsBytes(bytes.toBytes());
+    return bytes;
   }
 
-  Uint8List _int32ToBytes(int value) {
-    return Uint8List(4)
-      ..[0] = value & 0xFF
-      ..[1] = (value >> 8) & 0xFF
-      ..[2] = (value >> 16) & 0xFF
-      ..[3] = (value >> 24) & 0xFF;
-  }
-
-  Uint8List _int16ToBytes(int value) {
-    final clamped = value.clamp(-32768, 32767);
-    final unsigned = clamped < 0 ? clamped + 65536 : clamped;
-    return Uint8List(2)
-      ..[0] = unsigned & 0xFF
-      ..[1] = (unsigned >> 8) & 0xFF;
-  }
-
+  /// Convert bytes to int16 samples using typed data view (zero-copy when possible)
   List<int> _bytesToInt16(Uint8List bytes) {
-    final samples = <int>[];
-    for (var i = 0; i < bytes.length; i += 2) {
-      if (i + 1 < bytes.length) {
+    // Use Int16List.view for efficient conversion
+    // This is a zero-copy operation when bytes are properly aligned
+    if (bytes.isEmpty) return const [];
+
+    // Ensure we have an even number of bytes
+    final length = bytes.length & ~1; // Round down to even
+    if (length == 0) return const [];
+
+    try {
+      // Try zero-copy view first (works when buffer is aligned)
+      final int16View = Int16List.view(bytes.buffer, bytes.offsetInBytes, length ~/ 2);
+      return int16View.toList();
+    } catch (_) {
+      // Fallback to manual conversion if view fails (unaligned buffer)
+      final samples = List<int>.filled(length ~/ 2, 0);
+      for (var i = 0; i < length; i += 2) {
         final sample = bytes[i] | (bytes[i + 1] << 8);
-        final signed = sample > 32767 ? sample - 65536 : sample;
-        samples.add(signed);
+        samples[i ~/ 2] = sample > 32767 ? sample - 65536 : sample;
       }
+      return samples;
     }
-    return samples;
   }
 
   /// Stop recording and return audio file path

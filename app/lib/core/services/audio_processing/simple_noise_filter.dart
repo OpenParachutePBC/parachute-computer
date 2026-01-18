@@ -42,29 +42,41 @@ class SimpleNoiseFilter {
   /// Output: Filtered samples (same format)
   ///
   /// This removes frequencies below [cutoffFreq] Hz.
+  ///
+  /// Performance: Uses pre-allocated list and loop index for speed.
   List<int> process(List<int> samples) {
-    if (samples.isEmpty) {
+    final length = samples.length;
+    if (length == 0) {
       return samples;
     }
 
-    final filtered = <int>[];
+    // Pre-allocate output list for better performance
+    final filtered = List<int>.filled(length, 0);
 
-    for (final sample in samples) {
+    // Cache filter state in local variables for speed
+    var prevInput = _prevInput;
+    var prevOutput = _prevOutput;
+    final alpha = _alpha;
+
+    for (var i = 0; i < length; i++) {
       // Convert to normalized float
-      final input = sample.toDouble();
+      final input = samples[i].toDouble();
 
       // High-pass filter formula:
       // y[n] = α × (y[n-1] + x[n] - x[n-1])
-      final output = _alpha * (_prevOutput + input - _prevInput);
+      final output = alpha * (prevOutput + input - prevInput);
 
       // Convert back to int16 with clamping
-      final outputInt = output.round().clamp(-32768, 32767);
-      filtered.add(outputInt);
+      filtered[i] = output.round().clamp(-32768, 32767);
 
       // Update state
-      _prevInput = input;
-      _prevOutput = output;
+      prevInput = input;
+      prevOutput = output;
     }
+
+    // Store state back
+    _prevInput = prevInput;
+    _prevOutput = prevOutput;
 
     return filtered;
   }

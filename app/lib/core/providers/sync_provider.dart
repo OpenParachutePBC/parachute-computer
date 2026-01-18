@@ -4,6 +4,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../services/sync_service.dart';
+import '../../features/daily/journal/services/journal_merge_service.dart';
 import 'app_state_provider.dart';
 
 /// Sync state for UI
@@ -17,6 +18,8 @@ class SyncState {
   final int pullCounter;
   /// Current sync progress (when syncing)
   final SyncProgress? progress;
+  /// List of unresolved conflicts (file paths or file#entryId for journal entry conflicts)
+  final List<String> unresolvedConflicts;
 
   const SyncState({
     this.status = SyncStatus.idle,
@@ -25,6 +28,7 @@ class SyncState {
     this.errorMessage,
     this.pullCounter = 0,
     this.progress,
+    this.unresolvedConflicts = const [],
   });
 
   SyncState copyWith({
@@ -34,6 +38,7 @@ class SyncState {
     String? errorMessage,
     int? pullCounter,
     SyncProgress? progress,
+    List<String>? unresolvedConflicts,
     bool clearProgress = false,
   }) {
     return SyncState(
@@ -43,12 +48,14 @@ class SyncState {
       errorMessage: errorMessage,
       pullCounter: pullCounter ?? this.pullCounter,
       progress: clearProgress ? null : (progress ?? this.progress),
+      unresolvedConflicts: unresolvedConflicts ?? this.unresolvedConflicts,
     );
   }
 
   bool get isSyncing => status == SyncStatus.syncing;
   bool get hasError => status == SyncStatus.error;
   bool get isIdle => status == SyncStatus.idle;
+  bool get hasConflicts => unresolvedConflicts.isNotEmpty;
 
   /// Progress display string for UI
   String? get progressText {
@@ -63,9 +70,11 @@ class SyncState {
 class SyncNotifier extends StateNotifier<SyncState> {
   final Ref _ref;
   final SyncService _syncService = SyncService();
+  final JournalMergeService _journalMergeService = JournalMergeService();
 
   Timer? _periodicSyncTimer;
   Timer? _debouncedSyncTimer;
+  Timer? _statusResetTimer;
 
   /// Completer to track initialization status
   Completer<void>? _initCompleter;
@@ -83,6 +92,9 @@ class SyncNotifier extends StateNotifier<SyncState> {
 
   Future<void> _initialize() async {
     try {
+      // Wire up journal merge service for entry-level merging
+      _syncService.setJournalMergeService(_journalMergeService);
+
       // Watch for server URL changes and reinitialize
       final serverUrl = await _ref.read(serverUrlProvider.future);
       final apiKey = await _ref.read(apiKeyProvider.future);
@@ -111,6 +123,7 @@ class SyncNotifier extends StateNotifier<SyncState> {
   void dispose() {
     _periodicSyncTimer?.cancel();
     _debouncedSyncTimer?.cancel();
+    _statusResetTimer?.cancel();
     super.dispose();
   }
 
@@ -203,10 +216,18 @@ class SyncNotifier extends StateNotifier<SyncState> {
         },
       );
 
-      // Increment pull counter if files were pulled (signals UI to refresh)
-      final newPullCounter = result.pulled > 0
+      // Increment pull counter if files were pulled or merged (signals UI to refresh)
+      final newPullCounter = (result.pulled > 0 || result.merged > 0)
           ? state.pullCounter + 1
           : state.pullCounter;
+
+      // Track any new conflicts (add to existing, don't replace)
+      final newConflicts = [...state.unresolvedConflicts];
+      for (final conflict in result.conflicts) {
+        if (!newConflicts.contains(conflict)) {
+          newConflicts.add(conflict);
+        }
+      }
 
       state = state.copyWith(
         status: result.success ? SyncStatus.success : SyncStatus.error,
@@ -214,15 +235,20 @@ class SyncNotifier extends StateNotifier<SyncState> {
         lastSyncTime: DateTime.now(),
         errorMessage: result.success ? null : result.errors.join(', '),
         pullCounter: newPullCounter,
+        unresolvedConflicts: newConflicts,
         clearProgress: true,
       );
 
-      if (result.pulled > 0) {
-        debugPrint('[SyncNotifier] Pulled ${result.pulled} files, pullCounter=$newPullCounter');
+      if (result.pulled > 0 || result.merged > 0) {
+        debugPrint('[SyncNotifier] Pulled ${result.pulled} files, merged ${result.merged}, pullCounter=$newPullCounter');
+      }
+      if (result.conflicts.isNotEmpty) {
+        debugPrint('[SyncNotifier] New conflicts: ${result.conflicts}');
       }
 
-      // Reset to idle after a short delay
-      Future.delayed(const Duration(seconds: 3), () {
+      // Reset to idle after a short delay (use tracked timer for proper cleanup)
+      _statusResetTimer?.cancel();
+      _statusResetTimer = Timer(const Duration(seconds: 3), () {
         if (mounted && state.status == SyncStatus.success) {
           state = state.copyWith(status: SyncStatus.idle);
         }

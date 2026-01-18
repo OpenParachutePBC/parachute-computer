@@ -52,22 +52,40 @@ class _InlineAudioPlayerState extends State<InlineAudioPlayer> {
       } else {
         final file = File(widget.audioPath);
         if (!await file.exists()) {
-          setState(() {
-            _hasError = true;
-            _errorMessage = 'File not found';
-          });
+          if (mounted) {
+            setState(() {
+              _hasError = true;
+              _errorMessage = 'File not found';
+            });
+          }
           return;
         }
         await _player.setFilePath(widget.audioPath);
       }
 
+      // Check if widget was disposed during async initialization
+      if (!mounted) return;
+
       _positionSub = _player.positionStream.listen((pos) {
         if (mounted) setState(() => _position = pos);
       });
 
+      // Check mounted between subscription setups
+      if (!mounted) {
+        _positionSub?.cancel();
+        return;
+      }
+
       _durationSub = _player.durationStream.listen((dur) {
         if (dur != null && mounted) setState(() => _duration = dur);
       });
+
+      // Check mounted between subscription setups
+      if (!mounted) {
+        _positionSub?.cancel();
+        _durationSub?.cancel();
+        return;
+      }
 
       _stateSub = _player.playerStateStream.listen((state) {
         if (mounted) setState(() {});
@@ -78,12 +96,16 @@ class _InlineAudioPlayerState extends State<InlineAudioPlayer> {
         }
       });
 
-      setState(() => _isInitialized = true);
+      if (mounted) {
+        setState(() => _isInitialized = true);
+      }
     } catch (e) {
-      setState(() {
-        _hasError = true;
-        _errorMessage = e.toString();
-      });
+      if (mounted) {
+        setState(() {
+          _hasError = true;
+          _errorMessage = e.toString();
+        });
+      }
     }
   }
 

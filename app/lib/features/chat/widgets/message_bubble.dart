@@ -14,7 +14,10 @@ import 'collapsible_compact_summary.dart';
 // import 'collapsible_code_block.dart';
 
 /// A chat message bubble with support for text, tool calls, and inline assets
-class MessageBubble extends StatelessWidget {
+///
+/// Uses AutomaticKeepAliveClientMixin to prevent expensive rebuilds when
+/// scrolling. This is critical for scroll performance with markdown content.
+class MessageBubble extends StatefulWidget {
   final ChatMessage message;
   final String? vaultPath;
 
@@ -25,14 +28,26 @@ class MessageBubble extends StatelessWidget {
   });
 
   @override
+  State<MessageBubble> createState() => _MessageBubbleState();
+}
+
+class _MessageBubbleState extends State<MessageBubble>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
   Widget build(BuildContext context) {
-    final isUser = message.role == MessageRole.user;
+    // Must call super.build for AutomaticKeepAliveClientMixin to work
+    super.build(context);
+
+    final isUser = widget.message.role == MessageRole.user;
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
 
     // Wrap in RepaintBoundary to isolate paint operations during scroll
     return RepaintBoundary(
-      child: _buildWidget(context, isUser, isDark, vaultPath),
+      child: _buildWidget(context, isUser, isDark, widget.vaultPath),
     );
   }
 
@@ -43,7 +58,7 @@ class MessageBubble extends StatelessWidget {
       padding: EdgeInsets.only(
         left: isUser ? 48 : 0,
         right: isUser ? 0 : 48,
-        bottom: message.isCompactSummary ? 0 : Spacing.sm,
+        bottom: widget.message.isCompactSummary ? 0 : Spacing.sm,
       ),
       child: Align(
         alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
@@ -66,7 +81,7 @@ class MessageBubble extends StatelessWidget {
             ),
           ),
           child: _MessageContentWithCopy(
-            message: message,
+            message: widget.message,
             isUser: isUser,
             isDark: isDark,
             vaultPath: vaultPath,
@@ -79,11 +94,11 @@ class MessageBubble extends StatelessWidget {
     );
 
     // Wrap compact summary messages in a collapsible container
-    if (message.isCompactSummary) {
+    if (widget.message.isCompactSummary) {
       // Get preview text (first ~50 chars of content)
-      final preview = message.textContent.length > 50
-          ? '${message.textContent.substring(0, 47)}...'
-          : message.textContent;
+      final preview = widget.message.textContent.length > 50
+          ? '${widget.message.textContent.substring(0, 47)}...'
+          : widget.message.textContent;
 
       return CollapsibleCompactSummary(
         isDark: isDark,
@@ -108,13 +123,13 @@ class MessageBubble extends StatelessWidget {
           items: List.from(pendingThinkingItems),
           isDark: isDark,
           // Expand during streaming so user can see work in progress
-          initiallyExpanded: message.isStreaming,
+          initiallyExpanded: widget.message.isStreaming,
         ));
         pendingThinkingItems = [];
       }
     }
 
-    for (final content in message.content) {
+    for (final content in widget.message.content) {
       if (content.type == ContentType.text && content.text != null) {
         // Flush any pending thinking items before adding text
         flushThinkingItems();
@@ -129,7 +144,7 @@ class MessageBubble extends StatelessWidget {
     flushThinkingItems();
 
     // Show streaming indicator if message is streaming and has no content yet
-    if (message.isStreaming && widgets.isEmpty) {
+    if (widget.message.isStreaming && widgets.isEmpty) {
       widgets.add(_buildStreamingIndicator(context, isDark));
     }
 
@@ -163,7 +178,7 @@ class MessageBubble extends StatelessWidget {
   /// Get all text content from the message for copying
   String _getFullText() {
     final textParts = <String>[];
-    for (final content in message.content) {
+    for (final content in widget.message.content) {
       if (content.type == ContentType.text && content.text != null) {
         textParts.add(content.text!);
       }

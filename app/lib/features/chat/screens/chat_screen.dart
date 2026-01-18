@@ -528,11 +528,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                     : ListView.builder(
                         controller: _scrollController,
                         padding: const EdgeInsets.all(Spacing.md),
-                        // Increase cache extent to pre-build items off-screen
-                        // This reduces jank when scrolling by having more items ready
-                        cacheExtent: 500,
+                        // Increase cache extent significantly to pre-build items off-screen
+                        // MessageBubble uses AutomaticKeepAliveClientMixin to stay alive
+                        cacheExtent: 1000,
                         // Let MessageBubble handle its own RepaintBoundary
                         addRepaintBoundaries: false,
+                        // Keep items alive when scrolled off-screen (works with AutomaticKeepAliveClientMixin)
+                        addAutomaticKeepAlives: true,
                         itemCount: chatState.messages.length +
                             (chatState.isContinuation ? 1 : 0) +
                             (chatState.hasEarlierSegments ? 1 : 0),

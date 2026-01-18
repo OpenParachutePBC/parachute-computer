@@ -44,6 +44,9 @@ class _MiniAudioPlayerState extends ConsumerState<MiniAudioPlayer> {
     _audioService = ref.read(audioServiceProvider);
     await _audioService!.initialize();
 
+    // Check if widget was disposed during async initialization
+    if (!mounted) return;
+
     // Listen to position stream
     _positionSubscription = _audioService!.positionStream.listen((position) {
       if (mounted) {
@@ -53,6 +56,12 @@ class _MiniAudioPlayerState extends ConsumerState<MiniAudioPlayer> {
       }
     });
 
+    // Check mounted again between subscription setups
+    if (!mounted) {
+      _positionSubscription?.cancel();
+      return;
+    }
+
     // Listen to duration stream
     _durationSubscription = _audioService!.durationStream.listen((duration) {
       if (duration != null && mounted) {
@@ -61,6 +70,13 @@ class _MiniAudioPlayerState extends ConsumerState<MiniAudioPlayer> {
         });
       }
     });
+
+    // Check mounted again between subscription setups
+    if (!mounted) {
+      _positionSubscription?.cancel();
+      _durationSubscription?.cancel();
+      return;
+    }
 
     // Listen to playing stream
     _playingSubscription = _audioService!.playingStream.listen((playing) {

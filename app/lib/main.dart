@@ -18,6 +18,7 @@ import 'core/services/model_download_service.dart';
 import 'core/widgets/model_download_banner.dart';
 import 'features/daily/home/screens/home_screen.dart';
 import 'features/chat/screens/chat_hub_screen.dart';
+import 'features/chat/services/background_stream_manager.dart';
 import 'features/chat/widgets/message_bubble.dart' show currentlyRenderingMarkdown, markMarkdownAsFailed;
 import 'features/vault/screens/vault_browser_screen.dart';
 import 'features/settings/screens/settings_screen.dart';
@@ -162,7 +163,7 @@ class ParachuteApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Parachute',
+      title: isDailyOnlyFlavor ? 'Parachute Daily' : 'Parachute',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.lightTheme,
       darkTheme: AppTheme.darkTheme,
@@ -238,20 +239,28 @@ class _TabShellState extends ConsumerState<_TabShell> with WidgetsBindingObserve
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Handle sync lifecycle
     final syncAvailable = ref.read(syncAvailableProvider);
-    if (!syncAvailable) return;
+    if (syncAvailable) {
+      final syncNotifier = ref.read(syncProvider.notifier);
+      switch (state) {
+        case AppLifecycleState.resumed:
+          syncNotifier.onAppResumed();
+          break;
+        case AppLifecycleState.paused:
+        case AppLifecycleState.inactive:
+          syncNotifier.onAppPaused();
+          break;
+        default:
+          break;
+      }
+    }
 
-    final syncNotifier = ref.read(syncProvider.notifier);
-    switch (state) {
-      case AppLifecycleState.resumed:
-        syncNotifier.onAppResumed();
-        break;
-      case AppLifecycleState.paused:
-      case AppLifecycleState.inactive:
-        syncNotifier.onAppPaused();
-        break;
-      default:
-        break;
+    // Clean up background streams when app is detached/terminated
+    // This prevents memory leaks from orphaned stream controllers
+    if (state == AppLifecycleState.detached) {
+      debugPrint('[MainShell] App detached - cleaning up background streams');
+      BackgroundStreamManager.instance.cancelAll();
     }
   }
 
