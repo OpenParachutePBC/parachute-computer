@@ -29,14 +29,16 @@ class UsageBar extends ConsumerWidget {
   }
 }
 
-class _UsageContent extends StatelessWidget {
+class _UsageContent extends ConsumerWidget {
   final ClaudeUsage usage;
   final bool isDark;
 
   const _UsageContent({required this.usage, required this.isDark});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final textColor = isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood;
+
     return Container(
       padding: EdgeInsets.symmetric(
         horizontal: Spacing.md,
@@ -83,6 +85,16 @@ class _UsageContent extends StatelessWidget {
               isDark: isDark,
             ),
           ],
+          // Refresh button
+          SizedBox(width: Spacing.sm),
+          GestureDetector(
+            onTap: () => ref.invalidate(claudeUsageProvider),
+            child: Icon(
+              Icons.refresh,
+              size: 14,
+              color: textColor.withValues(alpha: 0.6),
+            ),
+          ),
         ],
       ),
     );
