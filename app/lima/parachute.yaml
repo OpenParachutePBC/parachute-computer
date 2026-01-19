@@ -1,0 +1,206 @@
+# Parachute Computer - Lima VM Configuration
+#
+# This creates an isolated Linux VM for running the Parachute server.
+# Claude Code runs inside this VM and can only access ~/Parachute.
+#
+# Usage:
+#   limactl start parachute.yaml
+#   lima               # Enter the VM
+#   limactl stop parachute
+#   limactl delete parachute
+
+# Use Apple Virtualization.framework for best performance on macOS
+vmType: vz
+rosetta:
+  enabled: true  # Enable Rosetta for x86_64 binaries if needed
+
+# VM Resources
+cpus: 4
+memory: 8GiB
+disk: 30GiB
+
+# Ubuntu 24.04 LTS
+images:
+  - location: "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-arm64.img"
+    arch: "aarch64"
+  - location: "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-amd64.img"
+    arch: "x86_64"
+
+# Mount the Parachute vault to /vault
+# The user's home directory is changed to /vault (via usermod in provision)
+# This means Claude Code's ~/.claude, CLAUDE.md, etc. all live in the vault
+mounts:
+  - location: "~/Parachute"
+    mountPoint: "/vault"
+    writable: true
+    sshfs:
+      followSymlinks: true
+  # Mount base server from Application Support (for regular users)
+  # Developers who have base in ~/Parachute/projects/parachute/base get it via /vault mount
+  - location: "~/Library/Application Support/Parachute/base"
+    mountPoint: "/opt/parachute/base"
+    writable: true
+    sshfs:
+      followSymlinks: true
+
+# Also set HOME env var for consistency (belt and suspenders with usermod)
+# The provision script also runs `usermod -d /vault` to change passwd entry
+env:
+  HOME: /vault
+
+# Network - forward port 3333 for the Parachute server
+# Bind to 0.0.0.0 to allow access via Tailscale and other network interfaces
+portForwards:
+  - guestPort: 3333
+    hostPort: 3333
+    hostIP: "0.0.0.0"
+
+# Provision the VM with everything needed for Parachute
+provision:
+  # System-level setup (runs as root)
+  - mode: system
+    script: |
+      #!/bin/bash
+      set -eux
+
+      # Update and install system dependencies
+      apt-get update
+      apt-get install -y \
+        python3 \
+        python3-pip \
+        python3-venv \
+        git \
+        curl \
+        build-essential
+
+      # Install Node.js 20 LTS (for Claude CLI)
+      curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+      apt-get install -y nodejs
+
+      # Install Claude CLI globally
+      npm install -g @anthropic-ai/claude-code
+
+      # Get the Lima user (the non-root user created by Lima)
+      # Lima creates users with home directories like /home/<username>.linux
+      # This is the most reliable way to identify the Lima user
+      LIMA_USER=$(grep '\.linux:' /etc/passwd | head -1 | cut -d: -f1)
+      if [ -n "$LIMA_USER" ]; then
+        echo "Found Lima user: $LIMA_USER"
+
+        # Change the user's home directory to /vault in /etc/passwd directly
+        # We use sed instead of usermod because usermod fails if user is logged in
+        # (Lima starts a session before provision scripts complete)
+        sed -i "s|/home/${LIMA_USER}.linux|/vault|g" /etc/passwd
+        echo "Changed home directory to /vault for $LIMA_USER"
+
+        # Verify the change
+        grep "^${LIMA_USER}:" /etc/passwd
+
+        # Move any existing .ssh from old home to /vault if needed
+        OLD_HOME="/home/${LIMA_USER}.linux"
+        if [ -d "$OLD_HOME/.ssh" ] && [ ! -d /vault/.ssh ]; then
+          cp -r "$OLD_HOME/.ssh" /vault/.ssh
+          chown -R "$LIMA_USER:$LIMA_USER" /vault/.ssh
+          echo "Copied .ssh to /vault"
+        fi
+      else
+        echo "Warning: Could not find Lima user"
+      fi
+
+      echo "System provisioning complete"
+
+  # User-level setup
+  - mode: user
+    script: |
+      #!/bin/bash
+      set -eux
+
+      # HOME=/vault, so ~ IS the Parachute vault
+      # This means ~/.claude, ~/CLAUDE.md, etc. are all in the vault
+      # Claude Code can only access files in ~, which is the vault
+
+      # Determine base server location:
+      # - Developer mode: ~/projects/parachute/base (in vault, git repo)
+      # - User mode: /opt/parachute/base (from Application Support)
+      if [ -d ~/projects/parachute/base ]; then
+        BASE_PATH=~/projects/parachute/base
+        echo "Developer mode: using base from vault"
+      elif [ -d /opt/parachute/base ]; then
+        BASE_PATH=/opt/parachute/base
+        echo "User mode: using base from /opt/parachute/base"
+      else
+        echo "Warning: No base server found"
+        BASE_PATH=""
+      fi
+
+      # Create Python venv for Parachute server (if base exists)
+      if [ -n "$BASE_PATH" ] && [ -d "$BASE_PATH" ]; then
+        cd "$BASE_PATH"
+        # Only create venv if it doesn't exist or is from a different platform
+        if [ ! -f venv/bin/python ] || ! venv/bin/python --version > /dev/null 2>&1; then
+          rm -rf venv
+          python3 -m venv venv
+          source venv/bin/activate
+          pip install --upgrade pip
+          pip install claude-agent-sdk
+          pip install -r requirements.txt
+        fi
+      fi
+
+      # Create .bashrc in vault if it doesn't exist (HOME=/vault)
+      if [ ! -f ~/.bashrc ]; then
+        echo '# Parachute Computer bashrc' > ~/.bashrc
+      fi
+
+      # Add convenience aliases that work for both developer and user mode
+      if ! grep -q 'Parachute aliases' ~/.bashrc 2>/dev/null; then
+        echo '' >> ~/.bashrc
+        echo '# Parachute aliases' >> ~/.bashrc
+        echo 'export VAULT_PATH=~' >> ~/.bashrc
+        # Use a function to find base dynamically
+        echo 'parachute_base() { if [ -d ~/projects/parachute/base ]; then echo ~/projects/parachute/base; else echo /opt/parachute/base; fi; }' >> ~/.bashrc
+        echo 'alias parachute="cd \$(parachute_base) && source venv/bin/activate"' >> ~/.bashrc
+        echo 'alias start-server="cd \$(parachute_base) && source venv/bin/activate && python -m parachute.main"' >> ~/.bashrc
+      fi
+
+      echo ""
+      echo "=========================================="
+      echo "User provisioning complete!"
+      echo ""
+      echo "HOME is set to the vault, so ~ IS your Parachute vault."
+      echo "Claude Code can only access files in ~ (the vault)."
+      echo ""
+      echo "Base server location: $BASE_PATH"
+      echo ""
+      echo "To start the Parachute server:"
+      echo "  start-server"
+      echo ""
+      echo "To authenticate with Claude:"
+      echo "  claude login"
+      echo "=========================================="
+
+# Message shown after VM starts
+message: |
+
+  ╔══════════════════════════════════════════════════════╗
+  ║         Parachute Computer VM is ready!              ║
+  ╚══════════════════════════════════════════════════════╝
+
+  HOME is set to your Parachute vault, so ~ IS the vault.
+  Claude Code can only access "user" files - complete isolation.
+
+  This means:
+    ~/.claude/     → Your Claude settings (in the vault)
+    ~/CLAUDE.md    → Your project context (in the vault)
+    ~/Daily/       → Your journals (in the vault)
+    ~/projects/    → Your projects (in the vault)
+
+  Quick start:
+    lima                    # Enter the VM
+    claude login            # Authenticate with Claude (first time)
+    start-server            # Start the Parachute server
+
+  The server will be accessible at http://localhost:3333
+
+  To stop the VM:
+    limactl stop parachute

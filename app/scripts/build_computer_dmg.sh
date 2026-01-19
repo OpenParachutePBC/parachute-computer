@@ -40,7 +40,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_DIR="$(dirname "$SCRIPT_DIR")"
 PROJECT_ROOT="$(dirname "$APP_DIR")"
 BASE_DIR="$PROJECT_ROOT/base"
-LIMA_DIR="$PROJECT_ROOT/lima"
+LIMA_DIR="$APP_DIR/lima"
 DIST_DIR="$APP_DIR/dist"
 BUILD_DIR="$DIST_DIR/computer-build"
 
