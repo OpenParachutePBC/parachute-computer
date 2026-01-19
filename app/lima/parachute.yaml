@@ -50,6 +50,26 @@ env:
 
 # Network - forward port 3333 for the Parachute server
 # Bind to 0.0.0.0 to allow access via Tailscale and other network interfaces
+#
+# ACCESSING HOST SERVICES FROM THE VM:
+# Lima automatically adds "host.lima.internal" to /etc/hosts, pointing to the
+# host machine (typically 192.168.5.2). To access a service running on macOS:
+#
+#   From VM:  curl http://host.lima.internal:9000
+#   Or:       curl http://192.168.5.2:9000
+#
+# This is useful for MCPs that need to reach host services like BrowserOS.
+# In .mcp.json, configure the CDP_URL or similar to use the gateway:
+#
+#   "env": { "CDP_URL": "http://192.168.5.2:9000" }
+#
+# NOTE: Some services (like BrowserOS/Chrome DevTools) validate the Host header
+# and reject requests with hostnames. Use the IP address (192.168.5.2) instead
+# of host.lima.internal for these services.
+#
+# To find the gateway IP programmatically:
+#   ip route | grep default | awk '{print $3}'
+#
 portForwards:
   - guestPort: 3333
     hostPort: 3333
