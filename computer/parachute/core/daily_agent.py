@@ -12,6 +12,7 @@ and chat logs. Output is written to configurable paths.
 
 import json
 import logging
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional, Callable, Awaitable
@@ -329,8 +330,12 @@ async def run_daily_agent(
     else:
         prompt_text = _default_prompt(config, date, output_date)
 
-    # Wrap prompt in async generator (SDK bug workaround)
+    # Wrap prompt in async generator with delay
+    # The delay ensures the SDK transport and MCP servers are ready
+    # before the first message is sent (workaround for SDK timing issue)
     async def generate_prompt():
+        import asyncio
+        await asyncio.sleep(1.0)  # Wait for transport/MCP initialization
         yield {"type": "user", "message": {"role": "user", "content": prompt_text}}
 
     # Build options
@@ -339,6 +344,8 @@ async def run_daily_agent(
         "max_turns": 20,
         "mcp_servers": all_mcp_servers,
         "permission_mode": "bypassPermissions",
+        "stderr": lambda msg: logger.error(f"CLI STDERR: {msg}"),
+        "debug_stderr": sys.stderr,  # Also write to actual stderr for debugging
     }
 
     # Resume existing session if available

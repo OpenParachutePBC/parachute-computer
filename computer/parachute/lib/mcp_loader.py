@@ -130,9 +130,13 @@ async def load_mcp_servers(
                 content = await f.read()
                 data = json.loads(content)
 
-            # .mcp.json has servers as top-level keys (not under mcpServers)
-            # Filter out any non-dict entries that might be metadata
-            user_servers = {k: v for k, v in data.items() if isinstance(v, dict)}
+            # .mcp.json can have servers under "mcpServers" key or as top-level keys
+            # Claude Code uses "mcpServers" wrapper, so check for that first
+            if "mcpServers" in data and isinstance(data["mcpServers"], dict):
+                user_servers = data["mcpServers"]
+            else:
+                # Fallback: treat top-level keys as servers
+                user_servers = {k: v for k, v in data.items() if isinstance(v, dict)}
 
             # User servers override built-ins
             servers.update(user_servers)
