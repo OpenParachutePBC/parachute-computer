@@ -74,27 +74,52 @@ async def list_directory(
                 continue
 
             relative_path = str(item.relative_to(vault_path))
-            stat = item.stat()
             is_symlink = item.is_symlink()
+
+            # Check if symlink target exists (for broken symlink detection)
+            is_broken_symlink = False
+            if is_symlink:
+                try:
+                    item.resolve(strict=True)
+                except (OSError, FileNotFoundError):
+                    is_broken_symlink = True
+
+            # Use lstat for symlinks to get info about the link itself,
+            # not the target (which may not exist for broken symlinks)
+            try:
+                stat = item.lstat() if is_symlink else item.stat()
+            except (OSError, FileNotFoundError):
+                # Skip entries we can't stat at all
+                continue
+
+            # For broken symlinks, we can't determine type from target
+            if is_broken_symlink:
+                is_dir = False
+                is_file = False
+            else:
+                is_dir = item.is_dir()
+                is_file = item.is_file()
 
             entry = {
                 "name": item.name,
-                "type": "directory" if item.is_dir() else "file",
+                "type": "symlink" if is_broken_symlink else ("directory" if is_dir else "file"),
                 "path": str(item),  # Full absolute path
                 "relativePath": relative_path,
-                "isDirectory": item.is_dir(),
-                "isFile": item.is_file(),
+                "isDirectory": is_dir,
+                "isFile": is_file,
                 "isSymlink": is_symlink,
+                "isBrokenSymlink": is_broken_symlink,
                 "symlinkTarget": str(os.readlink(item)) if is_symlink else None,
                 "hasAgentsMd": False,
                 "hasClaudeMd": False,
                 "isGitRepo": False,
-                "size": stat.st_size if item.is_file() else None,
+                "size": stat.st_size if is_file else None,
                 "lastModified": datetime.fromtimestamp(stat.st_mtime).isoformat() + "Z",
             }
 
             # For directories, check if they have AGENTS.md, CLAUDE.md, or .git
-            if item.is_dir():
+            # (skip for broken symlinks since we can't traverse them)
+            if is_dir and not is_broken_symlink:
                 entry["hasAgentsMd"] = (item / "AGENTS.md").exists()
                 entry["hasClaudeMd"] = (item / "CLAUDE.md").exists()
                 entry["isGitRepo"] = (item / ".git").exists()

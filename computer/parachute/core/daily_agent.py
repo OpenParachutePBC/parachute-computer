@@ -356,27 +356,72 @@ async def run_daily_agent(
         "mcp_servers": list(all_mcp_servers.keys()),
     }
 
+    # Helper to run the query with retry logic for stale sessions
+    async def run_query_with_retry(opts: ClaudeAgentOptions, retry_on_stale: bool = True):
+        nonlocal state
+        try:
+            response_text = ""
+            new_session_id = None
+            model_used = None
+            output_written = False
+
+            async for event in sdk_query(prompt=generate_prompt(), options=opts):
+                if hasattr(event, "session_id") and event.session_id:
+                    new_session_id = event.session_id
+
+                if hasattr(event, "model") and event.model:
+                    model_used = event.model
+
+                if hasattr(event, "content"):
+                    for block in event.content:
+                        if hasattr(block, "text"):
+                            response_text += block.text
+
+                        # Track if output was written
+                        if hasattr(block, "name") and "write_output" in str(getattr(block, "name", "")):
+                            output_written = True
+
+            return {
+                "success": True,
+                "response_text": response_text,
+                "new_session_id": new_session_id,
+                "model_used": model_used,
+                "output_written": output_written,
+            }
+
+        except Exception as e:
+            error_str = str(e).lower()
+            # Check for stale session errors - retry without resume
+            if retry_on_stale and ("no conversation found" in error_str or "session" in error_str and "not found" in error_str):
+                logger.warning(
+                    f"Agent '{agent_name}' session expired (id={opts.resume}), "
+                    "clearing and retrying with fresh session"
+                )
+                # Clear the stale session from state
+                state.sdk_session_id = None
+                state.save()
+
+                # Create new options without resume
+                fresh_opts_kwargs = {
+                    "system_prompt": opts.system_prompt,
+                    "max_turns": opts.max_turns,
+                    "mcp_servers": opts.mcp_servers,
+                    "permission_mode": opts.permission_mode,
+                }
+                fresh_opts = ClaudeAgentOptions(**fresh_opts_kwargs)
+
+                # Retry without resume (don't retry again on failure)
+                return await run_query_with_retry(fresh_opts, retry_on_stale=False)
+
+            # Re-raise other errors
+            raise
+
     try:
-        response_text = ""
-        new_session_id = None
-        model_used = None
-        output_written = False
+        query_result = await run_query_with_retry(options)
 
-        async for event in sdk_query(prompt=generate_prompt(), options=options):
-            if hasattr(event, "session_id") and event.session_id:
-                new_session_id = event.session_id
-
-            if hasattr(event, "model") and event.model:
-                model_used = event.model
-
-            if hasattr(event, "content"):
-                for block in event.content:
-                    if hasattr(block, "text"):
-                        response_text += block.text
-
-                    # Track if output was written
-                    if hasattr(block, "name") and "write_output" in str(getattr(block, "name", "")):
-                        output_written = True
+        new_session_id = query_result["new_session_id"]
+        model_used = query_result["model_used"]
+        output_written = query_result["output_written"]
 
         # Update state
         state.record_run(date, new_session_id, model_used)
