@@ -2,13 +2,11 @@
 Claude usage tracking service.
 
 Fetches usage limits from Claude's OAuth API using credentials
-stored in the macOS Keychain by Claude Code.
+stored by Claude Code at ~/.claude/.credentials.json.
 """
 
 import json
 import logging
-import subprocess
-import sys
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
@@ -18,7 +16,6 @@ import httpx
 logger = logging.getLogger(__name__)
 
 USAGE_API_URL = "https://api.anthropic.com/api/oauth/usage"
-KEYCHAIN_SERVICE = "Claude Code-credentials"
 
 
 @dataclass
@@ -52,37 +49,26 @@ class ClaudeUsage:
 
 def get_claude_credentials() -> Optional[dict]:
     """
-    Retrieve Claude Code credentials from the macOS Keychain.
+    Retrieve Claude Code credentials from ~/.claude/.credentials.json.
 
     Returns the full credentials dict or None if not available.
     """
-    if sys.platform != "darwin":
-        logger.debug("Keychain access only available on macOS")
+    from pathlib import Path
+
+    creds_path = Path.home() / ".claude" / ".credentials.json"
+    if not creds_path.exists():
+        logger.debug(f"Credentials file not found: {creds_path}")
         return None
 
     try:
-        result = subprocess.run(
-            ["security", "find-generic-password", "-s", KEYCHAIN_SERVICE, "-w"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-
-        if result.returncode != 0:
-            logger.debug(f"Keychain lookup failed: {result.stderr}")
-            return None
-
-        creds = json.loads(result.stdout.strip())
+        with open(creds_path) as f:
+            creds = json.load(f)
         return creds
-
-    except subprocess.TimeoutExpired:
-        logger.warning("Keychain lookup timed out")
-        return None
     except json.JSONDecodeError as e:
-        logger.warning(f"Failed to parse keychain credentials: {e}")
+        logger.warning(f"Failed to parse credentials file: {e}")
         return None
     except Exception as e:
-        logger.warning(f"Error accessing keychain: {e}")
+        logger.warning(f"Error reading credentials file: {e}")
         return None
 
 
