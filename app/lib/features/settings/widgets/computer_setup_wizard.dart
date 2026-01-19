@@ -29,6 +29,8 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
   String? _error;
   bool _homebrewInstalled = false;
   bool _limaInstalled = false;
+  String? _vmProgressMessage;
+  Stopwatch? _vmCreationTimer;
 
   @override
   void initState() {
@@ -182,6 +184,8 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
     setState(() {
       _isLoading = true;
       _error = null;
+      _vmProgressMessage = 'Preparing...';
+      _vmCreationTimer = Stopwatch()..start();
     });
 
     try {
@@ -192,7 +196,9 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
       // For developers: skips if ~/Vault/projects/parachute/base exists
       // For users: installs to ~/Library/Application Support/Parachute/base
       if (!await service.isBaseServerInstalled()) {
-        debugPrint('[ComputerSetupWizard] Installing base server...');
+        if (mounted) {
+          setState(() => _vmProgressMessage = 'Installing base server...');
+        }
         final installed = await service.installBaseServer();
         if (!installed) {
           _error = service.lastError ?? 'Failed to install base server';
@@ -201,9 +207,15 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
       }
 
       // Now create/start the VM
+      if (mounted) {
+        setState(() => _vmProgressMessage = 'Downloading Ubuntu & creating VM...');
+      }
       final success = await service.start();
 
       if (success) {
+        if (mounted) {
+          setState(() => _vmProgressMessage = 'Starting server...');
+        }
         // Start the server too
         await service.startServer();
         _currentStep = 3;
@@ -213,7 +225,13 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
     } catch (e) {
       _error = 'Error creating VM: $e';
     } finally {
-      if (mounted) setState(() => _isLoading = false);
+      _vmCreationTimer?.stop();
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _vmProgressMessage = null;
+        });
+      }
     }
   }
 
@@ -416,11 +434,15 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
           });
         }
 
+        final description = _isLoading && _vmProgressMessage != null
+            ? _vmProgressMessage!
+            : 'This will download Ubuntu and set up an isolated environment. First-time setup typically takes 3-5 minutes.';
+
         return _StepCard(
           isDark: isDark,
           icon: Icons.dns,
           title: 'Create Parachute VM',
-          description: 'This will download Ubuntu and set up an isolated environment. This takes a few minutes on first run.',
+          description: description,
           action: FilledButton.icon(
             onPressed: _isLoading ? null : _createAndStartVM,
             icon: _isLoading
