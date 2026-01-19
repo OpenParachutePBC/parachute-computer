@@ -24,7 +24,7 @@ def load_claude_export(export_path: str) -> list[dict]:
 
 def convert_conversation_to_sdk_jsonl(
     conversation: dict,
-    vault_path: str = "/Users/unforced/Parachute",
+    vault_path: str | None = None,
     new_session_id: str | None = None
 ) -> tuple[str, list[dict]]:
     """
@@ -33,6 +33,8 @@ def convert_conversation_to_sdk_jsonl(
     Returns:
         tuple: (session_id, list of JSONL events)
     """
+    if vault_path is None:
+        vault_path = os.environ.get("PARACHUTE_ROOT", os.path.expanduser("~/Parachute"))
     session_id = new_session_id or str(uuid.uuid4())
     events = []
 
@@ -142,10 +144,11 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(description='Test SDK JSONL synthesis from Claude exports')
-    parser.add_argument('--export', default='/Users/unforced/Parachute/imports/data-2025-12-26-20-56-04-batch-0000/conversations.json',
+    default_vault = os.environ.get("PARACHUTE_ROOT", os.path.expanduser("~/Parachute"))
+    parser.add_argument('--export', default=None,
                         help='Path to Claude export conversations.json')
-    parser.add_argument('--vault', default='/Users/unforced/Parachute',
-                        help='Vault path')
+    parser.add_argument('--vault', default=default_vault,
+                        help='Vault path (default: $PARACHUTE_ROOT or ~/Parachute)')
     parser.add_argument('--index', type=int, default=0,
                         help='Index of conversation to convert (default: 0)')
     parser.add_argument('--dry-run', action='store_true',
