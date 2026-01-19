@@ -181,9 +181,12 @@ async def get_manifest(
             continue
 
         # Skip hidden files and directories, EXCEPT .agents/ which we need to sync
+        # Also skip .versions/ (local-only backup) and .tombstones/ (deletion tracking)
         relative = file_path.relative_to(sync_root)
         parts = relative.parts
         if any(part.startswith(".") and part != ".agents" for part in parts):
+            continue
+        if ".versions" in parts or ".tombstones" in parts:
             continue
 
         # Skip binary files unless include_binary is True
