@@ -72,9 +72,21 @@ void main() async {
 
   // Initialize bundled server on desktop platforms
   // This checks if the app has a bundled server binary and starts it
+  // EXCEPT for "computer" flavor which uses Lima VM for the server
+  // In "full" flavor, we also skip if Lima VM is running (dev testing VM mode)
   if (Platform.isMacOS || Platform.isLinux || Platform.isWindows) {
-    debugPrint('[Parachute] Checking for bundled server...');
-    await initializeBundledServer(container);
+    if (isComputerFlavor) {
+      debugPrint('[Parachute] Computer flavor - server managed by Lima VM');
+    } else {
+      // Check if Lima VM is running (for dev testing with VM)
+      final limaRunning = await _isLimaVMRunning();
+      if (limaRunning) {
+        debugPrint('[Parachute] Lima VM detected - skipping bundled server');
+      } else {
+        debugPrint('[Parachute] Checking for bundled server...');
+        await initializeBundledServer(container);
+      }
+    }
   }
 
   runApp(
@@ -116,6 +128,26 @@ Future<void> _initializeServices() async {
 
   // Initialize transcription service in background (don't await)
   _initializeTranscription();
+}
+
+/// Check if Lima VM "parachute" is running
+Future<bool> _isLimaVMRunning() async {
+  if (!Platform.isMacOS) return false;
+
+  try {
+    final result = await Process.run('limactl', ['list', '--format', '{{.Name}}:{{.Status}}']);
+    if (result.exitCode == 0) {
+      final output = result.stdout.toString();
+      for (final line in output.split('\n')) {
+        if (line.startsWith('parachute:') && line.contains('Running')) {
+          return true;
+        }
+      }
+    }
+  } catch (e) {
+    debugPrint('[Parachute] Error checking Lima VM: $e');
+  }
+  return false;
 }
 
 /// Initialize transcription model download in background

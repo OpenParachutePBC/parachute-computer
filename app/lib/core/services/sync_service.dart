@@ -1,11 +1,14 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:crypto/crypto.dart';
+import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as path;
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'file_system_service.dart';
+import '../../features/daily/journal/services/journal_merge_service.dart';
 
 /// File info from server manifest
 class SyncFileInfo {
@@ -67,7 +70,9 @@ class SyncResult {
   final int pushed;
   final int pulled;
   final int deleted;
+  final int merged;
   final List<String> errors;
+  final List<String> conflicts;
   final Duration duration;
 
   SyncResult({
@@ -75,7 +80,9 @@ class SyncResult {
     this.pushed = 0,
     this.pulled = 0,
     this.deleted = 0,
+    this.merged = 0,
     this.errors = const [],
+    this.conflicts = const [],
     this.duration = Duration.zero,
   });
 
@@ -91,7 +98,9 @@ class SyncResult {
     if (!success) {
       return 'SyncResult(failed: ${errors.join(", ")})';
     }
-    return 'SyncResult(pushed: $pushed, pulled: $pulled, deleted: $deleted, duration: ${duration.inMilliseconds}ms)';
+    final conflictStr = conflicts.isNotEmpty ? ', conflicts: ${conflicts.length}' : '';
+    final mergedStr = merged > 0 ? ', merged: $merged' : '';
+    return 'SyncResult(pushed: $pushed, pulled: $pulled, deleted: $deleted$mergedStr$conflictStr, duration: ${duration.inMilliseconds}ms)';
   }
 }
 
@@ -120,21 +129,79 @@ class SyncService {
   SyncService._internal();
 
   final FileSystemService _fileSystem = FileSystemService.daily();
+  JournalMergeService? _journalMergeService;
 
   String? _serverUrl;
   String? _apiKey;
   bool _isInitialized = false;
+  String? _deviceId;
+
+  /// Key for storing device ID in SharedPreferences
+  static const _deviceIdKey = 'sync_device_id';
+
+  /// Threshold in seconds for detecting conflicts (close timestamps)
+  static const _conflictThresholdSeconds = 60.0;
+
+  /// Maximum versions to keep for each file
+  static const _maxVersions = 3;
 
   /// Initialize the service with server URL
   Future<void> initialize({required String serverUrl, String? apiKey}) async {
     _serverUrl = serverUrl;
     _apiKey = apiKey;
     _isInitialized = true;
-    debugPrint('[SyncService] Initialized with server: $serverUrl');
+    _deviceId = await getDeviceId();
+    debugPrint('[SyncService] Initialized with server: $serverUrl, deviceId: $_deviceId');
+  }
+
+  /// Set the journal merge service (injected to avoid circular dependency)
+  void setJournalMergeService(JournalMergeService service) {
+    _journalMergeService = service;
   }
 
   /// Check if service is ready
   bool get isReady => _isInitialized && _serverUrl != null;
+
+  /// Get or generate a unique device ID (first 7 chars of SHA-256)
+  static Future<String> getDeviceId() async {
+    final prefs = await SharedPreferences.getInstance();
+    var deviceId = prefs.getString(_deviceIdKey);
+
+    if (deviceId == null) {
+      // Generate new device ID from device info
+      final deviceInfo = DeviceInfoPlugin();
+      String rawId;
+
+      if (Platform.isAndroid) {
+        final android = await deviceInfo.androidInfo;
+        rawId = '${android.id}-${android.model}-${android.device}';
+      } else if (Platform.isIOS) {
+        final ios = await deviceInfo.iosInfo;
+        rawId = '${ios.identifierForVendor}-${ios.model}';
+      } else if (Platform.isMacOS) {
+        final macos = await deviceInfo.macOsInfo;
+        rawId = '${macos.systemGUID}-${macos.model}';
+      } else if (Platform.isLinux) {
+        final linux = await deviceInfo.linuxInfo;
+        rawId = '${linux.machineId}-${linux.name}';
+      } else if (Platform.isWindows) {
+        final windows = await deviceInfo.windowsInfo;
+        rawId = '${windows.deviceId}-${windows.computerName}';
+      } else {
+        // Fallback: use timestamp + random
+        rawId = '${DateTime.now().millisecondsSinceEpoch}-${DateTime.now().microsecond}';
+      }
+
+      // Hash and take first 7 characters
+      final hash = sha256.convert(utf8.encode(rawId)).toString();
+      deviceId = hash.substring(0, 7);
+
+      await prefs.setString(_deviceIdKey, deviceId);
+      debugPrint('[SyncService] Generated new device ID: $deviceId');
+    }
+
+    return deviceId;
+  }
 
   /// Get HTTP headers including auth if configured
   Map<String, String> get _headers {
@@ -161,6 +228,200 @@ class SyncService {
   /// Binary file extensions to skip in text-only sync mode
   static const _binaryExtensions = {'.wav', '.mp3', '.m4a', '.ogg', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.pdf'};
 
+  /// Check if a path is a journal file that supports entry-level merge
+  bool _isJournalFile(String relativePath) {
+    return relativePath.startsWith('journals/') && relativePath.endsWith('.md');
+  }
+
+  /// Parse date from journal file path (e.g., "journals/2025-01-16.md" -> DateTime)
+  DateTime? _parseDateFromPath(String relativePath) {
+    final filename = path.basenameWithoutExtension(relativePath);
+    final parts = filename.split('-');
+    if (parts.length != 3) return null;
+    try {
+      return DateTime(
+        int.parse(parts[0]),
+        int.parse(parts[1]),
+        int.parse(parts[2]),
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Save a version of a file before overwriting
+  Future<void> _saveVersion(File file, String localRoot) async {
+    if (!await file.exists()) return;
+
+    final relativePath = path.relative(file.path, from: localRoot);
+    final versionsDir = Directory('$localRoot/.versions/${path.dirname(relativePath)}');
+    await versionsDir.create(recursive: true);
+
+    final timestamp = DateTime.now().millisecondsSinceEpoch;
+    final versionName = '${path.basename(file.path)}.$timestamp';
+
+    await file.copy('${versionsDir.path}/$versionName');
+
+    // Prune old versions
+    await _pruneVersions(versionsDir, path.basename(file.path));
+
+    debugPrint('[SyncService] Saved version: $relativePath');
+  }
+
+  /// Prune old versions, keeping only _maxVersions
+  Future<void> _pruneVersions(Directory versionsDir, String basename) async {
+    if (!await versionsDir.exists()) return;
+
+    final versions = <File>[];
+    await for (final entity in versionsDir.list()) {
+      if (entity is File && path.basename(entity.path).startsWith(basename)) {
+        versions.add(entity);
+      }
+    }
+
+    if (versions.length <= _maxVersions) return;
+
+    // Sort by timestamp in filename (older first)
+    versions.sort((a, b) => a.path.compareTo(b.path));
+
+    // Delete oldest versions
+    for (var i = 0; i < versions.length - _maxVersions; i++) {
+      await versions[i].delete();
+      debugPrint('[SyncService] Pruned old version: ${versions[i].path}');
+    }
+  }
+
+  /// Create a conflict file preserving the server version
+  Future<void> _saveConflictFile(
+    String localRoot,
+    String relativePath,
+    String serverContent,
+  ) async {
+    final timestamp = DateTime.now().toIso8601String().replaceAll(':', '-').replaceAll('.', '-');
+    final ext = path.extension(relativePath);
+    final base = path.basenameWithoutExtension(relativePath);
+    final dir = path.dirname(relativePath);
+
+    final conflictName = '$base.sync-conflict-$timestamp-${_deviceId ?? 'unknown'}$ext';
+    final conflictPath = '$localRoot/$dir/$conflictName';
+
+    await File(conflictPath).parent.create(recursive: true);
+    await File(conflictPath).writeAsString(serverContent);
+
+    debugPrint('[SyncService] Created conflict file: $conflictName');
+  }
+
+  /// Create a tombstone file indicating a file was deleted
+  Future<void> _createTombstone(String localRoot, String relativePath) async {
+    final tombstonePath = '$localRoot/.tombstones/$relativePath.deleted';
+    final tombstoneFile = File(tombstonePath);
+    await tombstoneFile.parent.create(recursive: true);
+
+    await tombstoneFile.writeAsString(json.encode({
+      'deleted_at': DateTime.now().toIso8601String(),
+      'device_id': _deviceId ?? 'unknown',
+    }));
+
+    debugPrint('[SyncService] Created tombstone: $relativePath');
+  }
+
+  /// Get list of tombstones (deleted files)
+  Future<Map<String, Map<String, dynamic>>> _getTombstones(String localRoot) async {
+    final tombstoneDir = Directory('$localRoot/.tombstones');
+    final tombstones = <String, Map<String, dynamic>>{};
+
+    if (!await tombstoneDir.exists()) return tombstones;
+
+    await for (final entity in tombstoneDir.list(recursive: true)) {
+      if (entity is! File || !entity.path.endsWith('.deleted')) continue;
+
+      try {
+        final content = await entity.readAsString();
+        final data = json.decode(content) as Map<String, dynamic>;
+
+        // Extract original path from tombstone path
+        final relativeTombstonePath = path.relative(entity.path, from: '$localRoot/.tombstones');
+        final originalPath = relativeTombstonePath.replaceAll('.deleted', '');
+
+        tombstones[originalPath] = data;
+      } catch (e) {
+        debugPrint('[SyncService] Error reading tombstone ${entity.path}: $e');
+      }
+    }
+
+    return tombstones;
+  }
+
+  /// Clean up old tombstones (older than 7 days)
+  Future<void> _cleanOldTombstones(String localRoot) async {
+    final tombstoneDir = Directory('$localRoot/.tombstones');
+    if (!await tombstoneDir.exists()) return;
+
+    final cutoff = DateTime.now().subtract(const Duration(days: 7));
+
+    await for (final entity in tombstoneDir.list(recursive: true)) {
+      if (entity is! File) continue;
+
+      try {
+        final stat = await entity.stat();
+        if (stat.modified.isBefore(cutoff)) {
+          await entity.delete();
+          debugPrint('[SyncService] Cleaned up old tombstone: ${entity.path}');
+        }
+      } catch (e) {
+        // Ignore errors cleaning up tombstones
+      }
+    }
+  }
+
+  /// Delete a file and create a tombstone for sync
+  Future<void> deleteFileWithTombstone(String relativePath) async {
+    final localRoot = await _fileSystem.getRootPath();
+    final file = File('$localRoot/$relativePath');
+
+    // Save version before deleting
+    if (await file.exists()) {
+      await _saveVersion(file, localRoot);
+      await file.delete();
+    }
+
+    // Create tombstone so deletion propagates to server
+    await _createTombstone(localRoot, relativePath);
+  }
+
+  /// Fetch a single file's content from the server
+  Future<String?> _fetchFileContent(String root, String relativePath) async {
+    try {
+      final response = await http
+          .post(
+            Uri.parse('$_serverUrl/api/sync/pull'),
+            headers: _headers,
+            body: json.encode({
+              'root': root,
+              'paths': [relativePath],
+            }),
+          )
+          .timeout(const Duration(seconds: 30));
+
+      if (response.statusCode != 200) return null;
+
+      final data = json.decode(response.body) as Map<String, dynamic>;
+      final files = data['files'] as List<dynamic>;
+
+      if (files.isEmpty) return null;
+
+      final fileData = files.first as Map<String, dynamic>;
+      final isBinary = fileData['is_binary'] as bool? ?? false;
+
+      if (isBinary) return null; // Can't merge binary files
+
+      return fileData['content'] as String;
+    } catch (e) {
+      debugPrint('[SyncService] Error fetching file content: $e');
+      return null;
+    }
+  }
+
   /// Get local file info for a directory
   Future<Map<String, SyncFileInfo>> _getLocalManifest(
     String localRoot,
@@ -181,7 +442,11 @@ class SyncService {
       final parts = relativePath.split('/');
 
       // Skip hidden files/dirs, EXCEPT .agents/ which we need to sync
+      // Also skip .versions/ (local-only backup) and .tombstones/ (deletion tracking)
       if (parts.any((part) => part.startsWith('.') && part != '.agents')) {
+        continue;
+      }
+      if (parts.any((part) => part == '.versions' || part == '.tombstones')) {
         continue;
       }
 
@@ -359,6 +624,12 @@ class SyncService {
         final isBinary = fileData['is_binary'] as bool? ?? false;
 
         final localFile = File('$localRoot/$filePath');
+
+        // Save version before overwriting (Phase 2: Simple Versioning)
+        if (await localFile.exists()) {
+          await _saveVersion(localFile, localRoot);
+        }
+
         await localFile.parent.create(recursive: true);
 
         if (isBinary) {
@@ -448,7 +719,9 @@ class SyncService {
       // Determine what needs to sync
       final toPush = <String>[]; // Local files to push to server
       final toPull = <String>[]; // Server files to pull locally
+      final toMerge = <String>[]; // Files that need conflict resolution or merge
       final toDeleteRemote = <String>[]; // Files to delete on server
+      final conflicts = <String>[]; // Conflict files created
 
       // Check all local files
       for (final entry in localManifest.entries) {
@@ -460,8 +733,13 @@ class SyncService {
           // File exists locally but not on server - push it
           toPush.add(localPath);
         } else if (localInfo.hash != serverInfo.hash) {
-          // File exists both places but differs - use timestamp to decide
-          if (localInfo.modified > serverInfo.modified) {
+          // File exists both places but content differs
+          final timeDiff = (localInfo.modified - serverInfo.modified).abs();
+
+          if (timeDiff < _conflictThresholdSeconds) {
+            // Close timestamps + different content = potential conflict
+            toMerge.add(localPath);
+          } else if (localInfo.modified > serverInfo.modified) {
             toPush.add(localPath);
           } else {
             toPull.add(localPath);
@@ -470,14 +748,99 @@ class SyncService {
         // If hashes match, file is in sync
       }
 
-      // Check for server-only files (pull them)
+      // Process tombstones (files deleted locally that need to be deleted on server)
+      final tombstones = await _getTombstones(localRoot);
+      for (final tombstonePath in tombstones.keys) {
+        if (serverManifest.containsKey(tombstonePath)) {
+          // Server has this file, but we deleted it locally - tell server to delete
+          toDeleteRemote.add(tombstonePath);
+          debugPrint('[SyncService] Tombstone -> delete remote: $tombstonePath');
+        }
+        // Clean up the tombstone file after processing
+        final tombstoneFile = File('$localRoot/.tombstones/$tombstonePath.deleted');
+        if (await tombstoneFile.exists()) {
+          await tombstoneFile.delete();
+        }
+      }
+
+      // Check for server-only files (pull them, unless we have a tombstone)
       for (final serverPath in serverManifest.keys) {
-        if (!localManifest.containsKey(serverPath)) {
+        if (!localManifest.containsKey(serverPath) && !tombstones.containsKey(serverPath)) {
           toPull.add(serverPath);
         }
       }
 
-      debugPrint('[SyncService] To push: ${toPush.length}, To pull: ${toPull.length}');
+      // Clean up old tombstones
+      await _cleanOldTombstones(localRoot);
+
+      debugPrint('[SyncService] To push: ${toPush.length}, To pull: ${toPull.length}, To merge: ${toMerge.length}, To delete remote: ${toDeleteRemote.length}');
+
+      // Handle merges/conflicts first
+      var merged = 0;
+      for (final mergePath in toMerge) {
+        onProgress?.call(SyncProgress(
+          phase: 'merging',
+          current: merged,
+          total: toMerge.length,
+          currentFile: mergePath,
+        ));
+
+        // Check if this is a journal file that supports entry-level merge
+        if (_isJournalFile(mergePath) && _journalMergeService != null) {
+          final date = _parseDateFromPath(mergePath);
+          if (date != null) {
+            try {
+              final localContent = await File('$localRoot/$mergePath').readAsString();
+              final serverContent = await _fetchFileContent(root, mergePath);
+
+              if (serverContent != null) {
+                final mergeResult = await _journalMergeService!.merge(
+                  localContent: localContent,
+                  serverContent: serverContent,
+                  date: date,
+                );
+
+                // Save version before overwriting
+                await _saveVersion(File('$localRoot/$mergePath'), localRoot);
+
+                // Write merged content locally
+                await File('$localRoot/$mergePath').writeAsString(mergeResult.mergedContent);
+
+                // Push merged version to server
+                toPush.add(mergePath);
+
+                if (mergeResult.hasConflicts) {
+                  // Log entry-level conflicts (same entry, different content)
+                  for (final entryId in mergeResult.conflictEntryIds) {
+                    debugPrint('[SyncService] Journal entry conflict: $mergePath entry=$entryId (local wins)');
+                    conflicts.add('$mergePath#$entryId');
+                  }
+                }
+
+                debugPrint('[SyncService] Merged journal: $mergePath (local=${mergeResult.localOnlyCount}, server=${mergeResult.serverOnlyCount}, conflicts=${mergeResult.conflictEntryIds.length})');
+                merged++;
+                continue;
+              }
+            } catch (e) {
+              debugPrint('[SyncService] Journal merge failed for $mergePath: $e');
+              // Fall through to conflict file approach
+            }
+          }
+        }
+
+        // Non-journal file or merge failed: create conflict file
+        try {
+          final serverContent = await _fetchFileContent(root, mergePath);
+          if (serverContent != null) {
+            await _saveConflictFile(localRoot, mergePath, serverContent);
+            conflicts.add(mergePath);
+          }
+          // Push local version (local wins, server version preserved in conflict file)
+          toPush.add(mergePath);
+        } catch (e) {
+          debugPrint('[SyncService] Error handling conflict for $mergePath: $e');
+        }
+      }
 
       // Separate text and binary files for batching
       final textToPush = toPush.where((p) => !_binaryExtensions.contains(path.extension(p).toLowerCase())).toList();
@@ -551,6 +914,8 @@ class SyncService {
         pushed: pushed,
         pulled: pulled,
         deleted: deleted,
+        merged: merged,
+        conflicts: conflicts,
         duration: stopwatch.elapsed,
       );
 

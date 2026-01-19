@@ -37,10 +37,11 @@ class LiveTranscriptionService {
   final TranscriptionServiceAdapter _transcriptionService;
   final BackgroundRecordingService _backgroundService = BackgroundRecordingService();
 
-  // Extracted components
-  late StreamingAudioRecorder _recorder;
-  late SegmentPersistence _persistence;
-  late TranscriptionQueue _queue;
+  // Extracted components (nullable until initialized)
+  StreamingAudioRecorder? _recorder;
+  SegmentPersistence? _persistence;
+  TranscriptionQueue? _queue;
+  bool _isInitialized = false;
   final LocalAgreementState _localAgreement = LocalAgreementState();
   final RollingAudioBuffer _rollingBuffer = RollingAudioBuffer();
 
@@ -51,15 +52,12 @@ class LiveTranscriptionService {
 
   // Timers
   Timer? _reTranscriptionTimer;
-  Timer? _recordingDurationTimer;
-  bool _isReTranscribing = false;
 
   // State
   bool _isRecording = false;
   DateTime? _recordingStartTime;
   String? _tempDirectory;
   int _segmentStartOffset = 0;
-  int _nextSegmentIndex = 1;
   final List<String> _confirmedSegments = [];
   TranscriptionModelStatus _modelStatus = TranscriptionModelStatus.notInitialized;
 
@@ -69,19 +67,22 @@ class LiveTranscriptionService {
   final _streamingStateController = StreamController<StreamingTranscriptionState>.broadcast();
   final _interimTextController = StreamController<String>.broadcast();
 
-  // Public streams
+  // Public streams (safe to access before initialization)
   Stream<bool> get vadActivityStream => _vadActivityController.stream;
   Stream<AudioDebugMetrics> get debugMetricsStream => _debugMetricsController.stream;
   Stream<StreamingTranscriptionState> get streamingStateStream => _streamingStateController.stream;
   Stream<String> get interimTextStream => _interimTextController.stream;
-  Stream<TranscriptionSegment> get segmentStream => _queue.segmentStream;
-  Stream<bool> get isProcessingStream => _queue.isProcessingStream;
-  Stream<bool> get streamHealthStream => _recorder.streamHealthStream;
+  Stream<TranscriptionSegment> get segmentStream =>
+      _queue?.segmentStream ?? const Stream.empty();
+  Stream<bool> get isProcessingStream =>
+      _queue?.isProcessingStream ?? Stream.value(false);
+  Stream<bool> get streamHealthStream =>
+      _recorder?.streamHealthStream ?? Stream.value(true);
 
-  // Public getters
+  // Public getters (safe to access before initialization)
   bool get isRecording => _isRecording;
-  bool get isProcessing => _queue.isProcessing;
-  List<TranscriptionSegment> get segments => _queue.segments;
+  bool get isProcessing => _queue?.isProcessing ?? false;
+  List<TranscriptionSegment> get segments => _queue?.segments ?? [];
   List<String> get confirmedSegments => List.unmodifiable(_confirmedSegments);
   String get interimText => _localAgreement.interimText;
 
@@ -91,7 +92,7 @@ class LiveTranscriptionService {
     interimText: _localAgreement.interimText,
     confirmedSegments: List.unmodifiable(_confirmedSegments),
     isRecording: _isRecording,
-    isProcessing: _queue.isProcessing,
+    isProcessing: _queue?.isProcessing ?? false,
     recordingDuration: _recordingStartTime != null
         ? DateTime.now().difference(_recordingStartTime!)
         : Duration.zero,
@@ -103,7 +104,7 @@ class LiveTranscriptionService {
 
   /// Initialize service
   Future<void> initialize() async {
-    if (_tempDirectory != null) return;
+    if (_isInitialized) return;
 
     final fileSystem = FileSystemService.daily();
     _tempDirectory = await fileSystem.getTempAudioPath();
@@ -112,13 +113,14 @@ class LiveTranscriptionService {
     _persistence = SegmentPersistence(_tempDirectory!);
     _queue = TranscriptionQueue(
       transcriptionService: _transcriptionService,
-      persistence: _persistence,
+      persistence: _persistence!,
       onConfirmedSegment: (text) {
         _confirmedSegments.add(text);
         _emitStreamingState();
       },
     );
 
+    _isInitialized = true;
     debugPrint('[LiveTranscription] Initialized with temp dir: $_tempDirectory');
 
     // Recover pending segments
@@ -127,13 +129,13 @@ class LiveTranscriptionService {
 
   /// Recover pending segments from previous session
   Future<void> _recoverPendingSegments() async {
-    final pendingSegments = await _persistence.recoverPendingSegments();
+    final pendingSegments = await _persistence!.recoverPendingSegments();
 
     for (final segment in pendingSegments) {
       final audioFile = File(segment.audioFilePath);
       if (!await audioFile.exists()) {
         debugPrint('[LiveTranscription] ⚠️ Audio file missing for segment ${segment.index}');
-        await _persistence.updateSegmentStatus(
+        await _persistence!.updateSegmentStatus(
           segment.index,
           TranscriptionSegmentStatus.failed,
           text: '[Audio file missing]',
@@ -149,7 +151,7 @@ class LiveTranscriptionService {
 
         if (endOffset > audioBytes.length) {
           debugPrint('[LiveTranscription] ⚠️ Segment ${segment.index} exceeds audio file length');
-          await _persistence.updateSegmentStatus(
+          await _persistence!.updateSegmentStatus(
             segment.index,
             TranscriptionSegmentStatus.failed,
             text: '[Invalid audio range]',
@@ -161,10 +163,10 @@ class LiveTranscriptionService {
         final samples = _bytesToInt16(Uint8List.fromList(segmentBytes));
 
         debugPrint('[LiveTranscription] 🔄 Queueing recovered segment ${segment.index}');
-        _queue.queueSegment(samples, index: segment.index);
+        _queue!.queueSegment(samples, index: segment.index);
       } catch (e) {
         debugPrint('[LiveTranscription] ❌ Failed to recover segment ${segment.index}: $e');
-        await _persistence.updateSegmentStatus(
+        await _persistence!.updateSegmentStatus(
           segment.index,
           TranscriptionSegmentStatus.failed,
           text: '[Recovery failed: $e]',
@@ -208,7 +210,7 @@ class LiveTranscriptionService {
     );
 
     // Start audio recording
-    final success = await _recorder.startRecording(
+    final success = await _recorder!.startRecording(
       onAudioChunk: _processAudioChunk,
     );
 
@@ -219,8 +221,7 @@ class LiveTranscriptionService {
     _isRecording = true;
     _recordingStartTime = DateTime.now();
     _allAudioSamples.clear();
-    _nextSegmentIndex = 1;
-    _queue.clear();
+    _queue!.clear();
 
     // Reset streaming state
     _localAgreement.reset();
@@ -235,10 +236,7 @@ class LiveTranscriptionService {
         : TranscriptionModelStatus.initializing;
 
     // Notify background service
-    await _backgroundService.onRecordingStarted(_recorder.audioFilePath);
-
-    // Start duration timer
-    _startRecordingDurationTimer();
+    await _backgroundService.onRecordingStarted(_recorder!.audioFilePath);
 
     // Emit initial state
     _emitStreamingState();
@@ -279,7 +277,7 @@ class LiveTranscriptionService {
     _rollingBuffer.addSamples(cleanSamples);
 
     // Stream to disk
-    _recorder.writeSamples(cleanSamples);
+    _recorder!.writeSamples(cleanSamples);
 
     // Process through VAD chunker
     _chunker!.processSamples(cleanSamples);
@@ -297,9 +295,9 @@ class LiveTranscriptionService {
     debugPrint('[LiveTranscription] VAD pause detected! Duration: ${duration.inSeconds}s');
 
     // Queue for transcription
-    _queue.queueSegment(
+    _queue!.queueSegment(
       samples,
-      audioFilePath: _recorder.audioFilePath,
+      audioFilePath: _recorder!.audioFilePath,
       startOffset: _segmentStartOffset,
     );
 
@@ -308,7 +306,7 @@ class LiveTranscriptionService {
     _localAgreement.reset();
 
     // Update offset for next segment
-    _segmentStartOffset = _recorder.totalSamplesWritten * 2;
+    _segmentStartOffset = _recorder!.totalSamplesWritten * 2;
   }
 
   /// Stop recording
@@ -318,7 +316,6 @@ class LiveTranscriptionService {
     try {
       debugPrint('[LiveTranscription] 🛑 Stopping recording...');
 
-      _stopRecordingDurationTimer();
       _stopReTranscriptionLoop();
 
       // Flush chunker for final audio
@@ -329,7 +326,7 @@ class LiveTranscriptionService {
       }
 
       // Wait for queue to finish
-      while (_queue.isProcessing) {
+      while (_queue?.isProcessing ?? false) {
         await Future.delayed(const Duration(milliseconds: 100));
       }
 
@@ -347,7 +344,7 @@ class LiveTranscriptionService {
       _emitStreamingState();
 
       // Stop recorder and finalize WAV
-      final audioPath = await _recorder.stopRecording();
+      final audioPath = await _recorder!.stopRecording();
 
       // Clear memory buffers
       _allAudioSamples.clear();
@@ -372,7 +369,6 @@ class LiveTranscriptionService {
     try {
       debugPrint('[LiveTranscription] ❌ Cancelling recording...');
 
-      _stopRecordingDurationTimer();
       _stopReTranscriptionLoop();
 
       _chunker = null;
@@ -380,10 +376,10 @@ class LiveTranscriptionService {
       _isRecording = false;
       _recordingStartTime = null;
 
-      await _recorder.cancelRecording();
+      await _recorder?.cancelRecording();
 
       // Clear state
-      _queue.clear();
+      _queue?.clear();
       _allAudioSamples.clear();
       _rollingBuffer.clear();
       _localAgreement.reset();
@@ -402,13 +398,13 @@ class LiveTranscriptionService {
   /// Pause recording
   Future<void> pauseRecording() async {
     if (!_isRecording) return;
-    await _recorder.pauseRecording();
+    await _recorder?.pauseRecording();
   }
 
   /// Resume recording
   Future<void> resumeRecording() async {
     if (!_isRecording) return;
-    await _recorder.resumeRecording();
+    await _recorder?.resumeRecording();
   }
 
   /// Final transcription for remaining audio
@@ -443,19 +439,6 @@ class LiveTranscriptionService {
     }
   }
 
-  void _startRecordingDurationTimer() {
-    _recordingDurationTimer?.cancel();
-    _recordingDurationTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (!_isRecording) return;
-      _emitStreamingState();
-    });
-  }
-
-  void _stopRecordingDurationTimer() {
-    _recordingDurationTimer?.cancel();
-    _recordingDurationTimer = null;
-  }
-
   void _stopReTranscriptionLoop() {
     _reTranscriptionTimer?.cancel();
     _reTranscriptionTimer = null;
@@ -467,7 +450,7 @@ class LiveTranscriptionService {
   }
 
   /// Get complete transcript
-  String getCompleteTranscript() => _queue.getCompleteTranscript();
+  String getCompleteTranscript() => _queue?.getCompleteTranscript() ?? '';
 
   /// Get streaming transcript
   String getStreamingTranscript() => _confirmedSegments.join('\n');
@@ -549,11 +532,10 @@ class LiveTranscriptionService {
   Future<void> dispose() async {
     debugPrint('[LiveTranscription] 🧹 Disposing service...');
 
-    _stopRecordingDurationTimer();
     _stopReTranscriptionLoop();
 
-    await _recorder.dispose();
-    await _queue.dispose();
+    await _recorder?.dispose();
+    await _queue?.dispose();
 
     await _vadActivityController.close();
     await _debugMetricsController.close();

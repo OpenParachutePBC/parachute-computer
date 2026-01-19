@@ -1,7 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../services/feature_flags_service.dart';
-import '../services/bundled_server_service.dart';
-import 'server_providers.dart';
+import '../services/lima_vm_service.dart';
+import 'lima_vm_provider.dart';
 
 /// Provider for the feature flags service
 final featureFlagsServiceProvider = Provider<FeatureFlagsService>((ref) {
@@ -23,19 +23,18 @@ final aiChatEnabledProvider = FutureProvider<bool>((ref) async {
 /// Provider for AI server URL
 ///
 /// Priority:
-/// 1. If bundled server is running → use bundled server URL (localhost:3333)
+/// 1. If Lima VM is running → use Lima server URL (localhost:3334)
 /// 2. Otherwise → fall back to configured URL from FeatureFlagsService
 ///
 /// This enables the "Parachute Computer" experience where the app bundles
-/// the server on desktop platforms.
+/// the server in a Lima VM on desktop platforms.
 final aiServerUrlProvider = FutureProvider<String>((ref) async {
-  // Check if bundled server is available and running
-  final serverStatus = ref.watch(serverStatusProvider);
-  final bundledService = ref.watch(bundledServerServiceProvider);
+  // Check if Lima VM is running
+  final limaRunning = ref.watch(isLimaVMRunningProvider);
 
-  if (serverStatus == ServerStatus.running) {
-    // Bundled server is running - use it
-    return bundledService.serverUrl;
+  if (limaRunning) {
+    // Lima VM is running - use its server URL
+    return 'http://localhost:${LimaVMService.serverPort}';
   }
 
   // Fall back to configured URL from feature flags service

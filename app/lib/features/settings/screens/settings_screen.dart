@@ -4,18 +4,18 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
-import 'package:parachute/core/providers/app_state_provider.dart';
+import 'package:parachute/core/providers/app_state_provider.dart'
+    show AppMode, appModeProvider, serverUrlProvider, apiKeyProvider, syncModeProvider, SyncMode, isDailyOnlyFlavor, showLimaControls;
 import 'package:parachute/core/providers/file_system_provider.dart';
 import 'package:parachute/core/providers/feature_flags_provider.dart';
 import 'package:parachute/core/providers/server_providers.dart';
 import 'package:parachute/core/providers/sync_provider.dart';
+import 'package:parachute/core/providers/lima_vm_provider.dart';
 import 'package:parachute/core/services/sync_service.dart';
 import 'package:parachute/core/services/backend_health_service.dart';
 import 'package:parachute/features/daily/journal/providers/journal_providers.dart';
 import '../widgets/omi_device_section.dart';
 import '../widgets/api_key_section.dart';
-import '../widgets/bundled_server_section.dart';
-import '../widgets/claude_auth_section.dart';
 import '../widgets/lima_vm_section.dart';
 
 /// Unified Settings screen for Parachute
@@ -298,6 +298,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final showChatFolder = appMode == AppMode.full;
     final isBundled = ref.watch(isBundledAppProvider);
 
+    // Check if Lima VM is running (for auto-configuring server URL)
+    final limaVMRunning = ref.watch(isLimaVMRunningProvider);
+
     // Daily flavor: Hide all server-related UI
     final showServerSettings = !isDailyOnlyFlavor;
 
@@ -324,9 +327,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       body: ListView(
         padding: EdgeInsets.all(Spacing.lg),
         children: [
-          // Lima VM Section (macOS/Linux only, full flavor only)
-          // This is the recommended way to run Parachute Computer with isolation
-          if (showServerSettings && (Platform.isMacOS || Platform.isLinux)) ...[
+          // Parachute Computer Section (macOS/Linux only, when Lima controls should show)
+          // Lima VM with full isolation - Claude can only access the vault
+          if (showServerSettings && showLimaControls && (Platform.isMacOS || Platform.isLinux)) ...[
             _SettingsCard(
               isDark: isDark,
               child: const LimaVMSection(),
@@ -334,25 +337,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             SizedBox(height: Spacing.xl),
           ],
 
-          // Bundled Server Section (desktop only, full flavor only)
-          // Legacy PyInstaller approach - shown as alternative
-          if (showServerSettings && (Platform.isMacOS || Platform.isLinux || Platform.isWindows)) ...[
-            _SettingsCard(
-              isDark: isDark,
-              child: const BundledServerSection(),
-            ),
-            SizedBox(height: Spacing.xl),
-
-            // Claude Authentication Section (desktop only - shows when bundled)
-            _SettingsCard(
-              isDark: isDark,
-              child: const ClaudeAuthSection(),
-            ),
-            SizedBox(height: Spacing.xl),
-          ],
-
           // Server Connection Section (full flavor only)
-          if (showServerSettings) ...[
+          // Hide when Lima VM is running (auto-configured to localhost:3333)
+          if (showServerSettings && !limaVMRunning) ...[
             _buildServerSection(isDark),
             SizedBox(height: Spacing.xl),
           ],
