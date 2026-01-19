@@ -109,3 +109,18 @@ Sync Service → Reflection Agent → Content-Scout → Creative-Director
 - The pointer architecture means session.db is metadata only
 - Curator is a long-running agent with its own state file
 - `VAULT_PATH` env var defaults to `./sample-vault` (set to `~/Parachute` in prod)
+
+---
+
+## Parachute Computer (Lima VM)
+
+When distributed as "Parachute Computer", the base server runs inside a Lima VM:
+
+- **Location**: `~/Library/Application Support/Parachute/base` (users) or custom path (developers)
+- **Mount**: VM sees the vault at `/vault` (which is `HOME` for the Lima user)
+- **Port**: 3333, forwarded to host (including `0.0.0.0` for Tailscale access)
+
+The `/api/health` endpoint includes `version` and `commit` fields for update checking:
+```json
+{"status": "ok", "version": "0.1.0", "commit": "abc1234"}
+```
