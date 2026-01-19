@@ -2,14 +2,36 @@
 Health check endpoints.
 """
 
+import subprocess
 import time
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Query, Request
 
+from parachute import __version__
 from parachute.config import get_settings
 
 router = APIRouter()
+
+
+def _get_git_commit() -> str | None:
+    """Get the current git commit hash, if in a git repo."""
+    try:
+        # Get the directory where this file lives (parachute/api/)
+        base_dir = Path(__file__).parent.parent.parent
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=base_dir,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except Exception:
+        pass
+    return None
 
 # Server start time for uptime calculation
 _start_time = time.time()
@@ -26,9 +48,12 @@ async def health_check(
     """
     settings = get_settings()
 
+    commit = _get_git_commit()
     basic = {
         "status": "ok",
         "timestamp": int(time.time() * 1000),
+        "version": __version__,
+        **({"commit": commit} if commit else {}),
     }
 
     if not detailed:
@@ -46,7 +71,6 @@ async def health_check(
             "status": vault_status,
         },
         "uptime": time.time() - _start_time,
-        "version": "0.1.0",
     }
 
 
