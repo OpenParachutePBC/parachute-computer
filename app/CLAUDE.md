@@ -206,6 +206,46 @@ cd ../base && ./parachute.sh start
 
 ---
 
+## Parachute Computer (Lima VM Distribution)
+
+The app can be built as "Parachute Computer" - a self-contained distribution that runs the base server in an isolated Lima VM.
+
+### Build Flavors
+
+| Flavor | Build Command | Use Case |
+|--------|---------------|----------|
+| Default | `flutter run -d macos` | Development, connects to local server |
+| Computer | `flutter run --dart-define=FLAVOR=computer` | Lima VM mode |
+
+### Building the DMG
+
+```bash
+# Standard distribution (base at ~/Library/Application Support/Parachute/base)
+./scripts/build_computer_dmg.sh
+
+# Developer distribution (uses your local base repo)
+./scripts/build_computer_dmg.sh --dev-base-path ~/Parachute/projects/parachute/base
+```
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `lima/parachute.yaml` | Lima VM configuration |
+| `scripts/build_computer_dmg.sh` | DMG build script |
+| `lib/core/services/lima_vm_service.dart` | VM lifecycle management |
+| `lib/features/settings/widgets/computer_setup_wizard.dart` | Setup UI |
+
+### How It Works
+
+1. App detects `FLAVOR=computer` and shows Lima setup wizard
+2. User installs Homebrew → Lima → creates VM
+3. VM mounts `~/Parachute` as `/vault` (HOME for the VM user)
+4. Base server runs inside VM, accessible at `localhost:3333`
+5. Claude Code CLI runs in VM with filesystem access limited to vault
+
+---
+
 ## Key Files
 
 | Purpose | File |
