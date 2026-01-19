@@ -185,7 +185,22 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
     });
 
     try {
-      final service = ref.read(limaVMServiceProvider);
+      // Use initialized provider to get vault path for developer mode detection
+      final service = await ref.read(limaVMServiceInitializedProvider.future);
+
+      // First, ensure base server is installed
+      // For developers: skips if ~/Vault/projects/parachute/base exists
+      // For users: installs to ~/Library/Application Support/Parachute/base
+      if (!await service.isBaseServerInstalled()) {
+        debugPrint('[ComputerSetupWizard] Installing base server...');
+        final installed = await service.installBaseServer();
+        if (!installed) {
+          _error = service.lastError ?? 'Failed to install base server';
+          return;
+        }
+      }
+
+      // Now create/start the VM
       final success = await service.start();
 
       if (success) {

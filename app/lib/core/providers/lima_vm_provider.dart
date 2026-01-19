@@ -1,10 +1,25 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../services/file_system_service.dart';
 import '../services/lima_vm_service.dart';
 
 /// Provider for the Lima VM service singleton
 final limaVMServiceProvider = Provider<LimaVMService>((ref) {
   final service = LimaVMService();
   ref.onDispose(() => service.dispose());
+  return service;
+});
+
+/// Provider that initializes LimaVMService with the vault path
+/// Use this when you need developer mode detection to work
+final limaVMServiceInitializedProvider = FutureProvider<LimaVMService>((ref) async {
+  final service = ref.watch(limaVMServiceProvider);
+
+  // Get vault path from FileSystemService (any module works, they share vault)
+  final fsService = FileSystemService.daily();
+  await fsService.initialize();
+  final vaultPath = await fsService.getVaultPath();
+  service.setVaultPath(vaultPath);
+
   return service;
 });
 
@@ -32,4 +47,16 @@ final isLimaVMRunningProvider = Provider<bool>((ref) {
 final isLimaServerHealthyProvider = FutureProvider<bool>((ref) async {
   final service = ref.watch(limaVMServiceProvider);
   return service.isServerHealthy();
+});
+
+/// Provider to get the running server's version
+final serverVersionProvider = FutureProvider<String?>((ref) async {
+  final service = ref.watch(limaVMServiceProvider);
+  return service.getServerVersion();
+});
+
+/// Provider to check if a base update is available
+final isBaseUpdateAvailableProvider = FutureProvider<bool>((ref) async {
+  final service = ref.watch(limaVMServiceProvider);
+  return service.isBaseUpdateAvailable();
 });

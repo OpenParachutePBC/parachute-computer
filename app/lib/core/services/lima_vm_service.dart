@@ -38,6 +38,18 @@ class LimaVMService {
   static const String vmName = 'parachute';
   static const int serverPort = 3333;
 
+  /// Version of base server bundled with this app
+  /// This should match the version in base/parachute/__init__.py
+  static const String bundledBaseVersion = '0.1.0';
+
+  /// The vault path - must be set before using developer mode detection
+  String? _vaultPath;
+
+  /// Set the vault path (called by provider after FileSystemService initializes)
+  void setVaultPath(String path) {
+    _vaultPath = path;
+  }
+
   LimaVMStatus _currentStatus = LimaVMStatus.notInstalled;
   String? _lastError;
   final _statusController = StreamController<LimaVMStatus>.broadcast();
@@ -352,6 +364,18 @@ class LimaVMService {
     }
   }
 
+  /// Get the base server path inside the VM
+  /// Developer mode: ~/projects/parachute/base (via /vault mount)
+  /// User mode: /opt/parachute/base (via Application Support mount)
+  String get _vmBasePath {
+    // Check host paths to determine which mode we're in
+    final devPath = _developerBasePath;
+    if (devPath != null && Directory(devPath).existsSync()) {
+      return '~/projects/parachute/base';
+    }
+    return '/opt/parachute/base';
+  }
+
   /// Start the Parachute server inside the VM
   Future<bool> startServer() async {
     if (_currentStatus != LimaVMStatus.running) {
@@ -360,7 +384,8 @@ class LimaVMService {
     }
 
     try {
-      debugPrint('[LimaVMService] Starting server in VM...');
+      final vmPath = _vmBasePath;
+      debugPrint('[LimaVMService] Starting server in VM from $vmPath...');
 
       // Run server using parachute.sh script
       final result = await _runLimactl([
@@ -371,7 +396,7 @@ class LimaVMService {
         '--',
         'bash',
         '-c',
-        'cd ~/projects/parachute/base && ./parachute.sh restart',
+        'cd $vmPath && ./parachute.sh restart',
       ]);
 
       if (result != null && result.exitCode == 0) {
@@ -590,18 +615,62 @@ class LimaVMService {
   // Base server installation
   // ============================================================
 
-  /// Check if base server is installed in the vault
-  Future<bool> isBaseServerInstalled() async {
-    final home = Platform.environment['HOME'] ?? '';
-    final basePath = '$home/Parachute/projects/parachute/base';
-    return Directory(basePath).exists();
+  /// Path where developers keep base (in the vault, as a git repo)
+  /// Returns null if vault path not set
+  String? get _developerBasePath {
+    if (_vaultPath == null) return null;
+    return '$_vaultPath/projects/parachute/base';
   }
 
-  /// Install base server from app bundle to vault
+  /// Path where regular users' base is installed (hidden from vault)
+  static String get _userBasePath {
+    final home = Platform.environment['HOME'] ?? '';
+    return '$home/Library/Application Support/Parachute/base';
+  }
+
+  /// Get the active base server path
+  /// Prefers developer path if it exists (has .git), otherwise uses user path
+  String get baseServerPath {
+    final devPath = _developerBasePath;
+    if (devPath != null) {
+      // Check if developer path exists with .git (active development)
+      if (Directory('$devPath/.git').existsSync()) {
+        return devPath;
+      }
+      // Check if developer path exists at all (manual setup)
+      if (Directory(devPath).existsSync()) {
+        return devPath;
+      }
+    }
+    // Default to user path
+    return _userBasePath;
+  }
+
+  /// Check if we're in developer mode (base in vault as git repo)
+  bool get isDeveloperMode {
+    final devPath = _developerBasePath;
+    if (devPath == null) return false;
+    return Directory('$devPath/.git').existsSync();
+  }
+
+  /// Check if base server is installed (in either location)
+  Future<bool> isBaseServerInstalled() async {
+    return Directory(baseServerPath).exists();
+  }
+
+  /// Install base server from app bundle
+  /// Installs to user path (~/Library/Application Support/Parachute/base/)
+  /// unless developer path already exists
   Future<bool> installBaseServer() async {
     try {
-      final home = Platform.environment['HOME'] ?? '';
-      final destPath = '$home/Parachute/projects/parachute/base';
+      // If developer path exists, don't overwrite it
+      final devPath = _developerBasePath;
+      if (devPath != null && await Directory(devPath).exists()) {
+        debugPrint('[LimaVMService] Developer base exists, skipping install');
+        return true;
+      }
+
+      final destPath = _userBasePath;
 
       // Check if already installed
       if (await Directory(destPath).exists()) {
@@ -635,6 +704,129 @@ class LimaVMService {
       return true;
     } catch (e) {
       debugPrint('[LimaVMService] Error installing base server: $e');
+      _lastError = e.toString();
+      return false;
+    }
+  }
+
+  // ============================================================
+  // Base server version management
+  // ============================================================
+
+  /// Get the running server's version from the health endpoint
+  /// Returns null if server is not responding or version unavailable
+  Future<String?> getServerVersion() async {
+    try {
+      final response = await http
+          .get(Uri.parse('$serverUrl/api/health'))
+          .timeout(const Duration(seconds: 5));
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        return data['version'] as String?;
+      }
+      return null;
+    } catch (e) {
+      debugPrint('[LimaVMService] Error getting server version: $e');
+      return null;
+    }
+  }
+
+  /// Check if the running server needs an update
+  /// Returns true if bundled version is newer than running version
+  Future<bool> isBaseUpdateAvailable() async {
+    final serverVersion = await getServerVersion();
+    if (serverVersion == null) return false;
+
+    return _compareVersions(bundledBaseVersion, serverVersion) > 0;
+  }
+
+  /// Compare two semantic versions
+  /// Returns: positive if a > b, negative if a < b, 0 if equal
+  int _compareVersions(String a, String b) {
+    final aParts = a.split('.').map(int.parse).toList();
+    final bParts = b.split('.').map(int.parse).toList();
+
+    for (var i = 0; i < 3; i++) {
+      final aPart = i < aParts.length ? aParts[i] : 0;
+      final bPart = i < bParts.length ? bParts[i] : 0;
+      if (aPart != bPart) return aPart - bPart;
+    }
+    return 0;
+  }
+
+  /// Update the base server from the app bundle
+  /// This replaces the existing base with the bundled version
+  /// NOTE: In developer mode, this is a no-op (developers manage their own base)
+  Future<bool> updateBaseServer() async {
+    // Don't update in developer mode - they manage their own base via git
+    if (isDeveloperMode) {
+      debugPrint('[LimaVMService] Developer mode - skipping base update');
+      return true;
+    }
+
+    try {
+      final destPath = _userBasePath;
+
+      // Find source in app bundle
+      final executablePath = Platform.resolvedExecutable;
+      final resourcesPath = path.join(
+        path.dirname(executablePath),
+        '../Resources/base',
+      );
+
+      if (!await Directory(resourcesPath).exists()) {
+        _lastError = 'Base server not found in app bundle';
+        return false;
+      }
+
+      // Back up current version (keep venv)
+      final backupPath = '$destPath.backup';
+      if (await Directory(destPath).exists()) {
+        // Remove old backup if exists
+        if (await Directory(backupPath).exists()) {
+          await Directory(backupPath).delete(recursive: true);
+        }
+
+        // Move current to backup (preserves venv)
+        await Directory(destPath).rename(backupPath);
+        debugPrint('[LimaVMService] Backed up current base to $backupPath');
+      }
+
+      // Copy new base
+      final result = await Process.run('cp', ['-R', resourcesPath, destPath]);
+      if (result.exitCode != 0) {
+        // Restore backup on failure
+        if (await Directory(backupPath).exists()) {
+          await Directory(backupPath).rename(destPath);
+        }
+        _lastError = 'Failed to copy base server: ${result.stderr}';
+        return false;
+      }
+
+      // Copy venv from backup if it exists (avoid re-creating)
+      final backupVenv = '$backupPath/venv';
+      final destVenv = '$destPath/venv';
+      if (await Directory(backupVenv).exists()) {
+        await Process.run('cp', ['-R', backupVenv, destVenv]);
+        debugPrint('[LimaVMService] Preserved venv from backup');
+      }
+
+      // Clean up backup
+      if (await Directory(backupPath).exists()) {
+        await Directory(backupPath).delete(recursive: true);
+      }
+
+      debugPrint('[LimaVMService] Base server updated to $bundledBaseVersion');
+
+      // Restart server to pick up changes
+      if (_currentStatus == LimaVMStatus.running) {
+        await startServer();
+      }
+
+      return true;
+    } catch (e) {
+      debugPrint('[LimaVMService] Error updating base server: $e');
       _lastError = e.toString();
       return false;
     }
