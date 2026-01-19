@@ -4,6 +4,7 @@ import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/features/vault/models/file_item.dart';
 import 'package:parachute/features/vault/providers/file_browser_provider.dart';
 import 'package:parachute/features/vault/screens/markdown_viewer_screen.dart';
+import 'package:parachute/features/vault/screens/text_viewer_screen.dart';
 import 'package:parachute/features/settings/screens/settings_screen.dart';
 
 /// File browser screen for navigating the vault
@@ -88,6 +89,8 @@ class _FilesScreenState extends ConsumerState<FilesScreen> with WidgetsBindingOb
       _navigateToFolder(item.path);
     } else if (item.isMarkdown) {
       _openMarkdownFile(item);
+    } else if (item.isText) {
+      _openTextFile(item);
     } else if (item.isAudio) {
       _playAudioFile(item);
     } else {
@@ -100,6 +103,15 @@ class _FilesScreenState extends ConsumerState<FilesScreen> with WidgetsBindingOb
       context,
       MaterialPageRoute(
         builder: (context) => MarkdownViewerScreen(file: item),
+      ),
+    );
+  }
+
+  void _openTextFile(FileItem item) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => TextViewerScreen(file: item),
       ),
     );
   }
@@ -360,6 +372,10 @@ class _FilesScreenState extends ConsumerState<FilesScreen> with WidgetsBindingOb
       case FileItemType.markdown:
         icon = Icons.description;
         color = isDark ? BrandColors.nightTurquoise : BrandColors.turquoiseDeep;
+        break;
+      case FileItemType.text:
+        icon = Icons.code;
+        color = isDark ? BrandColors.nightTurquoise : BrandColors.turquoise;
         break;
       case FileItemType.audio:
         icon = Icons.audio_file;

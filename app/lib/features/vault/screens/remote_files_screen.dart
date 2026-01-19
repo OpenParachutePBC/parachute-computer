@@ -6,6 +6,7 @@ import 'package:parachute/core/providers/app_state_provider.dart';
 import 'package:parachute/features/vault/models/file_item.dart';
 import 'package:parachute/features/vault/services/remote_file_browser_service.dart';
 import 'package:parachute/features/vault/screens/remote_markdown_viewer_screen.dart';
+import 'package:parachute/features/vault/screens/remote_text_viewer_screen.dart';
 import 'package:parachute/features/settings/screens/settings_screen.dart';
 
 /// Provider for remote file browser service
@@ -61,6 +62,8 @@ class _RemoteFilesScreenState extends ConsumerState<RemoteFilesScreen> {
       _navigateToFolder(item.path);
     } else if (item.isMarkdown) {
       _openMarkdownFile(item);
+    } else if (item.isText) {
+      _openTextFile(item);
     } else {
       _showFileInfo(item);
     }
@@ -71,6 +74,15 @@ class _RemoteFilesScreenState extends ConsumerState<RemoteFilesScreen> {
       context,
       MaterialPageRoute(
         builder: (context) => RemoteMarkdownViewerScreen(file: item),
+      ),
+    );
+  }
+
+  void _openTextFile(FileItem item) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => RemoteTextViewerScreen(file: item),
       ),
     );
   }
@@ -387,6 +399,10 @@ class _RemoteFilesScreenState extends ConsumerState<RemoteFilesScreen> {
       case FileItemType.markdown:
         icon = Icons.description;
         color = isDark ? BrandColors.nightTurquoise : BrandColors.turquoiseDeep;
+        break;
+      case FileItemType.text:
+        icon = Icons.code;
+        color = isDark ? BrandColors.nightTurquoise : BrandColors.turquoise;
         break;
       case FileItemType.audio:
         icon = Icons.audio_file;

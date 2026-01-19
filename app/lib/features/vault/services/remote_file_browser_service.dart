@@ -160,6 +160,23 @@ class RemoteFileBrowserService {
     }
   }
 
+  /// Common text file extensions that can be viewed in the text viewer
+  static const _textExtensions = {
+    // Config files
+    'json', 'yaml', 'yml', 'toml', 'ini', 'cfg', 'conf',
+    // Code files
+    'dart', 'js', 'ts', 'jsx', 'tsx', 'py', 'rb', 'go', 'rs', 'java', 'kt',
+    'swift', 'c', 'cpp', 'h', 'hpp', 'cs', 'php', 'sh', 'bash', 'zsh', 'fish',
+    // Web files
+    'html', 'htm', 'css', 'scss', 'sass', 'less', 'vue', 'svelte',
+    // Data files
+    'xml', 'csv', 'tsv', 'sql',
+    // Text files
+    'txt', 'log', 'env', 'gitignore', 'dockerignore', 'editorconfig',
+    // Documentation
+    'rst', 'tex', 'bib',
+  };
+
   FileItemType _getFileType(String name) {
     final ext = name.split('.').last.toLowerCase();
     switch (ext) {
@@ -173,6 +190,9 @@ class RemoteFileBrowserService {
       case 'flac':
         return FileItemType.audio;
       default:
+        if (_textExtensions.contains(ext)) {
+          return FileItemType.text;
+        }
         return FileItemType.other;
     }
   }
