@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
+import 'package:opus_dart/opus_dart.dart';
 import 'package:parachute/features/daily/journal/models/journal_entry.dart';
 import 'package:parachute/features/daily/journal/services/journal_service.dart';
 import 'package:parachute/features/daily/recorder/services/omi/models.dart';
@@ -75,13 +77,8 @@ class OmiCaptureService {
   /// Start listening for button events from device
   /// Also checks for any pending recordings on device
   Future<void> startListening() async {
-    debugPrint('[OmiCaptureService] Starting button listener');
-
     final connection = bluetoothService.activeConnection;
-    if (connection == null) {
-      debugPrint('[OmiCaptureService] No active connection');
-      return;
-    }
+    if (connection == null) return;
 
     // Reset tracking state on new connection
     _lastKnownStorageSize = null;
@@ -95,15 +92,10 @@ class OmiCaptureService {
       );
 
       if (_buttonSubscription != null) {
-        debugPrint('[OmiCaptureService] Button listener started');
-
-        // Check for pending recordings and detect mode
         await _detectModeAndCheckRecordings();
-      } else {
-        debugPrint('[OmiCaptureService] Failed to start button listener');
       }
     } catch (e) {
-      debugPrint('[OmiCaptureService] Error starting button listener: $e');
+      debugPrint('[OmiCaptureService] Error starting: $e');
     }
   }
 
@@ -111,7 +103,6 @@ class OmiCaptureService {
   Future<void> _detectModeAndCheckRecordings() async {
     final connection = bluetoothService.activeConnection;
     if (connection == null || connection is! OmiDeviceConnection) {
-      debugPrint('[OmiCaptureService] No OmiDeviceConnection, using streaming mode');
       _useStreamingMode = true;
       _modeDetected = true;
       return;
@@ -120,7 +111,6 @@ class OmiCaptureService {
     final omiConnection = connection;
 
     if (!omiConnection.hasStorageService) {
-      debugPrint('[OmiCaptureService] No storage service, using streaming mode');
       _useStreamingMode = true;
       _modeDetected = true;
       return;
@@ -130,7 +120,6 @@ class OmiCaptureService {
     try {
       final storageInfo = await omiConnection.getStorageInfo();
       if (storageInfo == null) {
-        debugPrint('[OmiCaptureService] Failed to get storage info, using streaming mode');
         _useStreamingMode = true;
         _modeDetected = true;
         return;
@@ -139,11 +128,8 @@ class OmiCaptureService {
       final fileSize = storageInfo[0];
       final currentOffset = storageInfo[1];
 
-      debugPrint('[OmiCaptureService] Storage info: fileSize=$fileSize, offset=$currentOffset');
-
       // If there's data on storage, device supports store-and-forward
       if (fileSize > 0 || currentOffset > 0) {
-        debugPrint('[OmiCaptureService] Storage has data, using store-and-forward mode');
         _useStreamingMode = false;
         _modeDetected = true;
 
@@ -153,13 +139,11 @@ class OmiCaptureService {
           await _downloadRecording(omiConnection, fileSize, totalBytes);
         }
       } else {
-        // Storage is empty - could be either mode
-        // We'll detect after first recording completes
-        debugPrint('[OmiCaptureService] Storage empty, will detect mode after first recording');
+        // Storage is empty - will detect after first recording completes
         _modeDetected = false;
       }
     } catch (e) {
-      debugPrint('[OmiCaptureService] Error detecting mode: $e, using streaming mode');
+      debugPrint('[OmiCaptureService] Error detecting mode: $e');
       _useStreamingMode = true;
       _modeDetected = true;
     }
@@ -167,8 +151,6 @@ class OmiCaptureService {
 
   /// Stop listening for button events
   Future<void> stopListening() async {
-    debugPrint('[OmiCaptureService] Stopping button listener');
-
     await _buttonSubscription?.cancel();
     _buttonSubscription = null;
 
@@ -188,37 +170,22 @@ class OmiCaptureService {
 
     final buttonCode = data[0];
     final buttonEvent = ButtonEvent.fromCode(buttonCode);
-
-    // Log button press prominently
-    debugPrint('');
-    debugPrint('═══════════════════════════════════════════════════');
-    debugPrint('🔘 OMI BUTTON EVENT!');
-    debugPrint('   Type: $buttonEvent');
-    debugPrint('   Code: $buttonCode');
-    debugPrint('   Device Recording: ${_deviceIsRecording ? "ACTIVE" : "INACTIVE"}');
-    debugPrint('   Mode: ${_useStreamingMode ? "STREAMING" : "STORE-AND-FORWARD"}${_modeDetected ? "" : " (detecting)"}');
-    debugPrint('═══════════════════════════════════════════════════');
-    debugPrint('');
+    debugPrint('[OmiCaptureService] Button: $buttonEvent (code=$buttonCode, recording=$_deviceIsRecording)');
 
     if (buttonEvent == ButtonEvent.unknown) {
-      debugPrint('[OmiCaptureService] ⚠️  Unknown button event: $buttonCode');
       return;
     }
 
-    // Handle button press/release events
+    // Handle button press/release events (ignore, wait for tap count)
     if (buttonEvent == ButtonEvent.buttonPressed) {
-      debugPrint('[OmiCaptureService] 👆 Button pressed');
       return;
     }
 
     if (buttonEvent == ButtonEvent.buttonReleased) {
-      debugPrint('[OmiCaptureService] 👆 Button released');
-
       // Legacy mode: If firmware doesn't send tap count events,
       // treat button release as a toggle after timeout
       _legacyButtonTimer?.cancel();
       _legacyButtonTimer = Timer(const Duration(milliseconds: 700), () {
-        debugPrint('[OmiCaptureService] ⚠️  No tap count received - using legacy mode');
         _handleRecordingToggle(1);
       });
       return;
@@ -228,64 +195,30 @@ class OmiCaptureService {
     _legacyButtonTimer?.cancel();
     _legacyButtonTimer = null;
 
-    // Handle tap events
+    // Handle tap events (singleTap, doubleTap, tripleTap)
     _handleRecordingToggle(buttonEvent.toCode());
   }
 
   /// Handle recording start/stop based on button event
   void _handleRecordingToggle(int tapCount) {
-    final wasRecording = _deviceIsRecording;
     _deviceIsRecording = !_deviceIsRecording;
     _currentButtonTapCount = tapCount;
-
-    debugPrint('[OmiCaptureService] Device recording state: $wasRecording -> $_deviceIsRecording');
     onRecordingStateChanged?.call(_deviceIsRecording);
 
     if (_deviceIsRecording) {
-      // Device started recording
-      debugPrint('[OmiCaptureService] ⏺️  Device started recording');
-      onStatusMessage?.call('Recording on device...');
-
-      // If using streaming mode, start capturing audio
-      if (_useStreamingMode || !_modeDetected) {
-        _startStreamingCapture();
-      }
+      onStatusMessage?.call('Recording...');
+      // Always capture streaming audio when connected via BLE
+      // The device streams in real-time when BLE is connected (doesn't store to SD)
+      _startStreamingCapture();
     } else {
-      // Device stopped recording
-      debugPrint('[OmiCaptureService] ⏹️  Device stopped recording');
+      // Stop streaming capture
+      _stopStreamingCapture();
 
-      if (_useStreamingMode) {
-        // Streaming mode: stop and save what we captured
-        _stopStreamingCapture();
+      // Save if we have streaming data
+      if (_wavBytesUtil != null && _wavBytesUtil!.hasFrames) {
         _saveStreamingRecording();
-      } else if (!_modeDetected) {
-        // Mode not detected yet - check storage first, fall back to streaming
-        _stopStreamingCapture(); // Stop streaming capture if it was running
-
-        onStatusMessage?.call('Checking for recording...');
-
-        Future.delayed(const Duration(milliseconds: 500), () async {
-          final hasStorageRecording = await checkAndDownloadRecordings();
-          if (!hasStorageRecording && _wavBytesUtil != null && _wavBytesUtil!.hasFrames) {
-            // No storage data, but we have streaming data - use streaming mode
-            debugPrint('[OmiCaptureService] No storage data, detected streaming mode');
-            _useStreamingMode = true;
-            _modeDetected = true;
-            await _saveStreamingRecording();
-          } else if (hasStorageRecording) {
-            // Storage worked - use store-and-forward mode
-            debugPrint('[OmiCaptureService] Storage has data, detected store-and-forward mode');
-            _useStreamingMode = false;
-            _modeDetected = true;
-          }
-        });
       } else {
-        // Store-and-forward mode
-        onStatusMessage?.call('Recording complete, downloading...');
-
-        Future.delayed(const Duration(milliseconds: 500), () {
-          checkAndDownloadRecordings();
-        });
+        onStatusMessage?.call('No audio captured');
       }
     }
   }
@@ -296,38 +229,26 @@ class OmiCaptureService {
 
   /// Start capturing audio stream from device
   Future<void> _startStreamingCapture() async {
-    debugPrint('[OmiCaptureService] Starting streaming capture');
-
     final connection = bluetoothService.activeConnection;
-    if (connection == null) {
-      debugPrint('[OmiCaptureService] No active connection for streaming');
-      return;
-    }
+    if (connection == null) return;
 
     try {
-      // Get audio codec from device
       final codec = await connection.getAudioCodec();
-      debugPrint('[OmiCaptureService] Audio codec: $codec');
-
-      // Initialize WAV builder
       _wavBytesUtil = WavBytesUtil(codec: codec);
       _wavBytesUtil!.clear();
 
-      // Start audio stream
       _audioSubscription = await connection.getBleAudioBytesListener(
         onAudioBytesReceived: _onAudioData,
       );
 
       if (_audioSubscription == null) {
-        debugPrint('[OmiCaptureService] Failed to start audio stream');
         _wavBytesUtil = null;
         return;
       }
 
       _recordingStartTime = DateTime.now();
-      debugPrint('[OmiCaptureService] Streaming capture started');
     } catch (e) {
-      debugPrint('[OmiCaptureService] Error starting streaming capture: $e');
+      debugPrint('[OmiCaptureService] Error starting stream: $e');
       _wavBytesUtil = null;
     }
   }
@@ -340,8 +261,6 @@ class OmiCaptureService {
 
   /// Stop streaming capture
   Future<void> _stopStreamingCapture() async {
-    debugPrint('[OmiCaptureService] Stopping streaming capture');
-
     await _audioSubscription?.cancel();
     _audioSubscription = null;
   }
@@ -349,7 +268,6 @@ class OmiCaptureService {
   /// Save recording from streaming data to journal
   Future<void> _saveStreamingRecording() async {
     if (_wavBytesUtil == null || !_wavBytesUtil!.hasFrames) {
-      debugPrint('[OmiCaptureService] No streaming data to save');
       _cleanupStreaming();
       return;
     }
@@ -358,15 +276,11 @@ class OmiCaptureService {
       final wavBytes = _wavBytesUtil!.buildWavFile();
       final duration = _wavBytesUtil!.duration;
 
-      debugPrint('[OmiCaptureService] Built WAV file: ${wavBytes.length} bytes, duration: $duration');
-
       // Save WAV file to temp location first
       final fileSystem = FileSystemService.daily();
       final wavFilePath = await fileSystem.getRecordingTempPath();
       final wavFile = File(wavFilePath);
       await wavFile.writeAsBytes(wavBytes);
-
-      debugPrint('[OmiCaptureService] Saved temp WAV file: $wavFilePath');
 
       _cleanupStreaming();
 
@@ -379,16 +293,24 @@ class OmiCaptureService {
         title: 'Omi Recording',
       );
 
-      debugPrint('[OmiCaptureService] Recording saved to journal: ${result.entry.id}');
       onStatusMessage?.call('Recording saved!');
       onRecordingSaved?.call(result.entry);
 
-      // Transcribe and update the entry
-      _transcribeAndUpdateEntry(result.entry, wavFilePath).catchError((e) {
-        debugPrint('[OmiCaptureService] Auto-transcribe error (non-fatal): $e');
-      });
+      // Transcribe using the vault path (not the temp path)
+      if (result.entry.audioPath != null) {
+        final fileSystem = FileSystemService.daily();
+        final vaultAudioPath = await fileSystem.resolveAssetPath(result.entry.audioPath!);
+        _transcribeAndUpdateEntry(result.entry, vaultAudioPath).catchError((e) {
+          debugPrint('[OmiCaptureService] Transcribe error: $e');
+        });
+      }
+
+      // Clean up the temp file since it's now copied to vault
+      try {
+        await File(wavFilePath).delete();
+      } catch (_) {}
     } catch (e) {
-      debugPrint('[OmiCaptureService] Error saving streaming recording: $e');
+      debugPrint('[OmiCaptureService] Error saving recording: $e');
       onStatusMessage?.call('Error saving recording');
       _cleanupStreaming();
     }
@@ -408,55 +330,33 @@ class OmiCaptureService {
   /// Check device storage and download any new recordings
   /// Returns true if a recording was found and downloaded
   Future<bool> checkAndDownloadRecordings() async {
-    if (_isDownloading) {
-      debugPrint('[OmiCaptureService] Already downloading, skipping check');
-      return false;
-    }
+    if (_isDownloading) return false;
 
     final connection = bluetoothService.activeConnection;
-    if (connection == null) {
-      debugPrint('[OmiCaptureService] No active connection');
-      return false;
-    }
-
-    if (connection is! OmiDeviceConnection) {
-      debugPrint('[OmiCaptureService] Connection is not OmiDeviceConnection');
+    if (connection == null || connection is! OmiDeviceConnection) {
       return false;
     }
 
     final omiConnection = connection;
-
-    if (!omiConnection.hasStorageService) {
-      debugPrint('[OmiCaptureService] Storage service not available');
-      return false;
-    }
+    if (!omiConnection.hasStorageService) return false;
 
     try {
       final storageInfo = await omiConnection.getStorageInfo();
-      if (storageInfo == null) {
-        debugPrint('[OmiCaptureService] Failed to get storage info');
-        return false;
-      }
+      if (storageInfo == null) return false;
 
       final fileSize = storageInfo[0];
       final currentOffset = storageInfo[1];
-
-      debugPrint('[OmiCaptureService] Storage info: fileSize=$fileSize, offset=$currentOffset');
-
       final totalBytes = currentOffset > 0 ? currentOffset : fileSize;
 
       if (totalBytes == 0) {
-        debugPrint('[OmiCaptureService] No recordings on device');
         onStatusMessage?.call('No recordings on device');
         return false;
       }
 
       if (_lastKnownStorageSize != null && totalBytes <= _lastKnownStorageSize!) {
-        debugPrint('[OmiCaptureService] No new recordings since last check');
         return false;
       }
 
-      debugPrint('[OmiCaptureService] New recording detected: $totalBytes bytes');
       await _downloadRecording(omiConnection, fileSize, totalBytes);
       return true;
     } catch (e) {
@@ -487,41 +387,29 @@ class OmiCaptureService {
           final progress = (downloadedData.length / totalBytes * 100).clamp(0, 100).toInt();
           onStatusMessage?.call('Downloading: $progress%');
         },
-        onComplete: () {
-          debugPrint('[OmiCaptureService] Download complete: ${downloadedData.length} bytes');
-          completer.complete();
-        },
-        onError: (error) {
-          debugPrint('[OmiCaptureService] Download error: $error');
-          completer.completeError(error);
-        },
+        onComplete: () => completer.complete(),
+        onError: (error) => completer.completeError(error),
       );
 
       await completer.future.timeout(
         const Duration(minutes: 5),
-        onTimeout: () {
-          throw TimeoutException('Download timed out');
-        },
+        onTimeout: () => throw TimeoutException('Download timed out'),
       );
 
       await _downloadSubscription?.cancel();
       _downloadSubscription = null;
 
       if (downloadedData.isEmpty) {
-        debugPrint('[OmiCaptureService] Downloaded data is empty');
         onStatusMessage?.call('Download failed - no data');
         return;
       }
 
       _lastKnownStorageSize = totalBytes;
-
       await _processDownloadedRecording(Uint8List.fromList(downloadedData));
-
       await connection.deleteStorageFile(1);
-      debugPrint('[OmiCaptureService] Deleted recording from device');
     } catch (e) {
       debugPrint('[OmiCaptureService] Download failed: $e');
-      onStatusMessage?.call('Download failed: $e');
+      onStatusMessage?.call('Download failed');
     } finally {
       _isDownloading = false;
       await _downloadSubscription?.cancel();
@@ -530,52 +418,163 @@ class OmiCaptureService {
   }
 
   /// Process downloaded audio data and save to journal
+  ///
+  /// The Omi device stores audio as sequential Opus frames (80 bytes each at 16kHz).
+  /// We decode these to PCM and save as WAV for compatibility with transcription.
   Future<void> _processDownloadedRecording(Uint8List audioData) async {
-    debugPrint('[OmiCaptureService] Processing downloaded recording: ${audioData.length} bytes');
     onStatusMessage?.call('Processing recording...');
 
     try {
-      // Save raw Opus data to temp location
       final fileSystem = FileSystemService.daily();
-      final tempPath = await fileSystem.getTempWavPath(prefix: 'omi_download');
-      // Change extension to .opus since this is Opus data
-      final opusPath = tempPath.replaceAll('.wav', '.opus');
 
-      final opusFile = File(opusPath);
-      await opusFile.writeAsBytes(audioData);
-      debugPrint('[OmiCaptureService] Saved temp Opus file: $opusPath');
+      // Convert Opus frames to WAV
+      final wavBytes = await _convertOpusToWav(audioData);
+      if (wavBytes == null || wavBytes.isEmpty) {
+        onStatusMessage?.call('Failed to process recording');
+        return;
+      }
 
-      // Estimate duration (rough estimate: ~3KB per second for Opus)
-      final estimatedDurationMs = (audioData.length / 3000 * 1000).round();
-      final durationSeconds = (estimatedDurationMs / 1000).round();
+      // Save WAV to temp location
+      final wavPath = await fileSystem.getRecordingTempPath();
+      final wavFile = File(wavPath);
+      await wavFile.writeAsBytes(wavBytes);
+
+      // Calculate actual duration from WAV data
+      // WAV header is 44 bytes, 16-bit samples at 16kHz mono
+      final pcmBytes = wavBytes.length - 44;
+      final samples = pcmBytes ~/ 2; // 2 bytes per sample
+      final durationSeconds = samples ~/ 16000;
 
       // Save to journal with empty transcript (will be transcribed async)
       final journalService = await getJournalService();
       final result = await journalService.addVoiceEntry(
         transcript: '', // Will be transcribed async
-        audioPath: opusPath,
+        audioPath: wavPath,
         durationSeconds: durationSeconds,
         title: 'Omi Recording',
       );
 
-      debugPrint('[OmiCaptureService] Recording saved to journal: ${result.entry.id}');
       onStatusMessage?.call('Recording saved!');
       onRecordingSaved?.call(result.entry);
 
-      // Transcribe and update the entry
-      _transcribeAndUpdateEntry(result.entry, opusPath).catchError((e) {
-        debugPrint('[OmiCaptureService] Auto-transcribe error (non-fatal): $e');
-      });
+      // Transcribe using the vault path (not the temp path)
+      if (result.entry.audioPath != null) {
+        final vaultAudioPath = await fileSystem.resolveAssetPath(result.entry.audioPath!);
+        _transcribeAndUpdateEntry(result.entry, vaultAudioPath).catchError((e) {
+          debugPrint('[OmiCaptureService] Transcribe error: $e');
+        });
+      }
+
+      // Clean up the temp file
+      try {
+        await File(wavPath).delete();
+      } catch (_) {}
     } catch (e) {
-      debugPrint('[OmiCaptureService] Error processing recording: $e');
+      debugPrint('[OmiCaptureService] Error processing: $e');
       onStatusMessage?.call('Error processing recording');
     }
+  }
+
+  /// Convert raw Opus frames from device storage to WAV
+  ///
+  /// The Omi device stores Opus frames sequentially. Each frame is typically
+  /// 80 bytes for 16kHz mono audio with 20ms frame size.
+  Future<Uint8List?> _convertOpusToWav(Uint8List opusData) async {
+    try {
+      final decoder = SimpleOpusDecoder(sampleRate: 16000, channels: 1);
+      final decodedSamples = <int>[];
+      const frameSize = 80; // Typical Opus frame size for Omi
+
+      int offset = 0;
+      int framesDecoded = 0;
+      int errorsEncountered = 0;
+
+      while (offset < opusData.length) {
+        int bytesToRead = frameSize;
+        if (offset + bytesToRead > opusData.length) {
+          bytesToRead = opusData.length - offset;
+        }
+
+        if (bytesToRead < 10) break; // Too small to be a valid frame
+
+        try {
+          final frame = opusData.sublist(offset, offset + bytesToRead);
+          final decoded = decoder.decode(input: Uint8List.fromList(frame));
+          decodedSamples.addAll(decoded);
+          framesDecoded++;
+        } catch (_) {
+          errorsEncountered++;
+          if (errorsEncountered > 10 && framesDecoded == 0) {
+            return null;
+          }
+        }
+
+        offset += bytesToRead;
+      }
+
+      if (decodedSamples.isEmpty) return null;
+
+      return _buildWavFromSamples(decodedSamples, 16000);
+    } catch (e) {
+      debugPrint('[OmiCaptureService] Opus conversion failed: $e');
+      return null;
+    }
+  }
+
+  /// Build a WAV file from PCM samples
+  Uint8List _buildWavFromSamples(List<int> samples, int sampleRate) {
+    // Convert samples to bytes (16-bit little-endian)
+    final pcmData = ByteData(samples.length * 2);
+    for (var i = 0; i < samples.length; i++) {
+      pcmData.setInt16(i * 2, samples[i], Endian.little);
+    }
+    final pcmBytes = pcmData.buffer.asUint8List();
+
+    // Build WAV header
+    final header = ByteData(44);
+    final fileSize = pcmBytes.length + 36;
+    const channelCount = 1;
+    const bitsPerSample = 16;
+    final byteRate = sampleRate * channelCount * (bitsPerSample ~/ 8);
+    final blockAlign = channelCount * (bitsPerSample ~/ 8);
+
+    // RIFF chunk
+    header.setUint8(0, 0x52); // 'R'
+    header.setUint8(1, 0x49); // 'I'
+    header.setUint8(2, 0x46); // 'F'
+    header.setUint8(3, 0x46); // 'F'
+    header.setUint32(4, fileSize, Endian.little);
+    header.setUint8(8, 0x57); // 'W'
+    header.setUint8(9, 0x41); // 'A'
+    header.setUint8(10, 0x56); // 'V'
+    header.setUint8(11, 0x45); // 'E'
+
+    // fmt chunk
+    header.setUint8(12, 0x66); // 'f'
+    header.setUint8(13, 0x6D); // 'm'
+    header.setUint8(14, 0x74); // 't'
+    header.setUint8(15, 0x20); // ' '
+    header.setUint32(16, 16, Endian.little); // Subchunk1Size
+    header.setUint16(20, 1, Endian.little); // AudioFormat (1 = PCM)
+    header.setUint16(22, channelCount, Endian.little);
+    header.setUint32(24, sampleRate, Endian.little);
+    header.setUint32(28, byteRate, Endian.little);
+    header.setUint16(32, blockAlign, Endian.little);
+    header.setUint16(34, bitsPerSample, Endian.little);
+
+    // data chunk
+    header.setUint8(36, 0x64); // 'd'
+    header.setUint8(37, 0x61); // 'a'
+    header.setUint8(38, 0x74); // 't'
+    header.setUint8(39, 0x61); // 'a'
+    header.setUint32(40, pcmBytes.length, Endian.little);
+
+    return Uint8List.fromList([...header.buffer.asUint8List(), ...pcmBytes]);
   }
 
   /// Transcribe audio and update journal entry
   Future<void> _transcribeAndUpdateEntry(JournalEntry entry, String audioPath) async {
     try {
-      debugPrint('[OmiCaptureService] Starting transcription...');
       onStatusMessage?.call('Transcribing...');
 
       final transcriptResult = await transcriptionService.transcribeAudio(
@@ -586,7 +585,6 @@ class OmiCaptureService {
         },
       );
 
-      debugPrint('[OmiCaptureService] Transcription complete: ${transcriptResult.text.length} chars');
       onStatusMessage?.call('Transcription complete!');
 
       // Update the journal entry with the transcript
@@ -599,7 +597,7 @@ class OmiCaptureService {
 
       onRecordingSaved?.call(updatedEntry);
     } catch (e) {
-      debugPrint('[OmiCaptureService] Auto-transcription failed: $e');
+      debugPrint('[OmiCaptureService] Transcription failed: $e');
       onStatusMessage?.call('Transcription failed');
     }
   }

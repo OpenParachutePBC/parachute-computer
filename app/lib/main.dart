@@ -6,6 +6,7 @@ import 'package:flutter_gemma/flutter_gemma.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart' as flutter_blue_plus;
 import 'package:opus_dart/opus_dart.dart' as opus_dart;
 import 'package:opus_flutter/opus_flutter.dart' as opus_flutter;
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'core/theme/app_theme.dart';
 import 'core/theme/design_tokens.dart';
@@ -17,6 +18,7 @@ import 'core/services/logging_service.dart';
 import 'core/services/model_download_service.dart';
 import 'core/widgets/model_download_banner.dart';
 import 'features/daily/home/screens/home_screen.dart';
+import 'features/daily/recorder/providers/omi_providers.dart';
 import 'features/chat/screens/chat_hub_screen.dart';
 import 'features/chat/services/background_stream_manager.dart';
 import 'features/chat/widgets/message_bubble.dart' show currentlyRenderingMarkdown, markMarkdownAsFailed;
@@ -102,10 +104,8 @@ Future<void> _initializeServices() async {
   // Initialize Opus codec for Omi BLE audio decoding (iOS/Android only)
   if (Platform.isIOS || Platform.isAndroid) {
     try {
-      debugPrint('[Parachute] Initializing Opus codec...');
       final opusLib = await opus_flutter.load();
       opus_dart.initOpus(opusLib);
-      debugPrint('[Parachute] Opus codec initialized');
     } catch (e) {
       debugPrint('[Parachute] Failed to initialize Opus codec: $e');
     }
@@ -119,9 +119,7 @@ Future<void> _initializeServices() async {
 
   // Initialize Flutter Gemma for on-device AI (embeddings, title generation)
   try {
-    debugPrint('[Parachute] Initializing FlutterGemma...');
     await FlutterGemma.initialize();
-    debugPrint('[Parachute] FlutterGemma initialized');
   } catch (e) {
     debugPrint('[Parachute] Failed to initialize FlutterGemma: $e');
   }
@@ -156,32 +154,16 @@ Future<bool> _isLimaVMRunning() async {
 /// The download continues in the background and the app remains usable.
 void _initializeTranscription() async {
   // Only needed on Android - iOS/macOS use FluidAudio which handles its own models
-  if (!Platform.isAndroid) {
-    debugPrint('[Parachute] Skipping model download (not Android)');
-    return;
-  }
+  if (!Platform.isAndroid) return;
 
   try {
-    debugPrint('[Parachute] Checking transcription model status...');
     final downloadService = ModelDownloadService();
-
-    // Directly check if models are ready
-    final modelsReady = await downloadService.areModelsReady();
-    debugPrint('[Parachute] areModelsReady() returned: $modelsReady');
-
     await downloadService.initialize();
-    debugPrint('[Parachute] After initialize, state.isReady: ${downloadService.currentState.isReady}, status: ${downloadService.currentState.status}');
 
-    if (downloadService.currentState.isReady) {
-      debugPrint('[Parachute] Transcription models already downloaded');
-      return;
-    }
+    if (downloadService.currentState.isReady) return;
 
-    debugPrint('[Parachute] Starting transcription model download in background...');
     // Start download in background - don't await
-    downloadService.startDownload().then((_) {
-      debugPrint('[Parachute] Transcription model download complete');
-    }).catchError((e) {
+    downloadService.startDownload().catchError((e) {
       debugPrint('[Parachute] Transcription model download failed: $e');
     });
   } catch (e) {
@@ -255,11 +237,21 @@ class _TabShellState extends ConsumerState<_TabShell> with WidgetsBindingObserve
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    // Eagerly initialize sync provider so it's ready when journal entries are created
-    // Access the notifier directly - it handles its own async server check internally
+    // Eagerly initialize providers that need to start early
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      debugPrint('[MainShell] Eagerly initializing sync provider');
+      // Sync provider - ready when journal entries are created
       ref.read(syncProvider.notifier);
+
+      // Omi services - Bluetooth for connection, Capture for recording
+      // Only on mobile platforms where BLE is supported
+      if (Platform.isAndroid || Platform.isIOS) {
+        ref.read(omiBluetoothServiceProvider);
+        // Read capture service after a delay to avoid circular dependency
+        // The capture service sets up its own connection listener
+        Future.delayed(const Duration(milliseconds: 100), () {
+          ref.read(omiCaptureServiceProvider);
+        });
+      }
     });
   }
 
@@ -288,11 +280,42 @@ class _TabShellState extends ConsumerState<_TabShell> with WidgetsBindingObserve
       }
     }
 
+    // Handle Omi auto-reconnect on app resume
+    if (state == AppLifecycleState.resumed && (Platform.isAndroid || Platform.isIOS)) {
+      final bluetoothService = ref.read(omiBluetoothServiceProvider);
+      if (!bluetoothService.isConnected) {
+        _attemptOmiAutoReconnect();
+      }
+    }
+
     // Clean up background streams when app is detached/terminated
-    // This prevents memory leaks from orphaned stream controllers
     if (state == AppLifecycleState.detached) {
-      debugPrint('[MainShell] App detached - cleaning up background streams');
       BackgroundStreamManager.instance.cancelAll();
+    }
+  }
+
+  /// Attempt to auto-reconnect to last paired Omi device
+  Future<void> _attemptOmiAutoReconnect() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final autoReconnectEnabled = prefs.getBool('omi_auto_reconnect_enabled') ?? true;
+      if (!autoReconnectEnabled) return;
+
+      final deviceId = prefs.getString('omi_last_paired_device_id');
+      if (deviceId == null || deviceId.isEmpty) return;
+
+      final bluetoothService = ref.read(omiBluetoothServiceProvider);
+      final connection = await bluetoothService.reconnectToDevice(
+        deviceId,
+        onConnectionStateChanged: (id, state) {},
+      );
+
+      if (connection != null) {
+        final captureService = ref.read(omiCaptureServiceProvider);
+        await captureService.startListening();
+      }
+    } catch (e) {
+      debugPrint('[MainShell] Omi auto-reconnect error: $e');
     }
   }
 

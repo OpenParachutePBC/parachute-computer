@@ -101,11 +101,6 @@ class JournalService {
         await _paraIdService.register(entry.id);
       }
 
-      _log.debug('Loaded journal', data: {
-        'date': _formatDate(normalizedDate),
-        'entries': journal.entryCount,
-      });
-
       return journal;
     } catch (e, st) {
       _log.error('Failed to load journal', error: e, stackTrace: st, data: {'date': _formatDate(normalizedDate)});
@@ -128,10 +123,6 @@ class JournalService {
       if (!success) {
         throw Exception('Failed to write journal file');
       }
-      _log.debug('Saved journal', data: {
-        'date': journal.dateString,
-        'entries': journal.entryCount,
-      });
     } catch (e, st) {
       _log.error('Failed to save journal', error: e, stackTrace: st, data: {'date': journal.dateString});
       rethrow;
@@ -208,7 +199,12 @@ class JournalService {
     final defaultTitle = _formatTime(now);
 
     // Get path in unified assets folder (assets/YYYY-MM/)
-    final destPath = await _fileSystemService.getNewAssetPath(now, 'audio', 'wav');
+    // Preserve the original file extension (wav, opus, etc.)
+    final sourceExtension = audioPath.split('.').last.toLowerCase();
+    final extension = ['wav', 'opus', 'mp3', 'ogg', 'm4a'].contains(sourceExtension)
+        ? sourceExtension
+        : 'wav';
+    final destPath = await _fileSystemService.getNewAssetPath(now, 'audio', extension);
     final audioFilename = destPath.split('/').last;
     final relativePath = _fileSystemService.getAssetRelativePath(now, audioFilename);
 
@@ -217,7 +213,6 @@ class JournalService {
     if (await sourceFile.exists()) {
       try {
         await sourceFile.copy(destPath);
-        _log.debug('Copied audio file to journal assets', data: {'path': relativePath});
       } catch (e) {
         _log.warn('Could not copy audio file', data: {'error': e.toString()});
       }
@@ -991,8 +986,6 @@ class JournalService {
     int plainEntryCounter = 0;
     bool hasPreamble = false; // Track if we have preamble content before first H1
 
-    _log.debug('Parsing journal body', data: {'lines': lines.length, 'bodyPreview': body.substring(0, body.length > 200 ? 200 : body.length)});
-
     for (final line in lines) {
       final trimmedLine = line.trim();
 
@@ -1012,7 +1005,6 @@ class JournalService {
         } else if (hasPreamble && contentBuffer.toString().trim().isNotEmpty) {
           // Save preamble content before this para: H1
           final preambleContent = contentBuffer.toString().trim();
-          _log.debug('Saving preamble before para:H1', data: {'contentLength': preambleContent.length});
           entries.add(_createEntry(
             id: 'preamble',
             title: '',
@@ -1041,7 +1033,6 @@ class JournalService {
         } else if (hasPreamble && contentBuffer.toString().trim().isNotEmpty) {
           // Save preamble content before this plain H1
           final preambleContent = contentBuffer.toString().trim();
-          _log.debug('Saving preamble before plain H1', data: {'contentLength': preambleContent.length});
           entries.add(_createEntry(
             id: 'preamble',
             title: '',
@@ -1091,12 +1082,6 @@ class JournalService {
         isPlainMarkdown: isPlainH1,
       ));
     }
-
-    _log.debug('Parsing complete', data: {
-      'entryCount': entries.length,
-      'entryIds': entries.map((e) => e.id).toList(),
-      'hasPreamble': entries.any((e) => e.id == 'preamble'),
-    });
 
     return entries;
   }

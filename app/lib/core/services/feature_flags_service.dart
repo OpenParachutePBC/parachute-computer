@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Service for managing feature toggles
@@ -33,7 +32,6 @@ class FeatureFlagsService {
 
     final prefs = await SharedPreferences.getInstance();
     _omiEnabled = prefs.getBool(_omiEnabledKey) ?? _defaultOmiEnabled;
-    debugPrint('[FeatureFlags] Omi enabled: $_omiEnabled');
     return _omiEnabled!;
   }
 
@@ -42,7 +40,6 @@ class FeatureFlagsService {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_omiEnabledKey, enabled);
     _omiEnabled = enabled;
-    debugPrint('[FeatureFlags] Set Omi enabled: $enabled');
   }
 
   /// Check if AI Chat is enabled
@@ -51,7 +48,6 @@ class FeatureFlagsService {
 
     final prefs = await SharedPreferences.getInstance();
     _aiChatEnabled = prefs.getBool(_aiChatEnabledKey) ?? _defaultAiChatEnabled;
-    debugPrint('[FeatureFlags] AI Chat enabled: $_aiChatEnabled');
     return _aiChatEnabled!;
   }
 
@@ -60,7 +56,6 @@ class FeatureFlagsService {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_aiChatEnabledKey, enabled);
     _aiChatEnabled = enabled;
-    debugPrint('[FeatureFlags] Set AI Chat enabled: $enabled');
   }
 
   /// Get AI server URL
@@ -69,7 +64,6 @@ class FeatureFlagsService {
 
     final prefs = await SharedPreferences.getInstance();
     _aiServerUrl = prefs.getString(_aiServerUrlKey) ?? _defaultAiServerUrl;
-    debugPrint('[FeatureFlags] AI server URL: $_aiServerUrl');
     return _aiServerUrl!;
   }
 
@@ -78,7 +72,6 @@ class FeatureFlagsService {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_aiServerUrlKey, url);
     _aiServerUrl = url;
-    debugPrint('[FeatureFlags] Set AI server URL: $url');
   }
 
   /// Clear all cached values (call when settings change)
@@ -86,7 +79,6 @@ class FeatureFlagsService {
     _omiEnabled = null;
     _aiChatEnabled = null;
     _aiServerUrl = null;
-    debugPrint('[FeatureFlags] Cache cleared');
   }
 
   /// Reset all features to defaults
@@ -96,6 +88,5 @@ class FeatureFlagsService {
     await prefs.setBool(_aiChatEnabledKey, _defaultAiChatEnabled);
     await prefs.setString(_aiServerUrlKey, _defaultAiServerUrl);
     clearCache();
-    debugPrint('[FeatureFlags] Reset to defaults');
   }
 }

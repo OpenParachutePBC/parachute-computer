@@ -1,7 +1,7 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:parachute/core/providers/feature_flags_provider.dart';
 import 'package:parachute/features/daily/journal/providers/journal_providers.dart';
 import 'package:parachute/features/daily/recorder/models/omi_device.dart';
 import 'package:parachute/features/daily/recorder/services/omi/models.dart';
@@ -14,33 +14,70 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// Provider for OmiBluetoothService
 ///
 /// This service manages BLE scanning, device discovery, and connections.
-/// It only starts if Omi is enabled in feature flags.
+/// Auto-reconnects to the last paired device on startup if one exists.
+/// The feature flag controls UI visibility, not auto-reconnect behavior.
 final omiBluetoothServiceProvider = Provider<OmiBluetoothService>((ref) {
   final service = OmiBluetoothService();
 
-  // Check if Omi is enabled before starting
-  final featureFlagsService = ref.read(featureFlagsServiceProvider);
-
-  // Start service asynchronously if enabled
-  featureFlagsService.isOmiEnabled().then((enabled) {
-    if (enabled) {
+  // Check if we should start the service:
+  // 1. If Omi feature flag is enabled, OR
+  // 2. If we have a previously paired device (user used Omi before)
+  _shouldStartService().then((shouldStart) async {
+    if (shouldStart) {
       service.start();
+      await _attemptAutoReconnect(ref, service);
     }
   }).catchError((e) {
-    debugPrint('[OmiBluetoothServiceProvider] Error checking Omi enabled: $e');
+    debugPrint('[OmiBluetoothService] Error initializing: $e');
   });
 
-  // Clean up on dispose
-  // Note: onDispose callbacks are synchronous, so we fire-and-forget the async cleanup
-  // but catch any errors to prevent unhandled exceptions
   ref.onDispose(() {
     service.stop().catchError((e) {
-      debugPrint('[OmiBluetoothServiceProvider] Error stopping service: $e');
+      debugPrint('[OmiBluetoothService] Error stopping: $e');
     });
   });
 
   return service;
 });
+
+/// Check if we should start the Bluetooth service
+Future<bool> _shouldStartService() async {
+  final prefs = await SharedPreferences.getInstance();
+
+  // Start if we have a previously paired device
+  final deviceId = prefs.getString('omi_last_paired_device_id');
+  if (deviceId != null && deviceId.isNotEmpty) {
+    return true;
+  }
+
+  // Or if feature flag is enabled (for first-time setup)
+  final featureEnabled = prefs.getBool('feature_omi_enabled') ?? false;
+  return featureEnabled;
+}
+
+/// Attempt to auto-reconnect to the last paired Omi device
+Future<void> _attemptAutoReconnect(ProviderRef<OmiBluetoothService> ref, OmiBluetoothService service) async {
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    final autoReconnectEnabled = prefs.getBool('omi_auto_reconnect_enabled') ?? true;
+    if (!autoReconnectEnabled) return;
+
+    final deviceId = prefs.getString('omi_last_paired_device_id');
+    if (deviceId == null || deviceId.isEmpty) return;
+
+    // Small delay to let Bluetooth initialize
+    await Future.delayed(const Duration(milliseconds: 500));
+
+    // Attempt reconnection - capture service will be started by omiCaptureServiceProvider
+    // when it observes the connection state change
+    await service.reconnectToDevice(
+      deviceId,
+      onConnectionStateChanged: (id, state) {},
+    );
+  } catch (e) {
+    debugPrint('[OmiBluetoothService] Auto-reconnect error: $e');
+  }
+}
 
 /// Provider for the current connection state
 ///
@@ -91,19 +128,28 @@ final omiCaptureServiceProvider = Provider<OmiCaptureService>((ref) {
   );
 
   // Set up callback to trigger journal refresh when new recordings are saved
-  // This lives for the lifetime of the app, so it won't get disposed like screen callbacks
   service.onRecordingSaved = (entry) {
-    // Invalidate journal providers to refresh the UI
     ref.invalidate(todayJournalProvider);
     ref.invalidate(selectedJournalProvider);
   };
 
-  // Clean up on dispose
-  // Note: onDispose callbacks are synchronous, so we fire-and-forget the async cleanup
-  // but catch any errors to prevent unhandled exceptions
+  // Listen for connection state changes and auto-start listening when connected
+  StreamSubscription<OmiDevice?>? connectionSubscription;
+  connectionSubscription = bluetoothService.connectedDeviceStream.listen((device) {
+    if (device != null) {
+      service.startListening();
+    }
+  });
+
+  // Also start listening if already connected when provider is created
+  if (bluetoothService.isConnected) {
+    service.startListening();
+  }
+
   ref.onDispose(() {
+    connectionSubscription?.cancel();
     service.dispose().catchError((e) {
-      debugPrint('[OmiCaptureServiceProvider] Error disposing service: $e');
+      debugPrint('[OmiCaptureService] Error disposing: $e');
     });
   });
 
