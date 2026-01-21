@@ -47,6 +47,7 @@ jobs:
           path: app
 
       - name: Checkout base repository
+        id: checkout-base
         uses: actions/checkout@v4
         with:
           repository: OpenParachutePBC/parachute-base
@@ -56,12 +57,16 @@ jobs:
         continue-on-error: true
 
       - name: Fallback to base main branch
-        if: failure()
+        if: steps.checkout-base.outcome == 'failure'
         uses: actions/checkout@v4
         with:
           repository: OpenParachutePBC/parachute-base
           path: base
           ref: main
+        continue-on-error: true
+
+      - name: Create empty base directory if needed
+        run: mkdir -p base
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
@@ -193,12 +198,19 @@ jobs:
           fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
+      - name: List downloaded artifacts
+        run: |
+          echo "Contents of artifacts directory:"
+          ls -la artifacts/ || echo "No artifacts directory found"
+          echo "Looking for DMG files:"
+          find . -name "*.dmg" -o -name "*.txt" | head -20
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           name: Parachute Computer v${{ steps.version.outputs.version }}
           tag_name: ${{ github.ref_name }}
-          draft: true  # Create as draft so you can review before publishing
+          draft: false
           generate_release_notes: true
           files: |
             artifacts/*.dmg
