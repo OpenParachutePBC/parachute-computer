@@ -70,14 +70,19 @@ echo "→ Cleaning previous build..."
 rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"
 
-# Build Flutter app with computer flavor
-echo "→ Building Flutter app (FLAVOR=computer)..."
-cd "$APP_DIR"
-flutter build macos --release --dart-define=FLAVOR=computer
+# Build Flutter app with computer flavor (if not already built)
+APP_BUILD_PATH="$APP_DIR/build/macos/Build/Products/Release-computer/$APP_NAME.app"
+if [ -d "$APP_BUILD_PATH" ] && [ "$SKIP_BUILD" = "true" ]; then
+  echo "→ Using existing app build..."
+else
+  echo "→ Building Flutter app (FLAVOR=computer)..."
+  cd "$APP_DIR"
+  flutter build macos --release --flavor computer
+fi
 
 # Copy app to build directory
 echo "→ Copying app bundle..."
-cp -R "$APP_DIR/build/macos/Build/Products/Release/$APP_NAME.app" "$BUILD_DIR/"
+cp -R "$APP_BUILD_PATH" "$BUILD_DIR/"
 
 # Create Resources directory structure
 RESOURCES_DIR="$BUILD_DIR/$APP_NAME.app/Contents/Resources"
