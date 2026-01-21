@@ -9,6 +9,7 @@ import 'package:parachute/core/providers/app_state_provider.dart';
 import 'package:parachute/core/providers/file_system_provider.dart';
 import 'package:parachute/core/providers/server_providers.dart';
 import 'package:parachute/features/daily/journal/providers/journal_providers.dart';
+import 'package:parachute/features/settings/widgets/computer_setup_wizard.dart';
 import '../widgets/claude_auth_step.dart';
 import '../widgets/server_connection_step.dart';
 
@@ -233,7 +234,13 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> with Widget
     }
   }
 
+  /// Whether we've completed the computer setup (for computer flavor)
+  bool _computerSetupComplete = false;
+
   /// Total number of steps depends on flavor
+  /// - Daily flavor: 2 steps (welcome, ready)
+  /// - Client flavor: 3 steps (welcome, server connection, ready)
+  /// - Computer flavor: 3 steps (welcome, computer setup wizard, ready)
   int get _totalSteps => isDailyOnlyFlavor ? 2 : 3;
 
   void _nextStep() {
@@ -302,7 +309,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> with Widget
     // Detect bundled mode on first build (lazy initialization)
     _isBundledApp ??= ref.read(isBundledAppProvider);
 
-    debugPrint('[Onboarding] _buildStep: step=$_currentStep, flavor=$appFlavor, isDailyOnly=$isDailyOnlyFlavor, totalSteps=$_totalSteps');
+    debugPrint('[Onboarding] _buildStep: step=$_currentStep, flavor=$appFlavor, isDailyOnly=$isDailyOnlyFlavor, isBundled=$_isBundledApp, isComputer=$isComputerFlavor, totalSteps=$_totalSteps');
 
     switch (_currentStep) {
       case 0:
@@ -313,23 +320,37 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> with Widget
           debugPrint('[Onboarding] Daily flavor detected, showing ready step');
           return _buildReadyStep(isDark);
         }
-        // Full flavor step 2 varies by platform:
-        // - Bundled app (Parachute Computer): Skip (Claude auth via `claude login` in terminal)
-        // - Mobile/remote: Server URL + API key
-        if (_isBundledApp == true) {
-          // For bundled apps, go straight to ready step
-          return _buildReadyStep(isDark);
-        } else {
-          return ServerConnectionStep(
-            onNext: _nextStep,
-            onSkip: _nextStep,
-          );
+        // Computer flavor: Show setup wizard (mode selection + setup steps)
+        if (isComputerFlavor || _isBundledApp == true) {
+          debugPrint('[Onboarding] Computer flavor detected, showing setup wizard');
+          return _buildComputerSetupStep(isDark);
         }
+        // Client flavor: Server URL + API key for remote connection
+        return ServerConnectionStep(
+          onNext: _nextStep,
+          onSkip: _nextStep,
+        );
       case 2:
         return _buildReadyStep(isDark);
       default:
         return const SizedBox.shrink();
     }
+  }
+
+  Widget _buildComputerSetupStep(bool isDark) {
+    return SingleChildScrollView(
+      child: Padding(
+        padding: EdgeInsets.symmetric(vertical: Spacing.md),
+        child: ComputerSetupWizard(
+          onComplete: () {
+            setState(() {
+              _computerSetupComplete = true;
+            });
+            _nextStep();
+          },
+        ),
+      ),
+    );
   }
 
   Widget _buildWelcomeStep(bool isDark) {
@@ -473,6 +494,9 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> with Widget
   }
 
   Widget _buildReadyStep(bool isDark) {
+    // Determine what to show based on flavor
+    final isComputer = isComputerFlavor || _isBundledApp == true;
+
     return Column(
       key: const ValueKey('ready'),
       mainAxisAlignment: MainAxisAlignment.center,
@@ -521,7 +545,28 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> with Widget
                   ),
                 ],
               ),
-              if (_serverUrlController.text.isNotEmpty) ...[
+              // Show server info for computer flavor
+              if (isComputer) ...[
+                SizedBox(height: Spacing.md),
+                Row(
+                  children: [
+                    Icon(Icons.computer, color: BrandColors.turquoise, size: 20),
+                    SizedBox(width: Spacing.sm),
+                    Expanded(
+                      child: Text(
+                        'Server running at localhost:3333',
+                        style: TextStyle(
+                          fontFamily: 'monospace',
+                          fontSize: TypographyTokens.bodySmall,
+                          color: isDark ? BrandColors.nightText : BrandColors.charcoal,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ]
+              // Show remote server URL for client flavor
+              else if (_serverUrlController.text.isNotEmpty) ...[
                 SizedBox(height: Spacing.md),
                 Row(
                   children: [

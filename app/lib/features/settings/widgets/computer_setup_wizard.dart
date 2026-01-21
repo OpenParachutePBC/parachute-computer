@@ -3,17 +3,30 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
+import 'package:parachute/core/providers/app_state_provider.dart';
 import 'package:parachute/core/providers/lima_vm_provider.dart';
+import 'package:parachute/core/providers/bare_metal_provider.dart';
 import 'package:parachute/core/services/lima_vm_service.dart';
+import 'package:parachute/core/services/bare_metal_server_service.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 /// Setup wizard for Parachute Computer
 ///
-/// Guides users through:
-/// 1. Installing Homebrew (if needed)
-/// 2. Installing Lima (if needed)
-/// 3. Creating and starting the VM
-/// 4. Authenticating with Claude
+/// Guides users through setup with two paths:
+///
+/// **Lima VM Path (isolated):**
+/// 1. Choose setup mode
+/// 2. Install Homebrew (if needed)
+/// 3. Install Lima (if needed)
+/// 4. Create and start VM
+/// 5. Authenticate with Claude
+///
+/// **Bare Metal Path (direct):**
+/// 1. Choose setup mode
+/// 2. Check Python
+/// 3. Install/setup server
+/// 4. Authenticate with Claude
+/// 5. Enable auto-start
 class ComputerSetupWizard extends ConsumerStatefulWidget {
   final VoidCallback? onComplete;
 
@@ -24,45 +37,50 @@ class ComputerSetupWizard extends ConsumerStatefulWidget {
 }
 
 class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
+  // Mode selection (null = not yet chosen)
+  ServerMode? _selectedMode;
+
+  // Current step within the selected path
   int _currentStep = 0;
+
   bool _isLoading = false;
   String? _error;
+
+  // Lima VM path state
   bool _homebrewInstalled = false;
   bool _limaInstalled = false;
   String? _vmProgressMessage;
-  Stopwatch? _vmCreationTimer;
+
+  // Bare metal path state
+  bool _pythonInstalled = false;
+  String? _pythonVersion;
+  bool _serverInstalled = false;
+  String? _setupProgressMessage;
 
   @override
   void initState() {
     super.initState();
-    _checkPrerequisites();
+    _loadSavedMode();
   }
 
-  /// Known paths where brew might be installed (GUI apps don't inherit shell PATH)
-  static const List<String> _brewPaths = [
-    '/opt/homebrew/bin/brew', // Apple Silicon
-    '/usr/local/bin/brew', // Intel
-  ];
+  /// Load previously saved mode (if any)
+  Future<void> _loadSavedMode() async {
+    final modeAsync = await ref.read(serverModeProvider.future);
+    // Only use saved mode if setup was already completed
+    // For fresh installs, always show the choice
+  }
 
+  /// Check prerequisites for the selected mode
   Future<void> _checkPrerequisites() async {
+    if (_selectedMode == null) return;
+
     setState(() => _isLoading = true);
 
     try {
-      // Check Homebrew by looking for it in known paths
-      // (GUI apps don't inherit shell PATH, so 'which' doesn't work)
-      _homebrewInstalled = _brewPaths.any((p) => File(p).existsSync());
-
-      // Check Lima using the service's detection
-      final limaService = ref.read(limaVMServiceProvider);
-      _limaInstalled = await limaService.isLimaInstalled();
-
-      // Determine starting step
-      if (!_homebrewInstalled) {
-        _currentStep = 0;
-      } else if (!_limaInstalled) {
-        _currentStep = 1;
+      if (_selectedMode == ServerMode.limaVM) {
+        await _checkLimaPrerequisites();
       } else {
-        _currentStep = 2;
+        await _checkBareMetalPrerequisites();
       }
     } catch (e) {
       _error = e.toString();
@@ -71,14 +89,78 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
     }
   }
 
+  Future<void> _checkLimaPrerequisites() async {
+    // Check Homebrew
+    _homebrewInstalled = _brewPaths.any((p) => File(p).existsSync());
+
+    // Check Lima
+    final limaService = ref.read(limaVMServiceProvider);
+    _limaInstalled = await limaService.isLimaInstalled();
+
+    // Determine starting step
+    if (!_homebrewInstalled) {
+      _currentStep = 0;
+    } else if (!_limaInstalled) {
+      _currentStep = 1;
+    } else {
+      _currentStep = 2;
+    }
+  }
+
+  Future<void> _checkBareMetalPrerequisites() async {
+    final service = ref.read(bareMetalServiceProvider);
+
+    _pythonInstalled = await service.isPythonInstalled();
+    _pythonVersion = await service.getPythonVersion();
+    _serverInstalled = await service.isServerInstalled();
+
+    // Determine starting step
+    if (!_pythonInstalled) {
+      _currentStep = 0;
+    } else if (!_serverInstalled) {
+      _currentStep = 1;
+    } else {
+      _currentStep = 2;
+    }
+  }
+
+  /// Select a mode and save it
+  Future<void> _selectMode(ServerMode mode) async {
+    setState(() {
+      _selectedMode = mode;
+      _currentStep = 0;
+      _error = null;
+    });
+
+    // Save the mode
+    await ref.read(serverModeProvider.notifier).setServerMode(mode);
+
+    // Check prerequisites
+    await _checkPrerequisites();
+  }
+
+  // ============================================================
+  // Lima VM Path Methods
+  // ============================================================
+
+  static const List<String> _brewPaths = [
+    '/opt/homebrew/bin/brew', // Apple Silicon
+    '/usr/local/bin/brew', // Intel
+  ];
+
+  String? get _brewPath {
+    for (final p in _brewPaths) {
+      if (File(p).existsSync()) return p;
+    }
+    return null;
+  }
+
   Future<void> _installHomebrew() async {
-    // Open Homebrew website - user installs manually
     final url = Uri.parse('https://brew.sh');
     if (await canLaunchUrl(url)) {
       await launchUrl(url);
     }
 
-    // Show instructions
     if (mounted) {
       showDialog(
         context: context,
@@ -98,13 +180,10 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
                 ),
                 child: Row(
                   children: [
-                    Expanded(
+                    const Expanded(
                       child: SelectableText(
                         '/bin/bash -c "\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"',
-                        style: const TextStyle(
-                          fontFamily: 'monospace',
-                          fontSize: 12,
-                        ),
+                        style: TextStyle(fontFamily: 'monospace', fontSize: 12),
                       ),
                     ),
                     IconButton(
@@ -143,14 +222,6 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
     }
   }
 
-  /// Get the path to brew, or null if not found
-  String? get _brewPath {
-    for (final p in _brewPaths) {
-      if (File(p).existsSync()) return p;
-    }
-    return null;
-  }
-
   Future<void> _installLima() async {
     setState(() {
       _isLoading = true;
@@ -164,7 +235,6 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
         return;
       }
 
-      // Run brew install lima using full path
       final result = await Process.run(brewPath, ['install', 'lima']);
 
       if (result.exitCode == 0) {
@@ -185,16 +255,12 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
       _isLoading = true;
       _error = null;
       _vmProgressMessage = 'Preparing...';
-      _vmCreationTimer = Stopwatch()..start();
     });
 
     try {
-      // Use initialized provider to get vault path for developer mode detection
       final service = await ref.read(limaVMServiceInitializedProvider.future);
 
-      // First, ensure base server is installed
-      // For developers: skips if ~/Vault/projects/parachute/base exists
-      // For users: installs to ~/Library/Application Support/Parachute/base
+      // Install base server if needed
       if (!await service.isBaseServerInstalled()) {
         if (mounted) {
           setState(() => _vmProgressMessage = 'Installing base server...');
@@ -206,7 +272,7 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
         }
       }
 
-      // Now create/start the VM
+      // Create/start the VM
       if (mounted) {
         setState(() => _vmProgressMessage = 'Downloading Ubuntu & creating VM...');
       }
@@ -216,7 +282,6 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
         if (mounted) {
           setState(() => _vmProgressMessage = 'Starting server...');
         }
-        // Start the server too
         await service.startServer();
         _currentStep = 3;
       } else {
@@ -225,7 +290,6 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
     } catch (e) {
       _error = 'Error creating VM: $e';
     } finally {
-      _vmCreationTimer?.stop();
       if (mounted) {
         setState(() {
           _isLoading = false;
@@ -235,23 +299,173 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
     }
   }
 
-  Future<void> _authenticateClaude() async {
+  Future<void> _authenticateClaudeLima() async {
     final service = ref.read(limaVMServiceProvider);
     await service.runClaudeLogin();
-
-    // Move to complete
     setState(() => _currentStep = 4);
+  }
+
+  // ============================================================
+  // Bare Metal Path Methods
+  // ============================================================
+
+  Future<void> _installPython() async {
+    // Open Python download page
+    final url = Uri.parse('https://www.python.org/downloads/');
+    if (await canLaunchUrl(url)) {
+      await launchUrl(url);
+    }
+
+    if (mounted) {
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Install Python'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Python 3.10 or later is required.'),
+              const SizedBox(height: 12),
+              const Text('You can install via Homebrew:'),
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade200,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    const Expanded(
+                      child: SelectableText(
+                        'brew install python@3.12',
+                        style: TextStyle(fontFamily: 'monospace', fontSize: 12),
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.copy, size: 18),
+                      onPressed: () {
+                        Clipboard.setData(const ClipboardData(text: 'brew install python@3.12'));
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Copied to clipboard')),
+                        );
+                      },
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+              const Text('After installation, click "Check Again" below.'),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                _checkPrerequisites();
+              },
+              child: const Text('Check Again'),
+            ),
+          ],
+        ),
+      );
+    }
+  }
+
+  Future<void> _setupBareMetalServer() async {
+    setState(() {
+      _isLoading = true;
+      _error = null;
+      _setupProgressMessage = 'Installing server...';
+    });
+
+    try {
+      final service = ref.read(bareMetalServiceProvider);
+
+      // Install base server from bundle
+      if (!await service.isServerInstalled()) {
+        if (mounted) {
+          setState(() => _setupProgressMessage = 'Copying server files...');
+        }
+        final installed = await service.installBaseServer();
+        if (!installed) {
+          _error = service.lastError ?? 'Failed to install server';
+          return;
+        }
+      }
+
+      // Set up venv and install dependencies
+      if (mounted) {
+        setState(() => _setupProgressMessage = 'Installing dependencies...');
+      }
+      final setup = await service.setupServer();
+      if (!setup) {
+        _error = service.lastError ?? 'Failed to set up server';
+        return;
+      }
+
+      // Start the server
+      if (mounted) {
+        setState(() => _setupProgressMessage = 'Starting server...');
+      }
+      final started = await service.startServer();
+      if (!started) {
+        _error = service.lastError ?? 'Failed to start server';
+        return;
+      }
+
+      _serverInstalled = true;
+      _currentStep = 2;
+    } catch (e) {
+      _error = 'Error setting up server: $e';
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _setupProgressMessage = null;
+        });
+      }
+    }
+  }
+
+  Future<void> _authenticateClaudeBareMetal() async {
+    final service = ref.read(bareMetalServiceProvider);
+    await service.runClaudeLogin();
+    setState(() => _currentStep = 3);
+  }
+
+  Future<void> _enableAutoStart() async {
+    setState(() => _isLoading = true);
+
+    try {
+      final service = ref.read(bareMetalServiceProvider);
+      await service.enableAutoStart();
+      _currentStep = 4;
+    } catch (e) {
+      _error = 'Error enabling auto-start: $e';
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
   }
 
   void _complete() {
     widget.onComplete?.call();
   }
 
+  // ============================================================
+  // Build Methods
+  // ============================================================
+
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    if (_isLoading && _currentStep == 0) {
+    if (_isLoading && _selectedMode == null) {
       return const Center(child: CircularProgressIndicator());
     }
 
@@ -278,9 +492,11 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
         ),
         SizedBox(height: Spacing.md),
 
-        // Progress indicator
-        _buildProgressIndicator(isDark),
-        SizedBox(height: Spacing.lg),
+        // Progress indicator (only show after mode selection)
+        if (_selectedMode != null) ...[
+          _buildProgressIndicator(isDark),
+          SizedBox(height: Spacing.lg),
+        ],
 
         // Error message
         if (_error != null) ...[
@@ -310,14 +526,21 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
           SizedBox(height: Spacing.md),
         ],
 
-        // Current step content
-        _buildStepContent(isDark),
+        // Content
+        if (_selectedMode == null)
+          _buildModeSelection(isDark)
+        else if (_selectedMode == ServerMode.limaVM)
+          _buildLimaVMStep(isDark)
+        else
+          _buildBareMetalStep(isDark),
       ],
     );
   }
 
   Widget _buildProgressIndicator(bool isDark) {
-    final steps = ['Homebrew', 'Lima', 'VM', 'Claude', 'Ready'];
+    final steps = _selectedMode == ServerMode.limaVM
+        ? ['Homebrew', 'Lima', 'VM', 'Claude', 'Ready']
+        : ['Python', 'Server', 'Claude', 'Auto-start', 'Ready'];
 
     return Row(
       children: List.generate(steps.length, (index) {
@@ -365,7 +588,59 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
     );
   }
 
-  Widget _buildStepContent(bool isDark) {
+  Widget _buildModeSelection(bool isDark) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'How would you like to run Parachute?',
+          style: TextStyle(
+            fontSize: TypographyTokens.bodyLarge,
+            fontWeight: FontWeight.w500,
+            color: isDark ? BrandColors.nightText : BrandColors.charcoal,
+          ),
+        ),
+        SizedBox(height: Spacing.lg),
+
+        // Lima VM Option
+        _ModeCard(
+          isDark: isDark,
+          icon: Icons.security,
+          title: 'Isolated VM',
+          subtitle: 'Recommended for shared computers',
+          description: 'Runs in a Linux virtual machine. Claude can only access your vault, nothing else on your computer.',
+          features: const [
+            'Complete filesystem isolation',
+            'Requires ~8GB RAM, ~30GB disk',
+            'Slightly slower startup',
+          ],
+          isSelected: _selectedMode == ServerMode.limaVM,
+          onTap: () => _selectMode(ServerMode.limaVM),
+        ),
+
+        SizedBox(height: Spacing.md),
+
+        // Bare Metal Option
+        _ModeCard(
+          isDark: isDark,
+          icon: Icons.speed,
+          title: 'Direct Installation',
+          subtitle: 'Recommended for dedicated machines',
+          description: 'Runs directly on macOS. Best performance, access to native features like MLX.',
+          features: const [
+            'Full native performance',
+            'Access to MLX, Metal, native builds',
+            'Best for dedicated Parachute machines',
+          ],
+          isSelected: _selectedMode == ServerMode.bareMetal,
+          onTap: () => _selectMode(ServerMode.bareMetal),
+        ),
+      ],
+    );
+  }
+
+  // Lima VM step builders
+  Widget _buildLimaVMStep(bool isDark) {
     switch (_currentStep) {
       case 0:
         return _buildHomebrewStep(isDark);
@@ -374,9 +649,9 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
       case 2:
         return _buildVMStep(isDark);
       case 3:
-        return _buildClaudeStep(isDark);
+        return _buildClaudeStepLima(isDark);
       case 4:
-        return _buildCompleteStep(isDark);
+        return _buildCompleteStepLima(isDark);
       default:
         return const SizedBox.shrink();
     }
@@ -397,6 +672,10 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
         onPressed: _checkPrerequisites,
         child: const Text('Check Again'),
       ),
+      backAction: TextButton(
+        onPressed: () => setState(() => _selectedMode = null),
+        child: const Text('← Back'),
+      ),
     );
   }
 
@@ -405,15 +684,11 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
       isDark: isDark,
       icon: Icons.computer,
       title: 'Install Lima',
-      description: 'Lima runs Linux virtual machines on macOS. This provides complete isolation for Claude - it can only access your vault.',
+      description: 'Lima runs Linux virtual machines on macOS. This provides complete isolation for Claude.',
       action: FilledButton.icon(
         onPressed: _isLoading ? null : _installLima,
         icon: _isLoading
-            ? const SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-              )
+            ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
             : const Icon(Icons.download, size: 18),
         label: Text(_isLoading ? 'Installing...' : 'Install Lima'),
       ),
@@ -426,7 +701,6 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
     return vmStatus.when(
       data: (status) {
         if (status == LimaVMStatus.running) {
-          // Already running, skip to next step
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted && _currentStep == 2) {
               setState(() => _currentStep = 3);
@@ -446,11 +720,7 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
           action: FilledButton.icon(
             onPressed: _isLoading ? null : _createAndStartVM,
             icon: _isLoading
-                ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                  )
+                ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                 : const Icon(Icons.play_arrow, size: 18),
             label: Text(_isLoading ? 'Creating...' : 'Create & Start VM'),
           ),
@@ -461,14 +731,14 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
     );
   }
 
-  Widget _buildClaudeStep(bool isDark) {
+  Widget _buildClaudeStepLima(bool isDark) {
     return _StepCard(
       isDark: isDark,
       icon: Icons.key,
       title: 'Authenticate with Claude',
       description: 'This opens Terminal with an auth URL. Copy the URL to your browser to sign in with your Anthropic account.',
       action: FilledButton.icon(
-        onPressed: _authenticateClaude,
+        onPressed: _authenticateClaudeLima,
         icon: const Icon(Icons.login, size: 18),
         label: const Text('Run claude login'),
       ),
@@ -479,7 +749,7 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
     );
   }
 
-  Widget _buildCompleteStep(bool isDark) {
+  Widget _buildCompleteStepLima(bool isDark) {
     return _StepCard(
       isDark: isDark,
       icon: Icons.check_circle,
@@ -490,6 +760,232 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
         onPressed: _complete,
         icon: const Icon(Icons.arrow_forward, size: 18),
         label: const Text('Get Started'),
+      ),
+    );
+  }
+
+  // Bare Metal step builders
+  Widget _buildBareMetalStep(bool isDark) {
+    switch (_currentStep) {
+      case 0:
+        return _buildPythonStep(isDark);
+      case 1:
+        return _buildServerSetupStep(isDark);
+      case 2:
+        return _buildClaudeStepBareMetal(isDark);
+      case 3:
+        return _buildAutoStartStep(isDark);
+      case 4:
+        return _buildCompleteStepBareMetal(isDark);
+      default:
+        return const SizedBox.shrink();
+    }
+  }
+
+  Widget _buildPythonStep(bool isDark) {
+    return _StepCard(
+      isDark: isDark,
+      icon: Icons.code,
+      title: 'Install Python',
+      description: _pythonVersion != null
+          ? 'Found: $_pythonVersion (need 3.10+)'
+          : 'Python 3.10 or later is required to run the Parachute server.',
+      action: FilledButton.icon(
+        onPressed: _isLoading ? null : _installPython,
+        icon: const Icon(Icons.download, size: 18),
+        label: const Text('Install Python'),
+      ),
+      checkAction: OutlinedButton(
+        onPressed: _checkPrerequisites,
+        child: const Text('Check Again'),
+      ),
+      backAction: TextButton(
+        onPressed: () => setState(() => _selectedMode = null),
+        child: const Text('← Back'),
+      ),
+    );
+  }
+
+  Widget _buildServerSetupStep(bool isDark) {
+    final description = _isLoading && _setupProgressMessage != null
+        ? _setupProgressMessage!
+        : 'This will install the Parachute server and its dependencies.';
+
+    return _StepCard(
+      isDark: isDark,
+      icon: Icons.dns,
+      title: 'Set Up Server',
+      description: description,
+      action: FilledButton.icon(
+        onPressed: _isLoading ? null : _setupBareMetalServer,
+        icon: _isLoading
+            ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+            : const Icon(Icons.play_arrow, size: 18),
+        label: Text(_isLoading ? 'Setting up...' : 'Set Up Server'),
+      ),
+    );
+  }
+
+  Widget _buildClaudeStepBareMetal(bool isDark) {
+    return _StepCard(
+      isDark: isDark,
+      icon: Icons.key,
+      title: 'Authenticate with Claude',
+      description: 'This opens Terminal to authenticate. Sign in with your Anthropic account.',
+      action: FilledButton.icon(
+        onPressed: _authenticateClaudeBareMetal,
+        icon: const Icon(Icons.login, size: 18),
+        label: const Text('Run claude login'),
+      ),
+      skipAction: TextButton(
+        onPressed: () => setState(() => _currentStep = 3),
+        child: const Text('Skip for now'),
+      ),
+    );
+  }
+
+  Widget _buildAutoStartStep(bool isDark) {
+    return _StepCard(
+      isDark: isDark,
+      icon: Icons.autorenew,
+      title: 'Enable Auto-Start',
+      description: 'Start the Parachute server automatically when you log in. Recommended for dedicated machines.',
+      action: FilledButton.icon(
+        onPressed: _isLoading ? null : _enableAutoStart,
+        icon: _isLoading
+            ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+            : const Icon(Icons.check, size: 18),
+        label: const Text('Enable Auto-Start'),
+      ),
+      skipAction: TextButton(
+        onPressed: () => setState(() => _currentStep = 4),
+        child: const Text('Skip'),
+      ),
+    );
+  }
+
+  Widget _buildCompleteStepBareMetal(bool isDark) {
+    return _StepCard(
+      isDark: isDark,
+      icon: Icons.check_circle,
+      iconColor: BrandColors.success,
+      title: 'Setup Complete!',
+      description: 'Parachute Computer is ready. The server runs directly on your Mac for best performance.',
+      action: FilledButton.icon(
+        onPressed: _complete,
+        icon: const Icon(Icons.arrow_forward, size: 18),
+        label: const Text('Get Started'),
+      ),
+    );
+  }
+}
+
+// ============================================================
+// Helper Widgets
+// ============================================================
+
+class _ModeCard extends StatelessWidget {
+  final bool isDark;
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final String description;
+  final List<String> features;
+  final bool isSelected;
+  final VoidCallback onTap;
+
+  const _ModeCard({
+    required this.isDark,
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.description,
+    required this.features,
+    required this.isSelected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final borderColor = isSelected
+        ? (isDark ? BrandColors.nightTurquoise : BrandColors.turquoise)
+        : Colors.grey.shade300;
+
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: EdgeInsets.all(Spacing.lg),
+        decoration: BoxDecoration(
+          color: isSelected
+              ? (isDark ? BrandColors.nightTurquoise : BrandColors.turquoise).withValues(alpha: 0.1)
+              : (isDark ? BrandColors.nightSurfaceElevated : Colors.white),
+          borderRadius: BorderRadius.circular(Radii.md),
+          border: Border.all(color: borderColor, width: isSelected ? 2 : 1),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  icon,
+                  size: 28,
+                  color: isDark ? BrandColors.nightTurquoise : BrandColors.turquoise,
+                ),
+                SizedBox(width: Spacing.sm),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: TypographyTokens.bodyLarge,
+                          color: isDark ? BrandColors.nightText : BrandColors.charcoal,
+                        ),
+                      ),
+                      Text(
+                        subtitle,
+                        style: TextStyle(
+                          fontSize: TypographyTokens.bodySmall,
+                          color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                if (isSelected)
+                  Icon(Icons.check_circle, color: BrandColors.success, size: 24),
+              ],
+            ),
+            SizedBox(height: Spacing.md),
+            Text(
+              description,
+              style: TextStyle(
+                fontSize: TypographyTokens.bodySmall,
+                color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+              ),
+            ),
+            SizedBox(height: Spacing.sm),
+            ...features.map((f) => Padding(
+              padding: EdgeInsets.only(top: Spacing.xs),
+              child: Row(
+                children: [
+                  Icon(Icons.check, size: 16, color: BrandColors.success),
+                  SizedBox(width: Spacing.xs),
+                  Text(
+                    f,
+                    style: TextStyle(
+                      fontSize: TypographyTokens.bodySmall,
+                      color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+                    ),
+                  ),
+                ],
+              ),
+            )),
+          ],
+        ),
       ),
     );
   }
@@ -504,6 +1000,7 @@ class _StepCard extends StatelessWidget {
   final Widget action;
   final Widget? checkAction;
   final Widget? skipAction;
+  final Widget? backAction;
 
   const _StepCard({
     required this.isDark,
@@ -514,6 +1011,7 @@ class _StepCard extends StatelessWidget {
     required this.action,
     this.checkAction,
     this.skipAction,
+    this.backAction,
   });
 
   @override
@@ -521,12 +1019,10 @@ class _StepCard extends StatelessWidget {
     return Container(
       padding: EdgeInsets.all(Spacing.lg),
       decoration: BoxDecoration(
-        color: (isDark ? BrandColors.nightTurquoise : BrandColors.turquoise)
-            .withValues(alpha: 0.1),
+        color: (isDark ? BrandColors.nightTurquoise : BrandColors.turquoise).withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(Radii.md),
         border: Border.all(
-          color: (isDark ? BrandColors.nightTurquoise : BrandColors.turquoise)
-              .withValues(alpha: 0.3),
+          color: (isDark ? BrandColors.nightTurquoise : BrandColors.turquoise).withValues(alpha: 0.3),
         ),
       ),
       child: Column(
@@ -561,6 +1057,10 @@ class _StepCard extends StatelessWidget {
           SizedBox(height: Spacing.lg),
           Row(
             children: [
+              if (backAction != null) ...[
+                backAction!,
+                SizedBox(width: Spacing.sm),
+              ],
               action,
               if (checkAction != null) ...[
                 SizedBox(width: Spacing.sm),

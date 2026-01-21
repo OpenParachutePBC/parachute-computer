@@ -22,6 +22,107 @@ bool get isComputerFlavor => appFlavor == 'computer';
 /// Whether the app should show Lima VM controls (Computer flavor only)
 bool get showLimaControls => isComputerFlavor;
 
+// ============================================================================
+// Server Mode (for Computer flavor)
+// ============================================================================
+
+/// How the Parachute server is run (Computer flavor only)
+///
+/// - limaVM: Server runs in isolated Lima VM (more secure, recommended for shared computers)
+/// - bareMetal: Server runs directly on macOS (better performance, for dedicated machines)
+enum ServerMode {
+  /// Server runs in isolated Lima VM
+  /// Claude can only access the vault, not the host filesystem
+  limaVM,
+
+  /// Server runs directly on macOS
+  /// Full performance, access to MLX, native builds
+  /// Best for dedicated Parachute machines
+  bareMetal,
+}
+
+/// Notifier for server mode preference (Computer flavor)
+class ServerModeNotifier extends AsyncNotifier<ServerMode> {
+  static const _key = 'parachute_server_mode';
+
+  @override
+  Future<ServerMode> build() async {
+    final prefs = await SharedPreferences.getInstance();
+    final value = prefs.getString(_key);
+    return value == 'bareMetal' ? ServerMode.bareMetal : ServerMode.limaVM;
+  }
+
+  Future<void> setServerMode(ServerMode mode) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_key, mode == ServerMode.bareMetal ? 'bareMetal' : 'limaVM');
+    state = AsyncData(mode);
+  }
+}
+
+/// Server mode provider (Computer flavor only)
+final serverModeProvider = AsyncNotifierProvider<ServerModeNotifier, ServerMode>(() {
+  return ServerModeNotifier();
+});
+
+/// Whether the current server mode is Lima VM
+final isLimaVMModeProvider = Provider<bool>((ref) {
+  if (!isComputerFlavor) return false;
+  final modeAsync = ref.watch(serverModeProvider);
+  return modeAsync.valueOrNull == ServerMode.limaVM;
+});
+
+/// Whether the current server mode is bare metal
+final isBareMetalModeProvider = Provider<bool>((ref) {
+  if (!isComputerFlavor) return false;
+  final modeAsync = ref.watch(serverModeProvider);
+  return modeAsync.valueOrNull == ServerMode.bareMetal;
+});
+
+// ============================================================================
+// Custom Base Server Path (for developers)
+// ============================================================================
+
+/// Notifier for custom base server path (optional, for developers)
+class CustomBasePathNotifier extends AsyncNotifier<String?> {
+  static const _key = 'parachute_custom_base_path';
+  static const _enabledKey = 'parachute_custom_base_enabled';
+
+  @override
+  Future<String?> build() async {
+    final prefs = await SharedPreferences.getInstance();
+    final enabled = prefs.getBool(_enabledKey) ?? false;
+    if (!enabled) return null;
+    return prefs.getString(_key);
+  }
+
+  Future<void> setCustomPath(String? path, {bool enabled = true}) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (path != null && path.isNotEmpty && enabled) {
+      await prefs.setString(_key, path);
+      await prefs.setBool(_enabledKey, true);
+      state = AsyncData(path);
+    } else {
+      await prefs.setBool(_enabledKey, false);
+      state = const AsyncData(null);
+    }
+  }
+
+  Future<void> disable() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_enabledKey, false);
+    state = const AsyncData(null);
+  }
+}
+
+/// Custom base server path provider (null if using bundled)
+final customBasePathProvider = AsyncNotifierProvider<CustomBasePathNotifier, String?>(() {
+  return CustomBasePathNotifier();
+});
+
+// ============================================================================
+// App Mode
+// ============================================================================
+
 /// App mode determines which features are available
 enum AppMode {
   /// Daily only - no server configured, works offline

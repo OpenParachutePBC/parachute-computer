@@ -7,12 +7,13 @@ import 'package:file_picker/file_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/core/providers/app_state_provider.dart'
-    show AppMode, appModeProvider, serverUrlProvider, apiKeyProvider, syncModeProvider, SyncMode, isDailyOnlyFlavor, showLimaControls;
+    show AppMode, appModeProvider, serverUrlProvider, apiKeyProvider, syncModeProvider, SyncMode, isDailyOnlyFlavor, showLimaControls, isComputerFlavor, serverModeProvider, ServerMode, isLimaVMModeProvider, isBareMetalModeProvider;
 import 'package:parachute/core/providers/file_system_provider.dart';
 import 'package:parachute/core/providers/feature_flags_provider.dart';
 import 'package:parachute/core/providers/server_providers.dart';
 import 'package:parachute/core/providers/sync_provider.dart';
 import 'package:parachute/core/providers/lima_vm_provider.dart';
+import 'package:parachute/core/providers/bare_metal_provider.dart';
 import 'package:parachute/core/services/sync_service.dart';
 import 'package:parachute/core/services/backend_health_service.dart';
 import 'package:parachute/features/daily/journal/providers/journal_providers.dart';
@@ -20,6 +21,7 @@ import 'package:parachute/features/daily/journal/screens/curator_log_screen.dart
 import '../widgets/omi_device_section.dart';
 import '../widgets/api_key_section.dart';
 import '../widgets/lima_vm_section.dart';
+import '../widgets/bare_metal_section.dart';
 
 /// Unified Settings screen for Parachute
 ///
@@ -301,8 +303,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final showChatFolder = appMode == AppMode.full;
     final isBundled = ref.watch(isBundledAppProvider);
 
+    // Check server mode for Computer flavor
+    final isLimaVMMode = ref.watch(isLimaVMModeProvider);
+    final isBareMetalMode = ref.watch(isBareMetalModeProvider);
+
     // Check if Lima VM is running (for auto-configuring server URL)
     final limaVMRunning = ref.watch(isLimaVMRunningProvider);
+    // Check if bare metal server is running
+    final bareMetalRunning = ref.watch(isBareMetalServerRunningProvider);
+    // Server is running in either mode
+    final serverRunning = limaVMRunning || bareMetalRunning;
 
     // Daily flavor: Hide all server-related UI
     final showServerSettings = !isDailyOnlyFlavor;
@@ -330,19 +340,33 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       body: ListView(
         padding: EdgeInsets.all(Spacing.lg),
         children: [
-          // Parachute Computer Section (macOS/Linux only, when Lima controls should show)
-          // Lima VM with full isolation - Claude can only access the vault
-          if (showServerSettings && showLimaControls && (Platform.isMacOS || Platform.isLinux)) ...[
-            _SettingsCard(
-              isDark: isDark,
-              child: const LimaVMSection(),
-            ),
+          // Parachute Computer Section (macOS/Linux only)
+          // Show appropriate section based on server mode
+          if (showServerSettings && (showLimaControls || isComputerFlavor) && (Platform.isMacOS || Platform.isLinux)) ...[
+            // Show Lima VM section if in Lima mode
+            if (isLimaVMMode)
+              _SettingsCard(
+                isDark: isDark,
+                child: const LimaVMSection(),
+              )
+            // Show Bare Metal section if in bare metal mode
+            else if (isBareMetalMode)
+              _SettingsCard(
+                isDark: isDark,
+                child: const BareMetalSection(),
+              )
+            // Default: show Lima section (for backward compatibility or initial setup)
+            else
+              _SettingsCard(
+                isDark: isDark,
+                child: const LimaVMSection(),
+              ),
             SizedBox(height: Spacing.xl),
           ],
 
           // Server Connection Section (full flavor only)
-          // Hide when Lima VM is running (auto-configured to localhost:3333)
-          if (showServerSettings && !limaVMRunning) ...[
+          // Hide when any local server is running (auto-configured to localhost:3333)
+          if (showServerSettings && !serverRunning) ...[
             _buildServerSection(isDark),
             SizedBox(height: Spacing.xl),
           ],

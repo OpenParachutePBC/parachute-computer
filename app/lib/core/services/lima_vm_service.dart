@@ -42,12 +42,12 @@ class LimaVMService {
   /// This should match the version in base/parachute/__init__.py
   static const String bundledBaseVersion = '0.1.0';
 
-  /// The vault path - must be set before using developer mode detection
-  String? _vaultPath;
+  /// Custom base path (if set by developer in settings)
+  String? _customBasePath;
 
-  /// Set the vault path (called by provider after FileSystemService initializes)
-  void setVaultPath(String path) {
-    _vaultPath = path;
+  /// Set custom base path (for developers who want to use their own checkout)
+  void setCustomBasePath(String? path) {
+    _customBasePath = path;
   }
 
   LimaVMStatus _currentStatus = LimaVMStatus.notInstalled;
@@ -365,14 +365,8 @@ class LimaVMService {
   }
 
   /// Get the base server path inside the VM
-  /// Developer mode: ~/projects/parachute/base (via /vault mount)
-  /// User mode: /opt/parachute/base (via Application Support mount)
+  /// Always uses /opt/parachute/base (mounted from Application Support)
   String get _vmBasePath {
-    // Check host paths to determine which mode we're in
-    final devPath = _developerBasePath;
-    if (devPath != null && Directory(devPath).existsSync()) {
-      return '~/projects/parachute/base';
-    }
     return '/opt/parachute/base';
   }
 
@@ -615,62 +609,37 @@ class LimaVMService {
   // Base server installation
   // ============================================================
 
-  /// Path where developers keep base (in the vault, as a git repo)
-  /// Returns null if vault path not set
-  String? get _developerBasePath {
-    if (_vaultPath == null) return null;
-    return '$_vaultPath/projects/parachute/base';
-  }
-
-  /// Path where regular users' base is installed (hidden from vault)
-  static String get _userBasePath {
+  /// Standard path for base server (in Application Support)
+  static String get _standardBasePath {
     final home = Platform.environment['HOME'] ?? '';
     return '$home/Library/Application Support/Parachute/base';
   }
 
-  /// Get the active base server path
-  /// Prefers developer path if it exists (has .git), otherwise uses user path
+  /// Get the active base server path on the host
+  /// Returns custom path if set, otherwise standard Application Support path
   String get baseServerPath {
-    final devPath = _developerBasePath;
-    if (devPath != null) {
-      // Check if developer path exists with .git (active development)
-      if (Directory('$devPath/.git').existsSync()) {
-        return devPath;
-      }
-      // Check if developer path exists at all (manual setup)
-      if (Directory(devPath).existsSync()) {
-        return devPath;
-      }
-    }
-    // Default to user path
-    return _userBasePath;
+    return _customBasePath ?? _standardBasePath;
   }
 
-  /// Check if we're in developer mode (base in vault as git repo)
-  bool get isDeveloperMode {
-    final devPath = _developerBasePath;
-    if (devPath == null) return false;
-    return Directory('$devPath/.git').existsSync();
-  }
+  /// Whether using a custom (developer) base path
+  bool get isUsingCustomPath => _customBasePath != null;
 
-  /// Check if base server is installed (in either location)
+  /// Check if base server is installed
   Future<bool> isBaseServerInstalled() async {
     return Directory(baseServerPath).exists();
   }
 
   /// Install base server from app bundle
-  /// Installs to user path (~/Library/Application Support/Parachute/base/)
-  /// unless developer path already exists
+  /// Installs to standard path (~/Library/Application Support/Parachute/base/)
   Future<bool> installBaseServer() async {
     try {
-      // If developer path exists, don't overwrite it
-      final devPath = _developerBasePath;
-      if (devPath != null && await Directory(devPath).exists()) {
-        debugPrint('[LimaVMService] Developer base exists, skipping install');
+      // If using custom path, don't install - developer manages their own
+      if (isUsingCustomPath) {
+        debugPrint('[LimaVMService] Using custom base path, skipping install');
         return true;
       }
 
-      final destPath = _userBasePath;
+      final destPath = _standardBasePath;
 
       // Check if already installed
       if (await Directory(destPath).exists()) {
@@ -759,14 +728,14 @@ class LimaVMService {
   /// This replaces the existing base with the bundled version
   /// NOTE: In developer mode, this is a no-op (developers manage their own base)
   Future<bool> updateBaseServer() async {
-    // Don't update in developer mode - they manage their own base via git
-    if (isDeveloperMode) {
-      debugPrint('[LimaVMService] Developer mode - skipping base update');
+    // Don't update if using custom path - developer manages their own
+    if (isUsingCustomPath) {
+      debugPrint('[LimaVMService] Using custom path - skipping base update');
       return true;
     }
 
     try {
-      final destPath = _userBasePath;
+      final destPath = _standardBasePath;
 
       // Find source in app bundle
       final executablePath = Platform.resolvedExecutable;

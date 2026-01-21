@@ -1,0 +1,225 @@
+# Build and Release Parachute Computer
+#
+# Triggers on version tags like v0.1.0, v1.0.0, etc.
+# Creates a GitHub Release with:
+# - macOS DMG (Parachute Computer)
+# - SHA256 checksums
+#
+# Prerequisites (GitHub Secrets):
+# - MACOS_CERTIFICATE: Base64-encoded .p12 Developer ID certificate
+# - MACOS_CERTIFICATE_PASSWORD: Password for the certificate
+# - APPLE_ID: Apple ID email for notarization
+# - APPLE_APP_PASSWORD: App-specific password for notarization
+# - APPLE_TEAM_ID: Apple Developer Team ID
+#
+# To trigger a release:
+#   git tag v0.2.0
+#   git push origin v0.2.0
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., 0.2.0)'
+        required: true
+        type: string
+
+env:
+  FLUTTER_VERSION: '3.24.0'
+
+jobs:
+  build-macos:
+    name: Build macOS DMG
+    runs-on: macos-14  # Apple Silicon runner
+
+    steps:
+      - name: Checkout app repository
+        uses: actions/checkout@v4
+        with:
+          path: app
+
+      - name: Checkout base repository
+        uses: actions/checkout@v4
+        with:
+          repository: OpenParachutePBC/parachute-base
+          path: base
+          # Uses same tag if it exists, otherwise main
+          ref: ${{ github.ref_name }}
+        continue-on-error: true
+
+      - name: Fallback to base main branch
+        if: failure()
+        uses: actions/checkout@v4
+        with:
+          repository: OpenParachutePBC/parachute-base
+          path: base
+          ref: main
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: 'stable'
+          cache: true
+
+      - name: Install dependencies
+        run: |
+          cd app
+          flutter pub get
+
+      - name: Install create-dmg
+        run: brew install create-dmg
+
+      - name: Extract version
+        id: version
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            VERSION="${{ inputs.version }}"
+          else
+            # Extract from tag (remove 'v' prefix)
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Building version: $VERSION"
+
+      - name: Update version in build script
+        run: |
+          cd app
+          sed -i '' "s/VERSION=\".*\"/VERSION=\"${{ steps.version.outputs.version }}\"/" scripts/build_computer_dmg.sh
+
+      # Code signing (if certificates are configured)
+      - name: Import signing certificate
+        if: env.MACOS_CERTIFICATE != ''
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          # Create temporary keychain
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          KEYCHAIN_PASSWORD=$(openssl rand -base64 32)
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+
+          # Import certificate
+          echo "$MACOS_CERTIFICATE" | base64 --decode > $RUNNER_TEMP/certificate.p12
+          security import $RUNNER_TEMP/certificate.p12 -P "$MACOS_CERTIFICATE_PASSWORD" \
+            -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
+          security list-keychain -d user -s $KEYCHAIN_PATH
+
+          # Allow codesign to access keychain
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+
+      - name: Build DMG
+        run: |
+          cd app
+
+          # Create project structure expected by build script
+          mkdir -p ../base
+          cp -R ../base/* ../base/ 2>/dev/null || true
+
+          # Run build script
+          ./scripts/build_computer_dmg.sh
+        env:
+          # Set code signing identity if available
+          CODESIGN_IDENTITY: ${{ secrets.MACOS_CERTIFICATE != '' && 'Developer ID Application' || '' }}
+
+      # Notarization (if Apple credentials are configured)
+      - name: Notarize DMG
+        if: env.APPLE_ID != ''
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          DMG_PATH="app/dist/ParachuteComputer-${{ steps.version.outputs.version }}.dmg"
+
+          # Submit for notarization
+          xcrun notarytool submit "$DMG_PATH" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+
+          # Staple the notarization ticket
+          xcrun stapler staple "$DMG_PATH"
+
+      - name: Generate checksums
+        run: |
+          cd app/dist
+          shasum -a 256 *.dmg > checksums-sha256.txt
+          cat checksums-sha256.txt
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-dmg
+          path: |
+            app/dist/*.dmg
+            app/dist/checksums-sha256.txt
+          retention-days: 7
+
+  create-release:
+    name: Create GitHub Release
+    needs: build-macos
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-dmg
+          path: artifacts
+
+      - name: Extract version
+        id: version
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Parachute Computer v${{ steps.version.outputs.version }}
+          tag_name: ${{ github.ref_name }}
+          draft: true  # Create as draft so you can review before publishing
+          generate_release_notes: true
+          files: |
+            artifacts/*.dmg
+            artifacts/checksums-sha256.txt
+          body: |
+            ## Parachute Computer v${{ steps.version.outputs.version }}
+
+            ### Installation
+
+            1. Download `ParachuteComputer-${{ steps.version.outputs.version }}.dmg`
+            2. Open the DMG and drag Parachute to Applications
+            3. Launch Parachute and follow the setup wizard
+
+            ### Verification
+
+            Verify the download using the checksum:
+            ```bash
+            shasum -a 256 -c checksums-sha256.txt
+            ```
+
+            ### What's New
+
+            See the automatically generated release notes below.
+
+            ---
+
+            **Full Changelog**: https://github.com/${{ github.repository }}/compare/...v${{ steps.version.outputs.version }}

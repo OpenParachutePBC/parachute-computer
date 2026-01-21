@@ -44,7 +44,14 @@ LIMA_DIR="$APP_DIR/lima"
 DIST_DIR="$APP_DIR/dist"
 BUILD_DIR="$DIST_DIR/computer-build"
 
-VERSION="0.1.0"
+# Extract version from pubspec.yaml (format: version: 1.0.0+1)
+# Takes only the version part before the + (build number)
+VERSION=$(grep '^version:' "$APP_DIR/pubspec.yaml" | sed 's/version: //' | cut -d'+' -f1)
+if [ -z "$VERSION" ]; then
+  echo "Error: Could not extract version from pubspec.yaml"
+  exit 1
+fi
+
 APP_NAME="Parachute"
 DMG_NAME="ParachuteComputer-$VERSION"
 
