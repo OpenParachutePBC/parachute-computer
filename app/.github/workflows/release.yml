@@ -138,34 +138,18 @@ jobs:
           # Build the macOS app with computer flavor (via dart-define, not xcode scheme)
           flutter build macos --release --dart-define=FLAVOR=computer
 
-      - name: Sign the app
+      - name: Get signing identity
+        id: signing
         if: env.MACOS_CERTIFICATE != ''
         run: |
-          APP_PATH="app/build/macos/Build/Products/Release/Parachute.app"
-
-          echo "Signing app at: $APP_PATH"
-
-          # Find the signing identity
           IDENTITY=$(security find-identity -v -p codesigning | grep "Developer ID Application" | head -1 | awk -F'"' '{print $2}')
-          echo "Using identity: $IDENTITY"
-
-          # Sign all nested components first (frameworks, dylibs, etc.)
-          find "$APP_PATH" -type f \( -name "*.dylib" -o -name "*.framework" \) -exec \
-            codesign --force --options runtime --sign "$IDENTITY" {} \;
-
-          # Sign the main app bundle with hardened runtime
-          codesign --force --deep --options runtime \
-            --entitlements app/macos/Runner/Release.entitlements \
-            --sign "$IDENTITY" \
-            "$APP_PATH"
-
-          # Verify the signature
-          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+          echo "identity=$IDENTITY" >> $GITHUB_OUTPUT
+          echo "Found signing identity: $IDENTITY"
 
       - name: Create DMG
         run: |
           cd app
-          SKIP_BUILD=true ./scripts/build_computer_dmg.sh
+          SKIP_BUILD=true CODESIGN_IDENTITY="${{ steps.signing.outputs.identity }}" ./scripts/build_computer_dmg.sh
 
       # Notarization (if Apple credentials are configured)
       - name: Notarize DMG

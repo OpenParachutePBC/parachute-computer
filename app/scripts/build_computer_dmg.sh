@@ -129,6 +129,40 @@ fi
 EOF
 chmod +x "$RESOURCES_DIR/install-base.sh"
 
+# Code signing (if CODESIGN_IDENTITY is set)
+if [ -n "$CODESIGN_IDENTITY" ]; then
+  echo "→ Signing app bundle with: $CODESIGN_IDENTITY"
+
+  ENTITLEMENTS="$APP_DIR/macos/Runner/Release.entitlements"
+  BUNDLE_PATH="$BUILD_DIR/$APP_NAME.app"
+
+  # Sign all nested frameworks and dylibs first
+  find "$BUNDLE_PATH/Contents/Frameworks" -type f \( -name "*.dylib" -o -perm +111 \) 2>/dev/null | while read -r file; do
+    echo "  Signing: $file"
+    codesign --force --options runtime --sign "$CODESIGN_IDENTITY" "$file" 2>/dev/null || true
+  done
+
+  # Sign framework bundles
+  find "$BUNDLE_PATH/Contents/Frameworks" -name "*.framework" -type d 2>/dev/null | while read -r framework; do
+    echo "  Signing framework: $framework"
+    codesign --force --options runtime --sign "$CODESIGN_IDENTITY" "$framework" 2>/dev/null || true
+  done
+
+  # Sign the main app bundle with hardened runtime
+  echo "  Signing main bundle..."
+  codesign --force --deep --options runtime \
+    --entitlements "$ENTITLEMENTS" \
+    --sign "$CODESIGN_IDENTITY" \
+    "$BUNDLE_PATH"
+
+  # Verify
+  echo "  Verifying signature..."
+  codesign --verify --deep --strict --verbose=2 "$BUNDLE_PATH"
+  echo "✓ Code signing complete"
+else
+  echo "→ Skipping code signing (CODESIGN_IDENTITY not set)"
+fi
+
 # Check if create-dmg is installed
 if ! command -v create-dmg &> /dev/null; then
   echo ""
