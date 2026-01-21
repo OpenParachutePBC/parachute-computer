@@ -135,13 +135,13 @@ jobs:
           # Create project structure expected by build script
           mkdir -p ../base
 
-          # Build the macOS app with computer flavor
-          flutter build macos --release --flavor computer
+          # Build the macOS app with computer flavor (via dart-define, not xcode scheme)
+          flutter build macos --release --dart-define=FLAVOR=computer
 
       - name: Sign the app
         if: env.MACOS_CERTIFICATE != ''
         run: |
-          APP_PATH="app/build/macos/Build/Products/Release-computer/Parachute.app"
+          APP_PATH="app/build/macos/Build/Products/Release/Parachute.app"
 
           echo "Signing app at: $APP_PATH"
 

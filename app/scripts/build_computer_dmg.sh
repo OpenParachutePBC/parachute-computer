@@ -71,13 +71,13 @@ rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"
 
 # Build Flutter app with computer flavor (if not already built)
-APP_BUILD_PATH="$APP_DIR/build/macos/Build/Products/Release-computer/$APP_NAME.app"
+APP_BUILD_PATH="$APP_DIR/build/macos/Build/Products/Release/$APP_NAME.app"
 if [ -d "$APP_BUILD_PATH" ] && [ "$SKIP_BUILD" = "true" ]; then
   echo "→ Using existing app build..."
 else
   echo "→ Building Flutter app (FLAVOR=computer)..."
   cd "$APP_DIR"
-  flutter build macos --release --flavor computer
+  flutter build macos --release --dart-define=FLAVOR=computer
 fi
 
 # Copy app to build directory
