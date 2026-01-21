@@ -8,6 +8,8 @@ from typing import Any, Literal, Optional, Union
 
 from pydantic import BaseModel, Field
 
+from parachute.lib.typed_errors import ErrorCode, RecoveryAction
+
 
 class SessionEvent(BaseModel):
     """Session information event - sent at start of stream."""
@@ -119,6 +121,37 @@ class ErrorEvent(BaseModel):
 
     type: Literal["error"] = "error"
     error: str
+    session_id: Optional[str] = Field(alias="sessionId", default=None)
+
+    model_config = {"populate_by_name": True}
+
+
+class TypedErrorEvent(BaseModel):
+    """Typed error event - structured error with recovery actions.
+
+    This provides richer error information than ErrorEvent, including:
+    - Error code for programmatic handling
+    - User-friendly title and message
+    - Suggested recovery actions with keyboard shortcuts
+    - Retry capability information
+    """
+
+    type: Literal["typed_error"] = "typed_error"
+    code: ErrorCode = Field(description="Error code for programmatic handling")
+    title: str = Field(description="User-friendly error title")
+    message: str = Field(description="Detailed error message")
+    actions: list[RecoveryAction] = Field(
+        default_factory=list, description="Suggested recovery actions"
+    )
+    can_retry: bool = Field(
+        alias="canRetry", default=False, description="Whether retry is possible"
+    )
+    retry_delay_ms: Optional[int] = Field(
+        alias="retryDelayMs", default=None, description="Suggested retry delay in ms"
+    )
+    original_error: Optional[str] = Field(
+        alias="originalError", default=None, description="Original error for debugging"
+    )
     session_id: Optional[str] = Field(alias="sessionId", default=None)
 
     model_config = {"populate_by_name": True}
@@ -276,6 +309,7 @@ SSEEvent = Union[
     AbortedEvent,
     SessionUnavailableEvent,
     ErrorEvent,
+    TypedErrorEvent,
     PermissionRequestEvent,
     UserQuestionEvent,
     PermissionDeniedEvent,

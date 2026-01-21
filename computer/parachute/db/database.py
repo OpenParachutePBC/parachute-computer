@@ -140,7 +140,7 @@ CREATE TABLE IF NOT EXISTS schema_version (
     applied_at TEXT NOT NULL
 );
 
--- Insert schema version 8 (added tool_calls to curator_queue)
+-- Insert schema version 8 (current schema)
 INSERT OR IGNORE INTO schema_version (version, applied_at)
 VALUES (8, datetime('now'));
 """
@@ -186,6 +186,7 @@ class Database:
             )
             await self._connection.commit()
             logger.info("Added tool_calls column to curator_queue")
+
 
     async def close(self) -> None:
         """Close database connection."""
