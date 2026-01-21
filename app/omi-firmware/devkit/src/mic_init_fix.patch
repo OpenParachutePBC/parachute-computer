@@ -1,0 +1,14 @@
+--- a/firmware/devkit/src/mic.c
++++ b/firmware/devkit/src/mic.c
+@@ -84,8 +84,9 @@ int mic_start()
+ 
+     // Power on Mic
+     nrfy_gpio_cfg_output(PDM_PWR_PIN);
+-    nrfy_gpio_pin_set(PDM_PWR_PIN);
+-
++    // Start with mic OFF - wait for button press to enable
++    nrfy_gpio_pin_clear(PDM_PWR_PIN);
++    
+     // Start PDM
+     if (nrfx_pdm_start() != NRFX_SUCCESS)
+     {
