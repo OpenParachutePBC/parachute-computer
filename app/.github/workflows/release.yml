@@ -30,7 +30,7 @@ on:
         type: string
 
 env:
-  FLUTTER_VERSION: '3.27.4'
+  FLUTTER_VERSION: '3.38.6'
 
 jobs:
   build-macos:
