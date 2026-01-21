@@ -36,6 +36,12 @@ jobs:
   build-macos:
     name: Build macOS DMG
     runs-on: macos-15  # Apple Silicon runner with Xcode 16+
+    env:
+      MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
     steps:
       - name: Select Xcode 16
@@ -103,9 +109,6 @@ jobs:
       # Code signing (if certificates are configured)
       - name: Import signing certificate
         if: env.MACOS_CERTIFICATE != ''
-        env:
-          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
-          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
         run: |
           # Create temporary keychain
           KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
@@ -136,9 +139,7 @@ jobs:
           flutter build macos --release --flavor computer
 
       - name: Sign the app
-        if: ${{ secrets.MACOS_CERTIFICATE != '' }}
-        env:
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        if: env.MACOS_CERTIFICATE != ''
         run: |
           APP_PATH="app/build/macos/Build/Products/Release-computer/Parachute.app"
 
@@ -169,10 +170,6 @@ jobs:
       # Notarization (if Apple credentials are configured)
       - name: Notarize DMG
         if: env.APPLE_ID != ''
-        env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           # List what's in the dist directory for debugging
           echo "Contents of app/dist:"
