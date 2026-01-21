@@ -22,3 +22,4 @@ node/.env
 .env
 .DS_Store
 activity.log
+.claude/
