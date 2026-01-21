@@ -14,15 +14,20 @@ import 'core/providers/app_state_provider.dart';
 import 'core/providers/model_download_provider.dart';
 import 'core/providers/server_providers.dart';
 import 'core/providers/sync_provider.dart';
+import 'core/services/deep_link_service.dart';
 import 'core/services/logging_service.dart';
 import 'core/services/model_download_service.dart';
 import 'core/widgets/model_download_banner.dart';
 import 'features/daily/home/screens/home_screen.dart';
 import 'features/daily/recorder/providers/omi_providers.dart';
 import 'features/chat/screens/chat_hub_screen.dart';
+import 'features/chat/screens/chat_screen.dart';
+import 'features/chat/providers/chat_providers.dart';
 import 'features/chat/services/background_stream_manager.dart';
 import 'features/chat/widgets/message_bubble.dart' show currentlyRenderingMarkdown, markMarkdownAsFailed;
+import 'features/daily/journal/providers/journal_providers.dart';
 import 'features/vault/screens/vault_browser_screen.dart';
+import 'features/vault/screens/remote_files_screen.dart';
 import 'features/settings/screens/settings_screen.dart';
 import 'features/onboarding/screens/onboarding_screen.dart';
 
@@ -90,6 +95,10 @@ void main() async {
       }
     }
   }
+
+  // Initialize deep link service
+  final deepLinkService = container.read(deepLinkServiceProvider);
+  await deepLinkService.initialize();
 
   runApp(
     UncontrolledProviderScope(
@@ -219,11 +228,6 @@ class _MainShellState extends ConsumerState<MainShell> {
   }
 }
 
-/// Global navigator keys for each tab (for nested navigation)
-final chatNavigatorKey = GlobalKey<NavigatorState>();
-final dailyNavigatorKey = GlobalKey<NavigatorState>();
-final vaultNavigatorKey = GlobalKey<NavigatorState>();
-
 /// Tab navigation shell - Daily center, Chat/Vault conditional
 class _TabShell extends ConsumerStatefulWidget {
   const _TabShell();
@@ -233,6 +237,12 @@ class _TabShell extends ConsumerStatefulWidget {
 }
 
 class _TabShellState extends ConsumerState<_TabShell> with WidgetsBindingObserver {
+  /// Navigator keys are instance variables to avoid GlobalKey reuse issues
+  /// when tabs are conditionally shown/hidden
+  final GlobalKey<NavigatorState> _chatNavigatorKey = GlobalKey<NavigatorState>();
+  final GlobalKey<NavigatorState> _dailyNavigatorKey = GlobalKey<NavigatorState>();
+  final GlobalKey<NavigatorState> _vaultNavigatorKey = GlobalKey<NavigatorState>();
+
   @override
   void initState() {
     super.initState();
@@ -252,7 +262,133 @@ class _TabShellState extends ConsumerState<_TabShell> with WidgetsBindingObserve
           ref.read(omiCaptureServiceProvider);
         });
       }
+
+      // Listen for deep links
+      _setupDeepLinkListener();
     });
+  }
+
+  /// Set up listener for deep link navigation
+  void _setupDeepLinkListener() {
+    ref.listen<AsyncValue<DeepLinkTarget>>(deepLinkStreamProvider, (previous, next) {
+      next.whenData((target) {
+        _handleDeepLink(target);
+      });
+    });
+  }
+
+  /// Handle a deep link target by navigating appropriately
+  void _handleDeepLink(DeepLinkTarget target) {
+    debugPrint('[TabShell] Handling deep link: $target');
+
+    final visibleTabs = ref.read(visibleTabsProvider);
+
+    // Handle tab navigation
+    if (target.tab != null) {
+      final tabIndex = switch (target.tab) {
+        'chat' => visibleTabs.indexOf(AppTab.chat),
+        'daily' => visibleTabs.indexOf(AppTab.daily),
+        'vault' => visibleTabs.indexOf(AppTab.vault),
+        'settings' => -1, // Settings is a route, not a tab
+        _ => -1,
+      };
+
+      if (target.tab == 'settings') {
+        // Navigate to settings screen
+        Navigator.of(context).pushNamed('/settings');
+        return;
+      }
+
+      if (tabIndex >= 0) {
+        ref.read(currentTabIndexProvider.notifier).state = tabIndex;
+
+        // Handle additional navigation within the tab
+        if (target.tab == 'chat') {
+          _handleChatDeepLink(target);
+        } else if (target.tab == 'daily') {
+          _handleDailyDeepLink(target);
+        } else if (target.tab == 'vault') {
+          _handleVaultDeepLink(target);
+        }
+      }
+    }
+  }
+
+  /// Handle chat-specific deep links
+  void _handleChatDeepLink(DeepLinkTarget target) {
+    if (target.isNewChat) {
+      debugPrint('[TabShell] New chat deep link - prompt: ${target.prompt}, context: ${target.context}, autoSend: ${target.autoSend}');
+
+      // Start a new chat
+      ref.read(newChatProvider)();
+
+      // Navigate to ChatScreen with the deep link parameters
+      // Use Navigator from the chat tab's context (via global key)
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _chatNavigatorKey.currentState?.push(
+          MaterialPageRoute(
+            builder: (context) => ChatScreen(
+              initialMessage: target.prompt,
+              autoRun: target.autoSend,
+              autoRunMessage: target.autoSend ? target.prompt : null,
+            ),
+          ),
+        );
+      });
+    } else if (target.sessionId != null) {
+      debugPrint('[TabShell] Open session deep link - session: ${target.sessionId}, message: ${target.messageIndex}');
+
+      // Switch to the session
+      ref.read(switchSessionProvider)(target.sessionId!);
+
+      // Navigate to ChatScreen
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _chatNavigatorKey.currentState?.push(
+          MaterialPageRoute(
+            builder: (context) => const ChatScreen(),
+          ),
+        );
+      });
+
+      // Store message index for scrolling (ChatScreen can read this)
+      if (target.messageIndex != null) {
+        ref.read(pendingDeepLinkProvider.notifier).state = target;
+      }
+    }
+  }
+
+  /// Handle daily-specific deep links
+  void _handleDailyDeepLink(DeepLinkTarget target) {
+    if (target.date != null) {
+      debugPrint('[TabShell] Daily date deep link: ${target.date}');
+
+      // Parse the date string (format: YYYY-MM-DD)
+      final parts = target.date!.split('-');
+      if (parts.length == 3) {
+        final year = int.tryParse(parts[0]);
+        final month = int.tryParse(parts[1]);
+        final day = int.tryParse(parts[2]);
+
+        if (year != null && month != null && day != null) {
+          final date = DateTime(year, month, day);
+          ref.read(selectedJournalDateProvider.notifier).state = date;
+        }
+      }
+    } else if (target.entryId != null) {
+      debugPrint('[TabShell] Daily entry deep link: ${target.entryId}');
+      // Store for the journal screen to handle scrolling to specific entry
+      ref.read(pendingDeepLinkProvider.notifier).state = target;
+    }
+  }
+
+  /// Handle vault-specific deep links
+  void _handleVaultDeepLink(DeepLinkTarget target) {
+    if (target.path != null) {
+      debugPrint('[TabShell] Vault path deep link: ${target.path}');
+
+      // Set the remote file browser path
+      ref.read(remoteCurrentPathProvider.notifier).state = target.path!;
+    }
   }
 
   @override
@@ -328,99 +464,100 @@ class _TabShellState extends ConsumerState<_TabShell> with WidgetsBindingObserve
     // Determine visible tabs based on app mode
     final showAllTabs = appMode == AppMode.full;
 
-    // Build tab destinations
-    final destinations = <NavigationDestination>[];
-    final screens = <Widget>[];
-
-    if (showAllTabs) {
-      destinations.add(NavigationDestination(
-        icon: Icon(
-          Icons.chat_bubble_outline,
-          color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
-        ),
-        selectedIcon: Icon(
-          Icons.chat_bubble,
-          color: isDark ? BrandColors.nightTurquoise : BrandColors.turquoise,
-        ),
-        label: 'Chat',
-      ));
-      // Chat tab with nested navigator
-      screens.add(Navigator(
-        key: chatNavigatorKey,
-        onGenerateRoute: (settings) {
-          return MaterialPageRoute(
-            builder: (context) => const ChatHubScreen(),
-            settings: settings,
-          );
-        },
-      ));
-    }
-
-    // Daily is always in the middle (or only tab when server not configured)
-    destinations.add(NavigationDestination(
-      icon: Icon(
-        Icons.today_outlined,
-        color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
-      ),
-      selectedIcon: Icon(
-        Icons.today,
-        color: isDark ? BrandColors.nightForest : BrandColors.forest,
-      ),
-      label: 'Daily',
-    ));
-    // Daily tab with nested navigator
-    screens.add(Navigator(
-      key: dailyNavigatorKey,
-      onGenerateRoute: (settings) {
-        return MaterialPageRoute(
-          builder: (context) => const HomeScreen(),
-          settings: settings,
-        );
-      },
-    ));
-
-    if (showAllTabs) {
-      destinations.add(NavigationDestination(
-        icon: Icon(
-          Icons.folder_outlined,
-          color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
-        ),
-        selectedIcon: Icon(
-          Icons.folder,
-          color: isDark ? BrandColors.nightTurquoise : BrandColors.turquoise,
-        ),
-        label: 'Vault',
-      ));
-      // Vault tab with nested navigator
-      screens.add(Navigator(
-        key: vaultNavigatorKey,
-        onGenerateRoute: (settings) {
-          return MaterialPageRoute(
-            builder: (context) => const VaultBrowserScreen(),
-            settings: settings,
-          );
-        },
-      ));
-    }
-
-    // Current tab index - Daily is center
+    // Current tab index
     final currentIndex = ref.watch(currentTabIndexProvider);
+
+    // Build navigation destinations based on mode
+    final destinations = <NavigationDestination>[
+      if (showAllTabs)
+        NavigationDestination(
+          icon: Icon(
+            Icons.chat_bubble_outline,
+            color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+          ),
+          selectedIcon: Icon(
+            Icons.chat_bubble,
+            color: isDark ? BrandColors.nightTurquoise : BrandColors.turquoise,
+          ),
+          label: 'Chat',
+        ),
+      NavigationDestination(
+        icon: Icon(
+          Icons.today_outlined,
+          color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+        ),
+        selectedIcon: Icon(
+          Icons.today,
+          color: isDark ? BrandColors.nightForest : BrandColors.forest,
+        ),
+        label: 'Daily',
+      ),
+      if (showAllTabs)
+        NavigationDestination(
+          icon: Icon(
+            Icons.folder_outlined,
+            color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+          ),
+          selectedIcon: Icon(
+            Icons.folder,
+            color: isDark ? BrandColors.nightTurquoise : BrandColors.turquoise,
+          ),
+          label: 'Vault',
+        ),
+    ];
+
     // Clamp index to valid range when tabs change
-    final safeIndex = currentIndex.clamp(0, screens.length - 1);
+    final safeIndex = currentIndex.clamp(0, destinations.length - 1);
+
+    // Map visual index to actual tab for IndexedStack
+    // In full mode: [Chat, Daily, Vault] -> indices 0, 1, 2
+    // In daily-only mode: [Daily] -> visual index 0 maps to actual index 1
+    final actualIndex = showAllTabs ? safeIndex : 1;
 
     // Only show navigation bar if there are multiple tabs
-    final showNavBar = screens.length > 1;
+    final showNavBar = destinations.length > 1;
 
     return Scaffold(
       body: Column(
         children: [
           // Model download progress banner (only shows during download on Android)
           const ModelDownloadBanner(),
-          // Main content
+          // Main content - always create all navigators to avoid GlobalKey issues
           Expanded(
             child: IndexedStack(
-              index: safeIndex,
-              children: screens,
+              index: actualIndex,
+              children: [
+                // Chat tab (index 0) - hidden when not in full mode
+                Navigator(
+                  key: _chatNavigatorKey,
+                  onGenerateRoute: (settings) {
+                    return MaterialPageRoute(
+                      builder: (context) => const ChatHubScreen(),
+                      settings: settings,
+                    );
+                  },
+                ),
+                // Daily tab (index 1) - always visible
+                Navigator(
+                  key: _dailyNavigatorKey,
+                  onGenerateRoute: (settings) {
+                    return MaterialPageRoute(
+                      builder: (context) => const HomeScreen(),
+                      settings: settings,
+                    );
+                  },
+                ),
+                // Vault tab (index 2) - hidden when not in full mode
+                Navigator(
+                  key: _vaultNavigatorKey,
+                  onGenerateRoute: (settings) {
+                    return MaterialPageRoute(
+                      builder: (context) => const VaultBrowserScreen(),
+                      settings: settings,
+                    );
+                  },
+                ),
+              ],
             ),
           ),
         ],
@@ -429,7 +566,9 @@ class _TabShellState extends ConsumerState<_TabShell> with WidgetsBindingObserve
           ? NavigationBar(
               selectedIndex: safeIndex,
               onDestinationSelected: (index) {
-                ref.read(currentTabIndexProvider.notifier).state = index;
+                // Map visual index back to actual tab index
+                final newActualIndex = showAllTabs ? index : 1;
+                ref.read(currentTabIndexProvider.notifier).state = newActualIndex;
               },
               backgroundColor: isDark ? BrandColors.nightSurfaceElevated : BrandColors.softWhite,
               indicatorColor: isDark

@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
+import 'package:parachute/core/services/deep_link_service.dart';
 import '../models/chat_log.dart';
 
 /// Collapsible section showing AI conversation summaries for a day
@@ -188,13 +190,13 @@ class _CollapsibleChatLogSectionState extends State<CollapsibleChatLogSection>
   }
 }
 
-class _ChatLogEntryCard extends StatelessWidget {
+class _ChatLogEntryCard extends ConsumerWidget {
   final ChatLogEntry entry;
 
   const _ChatLogEntryCard({required this.entry});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
 
@@ -261,8 +263,10 @@ class _ChatLogEntryCard extends StatelessWidget {
                     color: BrandColors.turquoise,
                   ),
                   onPressed: () {
-                    // TODO: Open session in Parachute chat
-                    debugPrint('Open session: ${entry.sessionId}');
+                    // Navigate to chat session via deep link
+                    final deepLinkService = ref.read(deepLinkServiceProvider);
+                    final url = DeepLinkService.chatSessionUrl(entry.sessionId!);
+                    deepLinkService.handleDeepLink(url);
                   },
                   tooltip: 'Open session',
                   constraints: const BoxConstraints(

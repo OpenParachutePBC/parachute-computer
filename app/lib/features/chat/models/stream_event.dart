@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'chat_message.dart';
 import 'session_resume_info.dart';
+import 'typed_error.dart';
 
 /// Type of SSE stream event from the agent backend
 enum StreamEventType {
@@ -18,6 +19,7 @@ enum StreamEventType {
   aborted, // Stream was stopped by user
   done,
   error,
+  typedError, // Structured error with recovery actions
   unknown,
 }
 
@@ -91,6 +93,9 @@ class StreamEvent {
           break;
         case 'error':
           type = StreamEventType.error;
+          break;
+        case 'typed_error':
+          type = StreamEventType.typedError;
           break;
         default:
           type = StreamEventType.unknown;
@@ -215,5 +220,29 @@ class StreamEvent {
     final qs = data['questions'] as List<dynamic>?;
     if (qs == null) return [];
     return qs.cast<Map<String, dynamic>>();
+  }
+
+  // Typed error event accessors
+
+  /// Get typed error from typed_error event
+  TypedError? get typedError {
+    if (type != StreamEventType.typedError) return null;
+    return TypedError.fromJson(data);
+  }
+
+  /// Whether this error event (typed or plain) can be retried
+  bool get canRetry {
+    if (type == StreamEventType.typedError) {
+      return typedError?.canRetry ?? false;
+    }
+    return false;
+  }
+
+  /// Get retry delay for typed errors
+  int? get retryDelayMs {
+    if (type == StreamEventType.typedError) {
+      return typedError?.retryDelayMs;
+    }
+    return null;
   }
 }
