@@ -144,15 +144,26 @@ jobs:
         if: env.APPLE_ID != ''
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
+          # List what's in the dist directory for debugging
+          echo "Contents of app/dist:"
+          ls -la app/dist/ || echo "Directory not found"
+
           DMG_PATH="app/dist/ParachuteComputer-${{ steps.version.outputs.version }}.dmg"
+
+          if [ ! -f "$DMG_PATH" ]; then
+            echo "Error: DMG not found at $DMG_PATH"
+            echo "Looking for DMG files:"
+            find . -name "*.dmg" 2>/dev/null
+            exit 1
+          fi
 
           # Submit for notarization
           xcrun notarytool submit "$DMG_PATH" \
             --apple-id "$APPLE_ID" \
-            --password "$APPLE_APP_PASSWORD" \
+            --password "$APPLE_ID_PASSWORD" \
             --team-id "$APPLE_TEAM_ID" \
             --wait
 
