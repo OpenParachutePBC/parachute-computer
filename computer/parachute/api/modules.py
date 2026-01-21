@@ -510,6 +510,48 @@ async def get_daily_agent_transcript(
     }
 
 
+@router.post("/modules/daily/agents/{agent_name}/reset")
+async def reset_daily_agent_session(agent_name: str) -> dict[str, Any]:
+    """
+    Reset a daily agent's session context.
+
+    Clears the sdk_session_id from the agent's state, so the next run
+    will start fresh without any previous conversation context.
+
+    This is useful when:
+    - Agent instructions have changed significantly
+    - The agent got confused by accumulated context
+    - You want a clean slate for the next run
+    """
+    settings = get_settings()
+
+    from parachute.core.daily_agent import get_daily_agent_config, DailyAgentState
+
+    # Verify agent exists
+    config = get_daily_agent_config(settings.vault_path, agent_name)
+    if not config:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found")
+
+    # Load state and clear session ID
+    state = DailyAgentState(settings.vault_path, agent_name)
+    state_data = state.load()
+
+    old_session_id = state_data.get("sdk_session_id")
+
+    # Clear the session ID (next run will create a fresh session)
+    state.sdk_session_id = None
+    state.save()
+
+    logger.info(f"Reset agent '{agent_name}' session (was: {old_session_id})")
+
+    return {
+        "agent": agent_name,
+        "reset": True,
+        "previousSessionId": old_session_id,
+        "message": f"Agent '{agent_name}' will start fresh on next run",
+    }
+
+
 @router.get("/modules/{mod}/curator")
 async def get_module_curator_status(mod: str) -> dict[str, Any]:
     """
