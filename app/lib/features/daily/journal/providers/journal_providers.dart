@@ -147,16 +147,24 @@ final agentOutputServiceFutureProvider = FutureProvider.autoDispose<AgentOutputS
 /// Cached agent configs with TTL to avoid disk reads on every scroll
 List<DailyAgentConfig>? _cachedAgentConfigs;
 DateTime? _agentConfigsCacheTime;
+int? _cachedAgentRefreshTrigger;
 const _agentConfigsCacheTtl = Duration(minutes: 5);
 
 /// Provider for the list of configured daily agents (reads locally from Daily/.agents/)
 ///
 /// This works offline - no server connection needed.
 /// Uses in-memory caching to avoid disk reads during scroll.
+/// Cache is invalidated when journalRefreshTriggerProvider changes.
 final localAgentConfigsProvider = FutureProvider.autoDispose<List<DailyAgentConfig>>((ref) async {
-  // Only watch refresh trigger for manual refresh, not auto-reload
-  // Using read instead of watch to avoid triggering on every journal change
-  final _ = ref.watch(journalRefreshTriggerProvider);
+  // Watch refresh trigger - when it changes, we need to clear the cache
+  final refreshTrigger = ref.watch(journalRefreshTriggerProvider);
+
+  // Clear cache if refresh trigger changed (user requested refresh)
+  if (_cachedAgentRefreshTrigger != null && _cachedAgentRefreshTrigger != refreshTrigger) {
+    _cachedAgentConfigs = null;
+    _agentConfigsCacheTime = null;
+  }
+  _cachedAgentRefreshTrigger = refreshTrigger;
 
   // Return cached if valid
   if (_cachedAgentConfigs != null && _agentConfigsCacheTime != null) {

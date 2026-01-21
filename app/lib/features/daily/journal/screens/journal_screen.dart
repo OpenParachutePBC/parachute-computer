@@ -228,6 +228,11 @@ class _JournalScreenState extends ConsumerState<JournalScreen>
     ref.invalidate(selectedJournalProvider);
     ref.invalidate(selectedReflectionProvider);
 
+    // Also refresh agent providers - clear the cache and re-read from disk
+    ref.invalidate(localAgentConfigsProvider);
+    ref.invalidate(agentOutputsForDateProvider(ref.read(selectedJournalDateProvider)));
+    ref.read(journalRefreshTriggerProvider.notifier).state++;
+
     // Fire off a background sync (don't await) - UI will auto-refresh when pull completes
     debugPrint('[JournalScreen] Refreshing - starting background sync...');
     ref.read(syncProvider.notifier).sync(); // No await - runs in background
@@ -265,6 +270,10 @@ class _JournalScreenState extends ConsumerState<JournalScreen>
         if (mounted) {
           ref.invalidate(selectedJournalProvider);
           ref.invalidate(selectedReflectionProvider);
+          // Also refresh agent providers when sync pulls new files
+          ref.invalidate(localAgentConfigsProvider);
+          ref.invalidate(agentOutputsForDateProvider(selectedDate));
+          ref.read(journalRefreshTriggerProvider.notifier).state++;
         }
       });
     }

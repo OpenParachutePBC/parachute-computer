@@ -843,6 +843,16 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
         );
         break;
 
+      case StreamEventType.typedError:
+        // Handle typed errors with recovery info
+        _reattachStreamContent = [];
+        final typedErr = event.typedError;
+        state = state.copyWith(
+          isStreaming: false,
+          error: typedErr?.message ?? event.errorMessage ?? 'Unknown error',
+        );
+        break;
+
       case StreamEventType.userMessage:
         // User message event - add if not already present
         // This ensures the user's message is visible when rejoining mid-stream
@@ -1484,6 +1494,22 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
             } else {
               // Background: just log it
               debugPrint('[ChatMessagesNotifier] Background stream error for session $displaySessionId: $errorMsg');
+            }
+            break;
+
+          case StreamEventType.typedError:
+            // Typed error with recovery info
+            final typedErr = event.typedError;
+            final errorMsg = typedErr?.message ?? event.errorMessage ?? 'Unknown error';
+            if (!isBackgroundStream) {
+              state = state.copyWith(
+                isStreaming: false,
+                error: errorMsg,
+              );
+              accumulatedContent.add(MessageContent.text('\n\n⚠️ Error: $errorMsg'));
+              _updateAssistantMessage(accumulatedContent, isStreaming: false);
+            } else {
+              debugPrint('[ChatMessagesNotifier] Background stream typed error for session $displaySessionId: $errorMsg');
             }
             break;
 

@@ -357,7 +357,124 @@ class _FilesScreenState extends ConsumerState<FilesScreen> with WidgetsBindingOb
             )
           : null,
       onTap: () => _onItemTap(item),
+      onLongPress: item.isFolder ? null : () => _showFileContextMenu(item, isDark),
     );
+  }
+
+  void _showFileContextMenu(FileItem item, bool isDark) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: isDark ? BrandColors.nightSurfaceElevated : BrandColors.softWhite,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(Radii.lg)),
+      ),
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Handle bar
+            Container(
+              margin: const EdgeInsets.only(top: Spacing.sm),
+              width: 32,
+              height: 4,
+              decoration: BoxDecoration(
+                color: isDark ? BrandColors.charcoal : BrandColors.stone,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            // File name header
+            Padding(
+              padding: const EdgeInsets.all(Spacing.md),
+              child: Text(
+                item.name,
+                style: TextStyle(
+                  fontWeight: FontWeight.w600,
+                  color: isDark ? BrandColors.nightText : BrandColors.charcoal,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            const Divider(height: 1),
+            // View as Text option
+            ListTile(
+              leading: Icon(
+                Icons.text_snippet,
+                color: isDark ? BrandColors.nightTurquoise : BrandColors.turquoise,
+              ),
+              title: Text(
+                'View as Text',
+                style: TextStyle(
+                  color: isDark ? BrandColors.nightText : BrandColors.charcoal,
+                ),
+              ),
+              subtitle: item.sizeBytes != null && item.sizeBytes! > 1024 * 1024
+                  ? Text(
+                      'Large file (${_formatFileSize(item.sizeBytes!)}) - may be slow',
+                      style: TextStyle(
+                        color: BrandColors.warning,
+                        fontSize: TypographyTokens.labelSmall,
+                      ),
+                    )
+                  : null,
+              onTap: () {
+                Navigator.pop(context);
+                _viewAsText(item);
+              },
+            ),
+            // File info option
+            ListTile(
+              leading: Icon(
+                Icons.info_outline,
+                color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+              ),
+              title: Text(
+                'File Info',
+                style: TextStyle(
+                  color: isDark ? BrandColors.nightText : BrandColors.charcoal,
+                ),
+              ),
+              onTap: () {
+                Navigator.pop(context);
+                _showFileInfo(item);
+              },
+            ),
+            SizedBox(height: Spacing.md),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _viewAsText(FileItem item) {
+    // Warn for very large files (> 5MB)
+    if (item.sizeBytes != null && item.sizeBytes! > 5 * 1024 * 1024) {
+      final isDark = Theme.of(context).brightness == Brightness.dark;
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          backgroundColor: isDark ? BrandColors.nightSurfaceElevated : BrandColors.softWhite,
+          title: const Text('Large File Warning'),
+          content: Text(
+            'This file is ${_formatFileSize(item.sizeBytes!)}. Opening it may cause the app to become slow or unresponsive.\n\nDo you want to continue?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                Navigator.pop(context);
+                _openTextFile(item);
+              },
+              child: const Text('Open Anyway'),
+            ),
+          ],
+        ),
+      );
+    } else {
+      _openTextFile(item);
+    }
   }
 
   Widget _buildItemIcon(FileItem item, bool isDark) {

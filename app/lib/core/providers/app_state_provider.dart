@@ -1,28 +1,26 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// App flavor set at compile time via --dart-define=FLAVOR=daily|mobile|computer|full
-/// Defaults to 'full' if not specified
+/// App flavor set at compile time via --dart-define=FLAVOR=daily|client|computer
+/// Defaults to 'client' if not specified
 ///
 /// Flavors:
 /// - daily: Offline journal only, no server features
-/// - mobile: For phones/tablets, connects to remote server
+/// - client: Standard app - connects to external server (default)
 /// - computer: Desktop with bundled Lima VM (Parachute Computer)
-/// - full: Development/testing, all features configurable
-const String appFlavor = String.fromEnvironment('FLAVOR', defaultValue: 'full');
+const String appFlavor = String.fromEnvironment('FLAVOR', defaultValue: 'client');
 
 /// Whether the app was built as the Daily-only flavor
 bool get isDailyOnlyFlavor => appFlavor == 'daily';
 
-/// Whether the app was built as the Mobile flavor (remote server)
-bool get isMobileFlavor => appFlavor == 'mobile';
+/// Whether the app was built as the Client flavor (external server)
+bool get isClientFlavor => appFlavor == 'client';
 
 /// Whether the app was built as the Computer flavor (bundled Lima VM)
 bool get isComputerFlavor => appFlavor == 'computer';
 
-/// Whether the app should show Lima VM controls
-/// (Computer flavor always, Full flavor on desktop)
-bool get showLimaControls => isComputerFlavor || appFlavor == 'full';
+/// Whether the app should show Lima VM controls (Computer flavor only)
+bool get showLimaControls => isComputerFlavor;
 
 /// App mode determines which features are available
 enum AppMode {

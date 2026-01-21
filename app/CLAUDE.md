@@ -196,9 +196,11 @@ Version 1.12.21 has a native library crash (SIGSEGV at 0x3f800000) on certain AR
 ## Running
 
 ```bash
-# Run app
+# Desktop development
 flutter run -d macos
-flutter run -d android
+
+# Android development
+flutter run -d android --flavor full
 
 # Server (for Chat/Vault features)
 cd ../base && ./parachute.sh start
@@ -206,16 +208,39 @@ cd ../base && ./parachute.sh start
 
 ---
 
+## Build Flavors
+
+The app uses `--dart-define=FLAVOR=` to set compile-time behavior (works on ALL platforms). Default is `client`.
+
+| Flavor | Use Case |
+|--------|----------|
+| `client` | **Default** - connects to external server (any platform) |
+| `computer` | Desktop with bundled Lima VM (Parachute Computer) |
+| `daily` | Standalone offline journal app |
+
+**Android product flavors** (in `build.gradle.kts`) - controls app ID only:
+- `daily` → `io.openparachute.daily` (Parachute Daily)
+- `full` → `io.openparachute.parachute` (Parachute)
+
+**Examples:**
+```bash
+# Standard build (client flavor is default)
+flutter build apk --release --flavor full
+flutter run -d macos
+flutter run -d chrome
+
+# Daily-only standalone app
+flutter build apk --release --flavor daily --dart-define=FLAVOR=daily
+
+# Parachute Computer (macOS only)
+flutter build macos --release --dart-define=FLAVOR=computer
+```
+
+---
+
 ## Parachute Computer (Lima VM Distribution)
 
 The app can be built as "Parachute Computer" - a self-contained distribution that runs the base server in an isolated Lima VM.
-
-### Build Flavors
-
-| Flavor | Build Command | Use Case |
-|--------|---------------|----------|
-| Default | `flutter run -d macos` | Development, connects to local server |
-| Computer | `flutter run --dart-define=FLAVOR=computer` | Lima VM mode |
 
 ### Building the DMG
 
