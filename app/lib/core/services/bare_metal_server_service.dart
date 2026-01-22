@@ -264,23 +264,38 @@ class BareMetalServerService {
   /// Set up the server (create venv, install dependencies)
   Future<bool> setupServer() async {
     _updateStatus(BareMetalServerStatus.starting);
-    _lastError = null;
 
     try {
+      // Check if server is installed first
+      if (!await isServerInstalled()) {
+        _lastError = 'Server not installed. Please install the base server first.';
+        debugPrint('[BareMetalServerService] $_lastError');
+        _updateStatus(BareMetalServerStatus.notInstalled);
+        return false;
+      }
+
       debugPrint('[BareMetalServerService] Running setup...');
+      debugPrint('[BareMetalServerService] Base path: $baseServerPath');
 
       final result = await _runParachuteScript('setup');
       if (result == null) {
+        // _runParachuteScript sets _lastError
         _updateStatus(BareMetalServerStatus.error);
         return false;
       }
+
+      debugPrint('[BareMetalServerService] parachute.sh setup exited with ${result.exitCode}');
+      debugPrint('[BareMetalServerService] stdout: ${result.stdout}');
+      debugPrint('[BareMetalServerService] stderr: ${result.stderr}');
 
       if (result.exitCode == 0) {
         debugPrint('[BareMetalServerService] Setup complete');
         _updateStatus(BareMetalServerStatus.stopped);
         return true;
       } else {
-        _lastError = result.stderr.toString();
+        final stderr = result.stderr.toString().trim();
+        final stdout = result.stdout.toString().trim();
+        _lastError = stderr.isNotEmpty ? stderr : (stdout.isNotEmpty ? stdout : 'Setup failed (exit code ${result.exitCode})');
         debugPrint('[BareMetalServerService] Setup failed: $_lastError');
         _updateStatus(BareMetalServerStatus.error);
         return false;
@@ -301,13 +316,22 @@ class BareMetalServerService {
     }
 
     _updateStatus(BareMetalServerStatus.starting);
-    _lastError = null;
 
     try {
+      // Check if server is installed
+      if (!await isServerInstalled()) {
+        _lastError = 'Server not installed. Run setup first.';
+        debugPrint('[BareMetalServerService] $_lastError');
+        _updateStatus(BareMetalServerStatus.notInstalled);
+        return false;
+      }
+
       // If venv not set up, run setup first
       if (!await isVenvSetup()) {
         debugPrint('[BareMetalServerService] Venv not found, running setup first');
         if (!await setupServer()) {
+          // setupServer sets _lastError, preserve it
+          _updateStatus(BareMetalServerStatus.error);
           return false;
         }
       }
@@ -316,9 +340,14 @@ class BareMetalServerService {
 
       final result = await _runParachuteScript('start');
       if (result == null) {
+        // _runParachuteScript sets _lastError when returning null
         _updateStatus(BareMetalServerStatus.error);
         return false;
       }
+
+      debugPrint('[BareMetalServerService] parachute.sh start exited with ${result.exitCode}');
+      debugPrint('[BareMetalServerService] stdout: ${result.stdout}');
+      debugPrint('[BareMetalServerService] stderr: ${result.stderr}');
 
       if (result.exitCode == 0) {
         // Wait for server to be ready
@@ -326,12 +355,14 @@ class BareMetalServerService {
           _updateStatus(BareMetalServerStatus.running);
           return true;
         } else {
-          _lastError = 'Server started but not responding';
+          _lastError = 'Server started but not responding on port $serverPort';
           _updateStatus(BareMetalServerStatus.error);
           return false;
         }
       } else {
-        _lastError = result.stderr.toString();
+        final stderr = result.stderr.toString().trim();
+        final stdout = result.stdout.toString().trim();
+        _lastError = stderr.isNotEmpty ? stderr : (stdout.isNotEmpty ? stdout : 'Unknown error (exit code ${result.exitCode})');
         debugPrint('[BareMetalServerService] Start failed: $_lastError');
         _updateStatus(BareMetalServerStatus.error);
         return false;
