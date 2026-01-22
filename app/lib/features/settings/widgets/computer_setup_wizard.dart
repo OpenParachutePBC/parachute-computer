@@ -493,7 +493,12 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
     }
   }
 
-  void _complete() {
+  Future<void> _complete() async {
+    // Set the server URL so the app switches to full mode (Chat + Vault tabs)
+    // Both Lima VM and Bare Metal run on localhost:3333
+    const serverUrl = 'http://localhost:3333';
+    await ref.read(serverUrlProvider.notifier).setServerUrl(serverUrl);
+
     widget.onComplete?.call();
   }
 
