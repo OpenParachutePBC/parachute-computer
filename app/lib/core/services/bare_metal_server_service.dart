@@ -451,6 +451,69 @@ class BareMetalServerService {
     return false;
   }
 
+  /// Known paths where Claude CLI might be installed
+  static const List<String> _claudePaths = [
+    '/opt/homebrew/bin/claude', // Homebrew Apple Silicon
+    '/usr/local/bin/claude', // Homebrew Intel / npm global
+    // npm global paths vary by Node installation
+  ];
+
+  /// Get the path to Claude CLI, or null if not found
+  Future<String?> get claudePath async {
+    // Check known paths first
+    for (final p in _claudePaths) {
+      if (File(p).existsSync()) {
+        return p;
+      }
+    }
+
+    // Try to find via 'which' command
+    try {
+      final result = await Process.run('which', ['claude']);
+      if (result.exitCode == 0) {
+        final path = result.stdout.toString().trim();
+        if (path.isNotEmpty && File(path).existsSync()) {
+          return path;
+        }
+      }
+    } catch (e) {
+      debugPrint('[BareMetalServerService] Error finding claude: $e');
+    }
+
+    return null;
+  }
+
+  /// Check if Claude CLI is installed
+  Future<bool> isClaudeInstalled() async {
+    return await claudePath != null;
+  }
+
+  /// Get Claude CLI version if installed
+  Future<String?> getClaudeVersion() async {
+    final path = await claudePath;
+    if (path == null) return null;
+
+    try {
+      final result = await Process.run(path, ['--version']);
+      if (result.exitCode == 0) {
+        return result.stdout.toString().trim();
+      }
+    } catch (e) {
+      debugPrint('[BareMetalServerService] Error getting claude version: $e');
+    }
+    return null;
+  }
+
+  /// Check if Node.js/npm is installed
+  Future<bool> isNodeInstalled() async {
+    try {
+      final result = await Process.run('which', ['npm']);
+      return result.exitCode == 0;
+    } catch (e) {
+      return false;
+    }
+  }
+
   /// Run claude login (opens Terminal for interactive auth)
   Future<bool> runClaudeLogin() async {
     try {
@@ -465,6 +528,25 @@ class BareMetalServerService {
       return false;
     } catch (e) {
       debugPrint('[BareMetalServerService] Error running claude login: $e');
+      _lastError = e.toString();
+      return false;
+    }
+  }
+
+  /// Install Claude CLI via npm (opens Terminal)
+  Future<bool> installClaudeCLI() async {
+    try {
+      debugPrint('[BareMetalServerService] Installing Claude CLI...');
+
+      if (Platform.isMacOS) {
+        // Install globally via npm, then run claude login
+        final script = 'tell application "Terminal" to do script "npm install -g @anthropic-ai/claude-code && claude login"';
+        await Process.run('osascript', ['-e', script]);
+        return true;
+      }
+      return false;
+    } catch (e) {
+      debugPrint('[BareMetalServerService] Error installing Claude CLI: $e');
       _lastError = e.toString();
       return false;
     }

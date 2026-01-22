@@ -55,6 +55,8 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
   bool _pythonInstalled = false;
   String? _pythonVersion;
   bool _serverInstalled = false;
+  bool _claudeInstalled = false;
+  bool _nodeInstalled = false;
   String? _setupProgressMessage;
 
   @override
@@ -113,14 +115,18 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
     _pythonInstalled = await service.isPythonInstalled();
     _pythonVersion = await service.getPythonVersion();
     _serverInstalled = await service.isServerInstalled();
+    _claudeInstalled = await service.isClaudeInstalled();
+    _nodeInstalled = await service.isNodeInstalled();
 
     // Determine starting step
     if (!_pythonInstalled) {
       _currentStep = 0;
     } else if (!_serverInstalled) {
       _currentStep = 1;
-    } else {
+    } else if (!_claudeInstalled) {
       _currentStep = 2;
+    } else {
+      _currentStep = 3; // Claude auth step
     }
   }
 
@@ -470,7 +476,7 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
   Future<void> _authenticateClaudeBareMetal() async {
     final service = ref.read(bareMetalServiceProvider);
     await service.runClaudeLogin();
-    setState(() => _currentStep = 3);
+    setState(() => _currentStep = 4);
   }
 
   Future<void> _enableAutoStart() async {
@@ -479,7 +485,7 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
     try {
       final service = ref.read(bareMetalServiceProvider);
       await service.enableAutoStart();
-      _currentStep = 4;
+      _currentStep = 5;
     } catch (e) {
       _error = 'Error enabling auto-start: $e';
     } finally {
@@ -574,7 +580,7 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
   Widget _buildProgressIndicator(bool isDark) {
     final steps = _selectedMode == ServerMode.limaVM
         ? ['Homebrew', 'Lima', 'VM', 'Claude', 'Ready']
-        : ['Python', 'Server', 'Claude', 'Auto-start', 'Ready'];
+        : ['Python', 'Server', 'CLI', 'Login', 'Auto-start', 'Ready'];
 
     return Row(
       children: List.generate(steps.length, (index) {
@@ -806,10 +812,12 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
       case 1:
         return _buildServerSetupStep(isDark);
       case 2:
-        return _buildClaudeStepBareMetal(isDark);
+        return _buildClaudeCLIStep(isDark);
       case 3:
-        return _buildAutoStartStep(isDark);
+        return _buildClaudeStepBareMetal(isDark);
       case 4:
+        return _buildAutoStartStep(isDark);
+      case 5:
         return _buildCompleteStepBareMetal(isDark);
       default:
         return const SizedBox.shrink();
@@ -878,6 +886,168 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
     );
   }
 
+  Widget _buildClaudeCLIStep(bool isDark) {
+    if (_claudeInstalled) {
+      // Claude CLI already installed, auto-advance
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _currentStep == 2) {
+          setState(() => _currentStep = 3);
+        }
+      });
+      return const SizedBox.shrink();
+    }
+
+    // Show installation instructions
+    String description;
+    Widget action;
+
+    if (_nodeInstalled) {
+      description = 'Claude CLI is required but not installed. Click below to install it via npm and authenticate.';
+      action = FilledButton.icon(
+        onPressed: _isLoading ? null : _installClaudeCLI,
+        icon: _isLoading
+            ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+            : const Icon(Icons.download, size: 18),
+        label: const Text('Install Claude CLI'),
+      );
+    } else {
+      description = 'Claude CLI requires Node.js. Install Node.js first, then install Claude CLI.';
+      action = FilledButton.icon(
+        onPressed: _isLoading ? null : _installNode,
+        icon: const Icon(Icons.open_in_new, size: 18),
+        label: const Text('Install Node.js'),
+      );
+    }
+
+    return _StepCard(
+      isDark: isDark,
+      icon: Icons.terminal,
+      title: 'Install Claude CLI',
+      description: description,
+      action: action,
+      checkAction: OutlinedButton(
+        onPressed: _checkPrerequisites,
+        child: const Text('Check Again'),
+      ),
+    );
+  }
+
+  Future<void> _installNode() async {
+    // Open Node.js download page
+    final url = Uri.parse('https://nodejs.org/');
+    if (await canLaunchUrl(url)) {
+      await launchUrl(url);
+    }
+
+    if (mounted) {
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Install Node.js'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Install Node.js via Homebrew:'),
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade200,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    const Expanded(
+                      child: SelectableText(
+                        'brew install node',
+                        style: TextStyle(fontFamily: 'monospace', fontSize: 12),
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.copy, size: 18),
+                      onPressed: () {
+                        Clipboard.setData(const ClipboardData(text: 'brew install node'));
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Copied to clipboard')),
+                        );
+                      },
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+              const Text('Or download from nodejs.org'),
+              const SizedBox(height: 12),
+              const Text('After installation, click "Check Again" below.'),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                _checkPrerequisites();
+              },
+              child: const Text('Check Again'),
+            ),
+          ],
+        ),
+      );
+    }
+  }
+
+  Future<void> _installClaudeCLI() async {
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+
+    try {
+      final service = ref.read(bareMetalServiceProvider);
+      await service.installClaudeCLI();
+
+      // The Terminal will handle installation - show a dialog explaining next steps
+      if (mounted) {
+        showDialog(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Installing Claude CLI'),
+            content: const Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('A Terminal window has opened to install Claude CLI.'),
+                SizedBox(height: 12),
+                Text('After installation completes:'),
+                SizedBox(height: 8),
+                Text('1. The Terminal will prompt you to authenticate'),
+                Text('2. Follow the login instructions in the Terminal'),
+                Text('3. Return here and click "Check Again"'),
+              ],
+            ),
+            actions: [
+              FilledButton(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  _checkPrerequisites();
+                },
+                child: const Text('Check Again'),
+              ),
+            ],
+          ),
+        );
+      }
+    } catch (e) {
+      _error = 'Error installing Claude CLI: $e';
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
   Widget _buildClaudeStepBareMetal(bool isDark) {
     return _StepCard(
       isDark: isDark,
@@ -890,7 +1060,7 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
         label: const Text('Run claude login'),
       ),
       skipAction: TextButton(
-        onPressed: () => setState(() => _currentStep = 3),
+        onPressed: () => setState(() => _currentStep = 4),
         child: const Text('Skip for now'),
       ),
     );
@@ -910,7 +1080,7 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
         label: const Text('Enable Auto-Start'),
       ),
       skipAction: TextButton(
-        onPressed: () => setState(() => _currentStep = 4),
+        onPressed: () => setState(() => _currentStep = 5),
         child: const Text('Skip'),
       ),
     );
