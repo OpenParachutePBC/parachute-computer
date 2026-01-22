@@ -200,10 +200,16 @@ class BareMetalServerService {
     return File(scriptPath).exists();
   }
 
-  /// Check if venv is set up
+  /// Check if venv is set up (python exists)
   Future<bool> isVenvSetup() async {
     final venvPython = path.join(baseServerPath, 'venv', 'bin', 'python');
     return File(venvPython).exists();
+  }
+
+  /// Check if dependencies are installed (uvicorn exists in venv)
+  Future<bool> areDependenciesInstalled() async {
+    final uvicornPath = path.join(baseServerPath, 'venv', 'bin', 'uvicorn');
+    return File(uvicornPath).exists();
   }
 
   /// Get current server status
@@ -326,9 +332,12 @@ class BareMetalServerService {
         return false;
       }
 
-      // If venv not set up, run setup first
-      if (!await isVenvSetup()) {
-        debugPrint('[BareMetalServerService] Venv not found, running setup first');
+      // If venv not set up or dependencies missing, run setup first
+      final venvExists = await isVenvSetup();
+      final depsInstalled = await areDependenciesInstalled();
+
+      if (!venvExists || !depsInstalled) {
+        debugPrint('[BareMetalServerService] Venv exists: $venvExists, deps installed: $depsInstalled - running setup');
         if (!await setupServer()) {
           // setupServer sets _lastError, preserve it
           _updateStatus(BareMetalServerStatus.error);
