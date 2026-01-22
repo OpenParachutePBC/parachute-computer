@@ -497,7 +497,17 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
     // Set the server URL so the app switches to full mode (Chat + Vault tabs)
     // Both Lima VM and Bare Metal run on localhost:3333
     const serverUrl = 'http://localhost:3333';
+
+    debugPrint('[ComputerSetupWizard] Setting server URL to $serverUrl');
     await ref.read(serverUrlProvider.notifier).setServerUrl(serverUrl);
+
+    // Wait for the provider to update and verify it's set
+    // This ensures the app mode switches before we complete onboarding
+    await Future.delayed(const Duration(milliseconds: 100));
+
+    // Force a re-read to verify
+    final savedUrl = await ref.read(serverUrlProvider.future);
+    debugPrint('[ComputerSetupWizard] Server URL after save: $savedUrl');
 
     widget.onComplete?.call();
   }
