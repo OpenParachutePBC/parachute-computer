@@ -154,6 +154,7 @@ jobs:
       # Notarization (if Apple credentials are configured)
       - name: Notarize DMG
         if: env.APPLE_ID != ''
+        timeout-minutes: 35
         run: |
           # List what's in the dist directory for debugging
           echo "Contents of app/dist:"
@@ -187,8 +188,8 @@ jobs:
 
           echo "Submission ID: $SUBMISSION_ID"
 
-          # Poll for status with timeout (10 minutes max)
-          TIMEOUT=600
+          # Poll for status with timeout (30 minutes max - notarization can be slow)
+          TIMEOUT=1800
           ELAPSED=0
           POLL_INTERVAL=15
 
@@ -198,7 +199,7 @@ jobs:
               --password "$APPLE_ID_PASSWORD" \
               --team-id "$APPLE_TEAM_ID" 2>&1)
 
-            STATUS=$(echo "$STATUS_OUTPUT" | grep "status:" | awk '{print $2}')
+            STATUS=$(echo "$STATUS_OUTPUT" | grep "status:" | sed 's/.*status: //')
             echo "Status after ${ELAPSED}s: $STATUS"
 
             if [ "$STATUS" = "Accepted" ]; then
