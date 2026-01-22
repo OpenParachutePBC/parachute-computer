@@ -44,6 +44,9 @@ class BareMetalServerService {
   /// Minimum Python version required
   static const String minPythonVersion = '3.10';
 
+  /// Maximum Python version supported (3.14+ doesn't have all packages yet)
+  static const String maxPythonVersion = '3.13';
+
   BareMetalServerStatus _currentStatus = BareMetalServerStatus.notInstalled;
   String? _lastError;
   final _statusController = StreamController<BareMetalServerStatus>.broadcast();
@@ -100,7 +103,9 @@ class BareMetalServerService {
     return null;
   }
 
-  /// Check if Python 3.10+ is installed
+  /// Check if Python 3.10-3.13 is installed
+  /// Returns true if a compatible version is found
+  /// Note: Python 3.14+ is too new and doesn't have all required packages
   Future<bool> isPythonInstalled() async {
     final python = pythonPath;
     if (python == null) return false;
@@ -117,11 +122,52 @@ class BareMetalServerService {
       final major = int.parse(match.group(1)!);
       final minor = int.parse(match.group(2)!);
 
-      // Require 3.10+
-      return major > 3 || (major == 3 && minor >= 10);
+      // Require 3.10-3.13 (3.14+ doesn't have all packages yet)
+      if (major != 3) return false;
+      return minor >= 10 && minor <= 13;
     } catch (e) {
       debugPrint('[BareMetalServerService] Error checking Python: $e');
       return false;
+    }
+  }
+
+  /// Get detailed Python version info for error messages
+  Future<(bool isCompatible, String? version, String? reason)> checkPythonCompatibility() async {
+    final python = pythonPath;
+    if (python == null) {
+      return (false, null, 'Python not found. Install Python 3.10-3.13 via Homebrew.');
+    }
+
+    try {
+      final result = await Process.run(python, ['--version']);
+      if (result.exitCode != 0) {
+        return (false, null, 'Could not determine Python version.');
+      }
+
+      final output = result.stdout.toString().trim();
+      final match = RegExp(r'Python (\d+)\.(\d+)').firstMatch(output);
+      if (match == null) {
+        return (false, output, 'Could not parse Python version.');
+      }
+
+      final major = int.parse(match.group(1)!);
+      final minor = int.parse(match.group(2)!);
+
+      if (major != 3) {
+        return (false, output, 'Python 3 required (found Python $major).');
+      }
+
+      if (minor < 10) {
+        return (false, output, 'Python 3.10+ required (found 3.$minor). Run: brew install python@3.13 && brew link python@3.13');
+      }
+
+      if (minor > 13) {
+        return (false, output, 'Python 3.$minor is too new - packages not available yet. Install 3.13: brew install python@3.13 && brew link python@3.13');
+      }
+
+      return (true, output, null);
+    } catch (e) {
+      return (false, null, 'Error checking Python: $e');
     }
   }
 

@@ -247,7 +247,7 @@ class _BareMetalSectionState extends ConsumerState<BareMetalSection> {
               const Icon(Icons.info_outline, size: 20, color: BrandColors.warning),
               SizedBox(width: Spacing.sm),
               Text(
-                'Python not installed',
+                'Python 3.10-3.13 required',
                 style: TextStyle(
                   fontWeight: FontWeight.w500,
                   color: isDark ? BrandColors.nightText : BrandColors.charcoal,
@@ -257,7 +257,7 @@ class _BareMetalSectionState extends ConsumerState<BareMetalSection> {
           ),
           SizedBox(height: Spacing.sm),
           Text(
-            'Python 3.10+ is required. Install via Homebrew:',
+            'Install Python 3.13 via Homebrew (3.14+ is too new):',
             style: TextStyle(
               fontSize: TypographyTokens.bodySmall,
               color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
@@ -271,7 +271,31 @@ class _BareMetalSectionState extends ConsumerState<BareMetalSection> {
               borderRadius: BorderRadius.circular(Radii.sm),
             ),
             child: SelectableText(
-              'brew install python@3.12',
+              'brew install python@3.13',
+              style: TextStyle(
+                fontFamily: 'monospace',
+                fontSize: TypographyTokens.bodySmall,
+                color: isDark ? BrandColors.nightText : BrandColors.charcoal,
+              ),
+            ),
+          ),
+          SizedBox(height: Spacing.sm),
+          Text(
+            'Then make it your default Python:',
+            style: TextStyle(
+              fontSize: TypographyTokens.bodySmall,
+              color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+            ),
+          ),
+          SizedBox(height: Spacing.sm),
+          Container(
+            padding: EdgeInsets.all(Spacing.sm),
+            decoration: BoxDecoration(
+              color: isDark ? BrandColors.nightSurfaceElevated : BrandColors.stone,
+              borderRadius: BorderRadius.circular(Radii.sm),
+            ),
+            child: SelectableText(
+              'brew link python@3.13',
               style: TextStyle(
                 fontFamily: 'monospace',
                 fontSize: TypographyTokens.bodySmall,

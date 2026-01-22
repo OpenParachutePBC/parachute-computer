@@ -325,9 +325,14 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('Python 3.10 or later is required.'),
+              const Text('Python 3.10-3.13 is required.'),
+              const SizedBox(height: 8),
+              Text(
+                'Note: Python 3.14+ is too new and doesn\'t have all required packages yet.',
+                style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+              ),
               const SizedBox(height: 12),
-              const Text('You can install via Homebrew:'),
+              const Text('Install via Homebrew:'),
               const SizedBox(height: 8),
               Container(
                 padding: const EdgeInsets.all(12),
@@ -339,14 +344,43 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
                   children: [
                     const Expanded(
                       child: SelectableText(
-                        'brew install python@3.12',
+                        'brew install python@3.13',
                         style: TextStyle(fontFamily: 'monospace', fontSize: 12),
                       ),
                     ),
                     IconButton(
                       icon: const Icon(Icons.copy, size: 18),
                       onPressed: () {
-                        Clipboard.setData(const ClipboardData(text: 'brew install python@3.12'));
+                        Clipboard.setData(const ClipboardData(text: 'brew install python@3.13'));
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Copied to clipboard')),
+                        );
+                      },
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+              const Text('Then make it your default:'),
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade200,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    const Expanded(
+                      child: SelectableText(
+                        'brew link python@3.13',
+                        style: TextStyle(fontFamily: 'monospace', fontSize: 12),
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.copy, size: 18),
+                      onPressed: () {
+                        Clipboard.setData(const ClipboardData(text: 'brew link python@3.13'));
                         ScaffoldMessenger.of(context).showSnackBar(
                           const SnackBar(content: Text('Copied to clipboard')),
                         );
@@ -783,13 +817,31 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
   }
 
   Widget _buildPythonStep(bool isDark) {
+    String description;
+    if (_pythonVersion != null) {
+      // Parse version to give specific advice
+      final match = RegExp(r'Python (\d+)\.(\d+)').firstMatch(_pythonVersion!);
+      if (match != null) {
+        final minor = int.tryParse(match.group(2)!) ?? 0;
+        if (minor > 13) {
+          description = 'Found: $_pythonVersion (too new - need 3.10-3.13)';
+        } else if (minor < 10) {
+          description = 'Found: $_pythonVersion (too old - need 3.10-3.13)';
+        } else {
+          description = 'Found: $_pythonVersion';
+        }
+      } else {
+        description = 'Found: $_pythonVersion (need 3.10-3.13)';
+      }
+    } else {
+      description = 'Python 3.10-3.13 is required. (3.14+ is too new and doesn\'t have all packages yet.)';
+    }
+
     return _StepCard(
       isDark: isDark,
       icon: Icons.code,
       title: 'Install Python',
-      description: _pythonVersion != null
-          ? 'Found: $_pythonVersion (need 3.10+)'
-          : 'Python 3.10 or later is required to run the Parachute server.',
+      description: description,
       action: FilledButton.icon(
         onPressed: _isLoading ? null : _installPython,
         icon: const Icon(Icons.download, size: 18),
