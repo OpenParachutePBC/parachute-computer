@@ -424,45 +424,61 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
       _setupProgressMessage = 'Installing server...';
     });
 
+    String currentStep = 'initializing';
+
     try {
       final service = ref.read(bareMetalServiceProvider);
 
-      // Install base server from bundle
+      // Step 1: Install base server from bundle
+      currentStep = 'copying server files';
       if (!await service.isServerInstalled()) {
         if (mounted) {
           setState(() => _setupProgressMessage = 'Copying server files...');
         }
         final installed = await service.installBaseServer();
         if (!installed) {
-          _error = service.lastError ?? 'Failed to install server';
+          _error = 'Failed while $currentStep: ${service.lastError ?? 'Unknown error'}';
           return;
         }
       }
 
-      // Set up venv and install dependencies
+      // Step 2: Set up venv and install dependencies
+      currentStep = 'installing Python dependencies';
       if (mounted) {
-        setState(() => _setupProgressMessage = 'Installing dependencies...');
+        setState(() => _setupProgressMessage = 'Installing dependencies (this may take a minute)...');
       }
       final setup = await service.setupServer();
       if (!setup) {
-        _error = service.lastError ?? 'Failed to set up server';
+        _error = 'Failed while $currentStep: ${service.lastError ?? 'Unknown error'}';
         return;
       }
 
-      // Start the server
+      // Step 3: Start the server
+      currentStep = 'starting server';
       if (mounted) {
         setState(() => _setupProgressMessage = 'Starting server...');
       }
       final started = await service.startServer();
       if (!started) {
-        _error = service.lastError ?? 'Failed to start server';
+        _error = 'Failed while $currentStep: ${service.lastError ?? 'Unknown error'}';
+        return;
+      }
+
+      // Step 4: Verify server is healthy
+      currentStep = 'verifying server health';
+      if (mounted) {
+        setState(() => _setupProgressMessage = 'Verifying server is responding...');
+      }
+      final healthy = await service.isServerHealthy();
+      if (!healthy) {
+        _error = 'Server started but is not responding. Check logs at /tmp/parachute-server.log';
         return;
       }
 
       _serverInstalled = true;
       _currentStep = 2;
     } catch (e) {
-      _error = 'Error setting up server: $e';
+      _error = 'Error while $currentStep: $e';
     } finally {
       if (mounted) {
         setState(() {
@@ -501,13 +517,24 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
     debugPrint('[ComputerSetupWizard] Setting server URL to $serverUrl');
     await ref.read(serverUrlProvider.notifier).setServerUrl(serverUrl);
 
-    // Wait for the provider to update and verify it's set
-    // This ensures the app mode switches before we complete onboarding
-    await Future.delayed(const Duration(milliseconds: 100));
+    // Wait for the provider state to fully propagate
+    // Poll until we confirm the URL is set (up to 2 seconds)
+    String? savedUrl;
+    for (int i = 0; i < 20; i++) {
+      await Future.delayed(const Duration(milliseconds: 100));
+      savedUrl = await ref.read(serverUrlProvider.future);
+      if (savedUrl == serverUrl) {
+        debugPrint('[ComputerSetupWizard] Server URL confirmed after ${(i + 1) * 100}ms');
+        break;
+      }
+    }
 
-    // Force a re-read to verify
-    final savedUrl = await ref.read(serverUrlProvider.future);
-    debugPrint('[ComputerSetupWizard] Server URL after save: $savedUrl');
+    if (savedUrl != serverUrl) {
+      debugPrint('[ComputerSetupWizard] WARNING: Server URL not confirmed, proceeding anyway. Got: $savedUrl');
+    }
+
+    // Invalidate the app mode provider to force a rebuild with new server URL
+    ref.invalidate(appModeProvider);
 
     widget.onComplete?.call();
   }
