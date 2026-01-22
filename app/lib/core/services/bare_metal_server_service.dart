@@ -87,10 +87,19 @@ class BareMetalServerService {
   bool get isUsingCustomPath => _customBasePath != null;
 
   /// Known paths where Python might be installed
+  /// Includes versioned paths for Homebrew installations
   static const List<String> _pythonPaths = [
-    '/opt/homebrew/bin/python3', // Homebrew Apple Silicon
-    '/usr/local/bin/python3', // Homebrew Intel
-    '/usr/bin/python3', // System Python
+    '/opt/homebrew/bin/python3.13', // Homebrew Apple Silicon (versioned)
+    '/opt/homebrew/bin/python3.12', // Homebrew Apple Silicon (versioned)
+    '/opt/homebrew/bin/python3.11', // Homebrew Apple Silicon (versioned)
+    '/opt/homebrew/bin/python3.10', // Homebrew Apple Silicon (versioned)
+    '/opt/homebrew/bin/python3', // Homebrew Apple Silicon (generic)
+    '/usr/local/bin/python3.13', // Homebrew Intel (versioned)
+    '/usr/local/bin/python3.12', // Homebrew Intel (versioned)
+    '/usr/local/bin/python3.11', // Homebrew Intel (versioned)
+    '/usr/local/bin/python3.10', // Homebrew Intel (versioned)
+    '/usr/local/bin/python3', // Homebrew Intel (generic)
+    '/usr/bin/python3', // System Python (last resort)
   ];
 
   /// Get the path to Python 3, or null if not found
