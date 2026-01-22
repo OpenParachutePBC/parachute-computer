@@ -136,21 +136,28 @@ if [ -n "$CODESIGN_IDENTITY" ]; then
   ENTITLEMENTS="$APP_DIR/macos/Runner/Release.entitlements"
   BUNDLE_PATH="$BUILD_DIR/$APP_NAME.app"
 
-  # Sign all nested frameworks and dylibs first
+  # Sign all .so and .dylib files in Resources (bundled Python binaries, etc.)
+  echo "  Signing bundled binaries in Resources..."
+  find "$BUNDLE_PATH/Contents/Resources" -type f \( -name "*.so" -o -name "*.dylib" \) 2>/dev/null | while read -r file; do
+    echo "    Signing: $(basename "$file")"
+    codesign --force --options runtime --timestamp --sign "$CODESIGN_IDENTITY" "$file" || true
+  done
+
+  # Sign all nested frameworks and dylibs in Frameworks
   find "$BUNDLE_PATH/Contents/Frameworks" -type f \( -name "*.dylib" -o -perm +111 \) 2>/dev/null | while read -r file; do
     echo "  Signing: $file"
-    codesign --force --options runtime --sign "$CODESIGN_IDENTITY" "$file" 2>/dev/null || true
+    codesign --force --options runtime --timestamp --sign "$CODESIGN_IDENTITY" "$file" 2>/dev/null || true
   done
 
   # Sign framework bundles
   find "$BUNDLE_PATH/Contents/Frameworks" -name "*.framework" -type d 2>/dev/null | while read -r framework; do
     echo "  Signing framework: $framework"
-    codesign --force --options runtime --sign "$CODESIGN_IDENTITY" "$framework" 2>/dev/null || true
+    codesign --force --options runtime --timestamp --sign "$CODESIGN_IDENTITY" "$framework" 2>/dev/null || true
   done
 
   # Sign the main app bundle with hardened runtime
   echo "  Signing main bundle..."
-  codesign --force --deep --options runtime \
+  codesign --force --deep --options runtime --timestamp \
     --entitlements "$ENTITLEMENTS" \
     --sign "$CODESIGN_IDENTITY" \
     "$BUNDLE_PATH"
