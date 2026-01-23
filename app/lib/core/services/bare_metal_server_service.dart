@@ -252,6 +252,10 @@ class BareMetalServerService {
     }
 
     try {
+      // Pass the validated Python path to ensure the script uses the same version
+      // we validated in the setup wizard (avoids using wrong Python from PATH)
+      final python = pythonPath;
+
       return await Process.run(
         'bash',
         [scriptPath, command],
@@ -259,6 +263,7 @@ class BareMetalServerService {
         environment: {
           ...Platform.environment,
           'VAULT_PATH': Platform.environment['HOME'] ?? '',
+          if (python != null) 'PYTHON_PATH': python,
         },
       );
     } catch (e) {
