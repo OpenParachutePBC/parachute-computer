@@ -92,11 +92,11 @@ jobs:
       - name: Extract version
         id: version
         run: |
-          if [ -n "${{ inputs.version }}" ]; then
-            VERSION="${{ inputs.version }}"
-          else
-            # Extract from tag (remove 'v' prefix)
-            VERSION="${GITHUB_REF_NAME#v}"
+          # Always use version from pubspec.yaml to match what build_computer_dmg.sh uses
+          VERSION=$(grep '^version:' app/pubspec.yaml | sed 's/version: //' | cut -d'+' -f1)
+          if [ -z "$VERSION" ]; then
+            echo "Error: Could not extract version from pubspec.yaml"
+            exit 1
           fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Building version: $VERSION"
