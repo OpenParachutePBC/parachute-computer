@@ -74,6 +74,8 @@ jobs:
       - name: Create empty base directory if needed
         run: mkdir -p base
 
+      # Note: Flutter cache may show "ambiguous argument 'HEAD'" warnings during restore.
+      # This is harmless - the action recreates the Flutter directory if the cache is stale.
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
