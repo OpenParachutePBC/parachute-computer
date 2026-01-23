@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 /// App flavor set at compile time via --dart-define=FLAVOR=daily|client|computer
 /// Defaults to 'client' if not specified
@@ -351,3 +352,19 @@ String getDefaultVaultPath() {
   // Fallback for platforms where HOME isn't set at compile time
   return '~/Parachute';
 }
+
+// ============================================================================
+// App Version
+// ============================================================================
+
+/// App version info from pubspec.yaml (loaded at runtime via package_info_plus)
+final appVersionProvider = FutureProvider<String>((ref) async {
+  final info = await PackageInfo.fromPlatform();
+  return info.version;
+});
+
+/// Full app version with build number (e.g., "0.2.3+1")
+final appVersionFullProvider = FutureProvider<String>((ref) async {
+  final info = await PackageInfo.fromPlatform();
+  return '${info.version}+${info.buildNumber}';
+});

@@ -2,7 +2,7 @@ name: parachute
 description: "Your extended mind - voice journaling, AI chat, and knowledge vault"
 publish_to: "none"
 
-version: 0.2.8+1
+version: 0.2.3+1
 
 environment:
   sdk: ^3.8.0
@@ -43,6 +43,9 @@ dependencies:
   oauth2: ^2.0.2
   app_links: ^6.3.2
   crypto: ^3.0.3
+
+  # App Info
+  package_info_plus: ^8.0.0
 
   # Utilities
   uuid: ^4.4.0

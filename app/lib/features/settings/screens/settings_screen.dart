@@ -7,7 +7,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/core/providers/app_state_provider.dart'
-    show AppMode, appModeProvider, serverUrlProvider, apiKeyProvider, syncModeProvider, SyncMode, isDailyOnlyFlavor, showLimaControls, isComputerFlavor;
+    show AppMode, appModeProvider, serverUrlProvider, apiKeyProvider, syncModeProvider, SyncMode, isDailyOnlyFlavor, showLimaControls, isComputerFlavor, appVersionProvider;
 import 'package:parachute/core/providers/file_system_provider.dart';
 import 'package:parachute/core/providers/feature_flags_provider.dart';
 import 'package:parachute/core/providers/server_providers.dart';
@@ -1454,6 +1454,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 
   Widget _buildAboutSection(bool isDark) {
+    final versionAsync = ref.watch(appVersionProvider);
+
     return _SettingsCard(
       isDark: isDark,
       child: Column(
@@ -1483,7 +1485,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             value: isDailyOnlyFlavor ? 'Parachute Daily' : 'Parachute',
             isDark: isDark,
           ),
-          _AboutRow(label: 'Version', value: '0.1.0', isDark: isDark),
+          _AboutRow(
+            label: 'Version',
+            value: versionAsync.when(
+              data: (version) => version,
+              loading: () => '...',
+              error: (_, __) => 'Unknown',
+            ),
+            isDark: isDark,
+          ),
           _AboutRow(label: 'Company', value: 'Open Parachute, PBC', isDark: isDark),
 
           SizedBox(height: Spacing.lg),
