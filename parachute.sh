@@ -78,6 +78,33 @@ has_venv() {
     [[ -f "$SCRIPT_DIR/venv/bin/activate" ]]
 }
 
+# Check if existing venv has compatible Python version (3.10-3.13)
+# Returns 0 if compatible, 1 if not
+venv_python_compatible() {
+    if ! has_venv; then
+        return 1
+    fi
+
+    local venv_python="$SCRIPT_DIR/venv/bin/python"
+    if [[ ! -x "$venv_python" ]]; then
+        return 1
+    fi
+
+    local version=$("$venv_python" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null)
+    if [[ -z "$version" ]]; then
+        return 1
+    fi
+
+    local major=$(echo "$version" | cut -d. -f1)
+    local minor=$(echo "$version" | cut -d. -f2)
+
+    if [[ "$major" == "3" ]] && [[ "$minor" -ge 10 ]] && [[ "$minor" -le 13 ]]; then
+        return 0
+    fi
+
+    return 1
+}
+
 # Set up virtual environment and install dependencies
 cmd_setup() {
     echo -e "${BLUE}Setting up Parachute server...${NC}"
@@ -124,9 +151,18 @@ cmd_setup() {
     local python_version=$($PYTHON -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
     echo -e "  Python: $PYTHON (version $python_version)"
 
-    # Create venv if needed
+    # Create venv if needed, or recreate if Python version is incompatible
     if has_venv; then
-        echo -e "${YELLOW}  Virtual environment already exists${NC}"
+        if venv_python_compatible; then
+            echo -e "${YELLOW}  Virtual environment already exists (Python compatible)${NC}"
+        else
+            local old_version=$("$SCRIPT_DIR/venv/bin/python" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || echo "unknown")
+            echo -e "${YELLOW}  Existing venv has incompatible Python ($old_version), recreating...${NC}"
+            rm -rf "$SCRIPT_DIR/venv"
+            echo -e "  Creating virtual environment with $PYTHON..."
+            $PYTHON -m venv "$SCRIPT_DIR/venv"
+            echo -e "${GREEN}  ✓ Virtual environment recreated${NC}"
+        fi
     else
         echo -e "  Creating virtual environment..."
         $PYTHON -m venv "$SCRIPT_DIR/venv"
