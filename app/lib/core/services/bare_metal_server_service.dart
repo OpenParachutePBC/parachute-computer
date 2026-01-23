@@ -559,6 +559,120 @@ class BareMetalServerService {
     }
   }
 
+  /// Get the path to brew, or null if not found
+  String? get brewPath {
+    const brewPaths = [
+      '/opt/homebrew/bin/brew', // Apple Silicon
+      '/usr/local/bin/brew', // Intel
+    ];
+    for (final p in brewPaths) {
+      if (File(p).existsSync()) {
+        return p;
+      }
+    }
+    return null;
+  }
+
+  /// Install Node.js via Homebrew
+  /// Returns (success, errorMessage)
+  Future<(bool, String?)> installNode() async {
+    try {
+      debugPrint('[BareMetalServerService] Installing Node.js via Homebrew...');
+
+      final brew = brewPath;
+      if (brew == null) {
+        return (false, 'Homebrew not found. Please install Homebrew first.');
+      }
+
+      final result = await Process.run(
+        brew,
+        ['install', 'node'],
+        environment: Platform.environment,
+      );
+
+      debugPrint('[BareMetalServerService] brew install node exited with ${result.exitCode}');
+      debugPrint('[BareMetalServerService] stdout: ${result.stdout}');
+      debugPrint('[BareMetalServerService] stderr: ${result.stderr}');
+
+      if (result.exitCode == 0) {
+        return (true, null);
+      } else {
+        final stderr = result.stderr.toString().trim();
+        final stdout = result.stdout.toString().trim();
+        // Check if it's already installed (brew returns non-zero for this)
+        if (stdout.contains('already installed') || stderr.contains('already installed')) {
+          return (true, null);
+        }
+        return (false, stderr.isNotEmpty ? stderr : stdout);
+      }
+    } catch (e) {
+      debugPrint('[BareMetalServerService] Error installing Node.js: $e');
+      return (false, e.toString());
+    }
+  }
+
+  /// Get the path to npm, or null if not found
+  Future<String?> get npmPath async {
+    const npmPaths = [
+      '/opt/homebrew/bin/npm', // Homebrew Apple Silicon
+      '/usr/local/bin/npm', // Homebrew Intel
+    ];
+    for (final p in npmPaths) {
+      if (File(p).existsSync()) {
+        return p;
+      }
+    }
+
+    // Try to find via 'which' command
+    try {
+      final result = await Process.run('which', ['npm']);
+      if (result.exitCode == 0) {
+        final path = result.stdout.toString().trim();
+        if (path.isNotEmpty && File(path).existsSync()) {
+          return path;
+        }
+      }
+    } catch (e) {
+      debugPrint('[BareMetalServerService] Error finding npm: $e');
+    }
+
+    return null;
+  }
+
+  /// Install Claude CLI via npm (non-interactive)
+  /// Returns (success, errorMessage)
+  Future<(bool, String?)> installClaudeCLINonInteractive() async {
+    try {
+      debugPrint('[BareMetalServerService] Installing Claude CLI via npm...');
+
+      final npm = await npmPath;
+      if (npm == null) {
+        return (false, 'npm not found. Please install Node.js first.');
+      }
+
+      final result = await Process.run(
+        npm,
+        ['install', '-g', '@anthropic-ai/claude-code'],
+        environment: Platform.environment,
+      );
+
+      debugPrint('[BareMetalServerService] npm install exited with ${result.exitCode}');
+      debugPrint('[BareMetalServerService] stdout: ${result.stdout}');
+      debugPrint('[BareMetalServerService] stderr: ${result.stderr}');
+
+      if (result.exitCode == 0) {
+        return (true, null);
+      } else {
+        final stderr = result.stderr.toString().trim();
+        final stdout = result.stdout.toString().trim();
+        return (false, stderr.isNotEmpty ? stderr : stdout);
+      }
+    } catch (e) {
+      debugPrint('[BareMetalServerService] Error installing Claude CLI: $e');
+      return (false, e.toString());
+    }
+  }
+
   /// Run claude login (opens Terminal for interactive auth)
   ///
   /// If [vaultPath] is provided, sets HOME to the vault path so credentials

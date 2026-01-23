@@ -7,7 +7,6 @@ import 'package:parachute/core/providers/app_state_provider.dart';
 import 'package:parachute/core/providers/lima_vm_provider.dart';
 import 'package:parachute/core/providers/bare_metal_provider.dart';
 import 'package:parachute/core/services/lima_vm_service.dart';
-import 'package:parachute/core/services/bare_metal_server_service.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 /// Setup wizard for Parachute Computer
@@ -1158,20 +1157,28 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
     Widget action;
 
     if (_nodeInstalled) {
-      description = 'Claude CLI is required but not installed. Click below to install it via npm and authenticate.';
+      // Use progress message if installing, otherwise show default description
+      description = _isLoading && _setupProgressMessage != null
+          ? _setupProgressMessage!
+          : 'Claude CLI provides the AI capabilities. Click below to install it automatically.';
       action = FilledButton.icon(
         onPressed: _isLoading ? null : _installClaudeCLI,
         icon: _isLoading
             ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
             : const Icon(Icons.download, size: 18),
-        label: const Text('Install Claude CLI'),
+        label: Text(_isLoading ? 'Installing...' : 'Install Claude CLI'),
       );
     } else {
-      description = 'Claude CLI requires Node.js. Install Node.js first, then install Claude CLI.';
+      // Use progress message if installing, otherwise show default description
+      description = _isLoading && _setupProgressMessage != null
+          ? _setupProgressMessage!
+          : 'Claude CLI requires Node.js. Click below to install it automatically via Homebrew.';
       action = FilledButton.icon(
         onPressed: _isLoading ? null : _installNode,
-        icon: const Icon(Icons.open_in_new, size: 18),
-        label: const Text('Install Node.js'),
+        icon: _isLoading
+            ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+            : const Icon(Icons.download, size: 18),
+        label: Text(_isLoading ? 'Installing...' : 'Install Node.js'),
       );
     }
 
@@ -1189,70 +1196,36 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
   }
 
   Future<void> _installNode() async {
-    // Open Node.js download page
-    final url = Uri.parse('https://nodejs.org/');
-    if (await canLaunchUrl(url)) {
-      await launchUrl(url);
-    }
+    setState(() {
+      _isLoading = true;
+      _error = null;
+      _setupProgressMessage = 'Installing Node.js via Homebrew...';
+    });
 
-    if (mounted) {
-      showDialog(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('Install Node.js'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('Install Node.js via Homebrew:'),
-              const SizedBox(height: 12),
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade200,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Row(
-                  children: [
-                    const Expanded(
-                      child: SelectableText(
-                        'brew install node',
-                        style: TextStyle(fontFamily: 'monospace', fontSize: 12),
-                      ),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.copy, size: 18),
-                      onPressed: () {
-                        Clipboard.setData(const ClipboardData(text: 'brew install node'));
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Copied to clipboard')),
-                        );
-                      },
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 12),
-              const Text('Or download from nodejs.org'),
-              const SizedBox(height: 12),
-              const Text('After installation, click "Check Again" below.'),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () {
-                Navigator.pop(ctx);
-                _checkPrerequisites();
-              },
-              child: const Text('Check Again'),
-            ),
-          ],
-        ),
-      );
+    try {
+      final service = ref.read(bareMetalServiceProvider);
+      final (success, errorMessage) = await service.installNode();
+
+      if (success) {
+        // Node installed successfully, check prerequisites again
+        setState(() {
+          _nodeInstalled = true;
+          _setupProgressMessage = null;
+        });
+        await _checkPrerequisites();
+      } else {
+        setState(() {
+          _error = errorMessage ?? 'Failed to install Node.js';
+          _setupProgressMessage = null;
+        });
+      }
+    } catch (e) {
+      setState(() {
+        _error = 'Error installing Node.js: $e';
+        _setupProgressMessage = null;
+      });
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -1260,46 +1233,34 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
     setState(() {
       _isLoading = true;
       _error = null;
+      _setupProgressMessage = 'Installing Claude CLI via npm...';
     });
 
     try {
       final service = ref.read(bareMetalServiceProvider);
-      // Pass vault path so credentials are stored in vault for portability
-      await service.installClaudeCLI(vaultPath: _selectedVaultPath);
 
-      // The Terminal will handle installation - show a dialog explaining next steps
-      if (mounted) {
-        showDialog(
-          context: context,
-          builder: (ctx) => AlertDialog(
-            title: const Text('Installing Claude CLI'),
-            content: const Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('A Terminal window has opened to install Claude CLI.'),
-                SizedBox(height: 12),
-                Text('After installation completes:'),
-                SizedBox(height: 8),
-                Text('1. The Terminal will prompt you to authenticate'),
-                Text('2. Follow the login instructions in the Terminal'),
-                Text('3. Return here and click "Check Again"'),
-              ],
-            ),
-            actions: [
-              FilledButton(
-                onPressed: () {
-                  Navigator.pop(ctx);
-                  _checkPrerequisites();
-                },
-                child: const Text('Check Again'),
-              ),
-            ],
-          ),
-        );
+      // Install Claude CLI non-interactively
+      final (success, errorMessage) = await service.installClaudeCLINonInteractive();
+
+      if (success) {
+        // CLI installed successfully, update state and move to login step
+        setState(() {
+          _claudeInstalled = true;
+          _setupProgressMessage = null;
+        });
+        // Move to Claude login step
+        setState(() => _currentStep = 4);
+      } else {
+        setState(() {
+          _error = errorMessage ?? 'Failed to install Claude CLI';
+          _setupProgressMessage = null;
+        });
       }
     } catch (e) {
-      _error = 'Error installing Claude CLI: $e';
+      setState(() {
+        _error = 'Error installing Claude CLI: $e';
+        _setupProgressMessage = null;
+      });
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
