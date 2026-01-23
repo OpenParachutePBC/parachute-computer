@@ -1152,15 +1152,19 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
       return const SizedBox.shrink();
     }
 
-    // Show installation instructions
+    // Build the step content based on current state
+    // macOS: Uses Homebrew for Node.js and npm for Claude CLI
+    String title;
     String description;
     Widget action;
+    Widget secondaryAction;
 
     if (_nodeInstalled) {
-      // Use progress message if installing, otherwise show default description
+      // Node is installed, now install Claude CLI
+      title = 'Install Claude CLI';
       description = _isLoading && _setupProgressMessage != null
           ? _setupProgressMessage!
-          : 'Claude CLI provides the AI capabilities. Click below to install it automatically.';
+          : 'Claude CLI enables AI-powered coding assistance. This may take a minute.';
       action = FilledButton.icon(
         onPressed: _isLoading ? null : _installClaudeCLI,
         icon: _isLoading
@@ -1168,11 +1172,17 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
             : const Icon(Icons.download, size: 18),
         label: Text(_isLoading ? 'Installing...' : 'Install Claude CLI'),
       );
+      // Manual fallback button
+      secondaryAction = TextButton(
+        onPressed: _isLoading ? null : _showManualClaudeCLIInstructions,
+        child: const Text('Install manually'),
+      );
     } else {
-      // Use progress message if installing, otherwise show default description
+      // Need to install Node.js first
+      title = 'Install Node.js';
       description = _isLoading && _setupProgressMessage != null
           ? _setupProgressMessage!
-          : 'Claude CLI requires Node.js. Click below to install it automatically via Homebrew.';
+          : 'Node.js is required for Claude CLI. Installing via Homebrew may take a few minutes.';
       action = FilledButton.icon(
         onPressed: _isLoading ? null : _installNode,
         icon: _isLoading
@@ -1180,17 +1190,158 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
             : const Icon(Icons.download, size: 18),
         label: Text(_isLoading ? 'Installing...' : 'Install Node.js'),
       );
+      // Manual fallback button
+      secondaryAction = TextButton(
+        onPressed: _isLoading ? null : _showManualNodeInstructions,
+        child: const Text('Install manually'),
+      );
     }
 
     return _StepCard(
       isDark: isDark,
       icon: Icons.terminal,
-      title: 'Install Claude CLI',
+      title: title,
       description: description,
       action: action,
       checkAction: OutlinedButton(
-        onPressed: _checkPrerequisites,
+        onPressed: _isLoading ? null : _checkPrerequisites,
         child: const Text('Check Again'),
+      ),
+      skipAction: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          secondaryAction,
+          TextButton(
+            onPressed: _isLoading ? null : () => setState(() => _currentStep = 4),
+            child: const Text('Skip CLI setup'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Show manual installation instructions for Node.js (macOS)
+  void _showManualNodeInstructions() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Install Node.js Manually'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Run this command in Terminal:'),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade200,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                children: [
+                  const Expanded(
+                    child: SelectableText(
+                      'brew install node',
+                      style: TextStyle(fontFamily: 'monospace', fontSize: 12),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.copy, size: 18),
+                    onPressed: () {
+                      Clipboard.setData(const ClipboardData(text: 'brew install node'));
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Copied to clipboard')),
+                      );
+                    },
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            const Text('After installation completes, click "Check Again".'),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Close'),
+          ),
+          FilledButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              _checkPrerequisites();
+            },
+            child: const Text('Check Again'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Show manual installation instructions for Claude CLI (macOS)
+  void _showManualClaudeCLIInstructions() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Install Claude CLI Manually'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Run this command in Terminal:'),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade200,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                children: [
+                  const Expanded(
+                    child: SelectableText(
+                      'npm install -g @anthropic-ai/claude-code',
+                      style: TextStyle(fontFamily: 'monospace', fontSize: 12),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.copy, size: 18),
+                    onPressed: () {
+                      Clipboard.setData(const ClipboardData(
+                        text: 'npm install -g @anthropic-ai/claude-code',
+                      ));
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Copied to clipboard')),
+                      );
+                    },
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'If you get a permission error, try:\nsudo npm install -g @anthropic-ai/claude-code',
+              style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+            ),
+            const SizedBox(height: 12),
+            const Text('After installation completes, click "Check Again".'),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Close'),
+          ),
+          FilledButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              _checkPrerequisites();
+            },
+            child: const Text('Check Again'),
+          ),
+        ],
       ),
     );
   }

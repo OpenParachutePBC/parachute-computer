@@ -573,7 +573,11 @@ class BareMetalServerService {
     return null;
   }
 
-  /// Install Node.js via Homebrew
+  /// Install Node.js via Homebrew (macOS only)
+  ///
+  /// This runs `brew install node` which can take 1-3 minutes depending on
+  /// network speed and whether dependencies need to be built.
+  ///
   /// Returns (success, errorMessage)
   Future<(bool, String?)> installNode() async {
     try {
@@ -584,10 +588,18 @@ class BareMetalServerService {
         return (false, 'Homebrew not found. Please install Homebrew first.');
       }
 
+      // brew install can take several minutes, especially on first install
+      // or if dependencies need to be built from source
       final result = await Process.run(
         brew,
         ['install', 'node'],
         environment: Platform.environment,
+      ).timeout(
+        const Duration(minutes: 10),
+        onTimeout: () {
+          debugPrint('[BareMetalServerService] brew install node timed out after 10 minutes');
+          return ProcessResult(-1, -1, '', 'Installation timed out after 10 minutes. Try running "brew install node" manually in Terminal.');
+        },
       );
 
       debugPrint('[BareMetalServerService] brew install node exited with ${result.exitCode}');
@@ -603,7 +615,9 @@ class BareMetalServerService {
         if (stdout.contains('already installed') || stderr.contains('already installed')) {
           return (true, null);
         }
-        return (false, stderr.isNotEmpty ? stderr : stdout);
+        // Provide helpful error message
+        final errorMsg = stderr.isNotEmpty ? stderr : stdout;
+        return (false, errorMsg.isNotEmpty ? errorMsg : 'Installation failed with exit code ${result.exitCode}');
       }
     } catch (e) {
       debugPrint('[BareMetalServerService] Error installing Node.js: $e');
@@ -639,7 +653,14 @@ class BareMetalServerService {
     return null;
   }
 
-  /// Install Claude CLI via npm (non-interactive)
+  /// Install Claude CLI via npm (non-interactive, macOS only)
+  ///
+  /// This runs `npm install -g @anthropic-ai/claude-code` which typically
+  /// takes 30-60 seconds depending on network speed.
+  ///
+  /// Note: May require sudo on some systems if npm global directory isn't writable.
+  /// Homebrew-installed npm typically doesn't need sudo.
+  ///
   /// Returns (success, errorMessage)
   Future<(bool, String?)> installClaudeCLINonInteractive() async {
     try {
@@ -650,10 +671,17 @@ class BareMetalServerService {
         return (false, 'npm not found. Please install Node.js first.');
       }
 
+      // npm global installs typically take 30-60 seconds
       final result = await Process.run(
         npm,
         ['install', '-g', '@anthropic-ai/claude-code'],
         environment: Platform.environment,
+      ).timeout(
+        const Duration(minutes: 5),
+        onTimeout: () {
+          debugPrint('[BareMetalServerService] npm install timed out after 5 minutes');
+          return ProcessResult(-1, -1, '', 'Installation timed out after 5 minutes. Try running "npm install -g @anthropic-ai/claude-code" manually in Terminal.');
+        },
       );
 
       debugPrint('[BareMetalServerService] npm install exited with ${result.exitCode}');
@@ -665,7 +693,12 @@ class BareMetalServerService {
       } else {
         final stderr = result.stderr.toString().trim();
         final stdout = result.stdout.toString().trim();
-        return (false, stderr.isNotEmpty ? stderr : stdout);
+        // Check for permission errors
+        if (stderr.contains('EACCES') || stderr.contains('permission denied')) {
+          return (false, 'Permission denied. Try running in Terminal:\nsudo npm install -g @anthropic-ai/claude-code');
+        }
+        final errorMsg = stderr.isNotEmpty ? stderr : stdout;
+        return (false, errorMsg.isNotEmpty ? errorMsg : 'Installation failed with exit code ${result.exitCode}');
       }
     } catch (e) {
       debugPrint('[BareMetalServerService] Error installing Claude CLI: $e');
