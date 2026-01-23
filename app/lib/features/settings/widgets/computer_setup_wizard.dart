@@ -56,8 +56,10 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
   String? _vmProgressMessage;
 
   // Bare metal path state
+  bool _homebrewInstalledBareMetal = false;
   bool _pythonInstalled = false;
   String? _pythonVersion;
+  String? _pythonCompatibilityReason;
   bool _serverInstalled = false;
   bool _claudeInstalled = false;
   bool _nodeInstalled = false;
@@ -144,21 +146,37 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
   Future<void> _checkBareMetalPrerequisites() async {
     final service = ref.read(bareMetalServiceProvider);
 
-    _pythonInstalled = await service.isPythonInstalled();
-    _pythonVersion = await service.getPythonVersion();
+    // Check Homebrew first (needed for Python installation)
+    _homebrewInstalledBareMetal = _brewPaths.any((p) => File(p).existsSync());
+
+    // Check Python with detailed compatibility info
+    final pythonCompat = await service.checkPythonCompatibility();
+    _pythonInstalled = pythonCompat.$1;
+    _pythonVersion = pythonCompat.$2;
+    _pythonCompatibilityReason = pythonCompat.$3;
+
     _serverInstalled = await service.isServerInstalled();
     _claudeInstalled = await service.isClaudeInstalled();
     _nodeInstalled = await service.isNodeInstalled();
 
     // Determine starting step
-    if (!_pythonInstalled) {
+    // Step 0: Homebrew (if not installed)
+    // Step 1: Python (if not compatible)
+    // Step 2: Server setup
+    // Step 3: Claude CLI
+    // Step 4: Claude login
+    // Step 5: Auto-start
+    // Step 6: Complete
+    if (!_homebrewInstalledBareMetal) {
       _currentStep = 0;
-    } else if (!_serverInstalled) {
+    } else if (!_pythonInstalled) {
       _currentStep = 1;
-    } else if (!_claudeInstalled) {
+    } else if (!_serverInstalled) {
       _currentStep = 2;
+    } else if (!_claudeInstalled) {
+      _currentStep = 3;
     } else {
-      _currentStep = 3; // Claude auth step
+      _currentStep = 4; // Claude auth step
     }
   }
 
@@ -348,30 +366,17 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
   // ============================================================
 
   Future<void> _installPython() async {
-    // Open Python download page
-    final url = Uri.parse('https://www.python.org/downloads/');
-    if (await canLaunchUrl(url)) {
-      await launchUrl(url);
-    }
-
     if (mounted) {
       showDialog(
         context: context,
         builder: (ctx) => AlertDialog(
-          title: const Text('Install Python'),
+          title: const Text('Install Python 3.13'),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('Python 3.10-3.13 is required.'),
-              const SizedBox(height: 8),
-              Text(
-                'Note: Python 3.14+ is too new and doesn\'t have all required packages yet.',
-                style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
-              ),
+              const Text('Run these commands in Terminal:'),
               const SizedBox(height: 12),
-              const Text('Install via Homebrew:'),
-              const SizedBox(height: 8),
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
@@ -399,7 +404,7 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
                 ),
               ),
               const SizedBox(height: 12),
-              const Text('Then make it your default:'),
+              const Text('Then make it available in your PATH:'),
               const SizedBox(height: 8),
               Container(
                 padding: const EdgeInsets.all(12),
@@ -428,13 +433,18 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
                 ),
               ),
               const SizedBox(height: 12),
+              Text(
+                'Note: Python 3.14+ is too new - some packages aren\'t available yet.',
+                style: TextStyle(fontSize: 12, color: Colors.grey.shade600, fontStyle: FontStyle.italic),
+              ),
+              const SizedBox(height: 12),
               const Text('After installation, click "Check Again" below.'),
             ],
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(ctx),
-              child: const Text('Cancel'),
+              child: const Text('Close'),
             ),
             FilledButton(
               onPressed: () {
@@ -508,7 +518,7 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
       }
 
       _serverInstalled = true;
-      _currentStep = 2;
+      _currentStep = 3;
     } catch (e) {
       _error = 'Error while $currentStep: $e';
     } finally {
@@ -525,7 +535,7 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
     final service = ref.read(bareMetalServiceProvider);
     // Pass vault path so credentials are stored in vault for portability
     await service.runClaudeLogin(vaultPath: _selectedVaultPath);
-    setState(() => _currentStep = 4);
+    setState(() => _currentStep = 5);
   }
 
   Future<void> _enableAutoStart() async {
@@ -534,7 +544,7 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
     try {
       final service = ref.read(bareMetalServiceProvider);
       await service.enableAutoStart();
-      _currentStep = 5;
+      _currentStep = 6;
     } catch (e) {
       _error = 'Error enabling auto-start: $e';
     } finally {
@@ -657,7 +667,7 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
   Widget _buildProgressIndicator(bool isDark) {
     final steps = _selectedMode == ServerMode.limaVM
         ? ['Homebrew', 'Lima', 'VM', 'Claude', 'Ready']
-        : ['Python', 'Server', 'CLI', 'Login', 'Auto-start', 'Ready'];
+        : ['Homebrew', 'Python', 'Server', 'CLI', 'Login', 'Auto-start', 'Ready'];
 
     return Row(
       children: List.generate(steps.length, (index) {
@@ -1035,41 +1045,60 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
   Widget _buildBareMetalStep(bool isDark) {
     switch (_currentStep) {
       case 0:
-        return _buildPythonStep(isDark);
+        return _buildHomebrewStepBareMetal(isDark);
       case 1:
-        return _buildServerSetupStep(isDark);
+        return _buildPythonStep(isDark);
       case 2:
-        return _buildClaudeCLIStep(isDark);
+        return _buildServerSetupStep(isDark);
       case 3:
-        return _buildClaudeStepBareMetal(isDark);
+        return _buildClaudeCLIStep(isDark);
       case 4:
-        return _buildAutoStartStep(isDark);
+        return _buildClaudeStepBareMetal(isDark);
       case 5:
+        return _buildAutoStartStep(isDark);
+      case 6:
         return _buildCompleteStepBareMetal(isDark);
       default:
         return const SizedBox.shrink();
     }
   }
 
+  Widget _buildHomebrewStepBareMetal(bool isDark) {
+    return _StepCard(
+      isDark: isDark,
+      icon: Icons.local_drink,
+      title: 'Install Homebrew',
+      description: 'Homebrew is a package manager for macOS. We\'ll use it to install Python and other dependencies.',
+      action: FilledButton.icon(
+        onPressed: _isLoading ? null : _installHomebrew,
+        icon: const Icon(Icons.open_in_new, size: 18),
+        label: const Text('Install Homebrew'),
+      ),
+      checkAction: OutlinedButton(
+        onPressed: _checkPrerequisites,
+        child: const Text('Check Again'),
+      ),
+      backAction: TextButton(
+        onPressed: () => setState(() => _selectedMode = null),
+        child: const Text('← Back'),
+      ),
+    );
+  }
+
   Widget _buildPythonStep(bool isDark) {
+    // Build description based on current state
     String description;
-    if (_pythonVersion != null) {
-      // Parse version to give specific advice
-      final match = RegExp(r'Python (\d+)\.(\d+)').firstMatch(_pythonVersion!);
-      if (match != null) {
-        final minor = int.tryParse(match.group(2)!) ?? 0;
-        if (minor > 13) {
-          description = 'Found: $_pythonVersion (too new - need 3.10-3.13)';
-        } else if (minor < 10) {
-          description = 'Found: $_pythonVersion (too old - need 3.10-3.13)';
-        } else {
-          description = 'Found: $_pythonVersion';
-        }
-      } else {
-        description = 'Found: $_pythonVersion (need 3.10-3.13)';
-      }
+    if (_pythonVersion != null && _pythonCompatibilityReason != null) {
+      // We found Python but it's not compatible
+      description = 'Found: $_pythonVersion\n\n${_pythonCompatibilityReason!}';
+    } else if (_pythonVersion != null) {
+      // Python found and compatible (shouldn't reach this step, but just in case)
+      description = 'Found: $_pythonVersion (compatible)';
+    } else if (_pythonCompatibilityReason != null) {
+      // No Python found
+      description = _pythonCompatibilityReason!;
     } else {
-      description = 'Python 3.10-3.13 is required. (3.14+ is too new and doesn\'t have all packages yet.)';
+      description = 'Python 3.10-3.13 is required for the Parachute server.';
     }
 
     return _StepCard(
@@ -1080,14 +1109,14 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
       action: FilledButton.icon(
         onPressed: _isLoading ? null : _installPython,
         icon: const Icon(Icons.download, size: 18),
-        label: const Text('Install Python'),
+        label: const Text('Install Python 3.13'),
       ),
       checkAction: OutlinedButton(
         onPressed: _checkPrerequisites,
         child: const Text('Check Again'),
       ),
       backAction: TextButton(
-        onPressed: () => setState(() => _selectedMode = null),
+        onPressed: () => setState(() => _currentStep = 0),
         child: const Text('← Back'),
       ),
     );
@@ -1117,8 +1146,8 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
     if (_claudeInstalled) {
       // Claude CLI already installed, auto-advance
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted && _currentStep == 2) {
-          setState(() => _currentStep = 3);
+        if (mounted && _currentStep == 3) {
+          setState(() => _currentStep = 4);
         }
       });
       return const SizedBox.shrink();
@@ -1288,7 +1317,7 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
         label: const Text('Run claude login'),
       ),
       skipAction: TextButton(
-        onPressed: () => setState(() => _currentStep = 4),
+        onPressed: () => setState(() => _currentStep = 5),
         child: const Text('Skip for now'),
       ),
     );
@@ -1308,7 +1337,7 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
         label: const Text('Enable Auto-Start'),
       ),
       skipAction: TextButton(
-        onPressed: () => setState(() => _currentStep = 5),
+        onPressed: () => setState(() => _currentStep = 6),
         child: const Text('Skip'),
       ),
     );
