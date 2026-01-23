@@ -93,6 +93,21 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     // Cancel any existing subscription
     _chatMessagesSubscription?.close();
 
+    // Check for path migration on initial load (before listener fires)
+    final initialState = ref.read(chatMessagesProvider);
+    debugPrint('[ChatScreen] _setupChatMessagesListener - initialState.pathMigrationInfo: ${initialState.pathMigrationInfo}');
+    debugPrint('[ChatScreen] _setupChatMessagesListener - initialState.workingDirectory: ${initialState.workingDirectory}');
+    if (initialState.pathMigrationInfo != null) {
+      debugPrint('[ChatScreen] Path migration info detected on initial load, scheduling dialog');
+      // Use post-frame callback to ensure dialog shows after build completes
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && ref.read(chatMessagesProvider).pathMigrationInfo != null) {
+          debugPrint('[ChatScreen] Showing path migration dialog from initial load');
+          _showPathMigrationDialog(ref.read(chatMessagesProvider).pathMigrationInfo!);
+        }
+      });
+    }
+
     _chatMessagesSubscription = ref.listenManual(
       chatMessagesProvider,
       (previous, next) {
@@ -121,6 +136,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         // Show session recovery dialog when session is unavailable
         if (next.sessionUnavailable != null && previous?.sessionUnavailable == null) {
           _showSessionRecoveryDialog(next.sessionUnavailable!);
+        }
+
+        // Show path migration dialog when session needs migration
+        if (next.pathMigrationInfo != null && previous?.pathMigrationInfo == null) {
+          debugPrint('[ChatScreen] Path migration info changed: ${next.pathMigrationInfo}');
+          _showPathMigrationDialog(next.pathMigrationInfo!);
         }
       },
       fireImmediately: false,
@@ -304,6 +325,64 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                 ref.read(chatMessagesProvider.notifier).recoverSession('fresh_start');
               },
               child: const Text('Start Fresh'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _showPathMigrationDialog(PathMigrationInfo info) {
+    showDialog(
+      context: context,
+      barrierDismissible: true,
+      builder: (dialogContext) {
+        final theme = Theme.of(dialogContext);
+        return AlertDialog(
+          title: const Text('Session from Another Device'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'This session was created on a different Parachute instance. '
+                'The conversation history is preserved, but the transcript file '
+                'is not available locally.',
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Original location:',
+                style: theme.textTheme.labelSmall,
+              ),
+              Text(
+                info.sessionVaultRoot,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  fontFamily: 'monospace',
+                  color: theme.colorScheme.secondary,
+                ),
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'You can continue this conversation normally. '
+                'A new transcript will be created locally.',
+                style: TextStyle(fontStyle: FontStyle.italic),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(dialogContext).pop();
+                ref.read(chatMessagesProvider.notifier).dismissPathMigration();
+              },
+              child: const Text('Go Back'),
+            ),
+            FilledButton(
+              onPressed: () {
+                Navigator.of(dialogContext).pop();
+                ref.read(chatMessagesProvider.notifier).acknowledgeMigration();
+              },
+              child: const Text('Continue'),
             ),
           ],
         );
@@ -569,6 +648,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           if (chatState.error != null)
             _buildErrorBanner(context, isDark, chatState.error!),
 
+          // Path migration banner (shown when session needs migration)
+          if (chatState.pathMigrationInfo != null)
+            _buildMigrationBanner(context, isDark, chatState.pathMigrationInfo!),
+
           // Resume button for archived sessions
           if (chatState.isViewingArchived)
             _buildContinueButton(context, isDark, chatState),
@@ -577,18 +660,20 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           if (chatState.pendingUserQuestion != null)
             _buildUserQuestionCard(chatState.pendingUserQuestion!),
 
-          // Input field - disabled when viewing archived sessions (use Resume button)
+          // Input field - disabled when viewing archived sessions or pending migration
           ChatInput(
             onSend: _handleSend,
             onStop: _handleStop,
-            enabled: !chatState.isStreaming && !chatState.isViewingArchived,
+            enabled: !chatState.isStreaming && !chatState.isViewingArchived && chatState.pathMigrationInfo == null,
             isStreaming: chatState.isStreaming,
             initialText: widget.initialMessage,
             hintText: _pendingInitialContext != null
                 ? 'Ask about this recording...'
                 : chatState.isViewingArchived
                     ? 'Click Resume to continue this conversation'
-                    : 'Message your vault...',
+                    : chatState.pathMigrationInfo != null
+                        ? 'Migration required - see dialog'
+                        : 'Message your vault...',
           ),
         ],
       ),
@@ -1017,6 +1102,45 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMigrationBanner(BuildContext context, bool isDark, PathMigrationInfo info) {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: Spacing.md, vertical: Spacing.xs),
+      padding: const EdgeInsets.all(Spacing.sm),
+      decoration: BoxDecoration(
+        color: isDark
+            ? BrandColors.turquoise.withValues(alpha: 0.15)
+            : BrandColors.turquoise.withValues(alpha: 0.1),
+        borderRadius: Radii.badge,
+        border: Border.all(
+          color: BrandColors.turquoise.withValues(alpha: 0.3),
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            Icons.cloud_sync,
+            size: 18,
+            color: BrandColors.turquoise,
+          ),
+          const SizedBox(width: Spacing.sm),
+          Expanded(
+            child: Text(
+              'Session from another device',
+              style: TextStyle(
+                fontSize: TypographyTokens.bodySmall,
+                color: isDark ? BrandColors.nightText : BrandColors.charcoal,
+              ),
+            ),
+          ),
+          TextButton(
+            onPressed: () => _showPathMigrationDialog(info),
+            child: const Text('Details'),
           ),
         ],
       ),

@@ -293,3 +293,61 @@ class OnboardingNotifier extends AsyncNotifier<bool> {
 final onboardingCompleteProvider = AsyncNotifierProvider<OnboardingNotifier, bool>(() {
   return OnboardingNotifier();
 });
+
+// ============================================================================
+// Vault Path Configuration
+// ============================================================================
+
+/// Notifier for vault path with persistence
+///
+/// The vault is where all Parachute data lives: journals, chats, files.
+/// Common locations:
+/// - ~/Parachute: Dedicated vault folder (recommended)
+/// - ~: Home directory as vault (for advanced users)
+/// - Custom path: User-specified location
+class VaultPathNotifier extends AsyncNotifier<String?> {
+  static const _key = 'parachute_vault_path';
+
+  @override
+  Future<String?> build() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_key);
+  }
+
+  Future<void> setVaultPath(String? path) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (path != null && path.isNotEmpty) {
+      await prefs.setString(_key, path);
+      state = AsyncData(path);
+    } else {
+      await prefs.remove(_key);
+      state = const AsyncData(null);
+    }
+  }
+}
+
+/// Vault path provider with notifier for updates
+final vaultPathProvider = AsyncNotifierProvider<VaultPathNotifier, String?>(() {
+  return VaultPathNotifier();
+});
+
+/// Default vault path options
+class VaultPathOption {
+  final String path;
+  final String label;
+  final String description;
+
+  const VaultPathOption({
+    required this.path,
+    required this.label,
+    required this.description,
+  });
+}
+
+/// Get the default vault path (~/Parachute)
+String getDefaultVaultPath() {
+  final home = const String.fromEnvironment('HOME', defaultValue: '');
+  if (home.isNotEmpty) return '$home/Parachute';
+  // Fallback for platforms where HOME isn't set at compile time
+  return '~/Parachute';
+}

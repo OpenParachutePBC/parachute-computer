@@ -555,13 +555,26 @@ class BareMetalServerService {
   }
 
   /// Run claude login (opens Terminal for interactive auth)
-  Future<bool> runClaudeLogin() async {
+  ///
+  /// If [vaultPath] is provided, sets HOME to the vault path so credentials
+  /// are stored in {vault}/.claude/ making the vault fully self-contained
+  /// and portable across machines.
+  Future<bool> runClaudeLogin({String? vaultPath}) async {
     try {
-      debugPrint('[BareMetalServerService] Running claude login...');
+      debugPrint('[BareMetalServerService] Running claude login (vault: $vaultPath)...');
 
       // Open Terminal with claude login command
       if (Platform.isMacOS) {
-        final script = 'tell application "Terminal" to do script "claude login"';
+        String command;
+        if (vaultPath != null && vaultPath.isNotEmpty) {
+          // Self-contained mode: store credentials in vault
+          // Use single quotes around the path to handle spaces
+          command = "HOME='$vaultPath' claude login";
+        } else {
+          // Standard mode: use system-wide credentials
+          command = 'claude login';
+        }
+        final script = 'tell application "Terminal" to do script "$command"';
         await Process.run('osascript', ['-e', script]);
         return true;
       }
@@ -574,13 +587,23 @@ class BareMetalServerService {
   }
 
   /// Install Claude CLI via npm (opens Terminal)
-  Future<bool> installClaudeCLI() async {
+  ///
+  /// If [vaultPath] is provided, sets HOME to the vault path so credentials
+  /// are stored in {vault}/.claude/ making the vault fully self-contained.
+  Future<bool> installClaudeCLI({String? vaultPath}) async {
     try {
-      debugPrint('[BareMetalServerService] Installing Claude CLI...');
+      debugPrint('[BareMetalServerService] Installing Claude CLI (vault: $vaultPath)...');
 
       if (Platform.isMacOS) {
         // Install globally via npm, then run claude login
-        final script = 'tell application "Terminal" to do script "npm install -g @anthropic-ai/claude-code && claude login"';
+        String loginCmd;
+        if (vaultPath != null && vaultPath.isNotEmpty) {
+          // Use single quotes around the path to handle spaces
+          loginCmd = "HOME='$vaultPath' claude login";
+        } else {
+          loginCmd = 'claude login';
+        }
+        final script = 'tell application "Terminal" to do script "npm install -g @anthropic-ai/claude-code && $loginCmd"';
         await Process.run('osascript', ['-e', script]);
         return true;
       }

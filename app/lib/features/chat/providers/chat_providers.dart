@@ -238,6 +238,10 @@ class ChatMessagesState {
   /// Map contains: requestId, sessionId, questions
   final Map<String, dynamic>? pendingUserQuestion;
 
+  /// Path migration info - set when session needs migration from old /vault/ paths
+  /// When set, UI should show migration prompt before allowing messages
+  final PathMigrationInfo? pathMigrationInfo;
+
   const ChatMessagesState({
     this.messages = const [],
     this.isStreaming = false,
@@ -259,6 +263,7 @@ class ChatMessagesState {
     this.contextsExplicitlySet = false,
     this.reloadClaudeMd = false,
     this.pendingUserQuestion,
+    this.pathMigrationInfo,
   });
 
   /// Whether this session is continuing from another
@@ -294,10 +299,12 @@ class ChatMessagesState {
     bool? contextsExplicitlySet,
     bool? reloadClaudeMd,
     Map<String, dynamic>? pendingUserQuestion,
+    PathMigrationInfo? pathMigrationInfo,
     bool clearSessionUnavailable = false,
     bool clearWorkingDirectory = false,
     bool clearViewingSession = false,
     bool clearPendingUserQuestion = false,
+    bool clearPathMigrationInfo = false,
   }) {
     return ChatMessagesState(
       messages: messages ?? this.messages,
@@ -320,11 +327,32 @@ class ChatMessagesState {
       contextsExplicitlySet: contextsExplicitlySet ?? this.contextsExplicitlySet,
       reloadClaudeMd: reloadClaudeMd ?? this.reloadClaudeMd,
       pendingUserQuestion: clearPendingUserQuestion ? null : (pendingUserQuestion ?? this.pendingUserQuestion),
+      pathMigrationInfo: clearPathMigrationInfo ? null : (pathMigrationInfo ?? this.pathMigrationInfo),
     );
   }
 }
 
-/// Information about a session that couldn't be resumed
+/// Information about a session that needs path migration
+///
+/// This indicates the session was created on a different Parachute instance.
+/// The transcript file doesn't exist locally, but the session history is
+/// preserved in the database. Continuing will create a fresh local transcript.
+class PathMigrationInfo {
+  final String sessionId;
+
+  /// The vault root where the session was originally created
+  final String sessionVaultRoot;
+
+  /// The current vault root on this machine
+  final String currentVaultRoot;
+
+  const PathMigrationInfo({
+    required this.sessionId,
+    required this.sessionVaultRoot,
+    required this.currentVaultRoot,
+  });
+}
+
 class SessionUnavailableInfo {
   final String sessionId;
   final String reason;
@@ -435,6 +463,7 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
 
     try {
       ChatSession? loadedSession;
+      ChatSessionWithMessages? sessionData;
       List<ChatMessage> loadedMessages = [];
       bool usedTranscript = false;
 
@@ -462,7 +491,8 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
         }
 
         // Get session metadata (we still need this for title, workingDirectory, etc.)
-        final sessionData = await _service.getSession(sessionId);
+        // Also contains path migration info if the session needs migration
+        sessionData = await _service.getSession(sessionId);
         if (sessionData != null) {
           loadedSession = sessionData.session;
           // Only use markdown messages if transcript didn't provide any
@@ -536,6 +566,19 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
         // Fall back to current state contexts
       }
 
+      // Check if session is from a different Parachute instance (vault root mismatch)
+      // The server includes this info in the session response - no separate API call needed
+      PathMigrationInfo? migrationInfo;
+      if (sessionData != null && sessionData.needsPathMigration && sessionData.pathMigration != null) {
+        final pm = sessionData.pathMigration!;
+        migrationInfo = PathMigrationInfo(
+          sessionId: sessionId,
+          sessionVaultRoot: pm.sessionVaultRoot,
+          currentVaultRoot: pm.currentVaultRoot,
+        );
+        debugPrint('[ChatMessagesNotifier] Session from different vault: ${pm.sessionVaultRoot} (current: ${pm.currentVaultRoot})');
+      }
+
       state = ChatMessagesState(
         messages: loadedMessages,
         sessionId: sessionId,
@@ -551,6 +594,7 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
         transcriptSegmentCount: segmentCount,
         selectedContexts: effectiveContexts, // Use persisted or current contexts
         contextsExplicitlySet: effectiveContextsExplicit, // Mark explicit if loaded from DB
+        pathMigrationInfo: migrationInfo, // Set if session needs path migration
       );
 
       // If there's an active background stream, reattach to receive updates
@@ -1697,6 +1741,21 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
   /// Dismiss the session unavailable dialog without retrying
   void dismissSessionUnavailable() {
     state = state.copyWith(clearSessionUnavailable: true);
+  }
+
+  /// Acknowledge path migration info and allow continuing the session
+  ///
+  /// When a session is from a different Parachute instance, the transcript
+  /// doesn't exist locally. Continuing will create a fresh transcript.
+  /// The session history is preserved in the database.
+  void acknowledgeMigration() {
+    debugPrint('[ChatMessagesNotifier] User acknowledged migration, clearing info');
+    state = state.copyWith(clearPathMigrationInfo: true);
+  }
+
+  /// Dismiss the path migration prompt without continuing
+  void dismissPathMigration() {
+    state = state.copyWith(clearPathMigrationInfo: true);
   }
 
   /// Answer a pending user question (from AskUserQuestion tool)

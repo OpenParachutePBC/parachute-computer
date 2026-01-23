@@ -37,6 +37,10 @@ class ComputerSetupWizard extends ConsumerStatefulWidget {
 }
 
 class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
+  // Vault path selection
+  String? _selectedVaultPath;
+  bool _vaultPathSelected = false;
+
   // Mode selection (null = not yet chosen)
   ServerMode? _selectedMode;
 
@@ -62,15 +66,43 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
   @override
   void initState() {
     super.initState();
-    _loadSavedMode();
+    _loadSavedSettings();
   }
 
-  /// Load previously saved mode (if any)
-  Future<void> _loadSavedMode() async {
-    final modeAsync = await ref.read(serverModeProvider.future);
-    // Only use saved mode if setup was already completed
-    // For fresh installs, always show the choice
+  /// Load previously saved settings (vault path and mode)
+  Future<void> _loadSavedSettings() async {
+    // Load saved vault path
+    final savedVaultPath = await ref.read(vaultPathProvider.future);
+    if (savedVaultPath != null && savedVaultPath.isNotEmpty) {
+      setState(() {
+        _selectedVaultPath = savedVaultPath;
+        _vaultPathSelected = true;
+      });
+    } else {
+      // Default to ~/Parachute
+      final home = Platform.environment['HOME'] ?? '';
+      setState(() {
+        _selectedVaultPath = '$home/Parachute';
+      });
+    }
   }
+
+  /// Get the home directory path
+  String get _homePath => Platform.environment['HOME'] ?? '';
+
+  /// Default vault path options
+  List<({String path, String label, String description})> get _vaultPathOptions => [
+    (
+      path: '$_homePath/Parachute',
+      label: '~/Parachute',
+      description: 'Dedicated folder for all your Parachute data. Recommended for most users.',
+    ),
+    (
+      path: _homePath,
+      label: 'Home Directory (~)',
+      description: 'Use your entire home folder as the vault. Claude can access all your files.',
+    ),
+  ];
 
   /// Check prerequisites for the selected mode
   Future<void> _checkPrerequisites() async {
@@ -491,7 +523,8 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
 
   Future<void> _authenticateClaudeBareMetal() async {
     final service = ref.read(bareMetalServiceProvider);
-    await service.runClaudeLogin();
+    // Pass vault path so credentials are stored in vault for portability
+    await service.runClaudeLogin(vaultPath: _selectedVaultPath);
     setState(() => _currentStep = 4);
   }
 
@@ -574,8 +607,8 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
         ),
         SizedBox(height: Spacing.md),
 
-        // Progress indicator (only show after mode selection)
-        if (_selectedMode != null) ...[
+        // Progress indicator (show after vault selection)
+        if (_vaultPathSelected && _selectedMode != null) ...[
           _buildProgressIndicator(isDark),
           SizedBox(height: Spacing.lg),
         ],
@@ -609,7 +642,9 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
         ],
 
         // Content
-        if (_selectedMode == null)
+        if (!_vaultPathSelected)
+          _buildVaultSelection(isDark)
+        else if (_selectedMode == null)
           _buildModeSelection(isDark)
         else if (_selectedMode == ServerMode.limaVM)
           _buildLimaVMStep(isDark)
@@ -670,6 +705,147 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
     );
   }
 
+  Widget _buildVaultSelection(bool isDark) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Where should Parachute store your data?',
+          style: TextStyle(
+            fontSize: TypographyTokens.bodyLarge,
+            fontWeight: FontWeight.w500,
+            color: isDark ? BrandColors.nightText : BrandColors.charcoal,
+          ),
+        ),
+        SizedBox(height: Spacing.sm),
+        Text(
+          'Your vault contains journals, chats, and files. Claude credentials will also be stored here, making your vault portable across machines.',
+          style: TextStyle(
+            fontSize: TypographyTokens.bodySmall,
+            color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+          ),
+        ),
+        SizedBox(height: Spacing.lg),
+
+        // Vault path options
+        ..._vaultPathOptions.map((option) => Padding(
+          padding: EdgeInsets.only(bottom: Spacing.md),
+          child: _VaultOptionCard(
+            isDark: isDark,
+            label: option.label,
+            path: option.path,
+            description: option.description,
+            isSelected: _selectedVaultPath == option.path,
+            isRecommended: option.path.endsWith('/Parachute'),
+            onTap: () => setState(() => _selectedVaultPath = option.path),
+          ),
+        )),
+
+        // Custom path option
+        _VaultOptionCard(
+          isDark: isDark,
+          label: 'Custom Location',
+          path: _selectedVaultPath != null &&
+                !_vaultPathOptions.any((o) => o.path == _selectedVaultPath)
+              ? _selectedVaultPath!
+              : 'Choose a folder...',
+          description: 'Select a custom folder for your vault.',
+          isSelected: _selectedVaultPath != null &&
+              !_vaultPathOptions.any((o) => o.path == _selectedVaultPath),
+          onTap: _selectCustomVaultPath,
+        ),
+
+        SizedBox(height: Spacing.lg),
+
+        // Continue button
+        Row(
+          mainAxisAlignment: MainAxisAlignment.end,
+          children: [
+            FilledButton.icon(
+              onPressed: _selectedVaultPath != null ? _confirmVaultPath : null,
+              icon: const Icon(Icons.arrow_forward, size: 18),
+              label: const Text('Continue'),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Future<void> _selectCustomVaultPath() async {
+    // For now, show a dialog to enter a path manually
+    // In the future, could use file_picker package
+    final controller = TextEditingController(
+      text: _selectedVaultPath ?? '$_homePath/Parachute',
+    );
+
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Custom Vault Location'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Enter the full path to your vault folder:'),
+            SizedBox(height: Spacing.md),
+            TextField(
+              controller: controller,
+              decoration: const InputDecoration(
+                hintText: '/Users/you/Parachute',
+                border: OutlineInputBorder(),
+              ),
+              autofocus: true,
+            ),
+            SizedBox(height: Spacing.sm),
+            Text(
+              'The folder will be created if it doesn\'t exist.',
+              style: TextStyle(
+                fontSize: TypographyTokens.bodySmall,
+                color: Colors.grey.shade600,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, controller.text),
+            child: const Text('Select'),
+          ),
+        ],
+      ),
+    );
+
+    if (result != null && result.isNotEmpty) {
+      setState(() => _selectedVaultPath = result);
+    }
+  }
+
+  Future<void> _confirmVaultPath() async {
+    if (_selectedVaultPath == null) return;
+
+    // Save the vault path
+    await ref.read(vaultPathProvider.notifier).setVaultPath(_selectedVaultPath);
+
+    // Create the directory if it doesn't exist
+    final dir = Directory(_selectedVaultPath!);
+    if (!await dir.exists()) {
+      await dir.create(recursive: true);
+    }
+
+    // Create .claude directory for credentials
+    final claudeDir = Directory('$_selectedVaultPath/.claude');
+    if (!await claudeDir.exists()) {
+      await claudeDir.create(recursive: true);
+    }
+
+    setState(() => _vaultPathSelected = true);
+  }
+
   Widget _buildModeSelection(bool isDark) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -716,6 +892,15 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
           ],
           isSelected: _selectedMode == ServerMode.bareMetal,
           onTap: () => _selectMode(ServerMode.bareMetal),
+        ),
+
+        SizedBox(height: Spacing.lg),
+
+        // Back button
+        TextButton.icon(
+          onPressed: () => setState(() => _vaultPathSelected = false),
+          icon: const Icon(Icons.arrow_back, size: 18),
+          label: const Text('Change vault location'),
         ),
       ],
     );
@@ -1050,7 +1235,8 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
 
     try {
       final service = ref.read(bareMetalServiceProvider);
-      await service.installClaudeCLI();
+      // Pass vault path so credentials are stored in vault for portability
+      await service.installClaudeCLI(vaultPath: _selectedVaultPath);
 
       // The Terminal will handle installation - show a dialog explaining next steps
       if (mounted) {
@@ -1248,6 +1434,113 @@ class _ModeCard extends StatelessWidget {
                 ],
               ),
             )),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _VaultOptionCard extends StatelessWidget {
+  final bool isDark;
+  final String label;
+  final String path;
+  final String description;
+  final bool isSelected;
+  final bool isRecommended;
+  final VoidCallback onTap;
+
+  const _VaultOptionCard({
+    required this.isDark,
+    required this.label,
+    required this.path,
+    required this.description,
+    required this.isSelected,
+    this.isRecommended = false,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final borderColor = isSelected
+        ? (isDark ? BrandColors.nightTurquoise : BrandColors.turquoise)
+        : Colors.grey.shade300;
+
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: EdgeInsets.all(Spacing.md),
+        decoration: BoxDecoration(
+          color: isSelected
+              ? (isDark ? BrandColors.nightTurquoise : BrandColors.turquoise).withValues(alpha: 0.1)
+              : (isDark ? BrandColors.nightSurfaceElevated : Colors.white),
+          borderRadius: BorderRadius.circular(Radii.md),
+          border: Border.all(color: borderColor, width: isSelected ? 2 : 1),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              Icons.folder,
+              size: 24,
+              color: isDark ? BrandColors.nightTurquoise : BrandColors.turquoise,
+            ),
+            SizedBox(width: Spacing.md),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Text(
+                        label,
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: TypographyTokens.bodyMedium,
+                          color: isDark ? BrandColors.nightText : BrandColors.charcoal,
+                        ),
+                      ),
+                      if (isRecommended) ...[
+                        SizedBox(width: Spacing.xs),
+                        Container(
+                          padding: EdgeInsets.symmetric(horizontal: Spacing.xs, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: BrandColors.success.withValues(alpha: 0.2),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(
+                            'Recommended',
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w500,
+                              color: BrandColors.success,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                  SizedBox(height: 2),
+                  Text(
+                    path,
+                    style: TextStyle(
+                      fontSize: TypographyTokens.bodySmall,
+                      fontFamily: 'monospace',
+                      color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+                    ),
+                  ),
+                  SizedBox(height: Spacing.xs),
+                  Text(
+                    description,
+                    style: TextStyle(
+                      fontSize: TypographyTokens.bodySmall,
+                      color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (isSelected)
+              Icon(Icons.check_circle, color: BrandColors.success, size: 24),
           ],
         ),
       ),
