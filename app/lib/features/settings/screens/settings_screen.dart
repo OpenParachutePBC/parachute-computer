@@ -7,22 +7,20 @@ import 'package:file_picker/file_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/core/providers/app_state_provider.dart'
-    show AppMode, appModeProvider, serverUrlProvider, apiKeyProvider, syncModeProvider, SyncMode, isDailyOnlyFlavor, showLimaControls, isComputerFlavor, serverModeProvider, ServerMode, isLimaVMModeProvider, isBareMetalModeProvider;
+    show AppMode, appModeProvider, serverUrlProvider, apiKeyProvider, syncModeProvider, SyncMode, isDailyOnlyFlavor, showLimaControls, isComputerFlavor;
 import 'package:parachute/core/providers/file_system_provider.dart';
 import 'package:parachute/core/providers/feature_flags_provider.dart';
 import 'package:parachute/core/providers/server_providers.dart';
 import 'package:parachute/core/providers/sync_provider.dart';
-import 'package:parachute/core/providers/lima_vm_provider.dart';
-import 'package:parachute/core/providers/bare_metal_provider.dart';
-import 'package:parachute/core/services/lima_vm_service.dart' show LimaVMStatus;
+import 'package:parachute/core/providers/lima_vm_provider.dart' show isLimaVMRunningProvider;
+import 'package:parachute/core/providers/bare_metal_provider.dart' show isBareMetalServerRunningProvider;
 import 'package:parachute/core/services/sync_service.dart';
 import 'package:parachute/core/services/backend_health_service.dart';
 import 'package:parachute/features/daily/journal/providers/journal_providers.dart';
 import 'package:parachute/features/daily/journal/screens/curator_log_screen.dart';
 import '../widgets/omi_device_section.dart';
 import '../widgets/api_key_section.dart';
-import '../widgets/lima_vm_section.dart';
-import '../widgets/bare_metal_section.dart';
+import '../widgets/parachute_computer_section.dart';
 
 /// Unified Settings screen for Parachute
 ///
@@ -304,19 +302,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final showChatFolder = appMode == AppMode.full;
     final isBundled = ref.watch(isBundledAppProvider);
 
-    // Check server mode for Computer flavor
-    final isLimaVMMode = ref.watch(isLimaVMModeProvider);
-    final isBareMetalMode = ref.watch(isBareMetalModeProvider);
-
-    // Check if Lima VM is running (for auto-configuring server URL)
+    // Check if local server is running (auto-configured to localhost:3333)
     final limaVMRunning = ref.watch(isLimaVMRunningProvider);
-    // Check if bare metal server is running
     final bareMetalRunning = ref.watch(isBareMetalServerRunningProvider);
-    // Server is running in either mode
-    final serverRunning = limaVMRunning || bareMetalRunning;
+    final localServerRunning = limaVMRunning || bareMetalRunning;
 
-    // Daily flavor: Hide all server-related UI
+    // Visibility flags for settings sections
     final showServerSettings = !isDailyOnlyFlavor;
+    final showFullModeSettings = showServerSettings && showChatFolder;
+    final showComputerControls = showServerSettings && (showLimaControls || isComputerFlavor) && (Platform.isMacOS || Platform.isLinux);
 
     if (_isLoading) {
       return Scaffold(
@@ -342,56 +336,37 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         padding: EdgeInsets.all(Spacing.lg),
         children: [
           // Parachute Computer Section (macOS/Linux only)
-          // Show appropriate section based on server mode
-          if (showServerSettings && (showLimaControls || isComputerFlavor) && (Platform.isMacOS || Platform.isLinux)) ...[
-            // Server Mode Selection (allows switching between Lima VM and Bare Metal)
-            _buildServerModeSection(isDark, isLimaVMMode, isBareMetalMode),
-            SizedBox(height: Spacing.lg),
-            // Show Lima VM section if in Lima mode
-            if (isLimaVMMode)
-              _SettingsCard(
-                isDark: isDark,
-                child: const LimaVMSection(),
-              )
-            // Show Bare Metal section if in bare metal mode
-            else if (isBareMetalMode)
-              _SettingsCard(
-                isDark: isDark,
-                child: const BareMetalSection(),
-              )
-            // Default: show Lima section (for backward compatibility or initial setup)
-            else
-              _SettingsCard(
-                isDark: isDark,
-                child: const LimaVMSection(),
-              ),
+          if (showComputerControls) ...[
+            _SettingsCard(
+              isDark: isDark,
+              child: const ParachuteComputerSection(),
+            ),
             SizedBox(height: Spacing.xl),
           ],
 
-          // Server Connection Section (full flavor only)
-          // Hide when any local server is running (auto-configured to localhost:3333)
-          if (showServerSettings && !serverRunning) ...[
+          // Remote Server URL Section (hide when local server is running)
+          if (showServerSettings && !localServerRunning) ...[
             _buildServerSection(isDark),
             SizedBox(height: Spacing.xl),
           ],
 
-          // Parachute Vault Section (unified storage) - always shown
+          // Vault Section (always shown)
           _buildVaultSection(isDark, showChatFolder),
 
-          // Sync Section (only for remote clients with server configured)
-          if (showServerSettings && showChatFolder && !isBundled) ...[
+          // Sync Section (remote clients only)
+          if (showFullModeSettings && !isBundled) ...[
             SizedBox(height: Spacing.xl),
             _buildSyncSection(isDark),
           ],
 
-          // Daily Agents Section (full flavor only, when server is connected)
-          if (showServerSettings && showChatFolder) ...[
+          // Daily Agents Section
+          if (showFullModeSettings) ...[
             SizedBox(height: Spacing.xl),
             _buildSchedulerSection(isDark),
           ],
 
-          // API Keys Section (for multi-device auth, full flavor only)
-          if (showServerSettings && showChatFolder) ...[
+          // API Keys Section
+          if (showFullModeSettings) ...[
             SizedBox(height: Spacing.xl),
             _SettingsCard(
               isDark: isDark,
@@ -498,169 +473,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         ],
       ),
     );
-  }
-
-  Widget _buildServerModeSection(bool isDark, bool isLimaVMMode, bool isBareMetalMode) {
-    final serverModeAsync = ref.watch(serverModeProvider);
-    final currentMode = serverModeAsync.valueOrNull ?? ServerMode.limaVM;
-
-    return _SettingsCard(
-      isDark: isDark,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(
-                Icons.settings_suggest,
-                color: isDark ? BrandColors.nightTurquoise : BrandColors.turquoise,
-              ),
-              SizedBox(width: Spacing.sm),
-              Text(
-                'Server Mode',
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: TypographyTokens.bodyLarge,
-                  color: isDark ? BrandColors.nightText : BrandColors.charcoal,
-                ),
-              ),
-            ],
-          ),
-          SizedBox(height: Spacing.sm),
-          Text(
-            'Choose how Parachute runs its backend server.',
-            style: TextStyle(
-              fontSize: TypographyTokens.bodySmall,
-              color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
-            ),
-          ),
-          SizedBox(height: Spacing.lg),
-
-          // Server mode options
-          _ServerModeOption(
-            icon: Icons.security,
-            title: 'Lima VM',
-            subtitle: 'Isolated virtual machine. Claude can only access your vault.',
-            isSelected: currentMode == ServerMode.limaVM,
-            isDark: isDark,
-            onTap: currentMode != ServerMode.limaVM
-                ? () => _switchServerMode(ServerMode.limaVM)
-                : null,
-          ),
-          SizedBox(height: Spacing.sm),
-          _ServerModeOption(
-            icon: Icons.speed,
-            title: 'Bare Metal',
-            subtitle: 'Direct on macOS. Best performance with native ML and Metal.',
-            isSelected: currentMode == ServerMode.bareMetal,
-            isDark: isDark,
-            onTap: currentMode != ServerMode.bareMetal
-                ? () => _switchServerMode(ServerMode.bareMetal)
-                : null,
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _switchServerMode(ServerMode newMode) async {
-    final currentModeAsync = ref.read(serverModeProvider);
-    final currentMode = currentModeAsync.valueOrNull;
-
-    if (currentMode == newMode) return;
-
-    // Show confirmation dialog
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) {
-        final isDark = Theme.of(context).brightness == Brightness.dark;
-        return AlertDialog(
-          title: Text(
-            newMode == ServerMode.limaVM
-                ? 'Switch to Lima VM?'
-                : 'Switch to Bare Metal?',
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                newMode == ServerMode.limaVM
-                    ? 'This will use an isolated virtual machine for added security. Claude will only be able to access files in your vault.'
-                    : 'This will run the server directly on macOS for better performance. Claude will have access to native ML acceleration.',
-              ),
-              SizedBox(height: Spacing.md),
-              Container(
-                padding: EdgeInsets.all(Spacing.sm),
-                decoration: BoxDecoration(
-                  color: BrandColors.warning.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(Radii.sm),
-                  border: Border.all(color: BrandColors.warning.withValues(alpha: 0.3)),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.info_outline, size: 16, color: BrandColors.warning),
-                    SizedBox(width: Spacing.xs),
-                    Expanded(
-                      child: Text(
-                        'The current server will be stopped. You may need to set up the new mode.',
-                        style: TextStyle(
-                          fontSize: TypographyTokens.bodySmall,
-                          color: isDark ? BrandColors.nightText : BrandColors.charcoal,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              style: FilledButton.styleFrom(
-                backgroundColor: BrandColors.turquoise,
-              ),
-              child: const Text('Switch'),
-            ),
-          ],
-        );
-      },
-    );
-
-    if (confirmed != true) return;
-
-    // Stop current server based on old mode
-    if (currentMode == ServerMode.limaVM) {
-      final limaService = ref.read(limaVMServiceProvider);
-      final status = await limaService.checkStatus();
-      if (status == LimaVMStatus.running) {
-        await limaService.stop();
-      }
-    } else if (currentMode == ServerMode.bareMetal) {
-      final bareMetalService = ref.read(bareMetalServiceProvider);
-      await bareMetalService.stopServer();
-    }
-
-    // Switch the mode
-    await ref.read(serverModeProvider.notifier).setServerMode(newMode);
-
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            newMode == ServerMode.limaVM
-                ? 'Switched to Lima VM mode'
-                : 'Switched to Bare Metal mode',
-          ),
-          backgroundColor: BrandColors.success,
-        ),
-      );
-    }
   }
 
   Widget _buildVaultSection(bool isDark, bool showChatFolder) {
@@ -1802,102 +1614,6 @@ class _FolderInfoRow extends StatelessWidget {
           ),
         ),
       ],
-    );
-  }
-}
-
-/// Option card for server mode selection
-class _ServerModeOption extends StatelessWidget {
-  final IconData icon;
-  final String title;
-  final String subtitle;
-  final bool isSelected;
-  final bool isDark;
-  final VoidCallback? onTap;
-
-  const _ServerModeOption({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-    required this.isSelected,
-    required this.isDark,
-    this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final accentColor = isDark ? BrandColors.nightTurquoise : BrandColors.turquoise;
-
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(Radii.sm),
-      child: Container(
-        padding: EdgeInsets.all(Spacing.md),
-        decoration: BoxDecoration(
-          color: isSelected
-              ? accentColor.withValues(alpha: 0.15)
-              : (isDark ? BrandColors.nightSurface : BrandColors.stone).withValues(alpha: 0.5),
-          borderRadius: BorderRadius.circular(Radii.sm),
-          border: Border.all(
-            color: isSelected
-                ? accentColor
-                : (isDark ? BrandColors.nightSurface : BrandColors.stone),
-            width: isSelected ? 2 : 1,
-          ),
-        ),
-        child: Row(
-          children: [
-            Container(
-              padding: EdgeInsets.all(Spacing.sm),
-              decoration: BoxDecoration(
-                color: isSelected
-                    ? accentColor.withValues(alpha: 0.2)
-                    : (isDark ? BrandColors.nightSurface : BrandColors.stone),
-                borderRadius: BorderRadius.circular(Radii.sm),
-              ),
-              child: Icon(
-                icon,
-                size: 20,
-                color: isSelected
-                    ? accentColor
-                    : (isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood),
-              ),
-            ),
-            SizedBox(width: Spacing.md),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: TextStyle(
-                      fontWeight: FontWeight.w600,
-                      fontSize: TypographyTokens.bodyMedium,
-                      color: isSelected
-                          ? (isDark ? BrandColors.nightText : BrandColors.charcoal)
-                          : (isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood),
-                    ),
-                  ),
-                  SizedBox(height: Spacing.xs),
-                  Text(
-                    subtitle,
-                    style: TextStyle(
-                      fontSize: TypographyTokens.bodySmall,
-                      color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            if (isSelected)
-              Icon(
-                Icons.check_circle,
-                size: 20,
-                color: accentColor,
-              ),
-          ],
-        ),
-      ),
     );
   }
 }

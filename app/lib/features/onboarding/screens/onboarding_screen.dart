@@ -10,7 +10,6 @@ import 'package:parachute/core/providers/file_system_provider.dart';
 import 'package:parachute/core/providers/server_providers.dart';
 import 'package:parachute/features/daily/journal/providers/journal_providers.dart';
 import 'package:parachute/features/settings/widgets/computer_setup_wizard.dart';
-import '../widgets/claude_auth_step.dart';
 import '../widgets/server_connection_step.dart';
 
 // Import flavor detection
@@ -234,14 +233,15 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> with Widget
     }
   }
 
-  /// Whether we've completed the computer setup (for computer flavor)
-  bool _computerSetupComplete = false;
-
   /// Total number of steps depends on flavor
   /// - Daily flavor: 2 steps (welcome, ready)
   /// - Client flavor: 3 steps (welcome, server connection, ready)
-  /// - Computer flavor: 3 steps (welcome, computer setup wizard, ready)
-  int get _totalSteps => isDailyOnlyFlavor ? 2 : 3;
+  /// - Computer flavor: 2 steps (computer setup wizard handles vault, ready)
+  int get _totalSteps {
+    if (isDailyOnlyFlavor) return 2;
+    if (isComputerFlavor || _isBundledApp == true) return 2;
+    return 3; // Client flavor
+  }
 
   void _nextStep() {
     if (_currentStep < _totalSteps - 1) {
@@ -311,6 +311,20 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> with Widget
 
     debugPrint('[Onboarding] _buildStep: step=$_currentStep, flavor=$appFlavor, isDailyOnly=$isDailyOnlyFlavor, isBundled=$_isBundledApp, isComputer=$isComputerFlavor, totalSteps=$_totalSteps');
 
+    // Computer flavor has its own flow - wizard handles vault selection
+    if (isComputerFlavor || _isBundledApp == true) {
+      switch (_currentStep) {
+        case 0:
+          debugPrint('[Onboarding] Computer flavor: showing setup wizard');
+          return _buildComputerSetupStep(isDark);
+        case 1:
+          return _buildReadyStep(isDark);
+        default:
+          return const SizedBox.shrink();
+      }
+    }
+
+    // Daily and Client flavors start with welcome/vault selection
     switch (_currentStep) {
       case 0:
         return _buildWelcomeStep(isDark);
@@ -319,11 +333,6 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> with Widget
         if (isDailyOnlyFlavor) {
           debugPrint('[Onboarding] Daily flavor detected, showing ready step');
           return _buildReadyStep(isDark);
-        }
-        // Computer flavor: Show setup wizard (mode selection + setup steps)
-        if (isComputerFlavor || _isBundledApp == true) {
-          debugPrint('[Onboarding] Computer flavor detected, showing setup wizard');
-          return _buildComputerSetupStep(isDark);
         }
         // Client flavor: Server URL + API key for remote connection
         return ServerConnectionStep(
@@ -342,12 +351,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> with Widget
       child: Padding(
         padding: EdgeInsets.symmetric(vertical: Spacing.md),
         child: ComputerSetupWizard(
-          onComplete: () {
-            setState(() {
-              _computerSetupComplete = true;
-            });
-            _nextStep();
-          },
+          onComplete: _nextStep,
         ),
       ),
     );
@@ -497,6 +501,14 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> with Widget
     // Determine what to show based on flavor
     final isComputer = isComputerFlavor || _isBundledApp == true;
 
+    // For computer flavor, get vault path from provider (set by ComputerSetupWizard)
+    final vaultPathAsync = ref.watch(vaultPathProvider);
+    final displayVaultPath = vaultPathAsync.when(
+      data: (path) => path ?? '~/Parachute',
+      loading: () => '~/Parachute',
+      error: (_, __) => '~/Parachute',
+    );
+
     return Column(
       key: const ValueKey('ready'),
       mainAxisAlignment: MainAxisAlignment.center,
@@ -535,7 +547,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> with Widget
                   SizedBox(width: Spacing.sm),
                   Expanded(
                     child: Text(
-                      _vaultPath ?? '~/Parachute',
+                      isComputer ? displayVaultPath : (_vaultPath ?? '~/Parachute'),
                       style: TextStyle(
                         fontFamily: 'monospace',
                         fontSize: TypographyTokens.bodySmall,
