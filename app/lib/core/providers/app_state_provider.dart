@@ -368,3 +368,36 @@ final appVersionFullProvider = FutureProvider<String>((ref) async {
   final info = await PackageInfo.fromPlatform();
   return '${info.version}+${info.buildNumber}';
 });
+
+// ============================================================================
+// Setup Reset (for testing/troubleshooting)
+// ============================================================================
+
+/// Reset all setup-related state to start fresh
+///
+/// This clears:
+/// - Server URL (puts app back in dailyOnly mode)
+/// - Server mode (Lima vs Bare Metal choice)
+/// - Vault path selection
+/// - Onboarding completion flag
+///
+/// Does NOT clear:
+/// - API key (user might want to keep this)
+/// - Custom base path (developer setting)
+/// - Sync mode preferences
+Future<void> resetSetup(WidgetRef ref) async {
+  final prefs = await SharedPreferences.getInstance();
+
+  // Clear setup-related keys
+  await prefs.remove('parachute_server_url');
+  await prefs.remove('parachute_server_mode');
+  await prefs.remove('parachute_vault_path');
+  await prefs.remove('parachute_onboarding_complete');
+
+  // Invalidate providers to force reload
+  ref.invalidate(serverUrlProvider);
+  ref.invalidate(serverModeProvider);
+  ref.invalidate(vaultPathProvider);
+  ref.invalidate(onboardingCompleteProvider);
+  ref.invalidate(appModeProvider);
+}

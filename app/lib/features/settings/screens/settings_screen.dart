@@ -7,7 +7,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/core/providers/app_state_provider.dart'
-    show AppMode, appModeProvider, serverUrlProvider, apiKeyProvider, syncModeProvider, SyncMode, isDailyOnlyFlavor, showLimaControls, isComputerFlavor, appVersionProvider;
+    show AppMode, appModeProvider, serverUrlProvider, apiKeyProvider, syncModeProvider, SyncMode, isDailyOnlyFlavor, showLimaControls, isComputerFlavor, appVersionProvider, resetSetup;
 import 'package:parachute/core/providers/file_system_provider.dart';
 import 'package:parachute/core/providers/feature_flags_provider.dart';
 import 'package:parachute/core/providers/server_providers.dart';
@@ -1506,6 +1506,65 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               fontStyle: FontStyle.italic,
               color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
             ),
+          ),
+
+          // Reset Setup button (for Computer flavor or troubleshooting)
+          if (isComputerFlavor) ...[
+            SizedBox(height: Spacing.xl),
+            Divider(color: isDark ? BrandColors.nightTextSecondary.withValues(alpha: 0.3) : BrandColors.stone),
+            SizedBox(height: Spacing.md),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Reset setup to start fresh',
+                    style: TextStyle(
+                      fontSize: TypographyTokens.bodySmall,
+                      color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+                    ),
+                  ),
+                ),
+                TextButton(
+                  onPressed: () => _showResetConfirmation(context, isDark),
+                  child: Text(
+                    'Reset Setup',
+                    style: TextStyle(color: BrandColors.error),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  void _showResetConfirmation(BuildContext context, bool isDark) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Reset Setup?'),
+        content: const Text(
+          'This will clear your server configuration and return to the setup wizard.\n\n'
+          'Your vault data (journals, chats, files) will NOT be deleted.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: BrandColors.error),
+            onPressed: () async {
+              Navigator.pop(ctx);
+              await resetSetup(ref);
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Setup reset. Restart the app to begin setup again.')),
+                );
+              }
+            },
+            child: const Text('Reset'),
           ),
         ],
       ),
