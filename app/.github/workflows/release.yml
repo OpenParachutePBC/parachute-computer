@@ -118,15 +118,29 @@ jobs:
           security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
 
-          # Import certificate
+          # Download and import Apple intermediate certificates (required for chain validation)
+          echo "Downloading Apple intermediate certificates..."
+          curl -sL "https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer" -o $RUNNER_TEMP/DeveloperIDG2CA.cer
+          curl -sL "https://www.apple.com/appleca/AppleIncRootCertificate.cer" -o $RUNNER_TEMP/AppleRoot.cer
+
+          security import $RUNNER_TEMP/DeveloperIDG2CA.cer -k $KEYCHAIN_PATH
+          security import $RUNNER_TEMP/AppleRoot.cer -k $KEYCHAIN_PATH
+
+          # Import Developer ID certificate
           echo "$MACOS_CERTIFICATE" | base64 --decode > $RUNNER_TEMP/certificate.p12
           security import $RUNNER_TEMP/certificate.p12 -P "$MACOS_CERTIFICATE_PASSWORD" \
             -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
-          security list-keychain -d user -s $KEYCHAIN_PATH
+
+          # Add keychain to search list (include System keychain for additional roots)
+          security list-keychains -d user -s $KEYCHAIN_PATH /Library/Keychains/System.keychain
 
           # Allow codesign to access keychain
           security set-key-partition-list -S apple-tool:,apple:,codesign: \
             -s -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+
+          # Verify the identity is available
+          echo "Available signing identities:"
+          security find-identity -v -p codesigning
 
       - name: Build Flutter app
         run: |
@@ -154,6 +168,7 @@ jobs:
       # Notarization (if Apple credentials are configured)
       - name: Notarize DMG
         if: env.APPLE_ID != ''
+        timeout-minutes: 30
         run: |
           # List what's in the dist directory for debugging
           echo "Contents of app/dist:"
@@ -168,16 +183,38 @@ jobs:
             exit 1
           fi
 
-          # Submit for notarization and wait (no timeout - Apple service can be slow)
+          # Submit for notarization and wait
           echo "Submitting for notarization..."
+          echo "This may take several minutes..."
+
           xcrun notarytool submit "$DMG_PATH" \
             --apple-id "$APPLE_ID" \
             --password "$APPLE_ID_PASSWORD" \
             --team-id "$APPLE_TEAM_ID" \
-            --wait
+            --wait \
+            --timeout 20m \
+            2>&1 | tee notarization.log
+
+          RESULT=${PIPESTATUS[0]}
+
+          if [ $RESULT -ne 0 ]; then
+            echo "Notarization failed. Fetching detailed log..."
+            # Extract submission ID from log and get details
+            SUBMISSION_ID=$(grep -o 'id: [a-f0-9-]*' notarization.log | head -1 | cut -d' ' -f2)
+            if [ -n "$SUBMISSION_ID" ]; then
+              xcrun notarytool log "$SUBMISSION_ID" \
+                --apple-id "$APPLE_ID" \
+                --password "$APPLE_ID_PASSWORD" \
+                --team-id "$APPLE_TEAM_ID" || true
+            fi
+            exit 1
+          fi
 
           # Staple the notarization ticket
+          echo "Stapling notarization ticket..."
           xcrun stapler staple "$DMG_PATH"
+
+          echo "Notarization complete!"
 
       - name: Generate checksums
         run: |
