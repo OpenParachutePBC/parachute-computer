@@ -244,7 +244,7 @@ class BareMetalServerService {
   }
 
   /// Run parachute.sh with given command
-  Future<ProcessResult?> _runParachuteScript(String command) async {
+  Future<ProcessResult?> _runParachuteScript(String command, {String? vaultPath}) async {
     final scriptPath = path.join(baseServerPath, 'parachute.sh');
     if (!await File(scriptPath).exists()) {
       _lastError = 'parachute.sh not found at $scriptPath';
@@ -256,15 +256,22 @@ class BareMetalServerService {
       // we validated in the setup wizard (avoids using wrong Python from PATH)
       final python = pythonPath;
 
+      // Build environment with proper PATH for finding Python and other tools
+      final env = _environmentWithPath;
+      env['VAULT_PATH'] = vaultPath ?? Platform.environment['HOME'] ?? '';
+      if (python != null) {
+        env['PYTHON_PATH'] = python;
+      }
+
+      debugPrint('[BareMetalServerService] Running: parachute.sh $command');
+      debugPrint('[BareMetalServerService] PYTHON_PATH: $python');
+      debugPrint('[BareMetalServerService] VAULT_PATH: ${env['VAULT_PATH']}');
+
       return await Process.run(
         'bash',
         [scriptPath, command],
         workingDirectory: baseServerPath,
-        environment: {
-          ...Platform.environment,
-          'VAULT_PATH': Platform.environment['HOME'] ?? '',
-          if (python != null) 'PYTHON_PATH': python,
-        },
+        environment: env,
       );
     } catch (e) {
       _lastError = 'Error running parachute.sh: $e';
@@ -549,14 +556,42 @@ class BareMetalServerService {
     return null;
   }
 
-  /// Check if Node.js/npm is installed
+  /// Known paths where Node.js/npm might be installed (macOS)
+  static const List<String> _npmPaths = [
+    '/opt/homebrew/bin/npm', // Homebrew Apple Silicon
+    '/usr/local/bin/npm', // Homebrew Intel
+  ];
+
+  /// Check if Node.js/npm is installed by checking explicit paths first
   Future<bool> isNodeInstalled() async {
+    // Check explicit paths first (most reliable)
+    for (final p in _npmPaths) {
+      if (File(p).existsSync()) {
+        return true;
+      }
+    }
+
+    // Fall back to which command with proper PATH
     try {
-      final result = await Process.run('which', ['npm']);
+      final result = await Process.run(
+        'which',
+        ['npm'],
+        environment: _environmentWithPath,
+      );
       return result.exitCode == 0;
     } catch (e) {
       return false;
     }
+  }
+
+  /// Environment with Homebrew paths added to PATH
+  /// This ensures brew/npm/node are found when running subprocesses
+  Map<String, String> get _environmentWithPath {
+    final env = Map<String, String>.from(Platform.environment);
+    final currentPath = env['PATH'] ?? '';
+    // Prepend Homebrew paths to ensure they're found
+    env['PATH'] = '/opt/homebrew/bin:/usr/local/bin:$currentPath';
+    return env;
   }
 
   /// Get the path to brew, or null if not found
@@ -593,7 +628,7 @@ class BareMetalServerService {
       final result = await Process.run(
         brew,
         ['install', 'node'],
-        environment: Platform.environment,
+        environment: _environmentWithPath,
       ).timeout(
         const Duration(minutes: 10),
         onTimeout: () {
@@ -627,19 +662,20 @@ class BareMetalServerService {
 
   /// Get the path to npm, or null if not found
   Future<String?> get npmPath async {
-    const npmPaths = [
-      '/opt/homebrew/bin/npm', // Homebrew Apple Silicon
-      '/usr/local/bin/npm', // Homebrew Intel
-    ];
-    for (final p in npmPaths) {
+    // Check explicit paths first (most reliable)
+    for (final p in _npmPaths) {
       if (File(p).existsSync()) {
         return p;
       }
     }
 
-    // Try to find via 'which' command
+    // Try to find via 'which' command with proper PATH
     try {
-      final result = await Process.run('which', ['npm']);
+      final result = await Process.run(
+        'which',
+        ['npm'],
+        environment: _environmentWithPath,
+      );
       if (result.exitCode == 0) {
         final path = result.stdout.toString().trim();
         if (path.isNotEmpty && File(path).existsSync()) {
@@ -675,7 +711,7 @@ class BareMetalServerService {
       final result = await Process.run(
         npm,
         ['install', '-g', '@anthropic-ai/claude-code'],
-        environment: Platform.environment,
+        environment: _environmentWithPath,
       ).timeout(
         const Duration(minutes: 5),
         onTimeout: () {
