@@ -83,23 +83,42 @@ cmd_setup() {
     echo -e "${BLUE}Setting up Parachute server...${NC}"
     cd "$SCRIPT_DIR"
 
-    # Find best Python version (prefer newest)
+    # Use PYTHON_PATH if provided (from Flutter app's validated path)
+    # Otherwise find best Python version (prefer newest compatible: 3.10-3.13)
     local PYTHON=""
-    for py in python3.13 python3.12 python3.11 python3.10; do
-        if command -v $py &> /dev/null; then
-            PYTHON=$py
-            break
-        fi
-    done
+    if [[ -n "$PYTHON_PATH" ]] && [[ -x "$PYTHON_PATH" ]]; then
+        PYTHON="$PYTHON_PATH"
+        echo -e "  Using Python from PYTHON_PATH: $PYTHON"
+    else
+        for py in python3.13 python3.12 python3.11 python3.10; do
+            if command -v $py &> /dev/null; then
+                PYTHON=$py
+                break
+            fi
+        done
 
-    # Fall back to python3 if no specific version found
-    if [[ -z "$PYTHON" ]]; then
-        if command -v python3 &> /dev/null; then
-            PYTHON=python3
-        else
-            echo -e "${RED}Error: Python 3.10+ not found. Please install Python.${NC}"
-            exit 1
+        # Fall back to python3 if no specific version found
+        if [[ -z "$PYTHON" ]]; then
+            if command -v python3 &> /dev/null; then
+                PYTHON=python3
+            else
+                echo -e "${RED}Error: Python 3.10-3.13 not found. Please install Python via Homebrew:${NC}"
+                echo -e "  brew install python@3.13"
+                exit 1
+            fi
         fi
+    fi
+
+    # Verify Python version is compatible (3.10-3.13)
+    local python_version=$($PYTHON -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+    local major=$(echo $python_version | cut -d. -f1)
+    local minor=$(echo $python_version | cut -d. -f2)
+
+    if [[ "$major" != "3" ]] || [[ "$minor" -lt 10 ]] || [[ "$minor" -gt 13 ]]; then
+        echo -e "${RED}Error: Python $python_version is not compatible.${NC}"
+        echo -e "  Parachute requires Python 3.10-3.13 (3.14+ is too new)."
+        echo -e "  Install a compatible version: brew install python@3.13"
+        exit 1
     fi
 
     local python_version=$($PYTHON -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
