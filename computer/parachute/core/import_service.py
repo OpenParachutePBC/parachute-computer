@@ -55,7 +55,8 @@ class ImportService:
         self.vault_path = vault_path
         self.database = database
         self.module = module
-        self._sdk_projects_dir = Path.home() / ".claude" / "projects"
+        # Sessions are stored in {vault}/.claude/ since we set HOME=vault during SDK queries
+        self._sdk_projects_dir = Path(vault_path) / ".claude" / "projects"
 
         # Working directory for this module (e.g., ~/Parachute/Chat)
         self.working_directory = str(Path(vault_path) / module.capitalize())

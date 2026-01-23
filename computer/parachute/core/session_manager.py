@@ -89,6 +89,7 @@ class SessionManager:
                         module=module,
                         source=SessionSource.PARACHUTE,
                         working_directory=working_directory,
+                        vault_root=str(self.vault_path),
                         continued_from=continued_from,
                     )
                 )
@@ -159,6 +160,7 @@ class SessionManager:
                 module=placeholder.module,
                 source=placeholder.source,
                 working_directory=placeholder.working_directory,
+                vault_root=str(self.vault_path),
                 model=model,
                 continued_from=placeholder.continued_from,
             )
@@ -285,7 +287,8 @@ class SessionManager:
 
         # SDK encodes path by replacing / with -
         encoded_path = effective_cwd.replace("/", "-")
-        claude_dir = Path.home() / ".claude" / "projects" / encoded_path
+        # Sessions are stored in {vault}/.claude/ since we set HOME=vault during SDK queries
+        claude_dir = self.vault_path / ".claude" / "projects" / encoded_path
 
         return claude_dir / f"{session_id}.jsonl"
 
@@ -296,22 +299,38 @@ class SessionManager:
         This is a fallback when we don't know the working directory that was
         used when the session was created (e.g., curator sessions).
 
+        Searches in two locations:
+        1. {vault}/.claude/projects/ - new vault-based location (bare metal)
+        2. ~/.claude/projects/ - original HOME-based location (pre-migration)
+
         Args:
             session_id: The SDK session UUID
 
         Returns:
             Path to the transcript file, or None if not found
         """
-        claude_projects = Path.home() / ".claude" / "projects"
-        if not claude_projects.exists():
-            return None
-
         filename = f"{session_id}.jsonl"
-        for project_dir in claude_projects.iterdir():
-            if project_dir.is_dir():
-                candidate = project_dir / filename
-                if candidate.exists():
-                    return candidate
+
+        # First, search in vault's .claude directory (new location)
+        claude_projects = self.vault_path / ".claude" / "projects"
+        if claude_projects.exists():
+            for project_dir in claude_projects.iterdir():
+                if project_dir.is_dir():
+                    candidate = project_dir / filename
+                    if candidate.exists():
+                        return candidate
+
+        # Fallback: search in original ~/.claude directory (pre-migration sessions)
+        original_home = Path.home()
+        if original_home != self.vault_path:
+            original_claude_projects = original_home / ".claude" / "projects"
+            if original_claude_projects.exists():
+                for project_dir in original_claude_projects.iterdir():
+                    if project_dir.is_dir():
+                        candidate = project_dir / filename
+                        if candidate.exists():
+                            logger.debug(f"Found transcript in original HOME location: {candidate}")
+                            return candidate
 
         return None
 
@@ -417,6 +436,11 @@ class SessionManager:
             session.id, session.working_directory
         )
 
+        # Fallback: search all project directories if not found at expected path
+        # This handles old sessions with different path encodings (e.g., -vault- vs -Users-)
+        if not transcript_path or not transcript_path.exists():
+            transcript_path = self._find_sdk_transcript(session.id)
+
         if not transcript_path or not transcript_path.exists():
             return []
 
@@ -509,9 +533,9 @@ class SessionManager:
     async def _load_claude_code_messages(self, session: Session) -> list[dict[str, Any]]:
         """Load messages from a Claude Code session's JSONL file."""
         # Claude Code sessions use the original session ID to find the file
-        # The file is in ~/.claude/projects/{encoded-cwd}/{session_id}.jsonl
+        # Sessions are stored in {vault}/.claude/ since we set HOME=vault during SDK queries
 
-        projects_dir = Path.home() / ".claude" / "projects"
+        projects_dir = self.vault_path / ".claude" / "projects"
         if not projects_dir.exists():
             return []
 

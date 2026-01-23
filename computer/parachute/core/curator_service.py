@@ -431,7 +431,8 @@ class CuratorService:
         Returns None if transcript not found, empty list if no events.
         """
         # Look for SDK session file
-        projects_dir = Path.home() / ".claude" / "projects"
+        # Sessions are stored in {vault}/.claude/ since we set HOME=vault during SDK queries
+        projects_dir = self.vault_path / ".claude" / "projects"
         if not projects_dir.exists():
             return None
 

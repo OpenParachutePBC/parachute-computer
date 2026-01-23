@@ -110,6 +110,12 @@ class Session(BaseModel):
         serialization_alias="workingDirectory",
         description="Working directory for file operations",
     )
+    vault_root: Optional[str] = Field(
+        default=None,
+        alias="vaultRoot",
+        serialization_alias="vaultRoot",
+        description="Root path of vault when session was created (for cross-machine portability)",
+    )
     model: Optional[str] = Field(default=None, description="Model used")
     message_count: int = Field(
         default=0,
@@ -162,6 +168,7 @@ class SessionCreate(BaseModel):
     module: str = "chat"
     source: SessionSource = SessionSource.PARACHUTE
     working_directory: Optional[str] = None
+    vault_root: Optional[str] = None
     model: Optional[str] = None
     continued_from: Optional[str] = None
     metadata: Optional[dict[str, Any]] = None

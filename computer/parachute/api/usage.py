@@ -5,12 +5,14 @@ Provides access to Claude usage limits for display in the app.
 """
 
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
 from parachute.core.claude_usage import fetch_claude_usage
+from parachute.config import get_settings
 
 router = APIRouter()
 
@@ -69,10 +71,14 @@ async def get_usage() -> ClaudeUsageResponse:
     Get current Claude usage limits.
 
     Returns usage information for 5-hour and 7-day windows,
-    as well as subscription details. This data comes from
-    Claude Code's OAuth credentials stored in the keychain.
+    as well as subscription details. Credentials are first looked up
+    in the vault ({vault}/.claude/.credentials.json) for self-contained
+    operation, then falls back to ~/.claude/.credentials.json.
     """
-    usage = await fetch_claude_usage()
+    settings = get_settings()
+    vault_path = Path(settings.vault_path) if settings.vault_path else None
+
+    usage = await fetch_claude_usage(vault_path)
 
     return ClaudeUsageResponse(
         five_hour=_format_limit(usage.five_hour),

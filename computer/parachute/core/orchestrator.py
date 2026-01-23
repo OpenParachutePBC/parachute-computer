@@ -485,7 +485,12 @@ class Orchestrator:
             if session.id != "pending" and not is_new and not force_new:
                 resume_id = session.id
 
-            logger.debug(f"Resume decision: session.id={session.id}, is_new={is_new}, force_new={force_new}, resume_id={resume_id}")
+            # Determine vault_path for SDK session storage
+            # For old sessions (vault_root=None), don't override HOME so SDK finds them in ~/.claude/
+            # For new sessions or migrated sessions, use vault_path for portability
+            sdk_vault_path = None if (resume_id and session.vault_root is None) else self.vault_path
+
+            logger.debug(f"Resume decision: session.id={session.id}, is_new={is_new}, force_new={force_new}, resume_id={resume_id}, sdk_vault_path={sdk_vault_path}")
 
             # Run query
             current_text = ""
@@ -520,6 +525,7 @@ class Orchestrator:
                 can_use_tool=sdk_can_use_tool,  # Enable interactive tool permission checks (AskUserQuestion)
                 plugin_dirs=plugin_dirs if plugin_dirs else None,
                 agents=agents_dict,
+                vault_path=sdk_vault_path,  # Store sessions in vault/.claude/ (None for pre-migration sessions)
             ):
                 # Check for interrupt
                 if interrupt.is_interrupted:
@@ -998,11 +1004,36 @@ The user is now continuing this conversation with you. Respond naturally as if y
         return [s.model_dump(by_alias=True) for s in sessions]
 
     async def get_session(self, session_id: str) -> Optional[dict[str, Any]]:
-        """Get a session by ID with messages."""
+        """Get a session by ID with messages.
+
+        Includes migration info if the session was created on a different vault.
+        """
         session = await self.session_manager.get_session_with_messages(session_id)
-        if session:
-            return session.model_dump(by_alias=True)
-        return None
+        if not session:
+            return None
+
+        result = session.model_dump(by_alias=True)
+
+        # Check if session needs migration (created on different vault)
+        needs_migration = False
+        path_migration = None
+
+        if session.vault_root and session.vault_root != str(self.vault_path):
+            # Session was created on a different vault - check if transcript exists locally
+            transcript = self.session_manager._find_sdk_transcript(session_id)
+            if not transcript or not transcript.exists():
+                needs_migration = True
+                path_migration = {
+                    "sessionVaultRoot": session.vault_root,
+                    "currentVaultRoot": str(self.vault_path),
+                    "storedWorkingDirectory": session.working_directory or "",
+                }
+
+        result['needsPathMigration'] = needs_migration
+        if path_migration:
+            result['pathMigration'] = path_migration
+
+        return result
 
     async def delete_session(self, session_id: str) -> bool:
         """Delete a session."""
@@ -1050,20 +1081,35 @@ The user is now continuing this conversation with you. Respond naturally as if y
         import json
         from pathlib import Path
 
-        # Look for SDK session file
-        projects_dir = Path.home() / ".claude" / "projects"
-        if not projects_dir.exists():
-            return None
+        # Look for SDK session file in two locations:
+        # 1. {vault}/.claude/projects/ - new vault-based location (bare metal)
+        # 2. ~/.claude/projects/ - original HOME-based location (pre-migration sessions)
 
         session_file = None
 
-        # Search all project directories
-        for project_dir in projects_dir.iterdir():
-            if project_dir.is_dir():
-                candidate = project_dir / f"{session_id}.jsonl"
-                if candidate.exists():
-                    session_file = candidate
-                    break
+        # First, search in vault's .claude directory (new location)
+        projects_dir = self.vault_path / ".claude" / "projects"
+        if projects_dir.exists():
+            for project_dir in projects_dir.iterdir():
+                if project_dir.is_dir():
+                    candidate = project_dir / f"{session_id}.jsonl"
+                    if candidate.exists():
+                        session_file = candidate
+                        break
+
+        # Fallback: search in original ~/.claude directory (pre-migration sessions)
+        if not session_file:
+            original_home = Path.home()
+            if original_home != self.vault_path:
+                original_projects_dir = original_home / ".claude" / "projects"
+                if original_projects_dir.exists():
+                    for project_dir in original_projects_dir.iterdir():
+                        if project_dir.is_dir():
+                            candidate = project_dir / f"{session_id}.jsonl"
+                            if candidate.exists():
+                                session_file = candidate
+                                logger.debug(f"Found transcript in original HOME location: {candidate}")
+                                break
 
         if not session_file:
             return None

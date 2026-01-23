@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     module TEXT NOT NULL DEFAULT 'chat',
     source TEXT NOT NULL DEFAULT 'parachute',
     working_directory TEXT,
+    vault_root TEXT,  -- Root path of vault when session was created (for cross-machine portability)
     model TEXT,
     message_count INTEGER DEFAULT 0,
     archived INTEGER DEFAULT 0,
@@ -140,9 +141,9 @@ CREATE TABLE IF NOT EXISTS schema_version (
     applied_at TEXT NOT NULL
 );
 
--- Insert schema version 8 (current schema)
+-- Insert schema version 9 (current schema)
 INSERT OR IGNORE INTO schema_version (version, applied_at)
-VALUES (8, datetime('now'));
+VALUES (9, datetime('now'));
 """
 
 
@@ -186,6 +187,20 @@ class Database:
             )
             await self._connection.commit()
             logger.info("Added tool_calls column to curator_queue")
+
+        # Migration: Add vault_root column to sessions if missing (v9)
+        try:
+            async with self._connection.execute(
+                "SELECT vault_root FROM sessions LIMIT 1"
+            ):
+                pass  # Column exists
+        except Exception:
+            # Column doesn't exist, add it
+            await self._connection.execute(
+                "ALTER TABLE sessions ADD COLUMN vault_root TEXT"
+            )
+            await self._connection.commit()
+            logger.info("Added vault_root column to sessions")
 
 
     async def close(self) -> None:
@@ -231,10 +246,10 @@ class Database:
         await self.connection.execute(
             """
             INSERT INTO sessions (
-                id, title, module, source, working_directory, model,
+                id, title, module, source, working_directory, vault_root, model,
                 message_count, archived, created_at, last_accessed,
                 continued_from, metadata
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 session.id,
@@ -242,6 +257,7 @@ class Database:
                 session.module,
                 session.source.value,
                 session.working_directory,
+                session.vault_root,
                 session.model,
                 message_count,
                 archived,
@@ -745,6 +761,7 @@ class Database:
             module=row["module"],
             source=SessionSource(row["source"]),
             working_directory=row["working_directory"],
+            vault_root=row["vault_root"] if "vault_root" in row.keys() else None,
             model=row["model"],
             message_count=row["message_count"],
             archived=bool(row["archived"]),

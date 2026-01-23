@@ -420,8 +420,8 @@ async def get_daily_agent_transcript(
         }
 
     # Find the transcript file
-    # SDK stores transcripts in ~/.claude/projects/{escaped-cwd}/{session_id}.jsonl
-    claude_projects_dir = Path.home() / ".claude" / "projects"
+    # Sessions are stored in {vault}/.claude/ since we set HOME=vault during SDK queries
+    claude_projects_dir = Path(settings.vault_path) / ".claude" / "projects"
 
     transcript_path = None
     possible_paths = list(claude_projects_dir.glob(f"*/{session_id}.jsonl"))
@@ -630,8 +630,8 @@ async def get_module_curator_transcript(
         }
 
     # Find the transcript file
-    # SDK stores transcripts in ~/.claude/projects/{escaped-cwd}/{session_id}.jsonl
-    claude_projects_dir = Path.home() / ".claude" / "projects"
+    # Sessions are stored in {vault}/.claude/ since we set HOME=vault during SDK queries
+    claude_projects_dir = Path(settings.vault_path) / ".claude" / "projects"
 
     # The daily curator runs from the server's current working directory
     # which is typically the base/ directory. Search for the transcript

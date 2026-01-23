@@ -3,14 +3,45 @@ Claude SDK wrapper for async streaming.
 
 Wraps the claude-agent-sdk to provide async generators for streaming responses.
 The SDK bundles the Claude CLI, so no separate installation is required.
+
+Session Storage:
+    By default, Claude SDK stores sessions at ~/.claude/projects/{encoded-cwd}/.
+    We override HOME to point to the vault path so sessions are stored at
+    {vault}/.claude/projects/... making them portable with the vault.
 """
 
 import asyncio
 import logging
+import os
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, AsyncGenerator, Awaitable, Callable, Optional
 
 logger = logging.getLogger(__name__)
+
+
+@contextmanager
+def _override_home(vault_path: Optional[Path]):
+    """
+    Temporarily override HOME environment variable.
+
+    This makes Claude SDK store sessions in {vault}/.claude/ instead of ~/.claude/,
+    making sessions portable with the vault across machines.
+    """
+    if vault_path is None:
+        yield
+        return
+
+    old_home = os.environ.get('HOME')
+    try:
+        os.environ['HOME'] = str(vault_path)
+        logger.debug(f"Temporarily set HOME to {vault_path} for SDK session storage")
+        yield
+    finally:
+        if old_home is not None:
+            os.environ['HOME'] = old_home
+        elif 'HOME' in os.environ:
+            del os.environ['HOME']
 
 
 class QueryInterrupt:
@@ -66,6 +97,7 @@ async def query_streaming(
     can_use_tool: CanUseToolCallback = None,
     plugin_dirs: Optional[list[Path]] = None,
     agents: Optional[dict[str, Any]] = None,
+    vault_path: Optional[Path] = None,
 ) -> AsyncGenerator[dict[str, Any], None]:
     """
     Run a Claude SDK query with streaming response.
@@ -85,6 +117,8 @@ async def query_streaming(
         can_use_tool: Optional callback for permission checking
         plugin_dirs: List of plugin directories to load (for skills)
         agents: Dict of agent definitions for subagents
+        vault_path: Path to vault - if provided, HOME is temporarily set to this path
+                   so SDK stores sessions in {vault}/.claude/ instead of ~/.claude/
 
     Yields:
         SDK events as dictionaries
@@ -93,6 +127,10 @@ async def query_streaming(
         When setting_sources includes "project", Claude SDK loads CLAUDE.md files from
         the directory hierarchy, walking up from cwd to root. This enables hierarchical context:
         ~/Parachute/CLAUDE.md → ~/Parachute/projects/foo/CLAUDE.md → etc.
+
+    Session Storage:
+        When vault_path is provided, sessions are stored at {vault}/.claude/projects/...
+        This makes sessions portable across machines when the vault is synced.
     """
     # Import the SDK
     from claude_agent_sdk import query as sdk_query, ClaudeAgentOptions, ClaudeSDKError
@@ -156,13 +194,15 @@ async def query_streaming(
 
     # Run query and stream events
     # When using can_use_tool callback, SDK requires prompt as AsyncIterable
+    # Wrap in HOME override so sessions are stored in vault
     try:
         effective_prompt: Any = prompt
         if can_use_tool:
             effective_prompt = _string_to_async_iterable(prompt)
 
-        async for event in sdk_query(prompt=effective_prompt, options=options):
-            yield _event_to_dict(event)
+        with _override_home(vault_path):
+            async for event in sdk_query(prompt=effective_prompt, options=options):
+                yield _event_to_dict(event)
     except ClaudeSDKError as e:
         logger.error(f"Claude SDK error: {e}")
         yield {"type": "error", "error": str(e)}
