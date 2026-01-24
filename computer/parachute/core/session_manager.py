@@ -33,12 +33,67 @@ class SessionManager:
     - SDK session ID is the ONLY identifier (no separate Parachute session ID)
     - Messages are stored in SDK JSONL files, not our database
     - We store metadata for indexing and quick listing
+    - working_directory is stored RELATIVE to vault_path (e.g., "Projects/foo")
+    - Empty/null working_directory means vault root itself
     """
 
     def __init__(self, vault_path: Path, database: Database):
         """Initialize session manager."""
         self.vault_path = vault_path
         self.db = database
+
+    def resolve_working_directory(self, working_directory: Optional[str]) -> Path:
+        """
+        Resolve a working_directory to an absolute path.
+
+        Args:
+            working_directory: Relative path (e.g., "Projects/foo") or absolute path.
+                              None or empty means vault root.
+
+        Returns:
+            Absolute Path for use with SDK (which requires absolute paths).
+        """
+        if not working_directory:
+            return self.vault_path
+
+        wd_path = Path(working_directory)
+        if wd_path.is_absolute():
+            # Legacy absolute path - use as-is (will be migrated eventually)
+            return wd_path
+        else:
+            # Relative path - combine with vault_path
+            return self.vault_path / wd_path
+
+    def make_working_directory_relative(self, working_directory: Optional[str]) -> Optional[str]:
+        """
+        Convert a working_directory to relative form for storage.
+
+        Args:
+            working_directory: Absolute or relative path.
+
+        Returns:
+            Relative path string (e.g., "Projects/foo"), or None if it's the vault root.
+        """
+        if not working_directory:
+            return None
+
+        wd_path = Path(working_directory)
+        if not wd_path.is_absolute():
+            # Already relative
+            return working_directory
+
+        # Try to make it relative to vault_path
+        try:
+            rel_path = wd_path.relative_to(self.vault_path)
+            # If it's "." (vault root), return None
+            if str(rel_path) == ".":
+                return None
+            return str(rel_path)
+        except ValueError:
+            # Path is not under vault_path - this is an external project
+            # Keep as absolute (legacy behavior)
+            logger.warning(f"working_directory {working_directory} is not under vault_path {self.vault_path}")
+            return working_directory
 
     async def get_or_create_session(
         self,
@@ -78,18 +133,19 @@ class SessionManager:
                 return existing, resume_info, False
 
             # Session ID provided but not found - check if SDK file exists
-            sdk_available = self._check_sdk_session_exists(session_id, working_directory)
+            sdk_location = self._find_sdk_session_location(session_id, working_directory)
+            logger.info(f"SDK session location for {session_id[:8]}: {sdk_location}, working_dir={working_directory}")
 
-            if sdk_available:
+            if sdk_location:
                 # SDK has the session, we just don't have metadata
-                # Create a placeholder session
+                # Create a placeholder session with relative working_directory
+                relative_wd = self.make_working_directory_relative(working_directory)
                 session = await self.db.create_session(
                     SessionCreate(
                         id=session_id,
                         module=module,
                         source=SessionSource.PARACHUTE,
-                        working_directory=working_directory,
-                        vault_root=str(self.vault_path),
+                        working_directory=relative_wd,
                         continued_from=continued_from,
                     )
                 )
@@ -153,14 +209,15 @@ class SessionManager:
 
         Called after the first SDK response when we get the actual session ID.
         """
+        # Convert working_directory to relative for storage
+        relative_wd = self.make_working_directory_relative(placeholder.working_directory)
         session = await self.db.create_session(
             SessionCreate(
                 id=sdk_session_id,
                 title=title or placeholder.title,
                 module=placeholder.module,
                 source=placeholder.source,
-                working_directory=placeholder.working_directory,
-                vault_root=str(self.vault_path),
+                working_directory=relative_wd,
                 model=model,
                 continued_from=placeholder.continued_from,
             )
@@ -258,12 +315,73 @@ class SessionManager:
     # SDK Integration
     # =========================================================================
 
+    def get_session_resume_cwd(self, session_id: str) -> Optional[str]:
+        """
+        Get the working directory that should be used when resuming a session.
+
+        This finds the actual transcript file and returns the cwd that was used
+        when the session was created. This is necessary because the SDK uses the
+        cwd to locate the transcript file via path encoding.
+
+        Returns:
+            The cwd path to use for resuming, or None if transcript not found.
+        """
+        result = self._find_sdk_transcript_with_cwd(session_id)
+        if result:
+            _, cwd, _ = result
+            return cwd
+        return None
+
     def _check_sdk_session_exists(
         self, session_id: str, working_directory: Optional[str] = None
     ) -> bool:
-        """Check if an SDK JSONL file exists for this session."""
+        """Check if an SDK JSONL file exists for this session.
+
+        Checks both the expected vault path and the fallback ~/.claude location
+        to handle sessions created before vault-based storage was implemented.
+        """
+        location = self._find_sdk_session_location(session_id, working_directory)
+        return location is not None
+
+    def _find_sdk_session_location(
+        self, session_id: str, working_directory: Optional[str] = None
+    ) -> Optional[str]:
+        """Find where an SDK session is stored.
+
+        Returns:
+            - "vault" if found in vault's .claude directory
+            - "home" if found in user's ~/.claude directory (pre-migration)
+            - None if not found
+        """
+        # First check expected path in vault
         transcript_path = self.get_sdk_transcript_path(session_id, working_directory)
-        return transcript_path.exists() if transcript_path else False
+        if transcript_path and transcript_path.exists():
+            return "vault"
+
+        # Fallback: search all known locations
+        # Check vault .claude first
+        filename = f"{session_id}.jsonl"
+        claude_projects = self.vault_path / ".claude" / "projects"
+        if claude_projects.exists():
+            for project_dir in claude_projects.iterdir():
+                if project_dir.is_dir():
+                    candidate = project_dir / filename
+                    if candidate.exists():
+                        return "vault"
+
+        # Check ~/.claude (pre-migration location)
+        original_home = Path.home()
+        if original_home != self.vault_path:
+            original_claude_projects = original_home / ".claude" / "projects"
+            if original_claude_projects.exists():
+                for project_dir in original_claude_projects.iterdir():
+                    if project_dir.is_dir():
+                        candidate = project_dir / filename
+                        if candidate.exists():
+                            logger.debug(f"Found transcript in HOME location: {candidate}")
+                            return "home"
+
+        return None
 
     def get_sdk_transcript_path(
         self, session_id: str, working_directory: Optional[str] = None
@@ -309,7 +427,26 @@ class SessionManager:
         Returns:
             Path to the transcript file, or None if not found
         """
+        result = self._find_sdk_transcript_with_cwd(session_id)
+        return result[0] if result else None
+
+    def _find_sdk_transcript_with_cwd(self, session_id: str) -> Optional[tuple[Path, str, str]]:
+        """
+        Search for a transcript file and return its path along with the cwd it was created with.
+
+        Returns:
+            Tuple of (transcript_path, decoded_cwd, location) where location is "vault" or "home",
+            or None if not found.
+        """
         filename = f"{session_id}.jsonl"
+
+        def decode_project_path(encoded_name: str) -> str:
+            """Decode a project directory name to a path."""
+            # Claude encodes paths by replacing / with -
+            # Handle leading - which represents root /
+            if encoded_name.startswith("-"):
+                return "/" + encoded_name[1:].replace("-", "/")
+            return encoded_name.replace("-", "/")
 
         # First, search in vault's .claude directory (new location)
         claude_projects = self.vault_path / ".claude" / "projects"
@@ -318,7 +455,8 @@ class SessionManager:
                 if project_dir.is_dir():
                     candidate = project_dir / filename
                     if candidate.exists():
-                        return candidate
+                        decoded_cwd = decode_project_path(project_dir.name)
+                        return (candidate, decoded_cwd, "vault")
 
         # Fallback: search in original ~/.claude directory (pre-migration sessions)
         original_home = Path.home()
@@ -329,8 +467,9 @@ class SessionManager:
                     if project_dir.is_dir():
                         candidate = project_dir / filename
                         if candidate.exists():
-                            logger.debug(f"Found transcript in original HOME location: {candidate}")
-                            return candidate
+                            decoded_cwd = decode_project_path(project_dir.name)
+                            logger.debug(f"Found transcript in HOME location: {candidate}, cwd={decoded_cwd}")
+                            return (candidate, decoded_cwd, "home")
 
         return None
 
