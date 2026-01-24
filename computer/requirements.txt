@@ -10,7 +10,8 @@ httpx>=0.26.0
 pyyaml>=6.0.1
 python-frontmatter>=1.1.0
 sse-starlette>=2.0.0
-claude-agent-sdk>=0.1.19
+# Pin SDK to 0.1.21 - 0.1.22 has attach_tokens bug with MCP
+claude-agent-sdk>=0.1.19,<0.1.22
 watchfiles>=0.21.0
 watchdog>=4.0.0
 apscheduler>=3.10.0
