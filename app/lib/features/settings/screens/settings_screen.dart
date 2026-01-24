@@ -1189,9 +1189,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     try {
       final featureFlags = ref.read(featureFlagsServiceProvider);
       final serverUrl = await featureFlags.getAiServerUrl();
+      final apiKey = await ref.read(apiKeyProvider.future);
 
       final response = await http.get(
         Uri.parse('$serverUrl/api/modules/daily/agents'),
+        headers: {
+          if (apiKey != null && apiKey.isNotEmpty) 'Authorization': 'Bearer $apiKey',
+        },
       );
 
       if (mounted) {
@@ -1222,6 +1226,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     try {
       final featureFlags = ref.read(featureFlagsServiceProvider);
       final serverUrl = await featureFlags.getAiServerUrl();
+      final apiKey = await ref.read(apiKeyProvider.future);
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -1232,7 +1237,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
       final response = await http.post(
         Uri.parse('$serverUrl/api/modules/daily/agents/$agentName/run'),
-        headers: {'Content-Type': 'application/json'},
+        headers: {
+          'Content-Type': 'application/json',
+          if (apiKey != null && apiKey.isNotEmpty) 'Authorization': 'Bearer $apiKey',
+        },
         body: json.encode({'force': true}),
       );
 
@@ -1297,9 +1305,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     try {
       final featureFlags = ref.read(featureFlagsServiceProvider);
       final serverUrl = await featureFlags.getAiServerUrl();
+      final apiKey = await ref.read(apiKeyProvider.future);
 
       final response = await http.post(
         Uri.parse('$serverUrl/api/modules/daily/agents/$agentName/reset'),
+        headers: {
+          if (apiKey != null && apiKey.isNotEmpty) 'Authorization': 'Bearer $apiKey',
+        },
       );
 
       if (mounted) {

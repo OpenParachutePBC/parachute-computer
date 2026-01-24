@@ -121,7 +121,8 @@ class BaseServerService {
   Future<DailyCuratorStatus?> getDailyCuratorStatus() async {
     try {
       final response = await http
-          .get(Uri.parse('${await getServerUrl()}/api/modules/daily/curator'))
+          .get(Uri.parse('${await getServerUrl()}/api/modules/daily/curator'),
+              headers: await _getHeaders())
           .timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200) {
@@ -155,7 +156,7 @@ class BaseServerService {
       final response = await http
           .post(
             Uri.parse('${await getServerUrl()}/api/modules/daily/curate'),
-            headers: {'Content-Type': 'application/json'},
+            headers: await _getHeaders(json: true),
             body: json.encode(body),
           )
           .timeout(const Duration(seconds: 120)); // Curator can take a while
@@ -183,7 +184,8 @@ class BaseServerService {
   Future<CuratorTranscript?> getCuratorTranscript({int limit = 50}) async {
     try {
       final response = await http
-          .get(Uri.parse('${await getServerUrl()}/api/modules/daily/curator/transcript?limit=$limit'))
+          .get(Uri.parse('${await getServerUrl()}/api/modules/daily/curator/transcript?limit=$limit'),
+              headers: await _getHeaders())
           .timeout(const Duration(seconds: 15));
 
       if (response.statusCode == 200) {
@@ -237,7 +239,8 @@ class BaseServerService {
   Future<List<DailyAgentInfo>?> getDailyAgents() async {
     try {
       final response = await http
-          .get(Uri.parse('${await getServerUrl()}/api/modules/daily/agents'))
+          .get(Uri.parse('${await getServerUrl()}/api/modules/daily/agents'),
+              headers: await _getHeaders())
           .timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200) {
@@ -259,7 +262,8 @@ class BaseServerService {
   Future<DailyAgentInfo?> getDailyAgent(String agentName) async {
     try {
       final response = await http
-          .get(Uri.parse('${await getServerUrl()}/api/modules/daily/agents/$agentName'))
+          .get(Uri.parse('${await getServerUrl()}/api/modules/daily/agents/$agentName'),
+              headers: await _getHeaders())
           .timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200) {
@@ -293,7 +297,7 @@ class BaseServerService {
       final response = await http
           .post(
             Uri.parse('${await getServerUrl()}/api/modules/daily/agents/$agentName/run'),
-            headers: {'Content-Type': 'application/json'},
+            headers: await _getHeaders(json: true),
             body: json.encode(body),
           )
           .timeout(const Duration(seconds: 180)); // Agents can take a while
