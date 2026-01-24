@@ -1594,51 +1594,14 @@ class ClaudeCodeAdoptResult {
   }
 }
 
-/// Path migration info returned from session GET
-///
-/// Indicates the session was created on a different Parachute instance
-/// and the transcript file doesn't exist locally.
-class SessionPathMigration {
-  /// The vault root where the session was originally created
-  final String sessionVaultRoot;
-
-  /// The current vault root on this machine
-  final String currentVaultRoot;
-
-  /// The working directory stored in the session
-  final String storedWorkingDirectory;
-
-  const SessionPathMigration({
-    required this.sessionVaultRoot,
-    required this.currentVaultRoot,
-    required this.storedWorkingDirectory,
-  });
-
-  factory SessionPathMigration.fromJson(Map<String, dynamic> json) {
-    return SessionPathMigration(
-      sessionVaultRoot: json['sessionVaultRoot'] as String? ?? '',
-      currentVaultRoot: json['currentVaultRoot'] as String? ?? '',
-      storedWorkingDirectory: json['storedWorkingDirectory'] as String? ?? '',
-    );
-  }
-}
-
 /// A session with its messages
 class ChatSessionWithMessages {
   final ChatSession session;
   final List<ChatMessage> messages;
 
-  /// Whether the session needs path migration (working_directory mismatch)
-  final bool needsPathMigration;
-
-  /// Migration details if needsPathMigration is true
-  final SessionPathMigration? pathMigration;
-
   const ChatSessionWithMessages({
     required this.session,
     required this.messages,
-    this.needsPathMigration = false,
-    this.pathMigration,
   });
 
   factory ChatSessionWithMessages.fromJson(Map<String, dynamic> json) {
@@ -1653,18 +1616,9 @@ class ChatSessionWithMessages {
       });
     }).toList();
 
-    // Parse path migration info
-    final needsMigration = json['needsPathMigration'] as bool? ?? false;
-    final migrationJson = json['pathMigration'] as Map<String, dynamic>?;
-    final pathMigration = migrationJson != null
-        ? SessionPathMigration.fromJson(migrationJson)
-        : null;
-
     return ChatSessionWithMessages(
       session: session,
       messages: messages,
-      needsPathMigration: needsMigration,
-      pathMigration: pathMigration,
     );
   }
 }
