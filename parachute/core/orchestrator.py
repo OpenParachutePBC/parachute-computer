@@ -417,7 +417,7 @@ class Orchestrator:
             resolved_mcps = None
             mcp_warnings: list[str] = []
             try:
-                global_mcps = await load_mcp_servers(self.vault_path, attach_tokens=True)
+                global_mcps = await load_mcp_servers(self.vault_path)
                 resolved_mcps = resolve_mcp_servers(agent.mcp_servers, global_mcps)
 
                 # Validate and filter out problematic MCP servers
@@ -1334,3 +1334,194 @@ The user is now continuing this conversation with you. Respond naturally as if y
         except Exception as e:
             # Don't fail the main request if curator fails
             logger.warning(f"Failed to queue curator task: {e}", exc_info=True)
+
+    # =========================================================================
+    # Vault Migration
+    # =========================================================================
+
+    async def scan_sessions_needing_migration(self) -> dict[str, Any]:
+        """
+        Scan all sessions and identify those that need vault path migration.
+
+        Returns a summary of sessions that were created on a different vault root,
+        along with info about their transcript files.
+        """
+        current_vault = str(self.vault_path)
+        sessions = await self.session_manager.list_sessions(limit=10000)
+
+        needs_migration = []
+        already_current = 0
+        no_vault_root = 0
+
+        for session in sessions:
+            if not session.vault_root:
+                no_vault_root += 1
+                continue
+
+            if session.vault_root == current_vault:
+                already_current += 1
+                continue
+
+            # Session has different vault_root - check transcript
+            transcript = self.session_manager._find_sdk_transcript(session.id)
+            transcript_exists = transcript is not None and transcript.exists()
+            transcript_path = str(transcript) if transcript else None
+
+            needs_migration.append({
+                "sessionId": session.id,
+                "title": session.title or "(untitled)",
+                "oldVaultRoot": session.vault_root,
+                "workingDirectory": session.working_directory,
+                "transcriptExists": transcript_exists,
+                "transcriptPath": transcript_path,
+                "createdAt": session.created_at.isoformat() if session.created_at else None,
+            })
+
+        return {
+            "currentVaultRoot": current_vault,
+            "needsMigration": needs_migration,
+            "alreadyCurrent": already_current,
+            "noVaultRoot": no_vault_root,
+            "total": len(sessions),
+        }
+
+    async def migrate_session_vault_root(
+        self,
+        session_id: str,
+        copy_transcript: bool = True,
+    ) -> dict[str, Any]:
+        """
+        Migrate a single session to the current vault root.
+
+        This updates the session's vault_root in the database and optionally
+        copies the transcript file to the new location.
+
+        Args:
+            session_id: The session to migrate
+            copy_transcript: If True, copy transcript to new location
+
+        Returns:
+            Migration result with status and details
+        """
+        import shutil
+
+        current_vault = str(self.vault_path)
+        session = await self.session_manager.get_session(session_id)
+
+        if not session:
+            return {"success": False, "error": "Session not found"}
+
+        if not session.vault_root:
+            return {"success": False, "error": "Session has no vault_root set"}
+
+        if session.vault_root == current_vault:
+            return {"success": True, "status": "already_current"}
+
+        old_vault_root = session.vault_root
+        result = {
+            "sessionId": session_id,
+            "oldVaultRoot": old_vault_root,
+            "newVaultRoot": current_vault,
+            "transcriptCopied": False,
+        }
+
+        # Find existing transcript
+        old_transcript = self.session_manager._find_sdk_transcript(session_id)
+
+        if copy_transcript and old_transcript and old_transcript.exists():
+            # Calculate new transcript path based on current vault
+            # working_directory is relative to vault, so construct new path
+            effective_cwd = session.working_directory or ""
+            if effective_cwd:
+                if Path(effective_cwd).is_absolute():
+                    # Absolute path stored - need to rebase to new vault
+                    # e.g., /vault/Projects/foo -> /Users/me/Parachute/Projects/foo
+                    try:
+                        rel_path = Path(effective_cwd).relative_to(old_vault_root)
+                        new_cwd = str(self.vault_path / rel_path)
+                    except ValueError:
+                        # Path wasn't under old vault, use as-is
+                        new_cwd = effective_cwd
+                else:
+                    new_cwd = str(self.vault_path / effective_cwd)
+            else:
+                new_cwd = current_vault
+
+            # Resolve and encode the new path
+            try:
+                new_cwd_resolved = str(Path(new_cwd).resolve())
+            except Exception:
+                new_cwd_resolved = new_cwd
+
+            encoded_path = new_cwd_resolved.replace("/", "-")
+            new_transcript_dir = self.vault_path / ".claude" / "projects" / encoded_path
+            new_transcript = new_transcript_dir / f"{session_id}.jsonl"
+
+            # Copy if not already at new location
+            if old_transcript != new_transcript:
+                try:
+                    new_transcript_dir.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(old_transcript, new_transcript)
+                    result["transcriptCopied"] = True
+                    result["newTranscriptPath"] = str(new_transcript)
+                    logger.info(f"Copied transcript from {old_transcript} to {new_transcript}")
+                except Exception as e:
+                    logger.error(f"Failed to copy transcript: {e}")
+                    result["transcriptCopyError"] = str(e)
+
+        # Update the session's vault_root in database
+        await self.session_manager.db.connection.execute(
+            "UPDATE sessions SET vault_root = ? WHERE id = ?",
+            (current_vault, session_id),
+        )
+        await self.session_manager.db.connection.commit()
+
+        result["success"] = True
+        result["status"] = "migrated"
+        logger.info(f"Migrated session {session_id[:8]}... from {old_vault_root} to {current_vault}")
+
+        return result
+
+    async def migrate_all_sessions(self, copy_transcripts: bool = True) -> dict[str, Any]:
+        """
+        Migrate all sessions that have a different vault_root to the current vault.
+
+        Args:
+            copy_transcripts: If True, copy transcript files to new locations
+
+        Returns:
+            Summary of migration results
+        """
+        scan = await self.scan_sessions_needing_migration()
+        sessions_to_migrate = scan["needsMigration"]
+
+        results = []
+        migrated = 0
+        failed = 0
+
+        for session_info in sessions_to_migrate:
+            try:
+                result = await self.migrate_session_vault_root(
+                    session_info["sessionId"],
+                    copy_transcript=copy_transcripts,
+                )
+                results.append(result)
+                if result.get("success"):
+                    migrated += 1
+                else:
+                    failed += 1
+            except Exception as e:
+                logger.error(f"Failed to migrate session {session_info['sessionId']}: {e}")
+                results.append({
+                    "sessionId": session_info["sessionId"],
+                    "success": False,
+                    "error": str(e),
+                })
+                failed += 1
+
+        return {
+            "migrated": migrated,
+            "failed": failed,
+            "total": len(sessions_to_migrate),
+            "results": results,
+        }
