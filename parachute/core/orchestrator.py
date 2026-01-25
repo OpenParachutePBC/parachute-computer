@@ -343,13 +343,14 @@ class Orchestrator:
                     import base64
                     from datetime import datetime
 
-                    # Save to Chat/assets/YYYY-MM/
+                    # Save to Chat/assets/YYYY-MM-DD/ (date-based organization)
                     now = datetime.now()
-                    asset_dir = self.vault_path / "Chat" / "assets" / now.strftime("%Y-%m")
+                    date_folder = now.strftime("%Y-%m-%d")
+                    asset_dir = self.vault_path / "Chat" / "assets" / date_folder
                     asset_dir.mkdir(parents=True, exist_ok=True)
 
-                    # Generate unique filename
-                    timestamp = now.strftime("%Y-%m-%d_%H-%M-%S")
+                    # Generate unique filename (time-based, no date prefix since folder has date)
+                    timestamp = now.strftime("%H-%M-%S")
                     ext = Path(file_name).suffix or ".bin"
                     safe_name = Path(file_name).stem[:30]  # Truncate long names
                     unique_name = f"{timestamp}_{safe_name}{ext}"
@@ -362,7 +363,7 @@ class Orchestrator:
                         logger.info(f"Saved attachment: {file_path}")
 
                         # Use vault-relative path for display (enables UI asset fetching)
-                        relative_path = f"Chat/assets/{now.strftime('%Y-%m')}/{unique_name}"
+                        relative_path = f"Chat/assets/{date_folder}/{unique_name}"
 
                         # Build reference for the message
                         if att_type == "image":
@@ -905,9 +906,10 @@ class Orchestrator:
             return agent.system_prompt, metadata
 
         # For vault-agent: SDK loads CLAUDE.md hierarchy automatically
-        # Skills and agents are auto-discovered from .claude/skills/ and .claude/agents/
-        # by Claude Code's native setting_sources=["project"] behavior
-        # No need to inject them into the prompt manually
+        # with setting_sources=["project"]. CLAUDE.md uses @ references to include:
+        # - .parachute/system.md (system prompt)
+        # - parachute/*.md (bootstrap files: identity, orientation, profile, now, memory, tools)
+        # No need to inject them manually here.
 
         # Handle explicitly selected context files (beyond automatic hierarchy)
         # These are files the user explicitly selected in the UI
