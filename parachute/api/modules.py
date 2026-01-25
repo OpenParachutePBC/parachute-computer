@@ -252,6 +252,64 @@ async def curate_module(mod: str, body: Optional[CurateRequest] = None) -> dict[
 # =============================================================================
 
 
+@router.get("/modules/daily/agents/status")
+async def get_daily_agents_status(
+    date: Optional[str] = Query(None, description="Date in YYYY-MM-DD format (defaults to today)"),
+) -> dict[str, Any]:
+    """
+    Get status of all daily agents for a specific date.
+
+    This is a lightweight endpoint designed for the app to quickly check
+    which agents have outputs available for the selected date.
+
+    Returns for each agent:
+    - name: Agent identifier
+    - displayName: Human-readable name
+    - hasOutput: Whether output file exists for the date
+    - outputPath: Relative path to output (if exists)
+    - lastRunAt: When agent last ran
+    - isRunning: Whether agent is currently running (future)
+
+    This enables the "morning flow" UX:
+    1. App loads local outputs immediately
+    2. App calls this endpoint to check what's available on server
+    3. For any outputs that exist on server but not locally, app pulls them
+    """
+    settings = get_settings()
+
+    from parachute.core.daily_agent import discover_daily_agents, DailyAgentState
+
+    # Default to today
+    target_date = date or datetime.now().strftime("%Y-%m-%d")
+
+    agents = discover_daily_agents(settings.vault_path)
+    result = []
+
+    for config in agents:
+        # Get state for this agent
+        state = DailyAgentState(settings.vault_path, config.name)
+        state_data = state.load()
+
+        # Check if output exists for the target date
+        output_path = config.get_output_path(target_date)
+        output_file = settings.vault_path / output_path
+        has_output = output_file.exists()
+
+        result.append({
+            "name": config.name,
+            "displayName": config.display_name,
+            "hasOutput": has_output,
+            "outputPath": output_path if has_output else None,
+            "lastRunAt": state_data.get("last_run_at"),
+            "lastProcessedDate": state_data.get("last_processed_date"),
+        })
+
+    return {
+        "date": target_date,
+        "agents": result,
+    }
+
+
 @router.get("/modules/daily/agents")
 async def list_daily_agents() -> dict[str, Any]:
     """
