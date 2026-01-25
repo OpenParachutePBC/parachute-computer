@@ -8,6 +8,14 @@
 
 set -e
 
+# Source shell config for environment variables (JAVA_HOME, ANDROID_HOME, etc.)
+# This ensures the script works in non-interactive shells (e.g., from Claude Code)
+if [[ -f "$HOME/.zshrc" ]]; then
+    source "$HOME/.zshrc" 2>/dev/null || true
+elif [[ -f "$HOME/.bashrc" ]]; then
+    source "$HOME/.bashrc" 2>/dev/null || true
+fi
+
 cd "$(dirname "$0")/.."
 
 BUILD_TYPE="debug"
