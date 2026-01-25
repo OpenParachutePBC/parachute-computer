@@ -143,7 +143,7 @@ def hash_file(path: Path) -> str:
 # --- Endpoints ---
 
 
-BINARY_EXTENSIONS = {'.wav', '.mp3', '.m4a', '.ogg', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.pdf'}
+BINARY_EXTENSIONS = {'.wav', '.mp3', '.m4a', '.ogg', '.opus', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.pdf'}
 
 
 @router.get("/manifest", response_model=ManifestResponse)
@@ -152,12 +152,22 @@ async def get_manifest(
     root: str = Query(..., description="Sync root folder (e.g., 'Daily')"),
     pattern: str = Query("*.md", description="Glob pattern to match files"),
     include_binary: bool = Query(False, description="Include binary files (audio, images)"),
+    date: Optional[str] = Query(None, description="Date filter (YYYY-MM-DD) for date-scoped sync"),
+    quick: bool = Query(False, description="Quick mode: skip hashing, use mtime only (faster but less accurate)"),
 ) -> ManifestResponse:
     """
     Get file manifest for a sync root.
 
     Returns hashes and metadata for all matching files, allowing clients
     to determine which files need to be pushed or pulled.
+
+    When `date` is provided, only files relevant to that date are included:
+    - journals/{date}.md
+    - reflections/{date}.md
+    - chat-log/{date}.json
+    - assets/{date}/* (date-based folder)
+
+    This enables efficient sync for a single day without scanning the entire vault.
     """
     vault_path = get_vault_path()
     sync_root = validate_sync_path(vault_path, root)
@@ -175,43 +185,185 @@ async def get_manifest(
 
     files: list[FileInfo] = []
 
-    # Walk the directory and collect matching files
+    # If date is provided, use targeted file collection instead of rglob
+    if date:
+        # Validate date format
+        try:
+            datetime.strptime(date, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+
+        # Collect files for this specific date
+        date_files = [
+            sync_root / "journals" / f"{date}.md",
+            sync_root / "reflections" / f"{date}.md",
+            sync_root / "chat-log" / f"{date}.json",
+            sync_root / "chat-log" / f"{date}.md",  # Alternative format
+        ]
+
+        # Add assets from date folder (new structure: assets/YYYY-MM-DD/)
+        assets_date_dir = sync_root / "assets" / date
+        if assets_date_dir.exists() and assets_date_dir.is_dir():
+            for asset_file in assets_date_dir.iterdir():
+                if asset_file.is_file():
+                    date_files.append(asset_file)
+
+        # Also check legacy month folder for backwards compatibility
+        # assets/YYYY-MM/ with files matching the date
+        month = date[:7]  # YYYY-MM
+        assets_month_dir = sync_root / "assets" / month
+        if assets_month_dir.exists() and assets_month_dir.is_dir():
+            for asset_file in assets_month_dir.iterdir():
+                if asset_file.is_file() and asset_file.name.startswith(date):
+                    date_files.append(asset_file)
+
+        for file_path in date_files:
+            if not file_path.exists() or not file_path.is_file():
+                continue
+
+            # Skip binary files unless include_binary is True
+            if not include_binary and file_path.suffix.lower() in BINARY_EXTENSIONS:
+                continue
+
+            try:
+                relative = file_path.relative_to(sync_root)
+                stat = file_path.stat()
+                # In quick mode, use mtime as hash (fast but requires accurate clocks)
+                file_hash = str(stat.st_mtime) if quick else hash_file(file_path)
+                files.append(
+                    FileInfo(
+                        path=str(relative),
+                        hash=file_hash,
+                        size=stat.st_size,
+                        modified=stat.st_mtime,
+                    )
+                )
+            except (PermissionError, OSError) as e:
+                logger.warning(f"Could not read {file_path}: {e}")
+                continue
+
+        logger.info(f"Generated date-scoped manifest for {root}/{date}: {len(files)} files (quick={quick})")
+    else:
+        # Full manifest - walk the directory and collect matching files
+        for file_path in sync_root.rglob(pattern):
+            if not file_path.is_file():
+                continue
+
+            # Skip hidden files and directories, EXCEPT .agents/ which we need to sync
+            # Also skip .versions/ (local-only backup) and .tombstones/ (deletion tracking)
+            relative = file_path.relative_to(sync_root)
+            parts = relative.parts
+            if any(part.startswith(".") and part != ".agents" for part in parts):
+                continue
+            if ".versions" in parts or ".tombstones" in parts:
+                continue
+
+            # Skip binary files unless include_binary is True
+            if not include_binary and file_path.suffix.lower() in BINARY_EXTENSIONS:
+                continue
+
+            try:
+                stat = file_path.stat()
+                # In quick mode, use mtime as hash (fast but requires accurate clocks)
+                file_hash = str(stat.st_mtime) if quick else hash_file(file_path)
+                files.append(
+                    FileInfo(
+                        path=str(relative),
+                        hash=file_hash,
+                        size=stat.st_size,
+                        modified=stat.st_mtime,
+                    )
+                )
+            except (PermissionError, OSError) as e:
+                logger.warning(f"Could not read {file_path}: {e}")
+                continue
+
+        logger.info(f"Generated manifest for {root}: {len(files)} files (quick={quick})")
+
+    return ManifestResponse(
+        root=root,
+        files=files,
+        generated_at=datetime.utcnow().isoformat() + "Z",
+    )
+
+
+class ChangedFilesResponse(BaseModel):
+    """Response containing files modified since a given timestamp."""
+
+    root: str
+    files: list[FileInfo]
+    since: float = Field(..., description="The timestamp that was queried")
+    generated_at: str
+
+
+@router.get("/changes", response_model=ChangedFilesResponse)
+async def get_changes(
+    request: Request,
+    root: str = Query(..., description="Sync root folder (e.g., 'Daily')"),
+    since: float = Query(..., description="Unix timestamp - return files modified after this"),
+    pattern: str = Query("*.md", description="Glob pattern to match files"),
+    include_binary: bool = Query(False, description="Include binary files"),
+) -> ChangedFilesResponse:
+    """
+    Get files that have been modified since a given timestamp.
+
+    This is much more efficient than a full manifest when you only need
+    to know what changed since your last sync.
+
+    Note: Uses file mtime, not content hashing - fast but relies on accurate clocks.
+    """
+    vault_path = get_vault_path()
+    sync_root = validate_sync_path(vault_path, root)
+
+    if not sync_root.exists():
+        return ChangedFilesResponse(
+            root=root,
+            files=[],
+            since=since,
+            generated_at=datetime.utcnow().isoformat() + "Z",
+        )
+
+    files: list[FileInfo] = []
+
     for file_path in sync_root.rglob(pattern):
         if not file_path.is_file():
             continue
 
-        # Skip hidden files and directories, EXCEPT .agents/ which we need to sync
-        # Also skip .versions/ (local-only backup) and .tombstones/ (deletion tracking)
         relative = file_path.relative_to(sync_root)
         parts = relative.parts
+
+        # Skip hidden files except .agents/
         if any(part.startswith(".") and part != ".agents" for part in parts):
             continue
         if ".versions" in parts or ".tombstones" in parts:
             continue
 
-        # Skip binary files unless include_binary is True
+        # Skip binary files unless requested
         if not include_binary and file_path.suffix.lower() in BINARY_EXTENSIONS:
             continue
 
         try:
             stat = file_path.stat()
-            files.append(
-                FileInfo(
-                    path=str(relative),
-                    hash=hash_file(file_path),
-                    size=stat.st_size,
-                    modified=stat.st_mtime,
+            # Only include files modified after the 'since' timestamp
+            if stat.st_mtime > since:
+                files.append(
+                    FileInfo(
+                        path=str(relative),
+                        hash=str(stat.st_mtime),  # Use mtime as "hash" for efficiency
+                        size=stat.st_size,
+                        modified=stat.st_mtime,
+                    )
                 )
-            )
         except (PermissionError, OSError) as e:
             logger.warning(f"Could not read {file_path}: {e}")
             continue
 
-    logger.info(f"Generated manifest for {root}: {len(files)} files")
+    logger.info(f"Found {len(files)} files changed since {since} in {root}")
 
-    return ManifestResponse(
+    return ChangedFilesResponse(
         root=root,
         files=files,
+        since=since,
         generated_at=datetime.utcnow().isoformat() + "Z",
     )
 
