@@ -582,52 +582,60 @@ class FileSystemService {
   Future<String> getImportsPath() => getFolderPath('imports');
 
   // ============================================================
-  // Public API - Assets (Month-based organization)
+  // Public API - Assets (Date-based organization: assets/YYYY-MM-DD/)
   // ============================================================
 
-  /// Get month folder path for assets (YYYY-MM)
-  Future<String> getAssetsMonthPath(DateTime timestamp) async {
+  /// Get date folder path for assets (YYYY-MM-DD)
+  Future<String> getAssetsDatePath(DateTime timestamp) async {
     final assetsPath = await getFolderPath('assets');
-    final month =
-        '${timestamp.year}-${timestamp.month.toString().padLeft(2, '0')}';
-    return '$assetsPath/$month';
+    final date = '${timestamp.year}-${timestamp.month.toString().padLeft(2, '0')}-${timestamp.day.toString().padLeft(2, '0')}';
+    return '$assetsPath/$date';
   }
 
-  /// Ensure month folder exists
-  Future<String> ensureAssetsMonthFolderExists(DateTime timestamp) async {
-    final monthPath = await getAssetsMonthPath(timestamp);
-    final monthDir = Directory(monthPath);
-    if (!await monthDir.exists()) {
-      await monthDir.create(recursive: true);
-      debugPrint('[FileSystemService:${_moduleType.name}] Created assets folder: $monthPath');
+  /// Get month folder path for assets (YYYY-MM) - DEPRECATED, use getAssetsDatePath
+  @Deprecated('Use getAssetsDatePath for date-based organization')
+  Future<String> getAssetsMonthPath(DateTime timestamp) async {
+    return getAssetsDatePath(timestamp);
+  }
+
+  /// Ensure date folder exists for assets
+  Future<String> ensureAssetsDateFolderExists(DateTime timestamp) async {
+    final datePath = await getAssetsDatePath(timestamp);
+    final dateDir = Directory(datePath);
+    if (!await dateDir.exists()) {
+      await dateDir.create(recursive: true);
+      debugPrint('[FileSystemService:${_moduleType.name}] Created assets folder: $datePath');
     }
-    return monthPath;
+    return datePath;
   }
 
-  /// Generate unique asset filename
+  /// Ensure month folder exists - DEPRECATED, use ensureAssetsDateFolderExists
+  @Deprecated('Use ensureAssetsDateFolderExists for date-based organization')
+  Future<String> ensureAssetsMonthFolderExists(DateTime timestamp) async {
+    return ensureAssetsDateFolderExists(timestamp);
+  }
+
+  /// Generate unique asset filename (now without date prefix since folder has date)
   String generateAssetFilename(
       DateTime timestamp, String type, String extension) {
-    final date =
-        '${timestamp.year}-${timestamp.month.toString().padLeft(2, '0')}-${timestamp.day.toString().padLeft(2, '0')}';
     final time =
         '${timestamp.hour.toString().padLeft(2, '0')}${timestamp.minute.toString().padLeft(2, '0')}${timestamp.second.toString().padLeft(2, '0')}';
-    return '${date}_${time}_$type.$extension';
+    return '${time}_$type.$extension';
   }
 
   /// Get full path for new asset
   Future<String> getNewAssetPath(
       DateTime timestamp, String type, String extension) async {
-    final monthPath = await ensureAssetsMonthFolderExists(timestamp);
+    final datePath = await ensureAssetsDateFolderExists(timestamp);
     final filename = generateAssetFilename(timestamp, type, extension);
-    return '$monthPath/$filename';
+    return '$datePath/$filename';
   }
 
   /// Get relative path from root to asset
   String getAssetRelativePath(DateTime timestamp, String filename) {
-    final month =
-        '${timestamp.year}-${timestamp.month.toString().padLeft(2, '0')}';
+    final date = '${timestamp.year}-${timestamp.month.toString().padLeft(2, '0')}-${timestamp.day.toString().padLeft(2, '0')}';
     final assetsName = _folderNames['assets'] ?? 'assets';
-    return '$assetsName/$month/$filename';
+    return '$assetsName/$date/$filename';
   }
 
   /// Resolve relative asset path to absolute
@@ -939,45 +947,37 @@ class FileSystemService {
   // Private Helpers
   // ============================================================
 
-  /// Get the default vault root path (~/Parachute).
+  /// Get the default vault root path (~).
   /// The module subfolder (Daily/Chat) is handled separately via folder config.
+  /// On macOS/Linux, defaults to home directory for the "operating at root" experience.
+  /// On mobile platforms, uses app-specific storage with Parachute subfolder.
   Future<String> _getDefaultVaultPath() async {
     if (Platform.isMacOS) {
       final home = Platform.environment['HOME'];
       if (home != null) {
-        final preferredPath = '$home/Parachute';
-        final preferredDir = Directory(preferredPath);
+        final homeDir = Directory(home);
         try {
-          // Try to create the directory
-          if (!await preferredDir.exists()) {
-            await preferredDir.create(recursive: true);
-          }
-          // Verify it was actually created where we expect (not sandbox-redirected)
-          // by checking that the resolved path matches our expected path
-          final resolvedPath = await preferredDir.resolveSymbolicLinks();
-          if (resolvedPath == preferredPath) {
-            debugPrint('[FileSystemService:${_moduleType.name}] Using real path: $preferredPath');
-            return preferredPath;
-          } else {
-            debugPrint(
-                '[FileSystemService:${_moduleType.name}] Path was sandboxed: $preferredPath -> $resolvedPath');
+          // Verify home directory is accessible
+          if (await homeDir.exists()) {
+            debugPrint('[FileSystemService:${_moduleType.name}] Using home path: $home');
+            return home;
           }
         } catch (e) {
           debugPrint(
-              '[FileSystemService:${_moduleType.name}] Cannot access ~/Parachute: $e');
+              '[FileSystemService:${_moduleType.name}] Cannot access home: $e');
         }
       }
       // Fall back to app container
       final appDir = await getApplicationDocumentsDirectory();
-      debugPrint('[FileSystemService:${_moduleType.name}] Using container path: ${appDir.path}/Parachute');
-      return '${appDir.path}/Parachute';
+      debugPrint('[FileSystemService:${_moduleType.name}] Using container path: ${appDir.path}');
+      return appDir.path;
     }
 
     if (Platform.isLinux) {
       final home = Platform.environment['HOME'];
-      if (home != null) return '$home/Parachute';
+      if (home != null) return home;
       final appDir = await getApplicationDocumentsDirectory();
-      return '${appDir.path}/Parachute';
+      return appDir.path;
     }
 
     if (Platform.isAndroid) {

@@ -32,8 +32,8 @@ class RemoteFileBrowserService {
 
   /// Get a display-friendly version of the path
   String getDisplayPath(String path) {
-    if (path.isEmpty) return '~/Parachute';
-    return '~/Parachute/$path';
+    if (path.isEmpty) return '~';
+    return '~/$path';
   }
 
   /// Get the folder name from a path

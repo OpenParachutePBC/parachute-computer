@@ -226,7 +226,7 @@ class SyncService {
   }
 
   /// Binary file extensions to skip in text-only sync mode
-  static const _binaryExtensions = {'.wav', '.mp3', '.m4a', '.ogg', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.pdf'};
+  static const _binaryExtensions = {'.wav', '.mp3', '.m4a', '.ogg', '.opus', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.pdf'};
 
   /// Check if a path is a journal file that supports entry-level merge
   bool _isJournalFile(String relativePath) {
@@ -423,10 +423,14 @@ class SyncService {
   }
 
   /// Get local file info for a directory
+  ///
+  /// [quick] - If true, skip SHA-256 hashing and use mtime as "hash".
+  ///           Much faster for large directories but less accurate.
   Future<Map<String, SyncFileInfo>> _getLocalManifest(
     String localRoot,
     String pattern, {
     bool includeBinary = false,
+    bool quick = false,
   }) async {
     final manifest = <String, SyncFileInfo>{};
     final dir = Directory(localRoot);
@@ -465,7 +469,10 @@ class SyncService {
       if (pattern == '*' || relativePath.endsWith(pattern.replaceAll('*', ''))) {
         try {
           final stat = await entity.stat();
-          final hash = await _hashFile(entity);
+          // In quick mode, use mtime as hash (fast comparison)
+          final hash = quick
+              ? (stat.modified.millisecondsSinceEpoch / 1000.0).toString()
+              : await _hashFile(entity);
 
           manifest[relativePath] = SyncFileInfo(
             path: relativePath,
@@ -482,11 +489,137 @@ class SyncService {
     return manifest;
   }
 
+  /// Get local file info for a specific date (date-scoped sync)
+  ///
+  /// Only collects files relevant to the specified date:
+  /// - journals/{date}.md
+  /// - reflections/{date}.md
+  /// - chat-log/{date}.json or {date}.md
+  /// - assets/{date}/* (new date-based folder structure)
+  /// - assets/{YYYY-MM}/*{date}* (legacy month-based structure)
+  Future<Map<String, SyncFileInfo>> _getLocalManifestForDate(
+    String localRoot,
+    String date, {
+    bool includeBinary = false,
+  }) async {
+    final manifest = <String, SyncFileInfo>{};
+
+    // List of specific files to check
+    final filesToCheck = <String>[
+      'journals/$date.md',
+      'reflections/$date.md',
+      'chat-log/$date.json',
+      'chat-log/$date.md',
+    ];
+
+    // Check specific files
+    for (final relativePath in filesToCheck) {
+      final file = File('$localRoot/$relativePath');
+      if (await file.exists()) {
+        try {
+          final stat = await file.stat();
+          final hash = await _hashFile(file);
+
+          manifest[relativePath] = SyncFileInfo(
+            path: relativePath,
+            hash: hash,
+            size: stat.size,
+            modified: stat.modified.millisecondsSinceEpoch / 1000.0,
+          );
+        } catch (e) {
+          debugPrint('[SyncService] Error reading $relativePath: $e');
+        }
+      }
+    }
+
+    // Check new date-based assets folder (assets/YYYY-MM-DD/)
+    final assetsDateDir = Directory('$localRoot/assets/$date');
+    if (await assetsDateDir.exists()) {
+      await for (final entity in assetsDateDir.list()) {
+        if (entity is! File) continue;
+
+        final relativePath = path.relative(entity.path, from: localRoot);
+        final ext = path.extension(relativePath).toLowerCase();
+
+        // Skip binary files unless includeBinary is true
+        if (!includeBinary && _binaryExtensions.contains(ext)) {
+          continue;
+        }
+
+        try {
+          final stat = await entity.stat();
+          final hash = await _hashFile(entity);
+
+          manifest[relativePath] = SyncFileInfo(
+            path: relativePath,
+            hash: hash,
+            size: stat.size,
+            modified: stat.modified.millisecondsSinceEpoch / 1000.0,
+          );
+        } catch (e) {
+          debugPrint('[SyncService] Error reading $relativePath: $e');
+        }
+      }
+    }
+
+    // Also check legacy month-based folder for backwards compatibility
+    final month = date.substring(0, 7); // YYYY-MM
+    final assetsMonthDir = Directory('$localRoot/assets/$month');
+    if (await assetsMonthDir.exists()) {
+      await for (final entity in assetsMonthDir.list()) {
+        if (entity is! File) continue;
+
+        final filename = path.basename(entity.path);
+        // Only include files that start with this date
+        if (!filename.startsWith(date)) continue;
+
+        final relativePath = path.relative(entity.path, from: localRoot);
+        final ext = path.extension(relativePath).toLowerCase();
+
+        // Skip binary files unless includeBinary is true
+        if (!includeBinary && _binaryExtensions.contains(ext)) {
+          continue;
+        }
+
+        try {
+          final stat = await entity.stat();
+          final hash = await _hashFile(entity);
+
+          manifest[relativePath] = SyncFileInfo(
+            path: relativePath,
+            hash: hash,
+            size: stat.size,
+            modified: stat.modified.millisecondsSinceEpoch / 1000.0,
+          );
+        } catch (e) {
+          debugPrint('[SyncService] Error reading $relativePath: $e');
+        }
+      }
+    }
+
+    debugPrint('[SyncService] Local manifest for date $date: ${manifest.length} files');
+    return manifest;
+  }
+
   /// Get server manifest for a sync root
+  ///
+  /// [date] - Optional date filter (YYYY-MM-DD) for date-scoped sync.
+  ///          When provided, only returns files relevant to that date:
+  ///          - journals/{date}.md
+  ///          - reflections/{date}.md
+  ///          - chat-log/{date}.json
+  ///          - assets/{date}/* (date-based folder)
+  /// Get server manifest.
+  ///
+  /// [quick] - If true, server skips SHA-256 hashing and uses mtime instead.
+  ///           Faster but less accurate for detecting content changes.
+  ///           Use for periodic checks, use false when actually syncing.
   Future<Map<String, SyncFileInfo>?> getServerManifest(
     String root, {
     String pattern = '*.md',
     bool includeBinary = false,
+    String? date,
+    bool quick = false,
   }) async {
     if (!isReady) {
       debugPrint('[SyncService] Not initialized');
@@ -494,12 +627,20 @@ class SyncService {
     }
 
     try {
+      final queryParams = {
+        'root': root,
+        'pattern': pattern,
+        'include_binary': includeBinary.toString(),
+        'quick': quick.toString(),
+      };
+
+      // Add date filter if provided
+      if (date != null) {
+        queryParams['date'] = date;
+      }
+
       final uri = Uri.parse('$_serverUrl/api/sync/manifest')
-          .replace(queryParameters: {
-            'root': root,
-            'pattern': pattern,
-            'include_binary': includeBinary.toString(),
-          });
+          .replace(queryParameters: queryParams);
 
       final response = await http
           .get(uri, headers: _headers)
@@ -519,11 +660,99 @@ class SyncService {
         manifest[info.path] = info;
       }
 
-      debugPrint('[SyncService] Server manifest: ${manifest.length} files');
+      final scopeDesc = date != null ? 'date-scoped ($date)' : 'full';
+      debugPrint('[SyncService] Server manifest ($scopeDesc): ${manifest.length} files');
       return manifest;
     } catch (e) {
       debugPrint('[SyncService] Error getting manifest: $e');
       return null;
+    }
+  }
+
+  /// Get files changed on server since a timestamp (efficient incremental pull)
+  /// Returns list of relative paths that have been modified.
+  Future<List<String>?> getServerChanges(
+    String root, {
+    required double sinceTimestamp,
+    String pattern = '*.md',
+    bool includeBinary = false,
+  }) async {
+    if (!isReady) return null;
+
+    try {
+      final uri = Uri.parse('$_serverUrl/api/sync/changes').replace(
+        queryParameters: {
+          'root': root,
+          'since': sinceTimestamp.toString(),
+          'pattern': pattern,
+          'include_binary': includeBinary.toString(),
+        },
+      );
+
+      final response = await http
+          .get(uri, headers: _headers)
+          .timeout(const Duration(seconds: 30));
+
+      if (response.statusCode != 200) {
+        debugPrint('[SyncService] Changes error: ${response.statusCode}');
+        return null;
+      }
+
+      final data = json.decode(response.body) as Map<String, dynamic>;
+      final files = data['files'] as List<dynamic>;
+
+      final paths = files.map((f) => f['path'] as String).toList();
+      debugPrint('[SyncService] Server changes since $sinceTimestamp: ${paths.length} files');
+      return paths;
+    } catch (e) {
+      debugPrint('[SyncService] Error getting changes: $e');
+      return null;
+    }
+  }
+
+  /// Pull specific files from server and save locally
+  Future<int> pullFiles(String root, List<String> relativePaths) async {
+    if (!isReady || relativePaths.isEmpty) return 0;
+
+    try {
+      final localRoot = await _fileSystem.getRootPath();
+      final pulled = await _pullFiles(root, localRoot, relativePaths);
+      debugPrint('[SyncService] pullFiles(${relativePaths.length} files): pulled=$pulled');
+      return pulled;
+    } catch (e) {
+      debugPrint('[SyncService] Error in pullFiles: $e');
+      return 0;
+    }
+  }
+
+  /// Push a single file to server (no manifest comparison, just push)
+  /// Use this when you know a specific file changed locally.
+  Future<bool> pushFile(String root, String relativePath) async {
+    if (!isReady) return false;
+
+    try {
+      final localRoot = await _fileSystem.getRootPath();
+      final pushed = await _pushFiles(root, localRoot, [relativePath]);
+      debugPrint('[SyncService] pushFile($relativePath): pushed=$pushed');
+      return pushed > 0;
+    } catch (e) {
+      debugPrint('[SyncService] Error in pushFile: $e');
+      return false;
+    }
+  }
+
+  /// Push multiple specific files to server (no manifest comparison)
+  Future<int> pushFiles(String root, List<String> relativePaths) async {
+    if (!isReady || relativePaths.isEmpty) return 0;
+
+    try {
+      final localRoot = await _fileSystem.getRootPath();
+      final pushed = await _pushFiles(root, localRoot, relativePaths);
+      debugPrint('[SyncService] pushFiles(${relativePaths.length} files): pushed=$pushed');
+      return pushed;
+    } catch (e) {
+      debugPrint('[SyncService] Error in pushFiles: $e');
+      return 0;
     }
   }
 
@@ -939,6 +1168,229 @@ class SyncService {
       return response.statusCode == 200;
     } catch (e) {
       return false;
+    }
+  }
+
+  /// Perform a date-scoped sync for a specific day.
+  ///
+  /// This is much more efficient than a full sync when you only need to
+  /// refresh a single day's content. Only syncs files relevant to the date:
+  /// - journals/{date}.md
+  /// - reflections/{date}.md
+  /// - chat-log/{date}.json or {date}.md
+  /// - assets/{date}/* (new date-based folder)
+  /// - assets/{YYYY-MM}/*{date}* (legacy month-based folder)
+  ///
+  /// [date] - The date to sync (YYYY-MM-DD format)
+  /// [includeBinary] - Whether to include binary files (audio, images)
+  /// [onProgress] - Callback for progress updates
+  Future<SyncResult> syncDate({
+    required String date,
+    String root = 'Daily',
+    bool includeBinary = false,
+    SyncProgressCallback? onProgress,
+  }) async {
+    final stopwatch = Stopwatch()..start();
+
+    if (!isReady) {
+      return SyncResult.error('Sync service not initialized');
+    }
+
+    try {
+      final localRoot = await _fileSystem.getRootPath();
+      debugPrint('[SyncService] Date-scoped sync for $date: local=$localRoot, includeBinary=$includeBinary');
+
+      // Get date-scoped manifests
+      final serverManifest = await getServerManifest(
+        root,
+        pattern: '*',
+        includeBinary: includeBinary,
+        date: date,
+      );
+      if (serverManifest == null) {
+        return SyncResult.error('Failed to get server manifest');
+      }
+
+      final localManifest = await _getLocalManifestForDate(
+        localRoot,
+        date,
+        includeBinary: includeBinary,
+      );
+      debugPrint('[SyncService] Date $date - Local: ${localManifest.length} files, Server: ${serverManifest.length} files');
+
+      // Determine what needs to sync (same logic as full sync)
+      final toPush = <String>[];
+      final toPull = <String>[];
+      final toMerge = <String>[];
+      final conflicts = <String>[];
+
+      // Check all local files
+      for (final entry in localManifest.entries) {
+        final localPath = entry.key;
+        final localInfo = entry.value;
+        final serverInfo = serverManifest[localPath];
+
+        if (serverInfo == null) {
+          toPush.add(localPath);
+        } else if (localInfo.hash != serverInfo.hash) {
+          final timeDiff = (localInfo.modified - serverInfo.modified).abs();
+
+          if (timeDiff < _conflictThresholdSeconds) {
+            toMerge.add(localPath);
+          } else if (localInfo.modified > serverInfo.modified) {
+            toPush.add(localPath);
+          } else {
+            toPull.add(localPath);
+          }
+        }
+      }
+
+      // Check for server-only files (pull them)
+      for (final serverPath in serverManifest.keys) {
+        if (!localManifest.containsKey(serverPath)) {
+          toPull.add(serverPath);
+        }
+      }
+
+      debugPrint('[SyncService] Date $date - To push: ${toPush.length}, To pull: ${toPull.length}, To merge: ${toMerge.length}');
+
+      // Handle merges/conflicts
+      var merged = 0;
+      for (final mergePath in toMerge) {
+        onProgress?.call(SyncProgress(
+          phase: 'merging',
+          current: merged,
+          total: toMerge.length,
+          currentFile: mergePath,
+        ));
+
+        if (_isJournalFile(mergePath) && _journalMergeService != null) {
+          final fileDate = _parseDateFromPath(mergePath);
+          if (fileDate != null) {
+            try {
+              final localContent = await File('$localRoot/$mergePath').readAsString();
+              final serverContent = await _fetchFileContent(root, mergePath);
+
+              if (serverContent != null) {
+                final mergeResult = await _journalMergeService!.merge(
+                  localContent: localContent,
+                  serverContent: serverContent,
+                  date: fileDate,
+                );
+
+                await _saveVersion(File('$localRoot/$mergePath'), localRoot);
+                await File('$localRoot/$mergePath').writeAsString(mergeResult.mergedContent);
+                toPush.add(mergePath);
+
+                if (mergeResult.hasConflicts) {
+                  for (final entryId in mergeResult.conflictEntryIds) {
+                    conflicts.add('$mergePath#$entryId');
+                  }
+                }
+
+                merged++;
+                continue;
+              }
+            } catch (e) {
+              debugPrint('[SyncService] Journal merge failed for $mergePath: $e');
+            }
+          }
+        }
+
+        // Non-journal or merge failed - create conflict file
+        try {
+          final serverContent = await _fetchFileContent(root, mergePath);
+          if (serverContent != null) {
+            await _saveConflictFile(localRoot, mergePath, serverContent);
+            conflicts.add(mergePath);
+          }
+          toPush.add(mergePath);
+        } catch (e) {
+          debugPrint('[SyncService] Error handling conflict for $mergePath: $e');
+        }
+      }
+
+      // Separate text and binary files for batching
+      final textToPush = toPush.where((p) => !_binaryExtensions.contains(path.extension(p).toLowerCase())).toList();
+      final binaryToPush = toPush.where((p) => _binaryExtensions.contains(path.extension(p).toLowerCase())).toList();
+      final textToPull = toPull.where((p) => !_binaryExtensions.contains(path.extension(p).toLowerCase())).toList();
+      final binaryToPull = toPull.where((p) => _binaryExtensions.contains(path.extension(p).toLowerCase())).toList();
+
+      final totalFiles = toPush.length + toPull.length;
+      var processedFiles = 0;
+      var pushed = 0;
+      var pulled = 0;
+
+      // Push text files
+      for (var i = 0; i < textToPush.length; i += _textBatchSize) {
+        final batch = textToPush.skip(i).take(_textBatchSize).toList();
+        onProgress?.call(SyncProgress(
+          phase: 'pushing',
+          current: processedFiles,
+          total: totalFiles,
+          currentFile: batch.isNotEmpty ? batch.first : null,
+        ));
+        pushed += await _pushFiles(root, localRoot, batch);
+        processedFiles += batch.length;
+      }
+
+      // Push binary files
+      for (var i = 0; i < binaryToPush.length; i += _binaryBatchSize) {
+        final batch = binaryToPush.skip(i).take(_binaryBatchSize).toList();
+        onProgress?.call(SyncProgress(
+          phase: 'pushing',
+          current: processedFiles,
+          total: totalFiles,
+          currentFile: batch.isNotEmpty ? batch.first : null,
+        ));
+        pushed += await _pushFiles(root, localRoot, batch);
+        processedFiles += batch.length;
+      }
+
+      // Pull text files
+      for (var i = 0; i < textToPull.length; i += _textBatchSize) {
+        final batch = textToPull.skip(i).take(_textBatchSize).toList();
+        onProgress?.call(SyncProgress(
+          phase: 'pulling',
+          current: processedFiles,
+          total: totalFiles,
+          currentFile: batch.isNotEmpty ? batch.first : null,
+        ));
+        pulled += await _pullFiles(root, localRoot, batch);
+        processedFiles += batch.length;
+      }
+
+      // Pull binary files
+      for (var i = 0; i < binaryToPull.length; i += _binaryBatchSize) {
+        final batch = binaryToPull.skip(i).take(_binaryBatchSize).toList();
+        onProgress?.call(SyncProgress(
+          phase: 'pulling',
+          current: processedFiles,
+          total: totalFiles,
+          currentFile: batch.isNotEmpty ? batch.first : null,
+        ));
+        pulled += await _pullFiles(root, localRoot, batch);
+        processedFiles += batch.length;
+      }
+
+      stopwatch.stop();
+
+      final result = SyncResult(
+        success: true,
+        pushed: pushed,
+        pulled: pulled,
+        deleted: 0, // Date-scoped sync doesn't handle deletions
+        merged: merged,
+        conflicts: conflicts,
+        duration: stopwatch.elapsed,
+      );
+
+      debugPrint('[SyncService] Date-scoped sync complete: $result');
+      return result;
+    } catch (e) {
+      stopwatch.stop();
+      debugPrint('[SyncService] Date-scoped sync error: $e');
+      return SyncResult.error('Date-scoped sync failed: $e');
     }
   }
 }

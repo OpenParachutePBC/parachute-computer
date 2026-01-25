@@ -72,18 +72,20 @@ class SyncNotifier extends StateNotifier<SyncState> {
   final SyncService _syncService = SyncService();
   final JournalMergeService _journalMergeService = JournalMergeService();
 
-  Timer? _periodicSyncTimer;
-  Timer? _debouncedSyncTimer;
+  Timer? _debouncedPushTimer;
   Timer? _statusResetTimer;
 
   /// Completer to track initialization status
   Completer<void>? _initCompleter;
 
-  /// Debounce duration for change-triggered syncs
-  static const _syncDebounce = Duration(seconds: 5);
+  /// Debounce duration for push operations
+  static const _pushDebounce = Duration(seconds: 3);
 
-  /// Interval for periodic sync checks
-  static const _periodicSyncInterval = Duration(minutes: 5);
+  /// Track last sync time for incremental pulls (Unix timestamp)
+  double _lastSyncTimestamp = 0;
+
+  /// Files pending push (accumulated during debounce)
+  final Set<String> _pendingPushFiles = {};
 
   SyncNotifier(this._ref) : super(const SyncState()) {
     _initCompleter = Completer<void>();
@@ -103,11 +105,8 @@ class SyncNotifier extends StateNotifier<SyncState> {
         await _syncService.initialize(serverUrl: serverUrl, apiKey: apiKey);
         debugPrint('[SyncNotifier] Initialized with server: $serverUrl');
 
-        // Start periodic sync
-        _startPeriodicSync();
-
-        // Do an initial sync
-        _scheduleSync();
+        // Set initial sync timestamp to now (we'll do a full sync on first explicit refresh)
+        _lastSyncTimestamp = DateTime.now().millisecondsSinceEpoch / 1000.0;
       } else {
         debugPrint('[SyncNotifier] No server URL configured, sync disabled');
       }
@@ -121,60 +120,211 @@ class SyncNotifier extends StateNotifier<SyncState> {
 
   @override
   void dispose() {
-    _periodicSyncTimer?.cancel();
-    _debouncedSyncTimer?.cancel();
+    _debouncedPushTimer?.cancel();
     _statusResetTimer?.cancel();
     super.dispose();
   }
 
-  /// Start periodic sync timer
-  void _startPeriodicSync() {
-    _periodicSyncTimer?.cancel();
-    _periodicSyncTimer = Timer.periodic(_periodicSyncInterval, (_) {
-      debugPrint('[SyncNotifier] Periodic sync triggered');
-      _doSyncIfIdle();
+  // ============================================================
+  // Push-based sync: When we make local changes, just push them
+  // ============================================================
+
+  /// Schedule a file to be pushed to server (debounced)
+  /// Call this after any local file modification.
+  void schedulePush(String relativePath) {
+    debugPrint('[SyncNotifier] schedulePush($relativePath)');
+    _pendingPushFiles.add(relativePath);
+    _schedulePushDebounced();
+  }
+
+  /// Schedule multiple files to be pushed
+  void schedulePushFiles(List<String> relativePaths) {
+    if (relativePaths.isEmpty) return;
+    debugPrint('[SyncNotifier] schedulePushFiles(${relativePaths.length} files)');
+    _pendingPushFiles.addAll(relativePaths);
+    _schedulePushDebounced();
+  }
+
+  void _schedulePushDebounced() {
+    _debouncedPushTimer?.cancel();
+    _debouncedPushTimer = Timer(_pushDebounce, () {
+      _doPendingPush();
     });
   }
 
-  /// Schedule a debounced sync (for after local changes)
-  void scheduleSync() {
-    debugPrint('[SyncNotifier] scheduleSync() called');
-    _scheduleSync();
-  }
-
-  void _scheduleSync() {
-    debugPrint('[SyncNotifier] _scheduleSync() - cancelling existing timer and setting new one');
-    _debouncedSyncTimer?.cancel();
-    _debouncedSyncTimer = Timer(_syncDebounce, () {
-      debugPrint('[SyncNotifier] Debounced sync triggered after ${_syncDebounce.inSeconds}s');
-      _doSyncIfIdle();
-    });
-  }
-
-  /// Do sync only if not already syncing
-  Future<void> _doSyncIfIdle() async {
-    // Wait for initialization to complete first
+  Future<void> _doPendingPush() async {
+    if (_pendingPushFiles.isEmpty) return;
     await initialized;
 
-    debugPrint('[SyncNotifier] _doSyncIfIdle() called, isSyncing=${state.isSyncing}, isReady=${_syncService.isReady}');
-    if (state.isSyncing) {
-      debugPrint('[SyncNotifier] Skipping sync - already in progress');
-      return;
-    }
     if (!_syncService.isReady) {
-      debugPrint('[SyncNotifier] Skipping sync - service not ready (no server configured?)');
+      debugPrint('[SyncNotifier] Skipping push - service not ready');
       return;
     }
-    debugPrint('[SyncNotifier] Starting sync...');
-    final result = await sync(pattern: '*');
-    debugPrint('[SyncNotifier] Sync complete: $result');
+
+    final filesToPush = List<String>.from(_pendingPushFiles);
+    _pendingPushFiles.clear();
+
+    debugPrint('[SyncNotifier] Pushing ${filesToPush.length} files...');
+    state = state.copyWith(status: SyncStatus.syncing);
+
+    try {
+      final pushed = await _syncService.pushFiles('Daily', filesToPush);
+      debugPrint('[SyncNotifier] Pushed $pushed files');
+      state = state.copyWith(status: SyncStatus.idle);
+    } catch (e) {
+      debugPrint('[SyncNotifier] Push error: $e');
+      state = state.copyWith(status: SyncStatus.error, errorMessage: e.toString());
+    }
+  }
+
+  // ============================================================
+  // Pull-based sync: Only when user explicitly requests refresh
+  // ============================================================
+
+  /// Pull changes from server for a specific date (user-triggered refresh)
+  /// This is fast - only checks/pulls files for that date.
+  Future<SyncResult> pullDate(DateTime date) async {
+    await initialized;
+
+    if (!_syncService.isReady) {
+      return SyncResult.error('Sync service not ready');
+    }
+
+    final dateStr = '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+    debugPrint('[SyncNotifier] pullDate($dateStr) - user-triggered refresh');
+
+    state = state.copyWith(status: SyncStatus.syncing);
+
+    try {
+      // Use date-scoped sync which only looks at that day's files
+      final result = await syncDate(date);
+      _lastSyncTimestamp = DateTime.now().millisecondsSinceEpoch / 1000.0;
+
+      state = state.copyWith(
+        status: SyncStatus.idle,
+        lastResult: result,
+        lastSyncTime: DateTime.now(),
+      );
+
+      return result;
+    } catch (e) {
+      state = state.copyWith(status: SyncStatus.error, errorMessage: e.toString());
+      return SyncResult.error(e.toString());
+    }
+  }
+
+  /// Pull all changes from server since last sync (for full refresh)
+  /// Uses incremental approach - only fetches files modified since last sync.
+  Future<SyncResult> pullChanges() async {
+    await initialized;
+
+    if (!_syncService.isReady) {
+      return SyncResult.error('Sync service not ready');
+    }
+
+    debugPrint('[SyncNotifier] pullChanges() since $_lastSyncTimestamp');
+    state = state.copyWith(status: SyncStatus.syncing);
+
+    try {
+      // Get list of files changed on server since last sync
+      final changedPaths = await _syncService.getServerChanges(
+        'Daily',
+        sinceTimestamp: _lastSyncTimestamp,
+        pattern: '*',
+        includeBinary: false, // Text files only for now
+      );
+
+      if (changedPaths == null) {
+        state = state.copyWith(status: SyncStatus.error, errorMessage: 'Failed to get changes');
+        return SyncResult.error('Failed to get server changes');
+      }
+
+      if (changedPaths.isEmpty) {
+        debugPrint('[SyncNotifier] No changes on server since last sync');
+        state = state.copyWith(status: SyncStatus.idle);
+        return SyncResult(success: true, pulled: 0, pushed: 0, merged: 0, conflicts: const []);
+      }
+
+      // Pull the changed files
+      final pulled = await _syncService.pullFiles('Daily', changedPaths);
+      _lastSyncTimestamp = DateTime.now().millisecondsSinceEpoch / 1000.0;
+
+      debugPrint('[SyncNotifier] Pulled $pulled changed files');
+
+      final result = SyncResult(
+        success: true,
+        pulled: pulled,
+        pushed: 0,
+        merged: 0,
+        conflicts: const [],
+      );
+
+      state = state.copyWith(
+        status: SyncStatus.idle,
+        lastResult: result,
+        lastSyncTime: DateTime.now(),
+        pullCounter: pulled > 0 ? state.pullCounter + 1 : state.pullCounter,
+      );
+
+      return result;
+    } catch (e) {
+      state = state.copyWith(status: SyncStatus.error, errorMessage: e.toString());
+      return SyncResult.error(e.toString());
+    }
+  }
+
+  /// Pull a specific file from server (for targeted fetch)
+  /// Used when we know a specific file exists on server but not locally.
+  Future<bool> pullFile(String relativePath) async {
+    await initialized;
+
+    if (!_syncService.isReady) {
+      debugPrint('[SyncNotifier] Sync service not ready for pullFile');
+      return false;
+    }
+
+    debugPrint('[SyncNotifier] pullFile($relativePath)');
+
+    try {
+      final pulled = await _syncService.pullFiles('Daily', [relativePath]);
+      if (pulled > 0) {
+        state = state.copyWith(
+          pullCounter: state.pullCounter + 1,
+        );
+        return true;
+      }
+      return false;
+    } catch (e) {
+      debugPrint('[SyncNotifier] Error in pullFile: $e');
+      return false;
+    }
+  }
+
+  // ============================================================
+  // Legacy methods (kept for backward compatibility, but simplified)
+  // ============================================================
+
+  /// Schedule a debounced sync - now just schedules a push of pending files
+  /// For explicit refresh, use pullDate() or pullChanges() instead.
+  void scheduleSync() {
+    debugPrint('[SyncNotifier] scheduleSync() called - scheduling push only');
+    _schedulePushDebounced();
+  }
+
+  /// Schedule sync for a specific date - just pushes, doesn't pull
+  void scheduleSyncForDate(DateTime date) {
+    final dateStr = '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+    debugPrint('[SyncNotifier] scheduleSyncForDate($dateStr) - scheduling push');
+    // Note: The caller should add specific files via schedulePush()
+    // This is kept for API compatibility but is now a no-op if no files pending
+    _schedulePushDebounced();
   }
 
   /// Reinitialize with new server URL
   Future<void> reinitialize(String serverUrl, {String? apiKey}) async {
     await _syncService.initialize(serverUrl: serverUrl, apiKey: apiKey);
-    state = const SyncState(); // Reset state
-    _startPeriodicSync();
+    state = const SyncState();
+    _lastSyncTimestamp = DateTime.now().millisecondsSinceEpoch / 1000.0;
   }
 
   /// Trigger a sync
@@ -265,18 +415,107 @@ class SyncNotifier extends StateNotifier<SyncState> {
     }
   }
 
-  /// Called when app goes to foreground - pull latest
-  Future<void> onAppResumed() async {
-    debugPrint('[SyncNotifier] App resumed - syncing');
-    await _doSyncIfIdle();
+  /// Trigger a date-scoped sync for a specific day.
+  ///
+  /// This is much more efficient than a full sync when refreshing a single day's view.
+  /// Only syncs files relevant to the specified date.
+  ///
+  /// [date] - The date to sync (DateTime)
+  Future<SyncResult> syncDate(DateTime date) async {
+    if (state.isSyncing) {
+      return SyncResult.error('Sync already in progress');
+    }
+
+    if (!_syncService.isReady) {
+      final serverUrl = await _ref.read(serverUrlProvider.future);
+      final apiKey = await _ref.read(apiKeyProvider.future);
+      if (serverUrl != null && serverUrl.isNotEmpty) {
+        await _syncService.initialize(serverUrl: serverUrl, apiKey: apiKey);
+      } else {
+        state = state.copyWith(
+          status: SyncStatus.error,
+          errorMessage: 'No server configured',
+        );
+        return SyncResult.error('No server configured');
+      }
+    }
+
+    // Format date for API
+    final dateStr = '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+
+    // Check sync mode setting for binary inclusion
+    final syncMode = await _ref.read(syncModeProvider.future);
+    final includeBinary = syncMode == SyncMode.full;
+
+    state = state.copyWith(status: SyncStatus.syncing, errorMessage: null, clearProgress: true);
+
+    try {
+      final result = await _syncService.syncDate(
+        date: dateStr,
+        includeBinary: includeBinary,
+        onProgress: (progress) {
+          state = state.copyWith(progress: progress);
+        },
+      );
+
+      final newPullCounter = (result.pulled > 0 || result.merged > 0)
+          ? state.pullCounter + 1
+          : state.pullCounter;
+
+      final newConflicts = [...state.unresolvedConflicts];
+      for (final conflict in result.conflicts) {
+        if (!newConflicts.contains(conflict)) {
+          newConflicts.add(conflict);
+        }
+      }
+
+      state = state.copyWith(
+        status: result.success ? SyncStatus.success : SyncStatus.error,
+        lastResult: result,
+        lastSyncTime: DateTime.now(),
+        errorMessage: result.success ? null : result.errors.join(', '),
+        pullCounter: newPullCounter,
+        unresolvedConflicts: newConflicts,
+        clearProgress: true,
+      );
+
+      debugPrint('[SyncNotifier] Date-scoped sync for $dateStr: pushed=${result.pushed}, pulled=${result.pulled}, merged=${result.merged}');
+
+      _statusResetTimer?.cancel();
+      _statusResetTimer = Timer(const Duration(seconds: 3), () {
+        if (mounted && state.status == SyncStatus.success) {
+          state = state.copyWith(status: SyncStatus.idle);
+        }
+      });
+
+      return result;
+    } catch (e) {
+      state = state.copyWith(
+        status: SyncStatus.error,
+        errorMessage: e.toString(),
+        clearProgress: true,
+      );
+      return SyncResult.error(e.toString());
+    }
   }
 
-  /// Called when app goes to background - push latest
+  /// Called when app goes to foreground - no automatic sync, user triggers refresh
+  Future<void> onAppResumed() async {
+    // With push-on-change model, we don't need to sync on resume
+    // User will tap refresh if they want latest data
+    debugPrint('[SyncNotifier] App resumed - no automatic sync (push-on-change model)');
+  }
+
+  /// Called when app goes to background - flush any pending pushes
   Future<void> onAppPaused() async {
-    debugPrint('[SyncNotifier] App paused - syncing');
-    // Cancel any debounced sync and do it now
-    _debouncedSyncTimer?.cancel();
-    await _doSyncIfIdle();
+    // If there are pending files to push, push them now
+    if (_pendingPushFiles.isNotEmpty) {
+      debugPrint('[SyncNotifier] App paused with ${_pendingPushFiles.length} pending files - flushing');
+      _debouncedPushTimer?.cancel();
+      await _doPendingPush();
+    } else {
+      debugPrint('[SyncNotifier] App paused - no pending changes');
+    }
   }
 
   /// Check if server is reachable

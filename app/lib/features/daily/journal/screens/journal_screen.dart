@@ -95,6 +95,13 @@ class _JournalScreenState extends ConsumerState<JournalScreen>
   // Track last known pull counter to detect changes
   int? _lastPullCounter;
 
+  /// Get the relative path for a journal file for a given date
+  /// Used to push specific file changes to sync
+  String _journalPathForDate(DateTime date) {
+    final dateStr = '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+    return 'journals/$dateStr.md';
+  }
+
   @override
   void initState() {
     super.initState();
@@ -230,12 +237,14 @@ class _JournalScreenState extends ConsumerState<JournalScreen>
 
     // Also refresh agent providers - clear the cache and re-read from disk
     ref.invalidate(localAgentConfigsProvider);
-    ref.invalidate(agentOutputsForDateProvider(ref.read(selectedJournalDateProvider)));
+    final selectedDate = ref.read(selectedJournalDateProvider);
+    ref.invalidate(agentOutputsForDateProvider(selectedDate));
     ref.read(journalRefreshTriggerProvider.notifier).state++;
 
-    // Fire off a background sync (don't await) - UI will auto-refresh when pull completes
-    debugPrint('[JournalScreen] Refreshing - starting background sync...');
-    ref.read(syncProvider.notifier).sync(); // No await - runs in background
+    // Pull changes from server for this specific date (user-triggered refresh)
+    // This is efficient - only fetches files for this specific day
+    debugPrint('[JournalScreen] Refreshing - pulling changes for $selectedDate...');
+    ref.read(syncProvider.notifier).pullDate(selectedDate); // No await - runs in background
   }
 
   void _scrollToBottom() {
@@ -372,9 +381,11 @@ class _JournalScreenState extends ConsumerState<JournalScreen>
       ref.invalidate(selectedJournalProvider);
       ref.read(journalRefreshTriggerProvider.notifier).state++;
 
-      // Schedule sync after local change
-      debugPrint('[JournalScreen] Scheduling sync after text entry...');
-      ref.read(syncProvider.notifier).scheduleSync();
+      // Push the modified journal file to server
+      final selectedDate = ref.read(selectedJournalDateProvider);
+      final journalPath = _journalPathForDate(selectedDate);
+      debugPrint('[JournalScreen] Scheduling push for $journalPath after text entry...');
+      ref.read(syncProvider.notifier).schedulePush(journalPath);
     } catch (e, st) {
       debugPrint('[JournalScreen] Error adding text entry: $e');
       debugPrint('$st');
@@ -416,9 +427,11 @@ class _JournalScreenState extends ConsumerState<JournalScreen>
       ref.invalidate(selectedJournalProvider);
       ref.read(journalRefreshTriggerProvider.notifier).state++;
 
-      // Schedule sync after local change
-      debugPrint('[JournalScreen] Scheduling sync after voice entry...');
-      ref.read(syncProvider.notifier).scheduleSync();
+      // Push the modified journal file to server
+      final selectedDate = ref.read(selectedJournalDateProvider);
+      final journalPath = _journalPathForDate(selectedDate);
+      debugPrint('[JournalScreen] Scheduling push for $journalPath after voice entry...');
+      ref.read(syncProvider.notifier).schedulePush(journalPath);
     } catch (e, st) {
       debugPrint('[JournalScreen] Error adding voice entry: $e');
       debugPrint('$st');
@@ -448,9 +461,11 @@ class _JournalScreenState extends ConsumerState<JournalScreen>
       // Run OCR in background
       _runOcrInBackground(result.entry);
 
-      // Schedule sync after local change
-      debugPrint('[JournalScreen] Scheduling sync after photo entry...');
-      ref.read(syncProvider.notifier).scheduleSync();
+      // Push the modified journal file to server
+      final selectedDate = ref.read(selectedJournalDateProvider);
+      final journalPath = _journalPathForDate(selectedDate);
+      debugPrint('[JournalScreen] Scheduling push for $journalPath after photo entry...');
+      ref.read(syncProvider.notifier).schedulePush(journalPath);
     } catch (e, st) {
       debugPrint('[JournalScreen] Error adding photo entry: $e');
       debugPrint('$st');
@@ -492,9 +507,11 @@ class _JournalScreenState extends ConsumerState<JournalScreen>
       // Run OCR in background
       _runOcrInBackground(result.entry);
 
-      // Schedule sync after local change
-      debugPrint('[JournalScreen] Scheduling sync after handwriting entry...');
-      ref.read(syncProvider.notifier).scheduleSync();
+      // Push the modified journal file to server
+      final selectedDate = ref.read(selectedJournalDateProvider);
+      final journalPath = _journalPathForDate(selectedDate);
+      debugPrint('[JournalScreen] Scheduling push for $journalPath after handwriting entry...');
+      ref.read(syncProvider.notifier).schedulePush(journalPath);
     } catch (e, st) {
       debugPrint('[JournalScreen] Error adding handwriting entry: $e');
       debugPrint('$st');
@@ -1126,31 +1143,103 @@ class _JournalScreenState extends ConsumerState<JournalScreen>
     final agentsAsync = ref.watch(localAgentConfigsProvider);
     final agents = agentsAsync.valueOrNull ?? [];
 
+    // Watch loading status to see if any agents are being pulled
+    final loadingStatusAsync = ref.watch(agentLoadingStatusProvider(date));
+    final loadingStatuses = loadingStatusAsync.valueOrNull ?? [];
+
     // Build a map of agent name -> agent config
     final agentMap = <String, DailyAgentConfig>{};
     for (final agent in agents) {
       agentMap[agent.name] = agent;
     }
 
-    return Column(
-      children: outputs.map((output) {
-        // Find the agent config for this output, or create a fallback
-        final agentConfig = agentMap[output.agentName] ??
-            DailyAgentConfig(
-              name: output.agentName,
-              displayName: _formatAgentDisplayName(output.agentName),
-              description: '',
-              scheduleEnabled: false,
-              scheduleTime: '',
-              outputPath: '',
-            );
+    // Build a map of agent name -> loading status
+    final loadingMap = <String, AgentLoadingStatus>{};
+    for (final status in loadingStatuses) {
+      loadingMap[status.agentName] = status;
+    }
 
-        return AgentOutputHeader(
-          output: output,
-          agentConfig: agentConfig,
-          initiallyExpanded: false,
-        );
-      }).toList(),
+    // Find agents that are loading (pulling from server)
+    final pullingAgents = loadingStatuses
+        .where((s) => s.state == AgentLoadingState.pulling || s.state == AgentLoadingState.checking)
+        .toList();
+
+    return Column(
+      children: [
+        // Show loading indicators for agents being pulled
+        ...pullingAgents.map((status) => _buildAgentLoadingCard(context, status)),
+        // Show actual outputs
+        ...outputs.map((output) {
+          // Find the agent config for this output, or create a fallback
+          final agentConfig = agentMap[output.agentName] ??
+              DailyAgentConfig(
+                name: output.agentName,
+                displayName: _formatAgentDisplayName(output.agentName),
+                description: '',
+                scheduleEnabled: false,
+                scheduleTime: '',
+                outputPath: '',
+              );
+
+          return AgentOutputHeader(
+            output: output,
+            agentConfig: agentConfig,
+            initiallyExpanded: false,
+          );
+        }),
+      ],
+    );
+  }
+
+  /// Build a loading card for an agent being pulled from server
+  Widget _buildAgentLoadingCard(BuildContext context, AgentLoadingStatus status) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final isChecking = status.state == AgentLoadingState.checking;
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: isDark ? BrandColors.nightSurfaceElevated : Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: isDark ? BrandColors.driftwood.withValues(alpha: 0.3) : BrandColors.driftwood.withValues(alpha: 0.2),
+        ),
+      ),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 20,
+            height: 20,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              color: BrandColors.forest,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  status.displayName,
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: isDark ? BrandColors.driftwood : BrandColors.charcoal,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  isChecking ? 'Checking for updates...' : 'Loading...',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: BrandColors.driftwood,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -2040,9 +2129,10 @@ class _JournalScreenState extends ConsumerState<JournalScreen>
         ref.invalidate(selectedJournalProvider);
         ref.read(journalRefreshTriggerProvider.notifier).state++;
 
-        // Schedule sync after delete
-        debugPrint('[JournalScreen] Scheduling sync after delete...');
-        ref.read(syncProvider.notifier).scheduleSync();
+        // Push the modified journal file to server
+        final journalPath = _journalPathForDate(journal.date);
+        debugPrint('[JournalScreen] Scheduling push for $journalPath after delete...');
+        ref.read(syncProvider.notifier).schedulePush(journalPath);
       } catch (e, st) {
         debugPrint('[JournalScreen] Error deleting entry: $e');
         debugPrint('$st');

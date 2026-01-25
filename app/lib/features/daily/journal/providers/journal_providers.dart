@@ -35,15 +35,9 @@ final journalServiceFutureProvider = FutureProvider.autoDispose<JournalService>(
 
   await journalService.ensureDirectoryExists();
 
-  // Wire up sync trigger for all journal data changes
-  journalService.onDataChanged = () {
-    debugPrint('[JournalService] Data changed, scheduling sync...');
-    try {
-      ref.read(syncProvider.notifier).scheduleSync();
-    } catch (e) {
-      debugPrint('[JournalService] Failed to schedule sync: $e');
-    }
-  };
+  // Note: Sync is triggered by JournalNotifier._triggerRefresh() and JournalScreen
+  // after each operation, using date-scoped sync for efficiency.
+  // We don't wire up onDataChanged here to avoid duplicate syncs.
 
   return journalService;
 });
@@ -207,6 +201,158 @@ final agentOutputsForDateProvider = FutureProvider.autoDispose.family<List<Agent
   final agents = await ref.watch(localAgentConfigsProvider.future);
 
   return service.listOutputsForDate(agents, date);
+});
+
+/// Enum for agent output loading state
+enum AgentLoadingState {
+  /// Output available locally
+  ready,
+  /// Checking server for output
+  checking,
+  /// Pulling output from server
+  pulling,
+  /// No output available anywhere
+  notAvailable,
+  /// Server not connected, using local only
+  offline,
+}
+
+/// State for each agent's loading status
+class AgentLoadingStatus {
+  final String agentName;
+  final String displayName;
+  final AgentLoadingState state;
+  final String? outputPath;
+
+  const AgentLoadingStatus({
+    required this.agentName,
+    required this.displayName,
+    required this.state,
+    this.outputPath,
+  });
+
+  AgentLoadingStatus copyWith({
+    String? agentName,
+    String? displayName,
+    AgentLoadingState? state,
+    String? outputPath,
+  }) {
+    return AgentLoadingStatus(
+      agentName: agentName ?? this.agentName,
+      displayName: displayName ?? this.displayName,
+      state: state ?? this.state,
+      outputPath: outputPath ?? this.outputPath,
+    );
+  }
+}
+
+/// Provider that checks server for agent outputs and tracks loading state
+///
+/// This provider:
+/// 1. First loads local outputs (fast, works offline)
+/// 2. If connected to server, checks which agents have outputs available
+/// 3. For any agents with outputs on server but not locally, triggers a sync
+/// 4. Returns loading states for each agent so UI can show appropriate feedback
+final agentLoadingStatusProvider = FutureProvider.autoDispose.family<List<AgentLoadingStatus>, DateTime>((ref, date) async {
+  ref.watch(journalRefreshTriggerProvider);
+
+  // Get local agent configs
+  final agents = await ref.watch(localAgentConfigsProvider.future);
+  if (agents.isEmpty) {
+    return [];
+  }
+
+  // Get local outputs
+  final outputService = await ref.watch(agentOutputServiceFutureProvider.future);
+  final localOutputs = await outputService.listOutputsForDate(agents, date);
+  final localAgentNames = localOutputs.map((o) => o.agentName).toSet();
+
+  // Build initial status - mark all configured agents
+  final statusMap = <String, AgentLoadingStatus>{};
+  for (final agent in agents) {
+    final hasLocal = localAgentNames.contains(agent.name);
+    statusMap[agent.name] = AgentLoadingStatus(
+      agentName: agent.name,
+      displayName: agent.displayName,
+      state: hasLocal ? AgentLoadingState.ready : AgentLoadingState.checking,
+      outputPath: hasLocal ? localOutputs.firstWhere((o) => o.agentName == agent.name).filePath : null,
+    );
+  }
+
+  // Check if server is connected
+  final serverConnected = ref.watch(serverConnectedProvider).valueOrNull ?? false;
+  if (!serverConnected) {
+    // Mark all non-ready agents as offline
+    for (final agent in agents) {
+      if (statusMap[agent.name]?.state == AgentLoadingState.checking) {
+        statusMap[agent.name] = statusMap[agent.name]!.copyWith(
+          state: AgentLoadingState.offline,
+        );
+      }
+    }
+    return statusMap.values.toList();
+  }
+
+  // Check server for available outputs
+  final dateStr = '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+  final server = BaseServerService();
+  final serverStatus = await server.getDailyAgentsStatus(date: dateStr);
+
+  if (serverStatus == null) {
+    // Server check failed, mark as offline
+    for (final agent in agents) {
+      if (statusMap[agent.name]?.state == AgentLoadingState.checking) {
+        statusMap[agent.name] = statusMap[agent.name]!.copyWith(
+          state: AgentLoadingState.offline,
+        );
+      }
+    }
+    return statusMap.values.toList();
+  }
+
+  // Find agents that have outputs on server but not locally
+  final needsPull = <String>[];
+  for (final serverAgent in serverStatus.agents) {
+    final agentName = serverAgent.name;
+    if (serverAgent.hasOutput && !localAgentNames.contains(agentName)) {
+      // Server has output we don't have locally - need to pull
+      needsPull.add(serverAgent.outputPath!);
+      statusMap[agentName] = statusMap[agentName]?.copyWith(
+        state: AgentLoadingState.pulling,
+        outputPath: serverAgent.outputPath,
+      ) ?? AgentLoadingStatus(
+        agentName: agentName,
+        displayName: serverAgent.displayName,
+        state: AgentLoadingState.pulling,
+        outputPath: serverAgent.outputPath,
+      );
+    } else if (!serverAgent.hasOutput && !localAgentNames.contains(agentName)) {
+      // No output anywhere
+      statusMap[agentName] = statusMap[agentName]?.copyWith(
+        state: AgentLoadingState.notAvailable,
+      ) ?? AgentLoadingStatus(
+        agentName: agentName,
+        displayName: serverAgent.displayName,
+        state: AgentLoadingState.notAvailable,
+      );
+    }
+  }
+
+  // Pull missing outputs from server
+  if (needsPull.isNotEmpty) {
+    debugPrint('[AgentLoadingStatus] Pulling ${needsPull.length} agent outputs from server');
+    final syncNotifier = ref.read(syncProvider.notifier);
+
+    // Pull the files
+    for (final outputPath in needsPull) {
+      await syncNotifier.pullFile(outputPath);
+    }
+
+    // Trigger refresh to reload outputs
+    ref.read(journalRefreshTriggerProvider.notifier).state++;
+  }
+
+  return statusMap.values.toList();
 });
 
 /// State notifier for triggering agent runs
@@ -413,13 +559,15 @@ class JournalNotifier extends StateNotifier<AsyncValue<JournalDay>> {
 
   void _triggerRefresh() {
     _ref.read(journalRefreshTriggerProvider.notifier).state++;
-    // Schedule a sync after local changes
-    debugPrint('[JournalNotifier] Triggering sync after local change...');
+    // Push the modified journal file to server
+    final dateStr = '${_currentDate.year}-${_currentDate.month.toString().padLeft(2, '0')}-${_currentDate.day.toString().padLeft(2, '0')}';
+    final journalPath = 'journals/$dateStr.md';
+    debugPrint('[JournalNotifier] Pushing $journalPath after local changes...');
     try {
-      _ref.read(syncProvider.notifier).scheduleSync();
-      debugPrint('[JournalNotifier] Sync scheduled successfully');
+      _ref.read(syncProvider.notifier).schedulePush(journalPath);
+      debugPrint('[JournalNotifier] Push scheduled successfully');
     } catch (e) {
-      debugPrint('[JournalNotifier] Failed to schedule sync: $e');
+      debugPrint('[JournalNotifier] Failed to schedule push: $e');
     }
   }
 }

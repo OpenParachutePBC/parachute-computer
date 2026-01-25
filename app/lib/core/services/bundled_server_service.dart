@@ -129,7 +129,7 @@ class BundledServerService {
 
     try {
       // Get vault path from SharedPreferences (user's choice from onboarding/settings)
-      // Fall back to env var or default ~/Parachute
+      // Fall back to env var or default home directory
       String vaultPath;
       final prefs = await SharedPreferences.getInstance();
 
@@ -151,9 +151,9 @@ class BundledServerService {
           // Extract real home from sandboxed path
           // /Users/username/Library/Containers/... -> /Users/username
           final match = RegExp(r'^(/Users/[^/]+)').firstMatch(home);
-          vaultPath = path.join(match?.group(1) ?? home, 'Parachute');
+          vaultPath = match?.group(1) ?? home;
         } else {
-          vaultPath = path.join(home, 'Parachute');
+          vaultPath = home;
         }
         debugPrint('[BundledServerService] Using default vault path: $vaultPath');
       }

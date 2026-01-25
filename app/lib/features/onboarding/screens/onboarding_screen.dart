@@ -487,7 +487,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> with Widget
               ),
               child: Text(
                 Platform.isMacOS || Platform.isLinux
-                    ? 'Use default (~/Parachute)'
+                    ? 'Use default (~)'
                     : 'Use default location',
               ),
             ),
@@ -504,9 +504,9 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> with Widget
     // For computer flavor, get vault path from provider (set by ComputerSetupWizard)
     final vaultPathAsync = ref.watch(vaultPathProvider);
     final displayVaultPath = vaultPathAsync.when(
-      data: (path) => path ?? '~/Parachute',
-      loading: () => '~/Parachute',
-      error: (_, __) => '~/Parachute',
+      data: (path) => path ?? '~',
+      loading: () => '~',
+      error: (_, __) => '~',
     );
 
     return Column(
@@ -547,7 +547,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> with Widget
                   SizedBox(width: Spacing.sm),
                   Expanded(
                     child: Text(
-                      isComputer ? displayVaultPath : (_vaultPath ?? '~/Parachute'),
+                      isComputer ? displayVaultPath : (_vaultPath ?? '~'),
                       style: TextStyle(
                         fontFamily: 'monospace',
                         fontSize: TypographyTokens.bodySmall,

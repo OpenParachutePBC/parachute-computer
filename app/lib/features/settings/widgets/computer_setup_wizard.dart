@@ -80,10 +80,10 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
         _vaultPathSelected = true;
       });
     } else {
-      // Default to ~/Parachute
+      // Default to home directory
       final home = Platform.environment['HOME'] ?? '';
       setState(() {
-        _selectedVaultPath = '$home/Parachute';
+        _selectedVaultPath = home;
       });
     }
   }
@@ -94,14 +94,14 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
   /// Default vault path options
   List<({String path, String label, String description})> get _vaultPathOptions => [
     (
-      path: '$_homePath/Parachute',
-      label: '~/Parachute',
-      description: 'Dedicated folder for all your Parachute data. Recommended for most users.',
-    ),
-    (
       path: _homePath,
       label: 'Home Directory (~)',
-      description: 'Use your entire home folder as the vault. Claude can access all your files.',
+      description: 'Use your home folder as the vault. Recommended for the full Parachute experience.',
+    ),
+    (
+      path: '$_homePath/Parachute',
+      label: '~/Parachute',
+      description: 'Dedicated subfolder for Parachute data. Claude can only access this folder.',
     ),
   ];
 
@@ -745,7 +745,7 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
             path: option.path,
             description: option.description,
             isSelected: _selectedVaultPath == option.path,
-            isRecommended: option.path.endsWith('/Parachute'),
+            isRecommended: option.path == _homePath,
             onTap: () => setState(() => _selectedVaultPath = option.path),
           ),
         )),
@@ -785,7 +785,7 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
     // For now, show a dialog to enter a path manually
     // In the future, could use file_picker package
     final controller = TextEditingController(
-      text: _selectedVaultPath ?? '$_homePath/Parachute',
+      text: _selectedVaultPath ?? _homePath,
     );
 
     final result = await showDialog<String>(
@@ -801,7 +801,7 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
             TextField(
               controller: controller,
               decoration: const InputDecoration(
-                hintText: '/Users/you/Parachute',
+                hintText: '/Users/you',
                 border: OutlineInputBorder(),
               ),
               autofocus: true,

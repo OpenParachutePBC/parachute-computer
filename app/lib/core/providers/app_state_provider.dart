@@ -345,12 +345,13 @@ class VaultPathOption {
   });
 }
 
-/// Get the default vault path (~/Parachute)
+/// Get the default vault path (~)
+/// On desktop, defaults to home directory for the "operating at root" experience.
 String getDefaultVaultPath() {
   final home = const String.fromEnvironment('HOME', defaultValue: '');
-  if (home.isNotEmpty) return '$home/Parachute';
+  if (home.isNotEmpty) return home;
   // Fallback for platforms where HOME isn't set at compile time
-  return '~/Parachute';
+  return '~';
 }
 
 // ============================================================================

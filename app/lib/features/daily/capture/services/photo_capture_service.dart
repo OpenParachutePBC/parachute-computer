@@ -11,7 +11,7 @@ class CaptureResult {
   /// Absolute path to the saved image file.
   final String absolutePath;
 
-  /// Relative path for storing in journal entries (e.g., "assets/2025-12/...").
+  /// Relative path for storing in journal entries (e.g., "assets/2025-12-23/...").
   final String relativePath;
 
   /// Timestamp when the image was captured.

@@ -318,6 +318,34 @@ class BaseServerService {
     }
   }
 
+  /// Get status of all daily agents for a specific date
+  ///
+  /// Returns which agents have outputs available on the server for the date.
+  /// This enables the "morning flow" UX where the app can quickly check
+  /// what agent outputs are available and pull any that are missing locally.
+  Future<DailyAgentsStatusResult?> getDailyAgentsStatus({String? date}) async {
+    try {
+      final queryParams = <String, String>{};
+      if (date != null) queryParams['date'] = date;
+
+      final uri = Uri.parse('${await getServerUrl()}/api/modules/daily/agents/status')
+          .replace(queryParameters: queryParams.isNotEmpty ? queryParams : null);
+
+      final response = await http
+          .get(uri, headers: await _getHeaders())
+          .timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body) as Map<String, dynamic>;
+        return DailyAgentsStatusResult.fromJson(data);
+      }
+      return null;
+    } catch (e) {
+      debugPrint('[BaseServerService] Error getting agent status: $e');
+      return null;
+    }
+  }
+
   String _parseError(http.Response response) {
     try {
       final data = json.decode(response.body) as Map<String, dynamic>;
@@ -585,6 +613,69 @@ class AgentRunResult {
       error: json['error'] as String?,
       journalDate: json['journal_date'] as String?,
       outputDate: json['output_date'] as String?,
+    );
+  }
+}
+
+/// Result of checking daily agents status for a date
+class DailyAgentsStatusResult {
+  final String date;
+  final List<AgentStatusInfo> agents;
+
+  DailyAgentsStatusResult({
+    required this.date,
+    required this.agents,
+  });
+
+  factory DailyAgentsStatusResult.fromJson(Map<String, dynamic> json) {
+    final agentsList = json['agents'] as List<dynamic>? ?? [];
+    return DailyAgentsStatusResult(
+      date: json['date'] as String? ?? '',
+      agents: agentsList
+          .map((a) => AgentStatusInfo.fromJson(a as Map<String, dynamic>))
+          .toList(),
+    );
+  }
+
+  /// Get agents that have outputs available
+  List<AgentStatusInfo> get availableAgents =>
+      agents.where((a) => a.hasOutput).toList();
+
+  /// Check if a specific agent has output for this date
+  bool hasOutputFor(String agentName) =>
+      agents.any((a) => a.name == agentName && a.hasOutput);
+
+  /// Get output path for a specific agent
+  String? getOutputPath(String agentName) =>
+      agents.where((a) => a.name == agentName).firstOrNull?.outputPath;
+}
+
+/// Status info for a single agent
+class AgentStatusInfo {
+  final String name;
+  final String displayName;
+  final bool hasOutput;
+  final String? outputPath;
+  final String? lastRunAt;
+  final String? lastProcessedDate;
+
+  AgentStatusInfo({
+    required this.name,
+    required this.displayName,
+    required this.hasOutput,
+    this.outputPath,
+    this.lastRunAt,
+    this.lastProcessedDate,
+  });
+
+  factory AgentStatusInfo.fromJson(Map<String, dynamic> json) {
+    return AgentStatusInfo(
+      name: json['name'] as String? ?? '',
+      displayName: json['displayName'] as String? ?? json['name'] as String? ?? '',
+      hasOutput: json['hasOutput'] as bool? ?? false,
+      outputPath: json['outputPath'] as String?,
+      lastRunAt: json['lastRunAt'] as String?,
+      lastProcessedDate: json['lastProcessedDate'] as String?,
     );
   }
 }
