@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     created_at TEXT NOT NULL,
     last_accessed TEXT NOT NULL,
     continued_from TEXT,
+    agent_type TEXT,  -- Agent type/name (e.g., 'vault-agent', 'orchestrator', 'summarizer')
     metadata TEXT
 );
 
@@ -41,6 +42,7 @@ CREATE INDEX IF NOT EXISTS idx_sessions_archived ON sessions(archived);
 CREATE INDEX IF NOT EXISTS idx_sessions_source ON sessions(source);
 CREATE INDEX IF NOT EXISTS idx_sessions_last_accessed ON sessions(last_accessed DESC);
 CREATE INDEX IF NOT EXISTS idx_sessions_created_at ON sessions(created_at DESC);
+-- Note: idx_sessions_agent_type is created in migrations to handle existing DBs
 
 -- Session tags for filtered search
 CREATE TABLE IF NOT EXISTS session_tags (
@@ -141,9 +143,9 @@ CREATE TABLE IF NOT EXISTS schema_version (
     applied_at TEXT NOT NULL
 );
 
--- Insert schema version 9 (current schema)
+-- Insert schema version 10 (current schema)
 INSERT OR IGNORE INTO schema_version (version, applied_at)
-VALUES (9, datetime('now'));
+VALUES (10, datetime('now'));
 """
 
 
@@ -202,6 +204,24 @@ class Database:
             await self._connection.commit()
             logger.info("Added vault_root column to sessions")
 
+        # Migration: Add agent_type column to sessions if missing (v10)
+        try:
+            async with self._connection.execute(
+                "SELECT agent_type FROM sessions LIMIT 1"
+            ):
+                pass  # Column exists
+        except Exception:
+            # Column doesn't exist, add it
+            await self._connection.execute(
+                "ALTER TABLE sessions ADD COLUMN agent_type TEXT"
+            )
+            # Add index for agent_type lookups
+            await self._connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_sessions_agent_type ON sessions(agent_type)"
+            )
+            await self._connection.commit()
+            logger.info("Added agent_type column to sessions")
+
 
     async def close(self) -> None:
         """Close database connection."""
@@ -243,13 +263,16 @@ class Database:
             message_count = 0
             archived = 0
 
+        # Get agent_type (may be None)
+        agent_type = getattr(session, 'agent_type', None)
+
         await self.connection.execute(
             """
             INSERT INTO sessions (
                 id, title, module, source, working_directory, vault_root, model,
                 message_count, archived, created_at, last_accessed,
-                continued_from, metadata
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                continued_from, agent_type, metadata
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 session.id,
@@ -264,6 +287,7 @@ class Database:
                 created_at,
                 last_accessed,
                 session.continued_from,
+                agent_type,
                 metadata_json,
             ),
         )
@@ -308,6 +332,10 @@ class Database:
             updates.append("metadata = ?")
             params.append(json.dumps(update.metadata))
 
+        if update.agent_type is not None:
+            updates.append("agent_type = ?")
+            params.append(update.agent_type)
+
         if not updates:
             return await self.get_session(session_id)
 
@@ -336,6 +364,7 @@ class Database:
         self,
         module: Optional[str] = None,
         archived: Optional[bool] = None,
+        agent_type: Optional[str] = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[Session]:
@@ -350,6 +379,10 @@ class Database:
         if archived is not None:
             query += " AND archived = ?"
             params.append(1 if archived else 0)
+
+        if agent_type:
+            query += " AND agent_type = ?"
+            params.append(agent_type)
 
         query += " ORDER BY last_accessed DESC LIMIT ? OFFSET ?"
         params.extend([limit, offset])
@@ -768,6 +801,7 @@ class Database:
             created_at=datetime.fromisoformat(row["created_at"]),
             last_accessed=datetime.fromisoformat(row["last_accessed"]),
             continued_from=row["continued_from"],
+            agent_type=row["agent_type"] if "agent_type" in row.keys() else None,
             metadata=metadata,
         )
 

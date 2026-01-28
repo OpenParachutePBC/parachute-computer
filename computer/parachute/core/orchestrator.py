@@ -199,6 +199,7 @@ class Orchestrator:
         contexts: Optional[list[str]] = None,
         recovery_mode: Optional[str] = None,
         attachments: Optional[list[dict[str, Any]]] = None,
+        agent_type: Optional[str] = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         """
         Run an agent with streaming response.
@@ -211,12 +212,17 @@ class Orchestrator:
         start_time = time.time()
 
         # Load agent
+        logger.info(f"run_streaming: agent_path={agent_path!r}, agent_type={agent_type!r}")
         if agent_path and agent_path != "vault-agent":
+            logger.info(f"Loading custom agent from: {agent_path}")
             agent = await load_agent(agent_path, self.vault_path)
             if not agent:
+                logger.warning(f"Agent not found at path: {agent_path}, vault_path: {self.vault_path}")
                 yield ErrorEvent(error=f"Agent not found: {agent_path}").model_dump(by_alias=True)
                 return
+            logger.info(f"Loaded agent: {agent.name}")
         else:
+            logger.info("Using default vault agent")
             agent = create_vault_agent()
 
         # Get or create session (before building prompt so we can load prior conversation)
@@ -556,7 +562,8 @@ class Orchestrator:
                     if is_new and not session_finalized and captured_session_id:
                         title = generate_title_from_message(message) if message.strip() else None
                         session = await self.session_manager.finalize_session(
-                            session, captured_session_id, captured_model, title=title
+                            session, captured_session_id, captured_model, title=title,
+                            agent_type=agent_type,
                         )
                         session_finalized = True
                         logger.info(f"Early finalized session: {captured_session_id[:8]}...")
@@ -703,7 +710,8 @@ class Orchestrator:
                 # Generate title from the user's first message
                 title = generate_title_from_message(message) if message.strip() else None
                 session = await self.session_manager.finalize_session(
-                    session, captured_session_id, captured_model, title=title
+                    session, captured_session_id, captured_model, title=title,
+                    agent_type=agent_type,
                 )
                 session_finalized = True
                 logger.info(f"Finalized session: {captured_session_id[:8]}...")
@@ -894,6 +902,7 @@ class Orchestrator:
         # (useful for specialized agents that don't want Claude Code preset)
         if custom_prompt:
             metadata["prompt_source"] = "custom"
+            metadata["total_prompt_tokens"] = len(custom_prompt) // 4
             # For custom prompts, we return the full custom prompt
             # The caller should use system_prompt instead of system_prompt_append
             return custom_prompt, metadata
@@ -902,6 +911,7 @@ class Orchestrator:
         if agent.system_prompt and agent.name != "vault-agent":
             metadata["prompt_source"] = "agent"
             metadata["prompt_source_path"] = agent.path
+            metadata["total_prompt_tokens"] = len(agent.system_prompt) // 4
             # Agent has custom prompt - return it for full override
             return agent.system_prompt, metadata
 
