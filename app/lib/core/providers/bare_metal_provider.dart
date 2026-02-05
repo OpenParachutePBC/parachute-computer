@@ -1,6 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../services/bare_metal_server_service.dart';
-import '../services/file_system_service.dart';
 import 'app_state_provider.dart';
 
 /// Provider for the BareMetalServerService singleton
@@ -43,32 +42,8 @@ final isPythonInstalledProvider = FutureProvider<bool>((ref) async {
   return service.isPythonInstalled();
 });
 
-/// Provider to get Python version
-final pythonVersionProvider = FutureProvider<String?>((ref) async {
-  final service = ref.watch(bareMetalServiceProvider);
-  return service.getPythonVersion();
-});
-
 /// Provider to check if the server is running
 final isBareMetalServerRunningProvider = Provider<bool>((ref) {
   final statusAsync = ref.watch(bareMetalStatusProvider);
   return statusAsync.valueOrNull == BareMetalServerStatus.running;
-});
-
-/// Provider to check if server is healthy
-final isBareMetalServerHealthyProvider = FutureProvider<bool>((ref) async {
-  final service = ref.watch(bareMetalServiceProvider);
-  return service.isServerHealthy();
-});
-
-/// Provider to get the running server's version
-final bareMetalServerVersionProvider = FutureProvider<String?>((ref) async {
-  final service = ref.watch(bareMetalServiceProvider);
-  return service.getServerVersion();
-});
-
-/// Provider to check if auto-start is enabled
-final isBareMetalAutoStartEnabledProvider = FutureProvider<bool>((ref) async {
-  final service = ref.watch(bareMetalServiceProvider);
-  return service.isAutoStartEnabled();
 });

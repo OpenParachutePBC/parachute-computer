@@ -55,6 +55,7 @@ class BaseServerService {
     _serverUrl = prefs.getString(_serverUrlKey) ?? _defaultServerUrl;
     _apiKey = prefs.getString(_apiKeyKey);
     _isInitialized = true;
+    // Security: Only log presence of API key, not the key itself
     debugPrint('[BaseServerService] Initialized with URL: $_serverUrl, hasApiKey: ${_apiKey != null && _apiKey!.isNotEmpty}');
   }
 

@@ -1,20 +1,28 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../services/file_system_service.dart';
 
+/// Provider family for FileSystemService instances by module type
+///
+/// This replaces the static singleton pattern with proper dependency injection.
+/// Usage: ref.watch(fileSystemServiceFamilyProvider(ModuleType.daily))
+final fileSystemServiceFamilyProvider = Provider.family<FileSystemService, ModuleType>((ref, moduleType) {
+  return FileSystemService(moduleType);
+});
+
 /// Legacy provider name for backwards compatibility
 /// Points to Daily module service
 final fileSystemServiceProvider = Provider<FileSystemService>((ref) {
-  return FileSystemService.daily();
+  return ref.watch(fileSystemServiceFamilyProvider(ModuleType.daily));
 });
 
 /// Provider for Daily module file system service
 final dailyFileSystemServiceProvider = Provider<FileSystemService>((ref) {
-  return FileSystemService.daily();
+  return ref.watch(fileSystemServiceFamilyProvider(ModuleType.daily));
 });
 
 /// Provider for Chat module file system service
 final chatFileSystemServiceProvider = Provider<FileSystemService>((ref) {
-  return FileSystemService.chat();
+  return ref.watch(fileSystemServiceFamilyProvider(ModuleType.chat));
 });
 
 /// FutureProvider for Daily root path

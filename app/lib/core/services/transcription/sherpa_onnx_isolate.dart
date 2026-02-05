@@ -8,9 +8,9 @@ import 'sherpa_onnx_service.dart';
 ///
 /// Transcription runs in a dedicated background isolate with its own
 /// SherpaOnnxService instance. The main isolate stays responsive.
+///
+/// Use via Riverpod provider (sherpaOnnxIsolateProvider) in widget code.
 class SherpaOnnxIsolate {
-  static SherpaOnnxIsolate? _instance;
-
   Isolate? _isolate;
   SendPort? _sendPort;
   ReceivePort? _progressPort;
@@ -24,13 +24,7 @@ class SherpaOnnxIsolate {
   // Track if models are available (checked on main thread)
   bool _modelsAvailable = false;
 
-  SherpaOnnxIsolate._();
-
-  /// Get singleton instance
-  static SherpaOnnxIsolate get instance {
-    _instance ??= SherpaOnnxIsolate._();
-    return _instance!;
-  }
+  SherpaOnnxIsolate.internal();
 
   bool get isInitialized => _isInitialized;
   bool get modelsAvailable => _modelsAvailable;
@@ -217,7 +211,6 @@ class SherpaOnnxIsolate {
     _isolate = null;
     _sendPort = null;
     _isInitialized = false;
-    _instance = null;
   }
 }
 

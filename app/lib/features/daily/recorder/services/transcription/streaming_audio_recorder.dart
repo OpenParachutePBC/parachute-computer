@@ -146,14 +146,9 @@ class StreamingAudioRecorder {
   void writeSamples(List<int> samples) {
     if (_audioFileSink == null) return;
 
-    // Convert samples to bytes and write
-    final bytes = Uint8List(samples.length * 2);
-    for (int i = 0; i < samples.length; i++) {
-      final sample = samples[i];
-      bytes[i * 2] = sample & 0xFF;
-      bytes[i * 2 + 1] = (sample >> 8) & 0xFF;
-    }
-    _audioFileSink!.add(bytes);
+    // Use Int16List view to avoid per-sample byte conversion loop
+    final int16list = Int16List.fromList(samples);
+    _audioFileSink!.add(int16list.buffer.asUint8List());
     _totalSamplesWritten += samples.length;
 
     // Periodically flush to ensure data is persisted

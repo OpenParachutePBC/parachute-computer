@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
-import 'package:parachute/features/chat/providers/chat_providers.dart';
-import 'package:parachute/features/chat/models/chat_session.dart';
+import 'package:parachute/core/models/send_to_chat_event.dart';
+import 'package:parachute/core/providers/app_events_provider.dart';
 
 /// Available agent types for new chats
 class AgentTypeOption {
@@ -77,7 +77,6 @@ class _SendToChatSheetState extends ConsumerState<SendToChatSheet> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
-    final sessionsAsync = ref.watch(chatSessionsProvider);
 
     return Container(
       constraints: BoxConstraints(
@@ -222,66 +221,6 @@ class _SendToChatSheetState extends ConsumerState<SendToChatSheet> {
             ),
           ),
 
-          const SizedBox(height: Spacing.md),
-          const Divider(height: 1),
-
-          // Recent sessions header
-          Padding(
-            padding: const EdgeInsets.fromLTRB(Spacing.lg, Spacing.md, Spacing.lg, Spacing.sm),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                'Or send to existing session',
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
-                ),
-              ),
-            ),
-          ),
-
-          // Sessions list
-          Flexible(
-            child: sessionsAsync.when(
-              data: (sessions) {
-                if (sessions.isEmpty) {
-                  return Padding(
-                    padding: const EdgeInsets.all(Spacing.lg),
-                    child: Text(
-                      'No recent sessions',
-                      style: TextStyle(
-                        color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
-                      ),
-                    ),
-                  );
-                }
-
-                // Show up to 5 recent sessions
-                final recentSessions = sessions.take(5).toList();
-
-                return ListView.builder(
-                  shrinkWrap: true,
-                  itemCount: recentSessions.length,
-                  itemBuilder: (context, index) {
-                    final session = recentSessions[index];
-                    return _buildSessionOption(context, ref, session, isDark);
-                  },
-                );
-              },
-              loading: () => const Padding(
-                padding: EdgeInsets.all(Spacing.lg),
-                child: CircularProgressIndicator(),
-              ),
-              error: (error, _) => Padding(
-                padding: const EdgeInsets.all(Spacing.lg),
-                child: Text(
-                  'Error loading sessions',
-                  style: TextStyle(color: BrandColors.error),
-                ),
-              ),
-            ),
-          ),
 
           // Bottom padding for safe area
           SizedBox(height: MediaQuery.of(context).padding.bottom + Spacing.md),
@@ -348,50 +287,6 @@ class _SendToChatSheetState extends ConsumerState<SendToChatSheet> {
     );
   }
 
-  Widget _buildSessionOption(BuildContext context, WidgetRef ref, ChatSession session, bool isDark) {
-    final displayTitle = session.title?.isNotEmpty == true
-        ? session.title!
-        : 'Untitled';
-
-    return ListTile(
-      leading: Container(
-        padding: const EdgeInsets.all(8),
-        decoration: BoxDecoration(
-          color: BrandColors.forest.withValues(alpha: 0.1),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Icon(
-          Icons.chat,
-          color: BrandColors.forest,
-          size: 20,
-        ),
-      ),
-      title: Text(
-        displayTitle,
-        style: TextStyle(
-          fontWeight: FontWeight.w500,
-          color: isDark ? BrandColors.nightText : BrandColors.charcoal,
-        ),
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-      ),
-      subtitle: Text(
-        session.updatedAt != null ? _formatDate(session.updatedAt!) : '',
-        style: TextStyle(
-          fontSize: 12,
-          color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
-        ),
-      ),
-      onTap: () => _sendToExistingSession(context, ref, session.id),
-    );
-  }
-
-  String _formatMessage() {
-    // Format the message with title if available
-    return widget.title != null && widget.title!.isNotEmpty
-        ? '**${widget.title}**\n\n${widget.content}'
-        : widget.content;
-  }
 
   void _sendToNewChat(BuildContext context, WidgetRef ref) {
     // Close the bottom sheet first
@@ -403,40 +298,13 @@ class _SendToChatSheetState extends ConsumerState<SendToChatSheet> {
       orElse: () => _agentTypes.first,
     );
 
-    // Set pending prompt - TabShell will handle navigation
-    ref.read(pendingChatPromptProvider.notifier).state = PendingChatPrompt(
-      message: _formatMessage(),
+    // Emit send to chat event - Chat feature will handle it
+    ref.read(sendToChatEventProvider.notifier).state = SendToChatEvent(
+      content: widget.content,
+      title: widget.title,
       sessionId: null, // new chat
       agentType: _selectedAgentType,
       agentPath: selectedAgent.path,
     );
-  }
-
-  void _sendToExistingSession(BuildContext context, WidgetRef ref, String sessionId) {
-    // Close the bottom sheet first
-    Navigator.pop(context);
-
-    // Set pending prompt - TabShell will handle navigation
-    ref.read(pendingChatPromptProvider.notifier).state = PendingChatPrompt(
-      message: _formatMessage(),
-      sessionId: sessionId,
-    );
-  }
-
-  String _formatDate(DateTime date) {
-    final now = DateTime.now();
-    final diff = now.difference(date);
-
-    if (diff.inMinutes < 1) {
-      return 'Just now';
-    } else if (diff.inHours < 1) {
-      return '${diff.inMinutes}m ago';
-    } else if (diff.inDays < 1) {
-      return '${diff.inHours}h ago';
-    } else if (diff.inDays < 7) {
-      return '${diff.inDays}d ago';
-    } else {
-      return '${date.month}/${date.day}';
-    }
   }
 }

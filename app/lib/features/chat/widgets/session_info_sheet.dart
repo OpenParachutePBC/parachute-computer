@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
 import '../models/prompt_metadata.dart';
 import '../providers/chat_providers.dart';
+import '../services/chat_service.dart';
 
 /// Bottom sheet showing session information and prompt metadata
 ///

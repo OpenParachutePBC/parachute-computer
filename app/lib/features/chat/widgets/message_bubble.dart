@@ -521,10 +521,19 @@ class _MessageBubbleState extends State<MessageBubble>
     }
   }
 
+  /// Cache for resolved image file paths to avoid repeated filesystem checks
+  static final Map<String, File?> _imageFileCache = {};
+
   /// Find an image file, trying alternate extensions if needed
   Future<File?> _findImageFile(String path) async {
+    // Return cached result if available
+    if (_imageFileCache.containsKey(path)) {
+      return _imageFileCache[path];
+    }
+
     final file = File(path);
     if (await file.exists()) {
+      _imageFileCache[path] = file;
       return file;
     }
 
@@ -535,10 +544,12 @@ class _MessageBubbleState extends State<MessageBubble>
     for (final ext in alternateExtensions) {
       final altFile = File('$basePath$ext');
       if (await altFile.exists()) {
+        _imageFileCache[path] = altFile;
         return altFile;
       }
     }
 
+    _imageFileCache[path] = null;
     return null;
   }
 
@@ -1112,13 +1123,17 @@ class _RemoteImagePreviewOverlayState extends State<_RemoteImagePreviewOverlay> 
       if (result != null) {
         // Download the image
         final httpClient = HttpClient();
-        final request = await httpClient.getUrl(Uri.parse(widget.url));
-        final response = await request.close();
-        final bytes = await consolidateHttpClientResponseBytes(response);
+        try {
+          final request = await httpClient.getUrl(Uri.parse(widget.url));
+          final response = await request.close();
+          final bytes = await consolidateHttpClientResponseBytes(response);
 
-        // Write to file
-        final file = File(result);
-        await file.writeAsBytes(bytes);
+          // Write to file
+          final file = File(result);
+          await file.writeAsBytes(bytes);
+        } finally {
+          httpClient.close();
+        }
 
         if (mounted) {
           Navigator.of(context).pop();
@@ -1354,7 +1369,9 @@ void markMarkdownAsFailed(int hash) {
 
 /// Cache for MarkdownStyleSheet to avoid rebuilding on every frame
 /// Key is combination of isDark, isUser, and textColor
+/// Evicts when cache exceeds 50 entries to prevent unbounded growth
 final Map<int, MarkdownStyleSheet> _styleSheetCache = {};
+const int _maxStyleSheetCacheSize = 50;
 
 MarkdownStyleSheet _getOrCreateStyleSheet({
   required bool isDark,
@@ -1363,6 +1380,11 @@ MarkdownStyleSheet _getOrCreateStyleSheet({
 }) {
   // Create a cache key from the parameters
   final key = Object.hash(isDark, isUser, textColor.toARGB32());
+
+  // Evict cache if it grows too large
+  if (_styleSheetCache.length >= _maxStyleSheetCacheSize && !_styleSheetCache.containsKey(key)) {
+    _styleSheetCache.clear();
+  }
 
   return _styleSheetCache.putIfAbsent(key, () => MarkdownStyleSheet(
     p: TextStyle(
@@ -1464,40 +1486,52 @@ class _SafeMarkdownBodyState extends State<_SafeMarkdownBody> {
     }
   }
 
-  /// Sanitize markdown for streaming (close unclosed fences)
+  /// Sanitize markdown for streaming (close unclosed fences) — single pass
   String _sanitizeForStreaming(String input) {
-    var result = input;
-
-    // Close unclosed code fences (common during streaming)
-    final codeFencePattern = RegExp(r'^```', multiLine: true);
-    final codeFenceCount = codeFencePattern.allMatches(result).length;
-    if (codeFenceCount % 2 != 0) {
-      result = '$result\n```';
-    }
-
-    // Close unclosed inline code
-    final lines = result.split('\n');
+    var codeFenceCount = 0;
     var inCodeFence = false;
     var backtickCount = 0;
+    var hasUnclosedLink = false;
+
+    // Single pass: scan lines for fences, backticks, and link state
+    final lines = input.split('\n');
     for (final line in lines) {
       if (line.startsWith('```')) {
+        codeFenceCount++;
         inCodeFence = !inCodeFence;
         continue;
       }
       if (!inCodeFence) {
-        backtickCount += '`'.allMatches(line).length;
+        for (var i = 0; i < line.length; i++) {
+          if (line.codeUnitAt(i) == 0x60) backtickCount++; // '`'
+        }
       }
     }
-    if (backtickCount % 2 != 0) {
-      result = '$result`';
+
+    // Check last line for unclosed link pattern [text](url...
+    if (lines.isNotEmpty) {
+      final lastLine = lines.last;
+      var bracketOpen = false;
+      var parenOpen = false;
+      for (var i = 0; i < lastLine.length; i++) {
+        final c = lastLine.codeUnitAt(i);
+        if (c == 0x5B) { bracketOpen = true; parenOpen = false; } // '['
+        else if (c == 0x5D && bracketOpen) { bracketOpen = false; } // ']'
+        else if (c == 0x28 && i > 0 && lastLine.codeUnitAt(i - 1) == 0x5D) { parenOpen = true; } // '('
+        else if (c == 0x29 && parenOpen) { parenOpen = false; } // ')'
+      }
+      hasUnclosedLink = parenOpen;
     }
 
-    // Close unclosed links
-    final unclosedLinkPattern = RegExp(r'\[[^\]]*\]\([^)]*$');
-    if (unclosedLinkPattern.hasMatch(result)) {
-      result = '$result)';
+    // Build result only if fixes are needed
+    if (codeFenceCount % 2 == 0 && backtickCount % 2 == 0 && !hasUnclosedLink) {
+      return input;
     }
 
+    var result = input;
+    if (codeFenceCount % 2 != 0) result = '$result\n```';
+    if (backtickCount % 2 != 0) result = '$result`';
+    if (hasUnclosedLink) result = '$result)';
     return result;
   }
 

@@ -28,26 +28,31 @@ enum ModuleType {
 /// Philosophy: Files are the source of truth, databases are indexes.
 class FileSystemService {
   // ============================================================
-  // Instance Management - One instance per module
+  // Instance Management - Riverpod-managed instances
   // ============================================================
 
-  static final Map<ModuleType, FileSystemService> _instances = {};
-
-  /// Get or create service instance for a module
-  factory FileSystemService.forModule(ModuleType moduleType) {
-    return _instances.putIfAbsent(moduleType, () {
-      return FileSystemService._internal(moduleType);
-    });
-  }
-
-  /// Convenience factory for Daily module
-  factory FileSystemService.daily() => FileSystemService.forModule(ModuleType.daily);
-
-  /// Convenience factory for Chat module
-  factory FileSystemService.chat() => FileSystemService.forModule(ModuleType.chat);
-
   final ModuleType _moduleType;
-  FileSystemService._internal(this._moduleType);
+
+  /// Create a FileSystemService for the given module type
+  ///
+  /// NOTE: Don't call this directly. Use the fileSystemServiceProvider instead:
+  ///   ref.watch(fileSystemServiceProvider(ModuleType.daily))
+  ///
+  /// The static factory methods (daily(), chat(), forModule()) are deprecated
+  /// and should not be used in new code.
+  FileSystemService(this._moduleType);
+
+  /// Deprecated: Use fileSystemServiceProvider(ModuleType.daily) instead
+  @Deprecated('Use fileSystemServiceProvider(ModuleType.daily) instead')
+  factory FileSystemService.daily() => FileSystemService(ModuleType.daily);
+
+  /// Deprecated: Use fileSystemServiceProvider(ModuleType.chat) instead
+  @Deprecated('Use fileSystemServiceProvider(ModuleType.chat) instead')
+  factory FileSystemService.chat() => FileSystemService(ModuleType.chat);
+
+  /// Deprecated: Use fileSystemServiceProvider(moduleType) instead
+  @Deprecated('Use fileSystemServiceProvider(moduleType) instead')
+  factory FileSystemService.forModule(ModuleType moduleType) => FileSystemService(moduleType);
 
   // ============================================================
   // Constants

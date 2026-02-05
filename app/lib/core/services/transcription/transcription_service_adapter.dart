@@ -12,12 +12,18 @@ import 'sherpa_onnx_isolate.dart';
 /// - Android: Sherpa-ONNX (ONNX Runtime-based)
 ///
 /// This provides fast, offline transcription with 25-language support.
+///
+/// IMPORTANT: This service should ideally receive SherpaOnnxIsolate via dependency
+/// injection, but for now uses a package-level instance for backward compatibility.
 class TranscriptionServiceAdapter {
   final ParakeetService _parakeetService = ParakeetService();
   // Use isolate-based service for Sherpa-ONNX to prevent UI blocking
-  final SherpaOnnxIsolate _sherpaIsolate = SherpaOnnxIsolate.instance;
+  final SherpaOnnxIsolate _sherpaIsolate;
   // Keep direct service reference for compatibility checks
   final SherpaOnnxService _sherpaService = SherpaOnnxService();
+
+  TranscriptionServiceAdapter([SherpaOnnxIsolate? sherpaIsolate])
+      : _sherpaIsolate = sherpaIsolate ?? _getGlobalSherpaIsolate();
 
   // Global progress callbacks (set by main.dart)
   static Function(double)? _globalOnProgress;
@@ -309,4 +315,23 @@ class TranscriptionException implements Exception {
 
   @override
   String toString() => message;
+}
+
+/// Global SherpaOnnxIsolate instance for backward compatibility
+///
+/// This is initialized by the provider system. For new code, prefer injecting
+/// via constructor or using the provider directly.
+SherpaOnnxIsolate? _globalSherpaIsolate;
+
+void setGlobalSherpaIsolate(SherpaOnnxIsolate instance) {
+  _globalSherpaIsolate = instance;
+}
+
+SherpaOnnxIsolate _getGlobalSherpaIsolate() {
+  if (_globalSherpaIsolate != null) {
+    return _globalSherpaIsolate!;
+  }
+  // Fallback - create a new instance (not ideal but prevents crashes)
+  debugPrint('[TranscriptionAdapter] WARNING: Creating fallback SherpaOnnxIsolate instance');
+  return SherpaOnnxIsolate.internal();
 }

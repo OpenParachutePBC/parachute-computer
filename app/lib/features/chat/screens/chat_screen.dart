@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/core/widgets/error_boundary.dart';
+import 'package:parachute/core/widgets/error_snackbar.dart';
 import 'package:parachute/core/services/logging_service.dart';
+import 'package:parachute/core/errors/app_error.dart';
 import '../models/attachment.dart';
 import '../models/chat_session.dart';
 import '../providers/chat_providers.dart';
@@ -580,11 +582,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                     : ListView.builder(
                         controller: _scrollController,
                         padding: const EdgeInsets.all(Spacing.md),
-                        // Increase cache extent significantly to pre-build items off-screen
-                        // MessageBubble uses AutomaticKeepAliveClientMixin to stay alive
-                        cacheExtent: 1000,
-                        // Let MessageBubble handle its own RepaintBoundary
-                        addRepaintBoundaries: false,
+                        cacheExtent: 500,
+                        addRepaintBoundaries: true,
                         // Keep items alive when scrolled off-screen (works with AutomaticKeepAliveClientMixin)
                         addAutomaticKeepAlives: true,
                         itemCount: chatState.messages.length +
@@ -1268,8 +1267,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     // Unarchive the session on the server
     try {
       await ref.read(unarchiveSessionProvider)(session.id);
-    } catch (e) {
+    } on AppError catch (e) {
       debugPrint('[ChatScreen] Failed to unarchive session: $e');
+      if (mounted) {
+        showAppError(context, e);
+      }
+      // Continue anyway - the local state change is more important
+    } catch (e) {
+      debugPrint('[ChatScreen] Unexpected error unarchiving session: $e');
       // Continue anyway - the local state change is more important
     }
 

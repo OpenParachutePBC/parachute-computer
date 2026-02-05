@@ -61,10 +61,11 @@ class LogEntry {
 /// - Rolling in-memory buffer (last 1000 entries)
 /// - Local file logging (flushed periodically)
 /// - Component-specific logger factory
+///
+/// Use via Riverpod provider (loggingServiceProvider) in widget code,
+/// or the global `logger` getter in non-widget contexts.
 class LoggingService {
-  static final LoggingService _instance = LoggingService._internal();
-  factory LoggingService() => _instance;
-  LoggingService._internal();
+  LoggingService.internal();
 
   /// Maximum entries to keep in memory
   static const int maxBufferSize = 1000;
@@ -381,7 +382,37 @@ class ComponentLogger {
 }
 
 /// Global logging instance for convenience
-final logger = LoggingService();
+///
+/// DEPRECATED: This global instance is maintained for backward compatibility
+/// in contexts where ProviderRef isn't available. For new code in widgets,
+/// prefer using ref.read(loggingServiceProvider).
+///
+/// This will be initialized in main() via initializeGlobalServices().
+LoggingService get logger {
+  // Import from core_service_providers to get the actual instance
+  // This is a lazy import pattern to avoid circular dependencies
+  return _getGlobalLogger();
+}
+
+// Lazy getter to avoid circular dependency
+LoggingService _getGlobalLogger() {
+  // This will be replaced by the provider-based instance
+  // For now, create a temporary instance if accessed before initialization
+  if (_globalLoggerInstance != null) {
+    return _globalLoggerInstance!;
+  }
+  // Fallback for edge cases during initialization
+  return _fallbackLogger ??= LoggingService.internal();
+}
+
+// Package-level variables for global access
+LoggingService? _globalLoggerInstance;
+LoggingService? _fallbackLogger;
+
+/// Set the global logger instance (called by provider initialization)
+void setGlobalLogger(LoggingService instance) {
+  _globalLoggerInstance = instance;
+}
 
 /// Performance tracer for measuring execution time
 class PerformanceTrace {

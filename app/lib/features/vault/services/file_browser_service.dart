@@ -181,6 +181,15 @@ class FileBrowserService {
         debugPrint('[FileBrowserService] File does not exist: $path');
         return null;
       }
+
+      // Security: Verify path doesn't escape vault via symlinks
+      final resolvedPath = await file.resolveSymbolicLinks();
+      final rootPath = await _fileSystem.getRootPath();
+      if (!resolvedPath.startsWith(rootPath)) {
+        debugPrint('[FileBrowserService] Security: Path escapes vault boundary: $resolvedPath');
+        throw Exception('Access denied: Path escapes vault boundary');
+      }
+
       return await file.readAsString();
     } catch (e) {
       debugPrint('[FileBrowserService] Error reading file $path: $e');

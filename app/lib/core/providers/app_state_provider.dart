@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -153,9 +154,25 @@ class ServerUrlNotifier extends AsyncNotifier<String?> {
     return prefs.getString(_key);
   }
 
+  /// Validate that a URL is well-formed and uses http/https
+  static bool isValidServerUrl(String url) {
+    try {
+      final uri = Uri.parse(url);
+      return uri.hasScheme &&
+             (uri.scheme == 'http' || uri.scheme == 'https') &&
+             uri.host.isNotEmpty;
+    } catch (_) {
+      return false;
+    }
+  }
+
   Future<void> setServerUrl(String? url) async {
     final prefs = await SharedPreferences.getInstance();
     if (url != null && url.isNotEmpty) {
+      // Validate URL before saving
+      if (!isValidServerUrl(url)) {
+        throw ArgumentError('Invalid server URL: must be a valid http:// or https:// URL');
+      }
       await prefs.setString(_key, url);
       state = AsyncData(url);
     } else {
@@ -213,19 +230,34 @@ final isServerConfiguredProvider = Provider<bool>((ref) {
 });
 
 /// Notifier for API key with persistence
+///
+/// SECURITY NOTE: API keys are currently stored in SharedPreferences.
+/// This is NOT secure - SharedPreferences is unencrypted plaintext storage.
+/// TODO: Migrate to flutter_secure_storage for encrypted storage.
+/// For now, basic obfuscation is applied as a temporary measure.
 class ApiKeyNotifier extends AsyncNotifier<String?> {
   static const _key = 'parachute_api_key';
 
   @override
   Future<String?> build() async {
     final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_key);
+    final stored = prefs.getString(_key);
+    if (stored == null) return null;
+    // Deobfuscate from base64
+    try {
+      return String.fromCharCodes(base64Decode(stored));
+    } catch (_) {
+      // If decoding fails, assume it's unencoded (migration)
+      return stored;
+    }
   }
 
   Future<void> setApiKey(String? key) async {
     final prefs = await SharedPreferences.getInstance();
     if (key != null && key.isNotEmpty) {
-      await prefs.setString(_key, key);
+      // Basic obfuscation via base64 (NOT encryption, just prevents casual viewing)
+      final encoded = base64Encode(key.codeUnits);
+      await prefs.setString(_key, encoded);
       state = AsyncData(key);
     } else {
       await prefs.remove(_key);

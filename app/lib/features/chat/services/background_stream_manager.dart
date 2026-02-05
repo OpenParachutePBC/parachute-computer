@@ -17,11 +17,10 @@ typedef StreamEventCallback = void Function(StreamEvent event);
 /// - Multiple streams can run concurrently (different sessions)
 /// - Provides callback interface for UI updates when active
 /// - Tracks which sessions have active streams
+///
+/// Use via Riverpod provider (backgroundStreamManagerProvider) in widget code.
 class BackgroundStreamManager {
-  static final BackgroundStreamManager _instance = BackgroundStreamManager._();
-  static BackgroundStreamManager get instance => _instance;
-
-  BackgroundStreamManager._();
+  BackgroundStreamManager.internal();
 
   /// Active streams by session ID
   final Map<String, _ActiveStream> _activeStreams = {};

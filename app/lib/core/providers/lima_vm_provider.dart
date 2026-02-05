@@ -47,21 +47,3 @@ final isLimaVMRunningProvider = Provider<bool>((ref) {
   final statusAsync = ref.watch(limaVMStatusProvider);
   return statusAsync.valueOrNull == LimaVMStatus.running;
 });
-
-/// Provider to check if server in VM is healthy
-final isLimaServerHealthyProvider = FutureProvider<bool>((ref) async {
-  final service = ref.watch(limaVMServiceProvider);
-  return service.isServerHealthy();
-});
-
-/// Provider to get the running server's version
-final serverVersionProvider = FutureProvider<String?>((ref) async {
-  final service = ref.watch(limaVMServiceProvider);
-  return service.getServerVersion();
-});
-
-/// Provider to check if a base update is available
-final isBaseUpdateAvailableProvider = FutureProvider<bool>((ref) async {
-  final service = ref.watch(limaVMServiceProvider);
-  return service.isBaseUpdateAvailable();
-});

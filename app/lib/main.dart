@@ -11,9 +11,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'core/theme/app_theme.dart';
 import 'core/theme/design_tokens.dart';
 import 'core/providers/app_state_provider.dart';
+import 'core/providers/app_events_provider.dart';
 import 'core/providers/model_download_provider.dart';
 import 'core/providers/server_providers.dart';
 import 'core/providers/sync_provider.dart';
+import 'core/providers/core_service_providers.dart';
 import 'core/services/deep_link_service.dart';
 import 'core/services/logging_service.dart';
 import 'core/services/model_download_service.dart';
@@ -23,7 +25,6 @@ import 'features/daily/recorder/providers/omi_providers.dart';
 import 'features/chat/screens/chat_hub_screen.dart';
 import 'features/chat/screens/chat_screen.dart';
 import 'features/chat/providers/chat_providers.dart';
-import 'features/chat/services/background_stream_manager.dart';
 import 'features/chat/widgets/message_bubble.dart' show currentlyRenderingMarkdown, markMarkdownAsFailed;
 import 'features/daily/journal/providers/journal_providers.dart';
 import 'features/vault/screens/vault_browser_screen.dart';
@@ -34,8 +35,11 @@ import 'features/onboarding/screens/onboarding_screen.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Initialize logging
-  await logger.initialize();
+  // Create provider container for early initialization
+  final container = ProviderContainer();
+
+  // Initialize global services (logging, etc.)
+  await initializeGlobalServices(container);
 
   logger.info('Main', 'Starting Parachute app...');
 
@@ -73,9 +77,6 @@ void main() async {
     logger.captureException(error, stackTrace: stack, tag: 'PlatformDispatcher');
     return true;
   };
-
-  // Create provider container for early initialization
-  final container = ProviderContainer();
 
   // Initialize bundled server on desktop platforms
   // This checks if the app has a bundled server binary and starts it
@@ -283,7 +284,8 @@ class _TabShellState extends ConsumerState<_TabShell> with WidgetsBindingObserve
 
   /// Handle a pending chat prompt by navigating to ChatScreen
   void _handlePendingChatPrompt(PendingChatPrompt prompt) {
-    debugPrint('[TabShell] Handling pending chat prompt: session=${prompt.sessionId}, agentType=${prompt.agentType}, agentPath=${prompt.agentPath}, message=${prompt.message.substring(0, prompt.message.length.clamp(0, 50))}...');
+    // Security: Only log message preview (first 50 chars) to avoid leaking sensitive content
+    debugPrint('[TabShell] Handling pending chat prompt: session=${prompt.sessionId}, agentType=${prompt.agentType}, agentPath=${prompt.agentPath}, message preview=${prompt.message.substring(0, prompt.message.length.clamp(0, 50))}${prompt.message.length > 50 ? "..." : ""}');
 
     // Clear the pending prompt immediately to prevent re-triggering
     ref.read(pendingChatPromptProvider.notifier).state = null;
@@ -389,7 +391,8 @@ class _TabShellState extends ConsumerState<_TabShell> with WidgetsBindingObserve
         );
       });
     } else if (target.sessionId != null) {
-      debugPrint('[TabShell] Open session deep link - session: ${target.sessionId}, message: ${target.messageIndex}, prompt: ${target.prompt}, autoSend: ${target.autoSend}');
+      // Security: Only log prompt presence/length, not content
+      debugPrint('[TabShell] Open session deep link - session: ${target.sessionId}, message: ${target.messageIndex}, hasPrompt: ${target.prompt != null}, autoSend: ${target.autoSend}');
 
       // Switch to the session
       ref.read(switchSessionProvider)(target.sessionId!);
@@ -483,7 +486,7 @@ class _TabShellState extends ConsumerState<_TabShell> with WidgetsBindingObserve
 
     // Clean up background streams when app is detached/terminated
     if (state == AppLifecycleState.detached) {
-      BackgroundStreamManager.instance.cancelAll();
+      ref.read(backgroundStreamManagerProvider).cancelAll();
     }
   }
 
@@ -514,12 +517,29 @@ class _TabShellState extends ConsumerState<_TabShell> with WidgetsBindingObserve
 
   @override
   Widget build(BuildContext context) {
-    // Listen for pending chat prompts (from SendToChatSheet)
+    // Listen for pending chat prompts (legacy support)
     // This MUST be in build() for ref.listen to work properly
     ref.listen<PendingChatPrompt?>(pendingChatPromptProvider, (previous, next) {
       debugPrint('[TabShell] pendingChatPromptProvider changed: previous=$previous, next=$next');
       if (next != null) {
         _handlePendingChatPrompt(next);
+      }
+    });
+
+    // Listen for send to chat events (cross-feature communication)
+    ref.listen(sendToChatEventProvider, (previous, next) {
+      debugPrint('[TabShell] sendToChatEventProvider changed: previous=$previous, next=$next');
+      if (next != null) {
+        // Convert SendToChatEvent to PendingChatPrompt format
+        final prompt = PendingChatPrompt(
+          message: next.formattedMessage,
+          sessionId: next.sessionId,
+          agentType: next.agentType,
+          agentPath: next.agentPath,
+        );
+        _handlePendingChatPrompt(prompt);
+        // Clear the event
+        ref.read(sendToChatEventProvider.notifier).state = null;
       }
     });
 

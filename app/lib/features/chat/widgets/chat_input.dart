@@ -5,10 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
-import 'package:parachute/core/providers/voice_input_providers.dart';
 import 'package:parachute/core/providers/streaming_voice_providers.dart';
 import 'package:parachute/core/providers/model_download_provider.dart';
-import 'package:parachute/core/services/voice_input_service.dart';
 import 'package:parachute/core/services/streaming_voice_service.dart';
 import '../models/attachment.dart';
 import '../providers/chat_providers.dart';
@@ -51,7 +49,7 @@ class _ChatInputState extends ConsumerState<ChatInput>
   bool _isLoadingAttachment = false;
 
   // Streaming transcription
-  final bool _useStreamingTranscription = true; // Enable streaming by default
+  // Streaming transcription is always used
   bool _isStreamingRecording = false;
   bool _isProcessingStreamingStop = false; // Processing state for smooth transitions
 
@@ -186,42 +184,7 @@ class _ChatInputState extends ConsumerState<ChatInput>
   }
 
   Future<void> _handleVoiceInput() async {
-    if (_useStreamingTranscription) {
-      await _handleStreamingVoiceInput();
-    } else {
-      await _handleStandardVoiceInput();
-    }
-  }
-
-  /// Standard voice input (record all → transcribe once)
-  Future<void> _handleStandardVoiceInput() async {
-    final voiceService = ref.read(voiceInputServiceProvider);
-
-    if (voiceService.isRecording) {
-      // Stop and transcribe
-      _pulseController.stop();
-      final text = await voiceService.stopAndTranscribe();
-      if (text != null && text.isNotEmpty) {
-        // Append to existing text (with space if needed)
-        final currentText = _controller.text;
-        if (currentText.isNotEmpty && !currentText.endsWith(' ')) {
-          _controller.text = '$currentText $text';
-        } else {
-          _controller.text = currentText + text;
-        }
-        // Move cursor to end
-        _controller.selection = TextSelection.collapsed(
-          offset: _controller.text.length,
-        );
-      }
-    } else {
-      // Start recording
-      await voiceService.initialize();
-      final started = await voiceService.startRecording();
-      if (started) {
-        _pulseController.repeat(reverse: true);
-      }
-    }
+    await _handleStreamingVoiceInput();
   }
 
   /// Streaming voice input (real-time transcription feedback)
@@ -334,36 +297,11 @@ class _ChatInputState extends ConsumerState<ChatInput>
     // Note: Initial text is handled via widget.initialText and didUpdateWidget
     // TabShell is the single source of truth for pendingChatPromptProvider navigation
 
-    // Watch voice input state (standard mode)
-    final voiceState = ref.watch(voiceInputCurrentStateProvider);
-    final isStandardRecording = voiceState == VoiceInputState.recording;
-    final isTranscribing = voiceState == VoiceInputState.transcribing;
-
     // Watch streaming transcription state
     final streamingState = ref.watch(streamingVoiceCurrentStateProvider);
-    final isRecording = _useStreamingTranscription
-        ? _isStreamingRecording
-        : isStandardRecording;
-
-    // Get duration from appropriate source
-    final durationAsync = ref.watch(voiceInputDurationProvider);
-    final duration = _useStreamingTranscription
-        ? streamingState.recordingDuration
-        : (durationAsync.valueOrNull ?? Duration.zero);
-
-    // Listen for errors (standard mode)
-    ref.listen(voiceInputErrorProvider, (previous, next) {
-      next.whenData((error) {
-        if (error.isNotEmpty) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(error),
-              backgroundColor: BrandColors.error,
-            ),
-          );
-        }
-      });
-    });
+    final isRecording = _isStreamingRecording;
+    final isTranscribing = false;
+    final duration = streamingState.recordingDuration;
 
     return Container(
       padding: const EdgeInsets.all(Spacing.md),
@@ -386,20 +324,12 @@ class _ChatInputState extends ConsumerState<ChatInput>
               _buildAttachmentPreviews(isDark),
 
             // Processing indicator (shown while finalizing recording)
-            if (_isProcessingStreamingStop && _useStreamingTranscription)
+            if (_isProcessingStreamingStop)
               _buildFinalizingIndicator(isDark, streamingState),
 
             // Streaming transcript display (shown when streaming recording)
-            if (_isStreamingRecording && !_isProcessingStreamingStop && _useStreamingTranscription)
+            if (_isStreamingRecording && !_isProcessingStreamingStop)
               _buildStreamingTranscriptDisplay(isDark, streamingState),
-
-            // Recording indicator (shown when recording without streaming UI)
-            if (isRecording && !_useStreamingTranscription)
-              _buildRecordingIndicator(isDark, duration),
-
-            // Transcribing indicator (standard mode only)
-            if (isTranscribing && !_useStreamingTranscription)
-              _buildTranscribingIndicator(isDark),
 
             Row(
               crossAxisAlignment: CrossAxisAlignment.end,
@@ -575,69 +505,6 @@ class _ChatInputState extends ConsumerState<ChatInput>
           ),
         );
       },
-    );
-  }
-
-  Widget _buildRecordingIndicator(bool isDark, Duration duration) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: Spacing.sm),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          // Pulsing red dot
-          AnimatedBuilder(
-            animation: _pulseController,
-            builder: (context, child) {
-              final opacity = 0.5 + (_pulseController.value * 0.5);
-              return Container(
-                width: 8,
-                height: 8,
-                decoration: BoxDecoration(
-                  color: BrandColors.error.withValues(alpha: opacity),
-                  shape: BoxShape.circle,
-                ),
-              );
-            },
-          ),
-          const SizedBox(width: Spacing.sm),
-          Text(
-            'Recording ${_formatDuration(duration)}',
-            style: TextStyle(
-              color: BrandColors.error,
-              fontSize: TypographyTokens.labelMedium,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTranscribingIndicator(bool isDark) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: Spacing.sm),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          SizedBox(
-            width: 12,
-            height: 12,
-            child: CircularProgressIndicator(
-              strokeWidth: 2,
-              color: isDark ? BrandColors.nightTurquoise : BrandColors.turquoise,
-            ),
-          ),
-          const SizedBox(width: Spacing.sm),
-          Text(
-            'Transcribing...',
-            style: TextStyle(
-              color: isDark ? BrandColors.nightTurquoise : BrandColors.turquoise,
-              fontSize: TypographyTokens.labelMedium,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-        ],
-      ),
     );
   }
 

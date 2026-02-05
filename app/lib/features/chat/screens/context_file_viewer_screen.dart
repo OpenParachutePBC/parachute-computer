@@ -5,6 +5,7 @@ import 'package:yaml/yaml.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
 import '../models/context_file.dart';
 import '../providers/chat_providers.dart';
+import '../services/chat_service.dart';
 
 /// Screen for viewing and editing context files via the server API
 ///

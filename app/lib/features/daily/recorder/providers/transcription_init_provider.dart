@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/services/transcription/parakeet_service.dart';
 import 'package:parachute/core/services/transcription/sherpa_onnx_service.dart';
 import 'package:parachute/core/services/transcription/sherpa_onnx_isolate.dart';
+import 'package:parachute/core/providers/core_service_providers.dart';
 
 /// Initialization phase for transcription models
 enum TranscriptionInitPhase {
@@ -115,9 +116,9 @@ class TranscriptionInitState {
 class TranscriptionInitNotifier extends StateNotifier<TranscriptionInitState> {
   final ParakeetService _parakeetService = ParakeetService();
   final SherpaOnnxService _sherpaService = SherpaOnnxService();
-  final SherpaOnnxIsolate _sherpaIsolate = SherpaOnnxIsolate.instance;
+  final SherpaOnnxIsolate _sherpaIsolate;
 
-  TranscriptionInitNotifier() : super(const TranscriptionInitState()) {
+  TranscriptionInitNotifier(this._sherpaIsolate) : super(const TranscriptionInitState()) {
     // Check status on creation
     checkStatus();
   }
@@ -367,7 +368,8 @@ class TranscriptionInitNotifier extends StateNotifier<TranscriptionInitState> {
 final transcriptionInitProvider =
     StateNotifierProvider<TranscriptionInitNotifier, TranscriptionInitState>(
   (ref) {
-    final notifier = TranscriptionInitNotifier();
+    final sherpaIsolate = ref.watch(sherpaOnnxIsolateProvider);
+    final notifier = TranscriptionInitNotifier(sherpaIsolate);
     // Keep alive to persist across navigation
     ref.keepAlive();
     return notifier;

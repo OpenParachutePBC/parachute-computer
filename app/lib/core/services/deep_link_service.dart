@@ -106,6 +106,10 @@ class DeepLinkTarget {
   String? get agentType => params['agentType'];
 
   /// Whether to send the prompt immediately (default: false)
+  ///
+  /// SECURITY NOTE: Auto-send from deep links could be exploited to send
+  /// messages without user confirmation. Handlers SHOULD implement additional
+  /// confirmation UI when autoSend=true from external sources.
   bool get autoSend => params['send'] == 'true';
 
   /// Whether this is a "new chat" deep link
@@ -179,6 +183,18 @@ class DeepLinkService {
     }
   }
 
+  /// Sanitize and validate a query parameter value
+  static String? _sanitizeParam(String? value) {
+    if (value == null) return null;
+    // Limit parameter length to prevent abuse
+    const maxLength = 10000; // 10KB limit per parameter
+    if (value.length > maxLength) {
+      debugPrint('[DeepLinkService] Parameter too long (${value.length} chars), truncating to $maxLength');
+      return value.substring(0, maxLength);
+    }
+    return value;
+  }
+
   /// Parse a deep link URL into a structured target.
   ///
   /// Returns null if the URL is not a valid parachute:// link.
@@ -197,8 +213,10 @@ class DeepLinkService {
       final pathSegments =
           uri.pathSegments.where((s) => s.isNotEmpty).toList();
 
-      // Parse query parameters
-      final params = Map<String, String>.from(uri.queryParameters);
+      // Parse and sanitize query parameters
+      final params = Map<String, String>.fromEntries(
+        uri.queryParameters.entries.map((e) => MapEntry(e.key, _sanitizeParam(e.value) ?? '')),
+      );
 
       // Handle different routes
       switch (host) {
