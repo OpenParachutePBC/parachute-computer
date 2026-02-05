@@ -42,95 +42,30 @@ def _parse_time(time_str: str) -> tuple[int, int]:
 
 # =============================================================================
 # Generic Daily Agent Scheduling
+# DAILY_AGENT REMOVED - daily_agent module not yet available in modular architecture.
+# These functions are stubbed out. They will be restored in Phase 3
+# when parachute.core.daily_agent is implemented.
 # =============================================================================
 
 async def _run_daily_agent_job(agent_name: str):
     """Job function that runs a daily agent."""
-    global _vault_path
-
-    if _vault_path is None:
-        logger.error(f"Scheduler: vault_path not set, skipping agent '{agent_name}'")
-        return
-
-    # Check if agent still exists
-    agent_file = _vault_path / "Daily" / ".agents" / f"{agent_name}.md"
-    if not agent_file.exists():
-        logger.info(f"Scheduler: Agent '{agent_name}' file not found, skipping")
-        return
-
-    logger.info(f"Scheduler: Running daily agent '{agent_name}'")
-
-    try:
-        # Use generic agent runner for all agents
-        from parachute.core.daily_agent import run_daily_agent
-        result = await run_daily_agent(
-            vault_path=_vault_path,
-            agent_name=agent_name,
-            date=None,
-            force=False,
-        )
-
-        logger.info(f"Scheduler: Agent '{agent_name}' completed: {result.get('status')}")
-
-    except Exception as e:
-        logger.error(f"Scheduler: Agent '{agent_name}' job failed: {e}", exc_info=True)
+    # DAILY_AGENT REMOVED - daily_agent not available yet
+    logger.warning(f"Scheduler: daily_agent module not available, cannot run agent '{agent_name}'")
+    return
 
 
 def _schedule_daily_agent(scheduler: AsyncIOScheduler, vault_path: Path, agent_name: str) -> bool:
     """Schedule a daily agent based on its config file."""
-    from parachute.core.daily_agent import get_daily_agent_config
-
-    job_id = f"daily_{agent_name}"
-
-    # Remove existing job if present
-    try:
-        scheduler.remove_job(job_id)
-    except JobLookupError:
-        pass
-
-    # Load config from agent file
-    config = get_daily_agent_config(vault_path, agent_name)
-
-    if config is None:
-        logger.info(f"Scheduler: Agent '{agent_name}' not found")
-        return False
-
-    if not config.schedule_enabled:
-        logger.info(f"Scheduler: Agent '{agent_name}' disabled in config")
-        return False
-
-    hour, minute = config.get_schedule_hour_minute()
-
-    trigger = CronTrigger(hour=hour, minute=minute)
-
-    # Create a closure to capture agent_name
-    async def job_func():
-        await _run_daily_agent_job(agent_name)
-
-    scheduler.add_job(
-        job_func,
-        trigger=trigger,
-        id=job_id,
-        name=config.display_name,
-        replace_existing=True,
-    )
-
-    logger.info(f"Scheduler: Agent '{agent_name}' scheduled for {hour:02d}:{minute:02d}")
-    return True
+    # DAILY_AGENT REMOVED - daily_agent not available yet
+    logger.info(f"Scheduler: daily_agent module not available, skipping agent '{agent_name}'")
+    return False
 
 
 def _schedule_all_daily_agents(scheduler: AsyncIOScheduler, vault_path: Path) -> dict[str, bool]:
     """Discover and schedule all daily agents."""
-    from parachute.core.daily_agent import discover_daily_agents
-
-    results = {}
-    agents = discover_daily_agents(vault_path)
-
-    for config in agents:
-        scheduled = _schedule_daily_agent(scheduler, vault_path, config.name)
-        results[config.name] = scheduled
-
-    return results
+    # DAILY_AGENT REMOVED - daily_agent not available yet
+    logger.info("Scheduler: daily_agent module not available, no agents to schedule")
+    return {}
 
 
 # =============================================================================
@@ -144,19 +79,8 @@ def _load_daily_reflection_config(vault_path: Path) -> Optional[dict[str, Any]]:
     Returns None if the file doesn't exist (reflection agent is disabled).
     Returns config dict with schedule info if file exists.
     """
-    from parachute.core.daily_agent import get_daily_agent_config
-
-    config = get_daily_agent_config(vault_path, "reflection")
-    if config is None:
-        return None
-
-    hour, minute = config.get_schedule_hour_minute()
-    return {
-        "enabled": config.schedule_enabled,
-        "hour": hour,
-        "minute": minute,
-        "source": str(config.source_file) if config.source_file else None,
-    }
+    # DAILY_AGENT REMOVED - daily_agent not available yet
+    return None
 
 
 # =============================================================================
@@ -206,22 +130,8 @@ def get_scheduler_status(vault_path: Path) -> dict[str, Any]:
     """Get the current scheduler status."""
     global _scheduler
 
-    from parachute.core.daily_agent import discover_daily_agents
-
-    # Discover all agents
-    agents = discover_daily_agents(vault_path)
-    agents_config = {}
-    for agent in agents:
-        hour, minute = agent.get_schedule_hour_minute()
-        agents_config[agent.name] = {
-            "enabled": agent.schedule_enabled,
-            "hour": hour,
-            "minute": minute,
-            "display_name": agent.display_name,
-            "description": agent.description,
-            "output_path": agent.output_path,
-            "source": str(agent.source_file) if agent.source_file else None,
-        }
+    # DAILY_AGENT REMOVED - discover_daily_agents not available yet
+    agents_config: dict[str, Any] = {}
 
     status = {
         "running": _scheduler is not None and _scheduler.running if _scheduler else False,
@@ -323,10 +233,6 @@ async def trigger_agent_now(agent_name: str, vault_path: Path, date: Optional[st
     Returns:
         Result dict from the agent run
     """
-    from parachute.core.daily_agent import run_daily_agent
-    return await run_daily_agent(
-        vault_path=vault_path,
-        agent_name=agent_name,
-        date=date,
-        force=force,
-    )
+    # DAILY_AGENT REMOVED - daily_agent not available yet
+    logger.warning(f"trigger_agent_now: daily_agent module not available, cannot run agent '{agent_name}'")
+    return {"success": False, "error": "daily_agent module not available in modular architecture"}

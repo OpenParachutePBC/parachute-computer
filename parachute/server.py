@@ -1,10 +1,12 @@
 """
-Parachute Base Server
+Parachute Computer Server
 
-Main FastAPI application entry point.
+Main FastAPI application entry point with modular architecture.
+Discovers and loads modules from vault/.modules/ directory.
 """
 
 import logging
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
@@ -13,12 +15,12 @@ import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
 
 from parachute.api import api_router
 from parachute.config import get_settings, Settings
+from parachute.core.module_loader import ModuleLoader
 from parachute.core.orchestrator import Orchestrator
-from parachute.core.curator_service import init_curator_service, stop_curator_service
+# CURATOR REMOVED - curator service excluded from modular architecture
 from parachute.core.scheduler import init_scheduler, stop_scheduler
 from parachute.db.database import Database, init_database, close_database
 from parachute.lib.logger import setup_logging, get_logger
@@ -39,7 +41,7 @@ async def lifespan(app: FastAPI):
     # Set up logging
     setup_logging(level=settings.log_level)
 
-    logger.info(f"Starting Parachute server...")
+    logger.info(f"Starting Parachute Computer server...")
     logger.info(f"Vault path: {settings.vault_path}")
 
     # Ensure vault directories exist
@@ -65,15 +67,27 @@ async def lifespan(app: FastAPI):
     app.state.orchestrator = orchestrator
     app.state.database = db
 
-    # Initialize curator service for background title/context updates
-    curator = await init_curator_service(db, settings.vault_path)
-    app.state.curator = curator
-    logger.info("Curator service initialized")
+    # CURATOR REMOVED - curator service excluded from modular architecture
 
-    # Initialize scheduler for automated tasks (daily curator at 3am, etc.)
+    # Initialize scheduler for automated tasks
     scheduler = await init_scheduler(settings.vault_path)
     app.state.scheduler = scheduler
     logger.info("Scheduler initialized")
+
+    # Load modules from vault/.modules/
+    module_loader = ModuleLoader(settings.vault_path)
+    modules = await module_loader.discover_and_load()
+    app.state.modules = modules
+    logger.info(f"Loaded {len(modules)} modules: {list(modules.keys())}")
+
+    # Register module routes dynamically
+    for name, module in modules.items():
+        if hasattr(module, 'get_router'):
+            router = module.get_router()
+            if router:
+                prefix = f"/api/{name}"
+                app.include_router(router, prefix=prefix, tags=[name])
+                logger.info(f"Registered routes for module: {name} at {prefix}")
 
     logger.info("Server ready")
 
@@ -82,11 +96,11 @@ async def lifespan(app: FastAPI):
     # Shutdown
     logger.info("Shutting down...")
     await stop_scheduler()
-    await stop_curator_service()
+    # CURATOR REMOVED - no curator to stop
     await close_database()
     app.state.orchestrator = None
     app.state.database = None
-    app.state.curator = None
+    app.state.modules = None
     app.state.scheduler = None
     app.state.server_config = None
 
@@ -103,8 +117,8 @@ def get_orchestrator() -> Orchestrator:
 
 # Create FastAPI application
 app = FastAPI(
-    title="Parachute Base Server",
-    description="Backend server for Parachute ecosystem - AI agents, session management, and vault operations",
+    title="Parachute Computer",
+    description="Modular backend server for Parachute ecosystem - AI agents, session management, and vault operations",
     version="0.1.0",
     lifespan=lifespan,
 )
@@ -119,10 +133,10 @@ def _get_cors_origins() -> list[str]:
         # Wildcard mode - but we still want some basic protection
         # Allow localhost variants and Parachute app
         return [
-            "http://localhost:3333",
-            "http://localhost:3334",  # Test server
-            "http://127.0.0.1:3333",
-            "http://127.0.0.1:3334",
+            "http://localhost:3336",
+            "http://localhost:3337",  # Test server
+            "http://127.0.0.1:3336",
+            "http://127.0.0.1:3337",
             # Allow requests from any device on local network with Parachute user-agent
             # The middleware below handles user-agent validation
         ]
@@ -255,7 +269,7 @@ app.include_router(api_router)
 async def root():
     """Root endpoint - returns server info."""
     return {
-        "name": "Parachute Base Server",
+        "name": "Parachute Computer",
         "version": "0.1.0",
         "status": "running",
     }
@@ -265,28 +279,33 @@ def main():
     """Main entry point."""
     settings = get_settings()
 
+    # Allow PARACHUTE_PORT env var to override
+    port = int(os.environ.get("PARACHUTE_PORT", settings.port))
+
     print(f"""
-╔═══════════════════════════════════════════════════════════════╗
-║           🪂 Parachute Base Server (Python)                   ║
-╠═══════════════════════════════════════════════════════════════╣
-║  Server:  http://{settings.host}:{settings.port:<37}║
-║  Vault:   {str(settings.vault_path)[:45]:<45}║
-╠═══════════════════════════════════════════════════════════════╣
-║  API Endpoints:                                               ║
-║    POST /api/chat             - Run agent (streaming)         ║
-║    GET  /api/chat             - List sessions                 ║
-║    GET  /api/chat/:id         - Get session                   ║
-║    DELETE /api/chat/:id       - Delete session                ║
-║    GET  /api/modules/:mod/prompt   - Get module prompt        ║
-║    PUT  /api/modules/:mod/prompt   - Update module prompt     ║
-║    GET  /api/modules/:mod/search   - Search module            ║
-╚═══════════════════════════════════════════════════════════════╝
+===============================================================
+          Parachute Computer (Modular Architecture)
+===============================================================
+  Server:  http://{settings.host}:{port}
+  Vault:   {str(settings.vault_path)[:45]}
+---------------------------------------------------------------
+  API Endpoints:
+    GET  /health               - Health check
+    GET  /api/modules          - List loaded modules
+    POST /api/chat             - Run agent (streaming)
+    GET  /api/chat             - List sessions
+    GET  /api/chat/:id         - Get session
+    DELETE /api/chat/:id       - Delete session
+    GET  /api/modules/:mod/prompt   - Get module prompt
+    PUT  /api/modules/:mod/prompt   - Update module prompt
+    GET  /api/modules/:mod/search   - Search module
+===============================================================
     """)
 
     uvicorn.run(
         app,
         host=settings.host,
-        port=settings.port,
+        port=port,
         reload=settings.reload,
         log_level=settings.log_level.lower(),
     )

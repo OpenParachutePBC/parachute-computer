@@ -120,6 +120,11 @@ class ChatRequest(BaseModel):
         default=None,
         description="File attachments (images, PDFs, text files)",
     )
+    agent_type: Optional[str] = Field(
+        alias="agentType",
+        default=None,
+        description="Agent type for new sessions (e.g., 'orchestrator', 'vault-agent')",
+    )
 
     # Legacy fields for compatibility
     agent_path: Optional[str] = Field(alias="agentPath", default=None)

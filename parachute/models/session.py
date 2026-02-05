@@ -140,6 +140,12 @@ class Session(BaseModel):
         serialization_alias="continuedFrom",
         description="Parent session ID if continued",
     )
+    agent_type: Optional[str] = Field(
+        default=None,
+        alias="agentType",
+        serialization_alias="agentType",
+        description="Agent type/name (e.g., 'vault-agent', 'orchestrator', 'summarizer')",
+    )
     metadata: Optional[dict[str, Any]] = Field(
         default=None, description="Additional metadata"
     )
@@ -159,6 +165,14 @@ class Session(BaseModel):
         new_metadata["permissions"] = permissions.model_dump(by_alias=True)
         return self.model_copy(update={"metadata": new_metadata})
 
+    def get_agent_type(self) -> Optional[str]:
+        """Get agent type, checking field first, then metadata for backwards compatibility."""
+        if self.agent_type:
+            return self.agent_type
+        if self.metadata and "agent_type" in self.metadata:
+            return self.metadata["agent_type"]
+        return None
+
 
 class SessionCreate(BaseModel):
     """Data for creating a new session."""
@@ -171,6 +185,7 @@ class SessionCreate(BaseModel):
     vault_root: Optional[str] = None
     model: Optional[str] = None
     continued_from: Optional[str] = None
+    agent_type: Optional[str] = None
     metadata: Optional[dict[str, Any]] = None
 
 
@@ -181,6 +196,7 @@ class SessionUpdate(BaseModel):
     archived: Optional[bool] = None
     message_count: Optional[int] = None
     model: Optional[str] = None
+    agent_type: Optional[str] = None
     metadata: Optional[dict[str, Any]] = None
 
 

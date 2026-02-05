@@ -34,7 +34,7 @@ async def get_scheduler_info() -> dict[str, Any]:
     - running: Whether the scheduler is active
     - jobs: List of scheduled jobs with next run times
     - agents: Configuration for all daily agents
-    - config: Legacy field (daily_curator config)
+    - config: Legacy field
     """
     settings = get_settings()
     return get_scheduler_status(settings.vault_path)
@@ -56,24 +56,9 @@ async def reload_scheduler_config() -> dict[str, Any]:
     return result
 
 
-@router.post("/scheduler/daily-curator/trigger")
-async def trigger_daily_curator_now() -> dict[str, Any]:
-    """
-    Manually trigger the daily curator to run immediately.
-
-    This is the same as POST /modules/daily/curate but runs through
-    the scheduler infrastructure.
-
-    DEPRECATED: Use POST /scheduler/agents/{agent_name}/trigger instead.
-    """
-    settings = get_settings()
-
-    result = await trigger_job_now("daily_curator", settings.vault_path)
-
-    if not result.get("success"):
-        raise HTTPException(status_code=500, detail=result.get("error", "Unknown error"))
-
-    return result
+# DAILY_AGENT REMOVED - trigger_daily_curator_now endpoint removed
+# This endpoint depended on daily_curator which is excluded from modular architecture.
+# Use POST /scheduler/agents/{agent_name}/trigger instead when daily_agent is available.
 
 
 @router.post("/scheduler/agents/{agent_name}/trigger")
@@ -82,22 +67,26 @@ async def trigger_agent(agent_name: str) -> dict[str, Any]:
     Manually trigger a daily agent to run immediately.
 
     Args:
-        agent_name: Name of the agent (e.g., "curator", "content-scout")
+        agent_name: Name of the agent (e.g., "content-scout")
+
+    Note: daily_agent module is not yet available in modular architecture (Phase 3).
+    This endpoint will return an error until then.
     """
     settings = get_settings()
 
-    # Verify agent exists
-    from parachute.core.daily_agent import get_daily_agent_config
-    config = get_daily_agent_config(settings.vault_path, agent_name)
-    if not config:
-        raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found")
+    # DAILY_AGENT REMOVED - cannot verify agent config without daily_agent module
+    # When daily_agent is available in Phase 3, restore the config check:
+    # from parachute.core.daily_agent import get_daily_agent_config
+    # config = get_daily_agent_config(settings.vault_path, agent_name)
+    # if not config:
+    #     raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found")
 
     result = await trigger_agent_now(
         agent_name=agent_name,
         vault_path=settings.vault_path,
     )
 
-    if result.get("status") == "error":
+    if result.get("status") == "error" or not result.get("success", True):
         raise HTTPException(status_code=500, detail=result.get("error", "Unknown error"))
 
     return result

@@ -1,74 +1,32 @@
 [project]
-name = "parachute-base"
+name = "parachute-computer"
 version = "0.1.0"
-description = "Backend server for Parachute ecosystem - AI agents, session management, and vault operations"
-readme = "README.md"
-license = {text = "MIT"}
-requires-python = ">=3.10"
-authors = [
-    {name = "Aaron G", email = "aaron@openparachute.xyz"}
-]
-keywords = ["ai", "agent", "claude", "anthropic", "markdown", "obsidian"]
-
+requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.109.0",
     "uvicorn[standard]>=0.27.0",
     "pydantic>=2.5.0",
     "pydantic-settings>=2.1.0",
-    "python-multipart>=0.0.6",
     "aiosqlite>=0.19.0",
-    "httpx>=0.26.0",
     "pyyaml>=6.0.1",
-    "python-frontmatter>=1.1.0",
+    "claude-agent-sdk>=0.1.29",
     "sse-starlette>=2.0.0",
-    "claude-agent-sdk>=0.1.19",
-    "watchfiles>=0.21.0",
+    "apscheduler>=3.10.0",
+    "httpx>=0.25.0",
+    "aiofiles>=23.0.0",
+    "python-frontmatter>=1.0.0",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=7.4.0",
-    "pytest-asyncio>=0.23.0",
-    "pytest-cov>=4.1.0",
-    "ruff>=0.1.0",
-    "mypy>=1.8.0",
+    "pytest-asyncio>=0.21.0",
+    "httpx>=0.25.0",
 ]
 
 [project.scripts]
-parachute-server = "parachute.server:main"
-parachute-supervisor = "supervisor.main:main"
+parachute = "parachute.server:main"
 
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
-
-[tool.ruff]
-line-length = 100
-target-version = "py310"
-
-[tool.ruff.lint]
-select = ["E", "F", "W", "I", "N", "UP", "B", "C4"]
-ignore = ["E501"]  # Line length handled separately
-
-[tool.pytest.ini_options]
-asyncio_mode = "auto"
-testpaths = ["tests"]
-python_files = ["test_*.py"]
-python_functions = ["test_*"]
-
-[tool.mypy]
-python_version = "3.10"
-warn_return_any = true
-warn_unused_ignores = true
-disallow_untyped_defs = true
-
-[tool.coverage.run]
-source = ["parachute", "supervisor"]
-branch = true
-
-[tool.coverage.report]
-exclude_lines = [
-    "pragma: no cover",
-    "if TYPE_CHECKING:",
-    "if __name__ == .__main__.:",
-]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
