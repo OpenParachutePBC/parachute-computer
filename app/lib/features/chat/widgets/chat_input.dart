@@ -11,6 +11,7 @@ import 'package:parachute/core/providers/model_download_provider.dart';
 import 'package:parachute/core/services/voice_input_service.dart';
 import 'package:parachute/core/services/streaming_voice_service.dart';
 import '../models/attachment.dart';
+import '../providers/chat_providers.dart';
 
 /// Text input field for chat messages with voice input and attachment support
 class ChatInput extends ConsumerStatefulWidget {
@@ -66,6 +67,29 @@ class _ChatInputState extends ConsumerState<ChatInput>
       duration: const Duration(milliseconds: 1000),
       vsync: this,
     );
+
+    // Request focus if we have initial text
+    if (widget.initialText != null && widget.initialText!.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _focusNode.requestFocus();
+      });
+    }
+  }
+
+  @override
+  void didUpdateWidget(ChatInput oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // If initialText changes and the controller is empty or has old text, update it
+    if (widget.initialText != oldWidget.initialText &&
+        widget.initialText != null &&
+        widget.initialText!.isNotEmpty &&
+        _controller.text.isEmpty) {
+      _controller.text = widget.initialText!;
+      _controller.selection = TextSelection.fromPosition(
+        TextPosition(offset: _controller.text.length),
+      );
+      _focusNode.requestFocus();
+    }
   }
 
   @override
@@ -306,6 +330,9 @@ class _ChatInputState extends ConsumerState<ChatInput>
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
+
+    // Note: Initial text is handled via widget.initialText and didUpdateWidget
+    // TabShell is the single source of truth for pendingChatPromptProvider navigation
 
     // Watch voice input state (standard mode)
     final voiceState = ref.watch(voiceInputCurrentStateProvider);

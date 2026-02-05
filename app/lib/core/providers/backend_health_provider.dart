@@ -44,9 +44,5 @@ final periodicServerHealthProvider = StreamProvider<ServerHealthStatus?>((ref) a
   }
 });
 
-/// Provider for vault base path
-final vaultPathProvider = FutureProvider<String?>((ref) async {
-  // TODO: Get actual vault path from file system service
-  // For now return null - will be configured in settings
-  return null;
-});
+// Note: vaultPathProvider is defined in app_state_provider.dart
+// It handles both local settings and fetching from server in Parachute Computer mode

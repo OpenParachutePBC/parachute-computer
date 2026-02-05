@@ -40,12 +40,20 @@ class ChatScreen extends ConsumerStatefulWidget {
   /// Message to auto-send when [autoRun] is true
   final String? autoRunMessage;
 
+  /// Agent type for new sessions (e.g., 'orchestrator', 'vault-agent')
+  final String? agentType;
+
+  /// Path to agent definition file (e.g., 'Daily/.agents/orchestrator.md')
+  final String? agentPath;
+
   const ChatScreen({
     super.key,
     this.initialMessage,
     this.initialContext,
     this.autoRun = false,
     this.autoRunMessage,
+    this.agentType,
+    this.agentPath,
   });
 
   @override
@@ -55,6 +63,8 @@ class ChatScreen extends ConsumerStatefulWidget {
 class _ChatScreenState extends ConsumerState<ChatScreen> {
   final ScrollController _scrollController = ScrollController();
   String? _pendingInitialContext;
+  String? _pendingAgentType;
+  String? _pendingAgentPath;
   bool _hasAutoRun = false;
   bool _resumeBannerDismissed = false;
 
@@ -68,6 +78,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   void initState() {
     super.initState();
     _pendingInitialContext = widget.initialContext;
+    _pendingAgentType = widget.agentType;
+    _pendingAgentPath = widget.agentPath;
 
     // Listen to scroll position to show/hide scroll-to-bottom FAB
     _scrollController.addListener(_onScroll);
@@ -231,10 +243,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           message: message,
           initialContext: _pendingInitialContext,
           attachments: attachments,
+          agentType: _pendingAgentType,
+          agentPath: _pendingAgentPath,
         );
 
-    // Clear pending context after first message
+    // Clear pending context, agentType, and agentPath after first message
     _pendingInitialContext = null;
+    _pendingAgentType = null;
+    _pendingAgentPath = null;
 
     _scrollToBottom();
   }
@@ -390,6 +406,42 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                 onPressed: _showDirectoryPicker,
                 icon: const Icon(Icons.folder_outlined),
                 tooltip: 'Set working directory',
+              ),
+            // Agent indicator (shows which agent is being used)
+            if (chatState.promptMetadata?.agentName != null &&
+                chatState.promptMetadata!.agentName != 'Vault Agent')
+              Tooltip(
+                message: 'Agent: ${chatState.promptMetadata!.agentName}',
+                child: Container(
+                  margin: const EdgeInsets.only(right: Spacing.xs),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: Spacing.sm,
+                    vertical: Spacing.xxs,
+                  ),
+                  decoration: BoxDecoration(
+                    color: BrandColors.turquoise.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.smart_toy,
+                        size: 12,
+                        color: BrandColors.turquoise,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        _getAgentBadge(chatState.promptMetadata!.agentName!),
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                          color: BrandColors.turquoise,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ),
             // Model indicator (shows which model is being used)
             if (chatState.model != null)
@@ -1065,6 +1117,33 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       return const Color(0xFF14B8A6); // Teal for Haiku
     }
     return BrandColors.forest; // Default
+  }
+
+  /// Get a short badge label from an agent name
+  /// e.g., "Daily Orchestrator" -> "Orchestrator", "reflection" -> "Reflection"
+  String _getAgentBadge(String agentName) {
+    // For known agent types, return short names
+    final lower = agentName.toLowerCase();
+    if (lower.contains('orchestrator')) {
+      return 'Orchestrator';
+    } else if (lower.contains('reflection')) {
+      return 'Reflection';
+    } else if (lower.contains('vault')) {
+      return 'Vault';
+    }
+    // For other agents, capitalize first letter of each word and truncate
+    final words = agentName.split(RegExp(r'[-_\s]+'));
+    if (words.length > 1) {
+      // Return last significant word capitalized
+      final lastWord = words.last;
+      return lastWord.isNotEmpty
+          ? '${lastWord[0].toUpperCase()}${lastWord.substring(1)}'
+          : agentName;
+    }
+    // Single word - capitalize
+    return agentName.isNotEmpty
+        ? '${agentName[0].toUpperCase()}${agentName.substring(1)}'
+        : agentName;
   }
 
   /// Show the session info sheet with prompt metadata

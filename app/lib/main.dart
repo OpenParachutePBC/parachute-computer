@@ -270,10 +270,62 @@ class _TabShellState extends ConsumerState<_TabShell> with WidgetsBindingObserve
 
   /// Set up listener for deep link navigation
   void _setupDeepLinkListener() {
+    debugPrint('[TabShell] Setting up deep link listener');
+
     ref.listen<AsyncValue<DeepLinkTarget>>(deepLinkStreamProvider, (previous, next) {
       next.whenData((target) {
         _handleDeepLink(target);
       });
+    });
+
+    debugPrint('[TabShell] Deep link listener set up complete');
+  }
+
+  /// Handle a pending chat prompt by navigating to ChatScreen
+  void _handlePendingChatPrompt(PendingChatPrompt prompt) {
+    debugPrint('[TabShell] Handling pending chat prompt: session=${prompt.sessionId}, agentType=${prompt.agentType}, agentPath=${prompt.agentPath}, message=${prompt.message.substring(0, prompt.message.length.clamp(0, 50))}...');
+
+    // Clear the pending prompt immediately to prevent re-triggering
+    ref.read(pendingChatPromptProvider.notifier).state = null;
+
+    // Switch to chat tab
+    final visibleTabs = ref.read(visibleTabsProvider);
+    final chatTabIndex = visibleTabs.indexOf(AppTab.chat);
+    debugPrint('[TabShell] Chat tab index: $chatTabIndex, visible tabs: $visibleTabs');
+    if (chatTabIndex >= 0) {
+      ref.read(currentTabIndexProvider.notifier).state = chatTabIndex;
+    }
+
+    // Set up the session
+    if (prompt.sessionId != null) {
+      // Existing session
+      debugPrint('[TabShell] Switching to existing session: ${prompt.sessionId}');
+      ref.read(switchSessionProvider)(prompt.sessionId!);
+    } else {
+      // New chat
+      debugPrint('[TabShell] Starting new chat');
+      ref.read(newChatProvider)();
+    }
+
+    // Navigate to ChatScreen with the message pre-filled
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      debugPrint('[TabShell] Post-frame callback - pushing ChatScreen');
+      debugPrint('[TabShell] _chatNavigatorKey.currentState: ${_chatNavigatorKey.currentState}');
+
+      // Pop to root first to avoid stacking multiple ChatScreens
+      _chatNavigatorKey.currentState?.popUntil((route) => route.isFirst);
+
+      // Then push the new ChatScreen
+      final pushed = _chatNavigatorKey.currentState?.push(
+        MaterialPageRoute(
+          builder: (context) => ChatScreen(
+            initialMessage: prompt.message,
+            agentType: prompt.agentType,
+            agentPath: prompt.agentPath,
+          ),
+        ),
+      );
+      debugPrint('[TabShell] Push result: $pushed');
     });
   }
 
@@ -331,21 +383,26 @@ class _TabShellState extends ConsumerState<_TabShell> with WidgetsBindingObserve
               initialMessage: target.prompt,
               autoRun: target.autoSend,
               autoRunMessage: target.autoSend ? target.prompt : null,
+              agentType: target.agentType,
             ),
           ),
         );
       });
     } else if (target.sessionId != null) {
-      debugPrint('[TabShell] Open session deep link - session: ${target.sessionId}, message: ${target.messageIndex}');
+      debugPrint('[TabShell] Open session deep link - session: ${target.sessionId}, message: ${target.messageIndex}, prompt: ${target.prompt}, autoSend: ${target.autoSend}');
 
       // Switch to the session
       ref.read(switchSessionProvider)(target.sessionId!);
 
-      // Navigate to ChatScreen
+      // Navigate to ChatScreen with optional message to send
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _chatNavigatorKey.currentState?.push(
           MaterialPageRoute(
-            builder: (context) => const ChatScreen(),
+            builder: (context) => ChatScreen(
+              initialMessage: target.prompt,
+              autoRun: target.autoSend,
+              autoRunMessage: target.autoSend ? target.prompt : null,
+            ),
           ),
         );
       });
@@ -457,6 +514,15 @@ class _TabShellState extends ConsumerState<_TabShell> with WidgetsBindingObserve
 
   @override
   Widget build(BuildContext context) {
+    // Listen for pending chat prompts (from SendToChatSheet)
+    // This MUST be in build() for ref.listen to work properly
+    ref.listen<PendingChatPrompt?>(pendingChatPromptProvider, (previous, next) {
+      debugPrint('[TabShell] pendingChatPromptProvider changed: previous=$previous, next=$next');
+      if (next != null) {
+        _handlePendingChatPrompt(next);
+      }
+    });
+
     final appMode = ref.watch(appModeProvider);
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;

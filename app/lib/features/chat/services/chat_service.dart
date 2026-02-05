@@ -859,6 +859,8 @@ class ChatService {
     String? workingDirectory,
     List<String>? contexts,
     List<ChatAttachment>? attachments,
+    String? agentType,  // Agent type for new sessions (e.g., 'orchestrator')
+    String? agentPath,  // Path to agent definition file (e.g., 'Daily/.agents/orchestrator.md')
   }) async* {
     debugPrint('[ChatService] Starting stream chat');
     debugPrint('[ChatService] Session: ${sessionId ?? "new"}');
@@ -886,8 +888,11 @@ class ChatService {
       if (workingDirectory != null) 'workingDirectory': workingDirectory,
       if (contexts != null && contexts.isNotEmpty) 'contexts': contexts,
       if (attachments != null && attachments.isNotEmpty) 'attachments': attachments.map((a) => a.toJson()).toList(),
+      if (agentType != null) 'agentType': agentType,
+      if (agentPath != null) 'agentPath': agentPath,
     };
     debugPrint('[ChatService] Request body keys: ${requestBody.keys.toList()}');
+    debugPrint('[ChatService] agentType: $agentType, agentPath: $agentPath');
     if (attachments != null && attachments.isNotEmpty) {
       debugPrint('[ChatService] Attachments: ${attachments.length} files');
     }

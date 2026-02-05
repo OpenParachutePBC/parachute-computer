@@ -7,6 +7,8 @@ import 'package:parachute/core/providers/app_state_provider.dart';
 import 'package:parachute/core/providers/lima_vm_provider.dart';
 import 'package:parachute/core/providers/bare_metal_provider.dart';
 import 'package:parachute/core/services/lima_vm_service.dart';
+import 'package:parachute/core/services/base_server_service.dart';
+import 'package:parachute/core/services/file_system_service.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 /// Setup wizard for Parachute Computer
@@ -573,6 +575,32 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
 
     if (savedUrl != serverUrl) {
       debugPrint('[ComputerSetupWizard] WARNING: Server URL not confirmed, proceeding anyway. Got: $savedUrl');
+    }
+
+    // In Parachute Computer mode, fetch vault path from server and configure FileSystemService
+    // This ensures app and server use the same vault - no sync needed
+    try {
+      final serverService = BaseServerService();
+      final serverVaultPath = await serverService.getServerVaultPath();
+      if (serverVaultPath != null) {
+        debugPrint('[ComputerSetupWizard] Server vault path: $serverVaultPath');
+
+        // Update FileSystemService instances to use the server's vault path
+        final dailyFs = FileSystemService.daily();
+        final chatFs = FileSystemService.chat();
+
+        await dailyFs.setVaultPath(serverVaultPath, migrateFiles: false);
+        await chatFs.setVaultPath(serverVaultPath, migrateFiles: false);
+
+        // Refresh the vault path provider
+        await ref.read(vaultPathProvider.notifier).refreshFromServer();
+
+        debugPrint('[ComputerSetupWizard] FileSystemService configured with server vault path');
+      } else {
+        debugPrint('[ComputerSetupWizard] WARNING: Could not fetch server vault path');
+      }
+    } catch (e) {
+      debugPrint('[ComputerSetupWizard] Error configuring vault path from server: $e');
     }
 
     // Invalidate the app mode provider to force a rebuild with new server URL

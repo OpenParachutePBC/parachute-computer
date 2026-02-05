@@ -1138,6 +1138,8 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
     String? priorConversation,
     List<String>? contexts,
     List<ChatAttachment>? attachments,
+    String? agentType,
+    String? agentPath,
   }) async {
     if (state.isStreaming) return;
 
@@ -1269,6 +1271,8 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
         workingDirectory: state.workingDirectory,
         contexts: effectiveContexts,
         attachments: attachments,
+        agentType: agentType,
+        agentPath: agentPath,
       )) {
         // Check if session has changed (user switched chats during stream)
         // Don't break the stream - let it continue in background so server keeps processing
@@ -1816,6 +1820,27 @@ final newChatProvider = Provider<void Function()>((ref) {
     ref.read(chatMessagesProvider.notifier).clearSession();
   };
 });
+
+/// Pending chat prompt to pre-fill when navigating to chat
+///
+/// Set this before switching to the chat tab to have the message
+/// pre-filled in the input field. The chat screen will read and
+/// clear this when it becomes active.
+class PendingChatPrompt {
+  final String message;
+  final String? sessionId; // null = new chat
+  final String? agentType; // for new chats only
+  final String? agentPath; // path to agent definition file
+
+  const PendingChatPrompt({
+    required this.message,
+    this.sessionId,
+    this.agentType,
+    this.agentPath,
+  });
+}
+
+final pendingChatPromptProvider = StateProvider<PendingChatPrompt?>((ref) => null);
 
 /// Provider for switching to a session
 ///

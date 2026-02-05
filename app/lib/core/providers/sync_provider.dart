@@ -94,6 +94,13 @@ class SyncNotifier extends StateNotifier<SyncState> {
 
   Future<void> _initialize() async {
     try {
+      // Check if sync is disabled (Parachute Computer mode - app and server share filesystem)
+      final syncDisabled = _ref.read(syncDisabledProvider);
+      if (syncDisabled) {
+        debugPrint('[SyncNotifier] Sync disabled - app and server share the same vault');
+        return;
+      }
+
       // Wire up journal merge service for entry-level merging
       _syncService.setJournalMergeService(_journalMergeService);
 
@@ -129,9 +136,13 @@ class SyncNotifier extends StateNotifier<SyncState> {
   // Push-based sync: When we make local changes, just push them
   // ============================================================
 
+  /// Check if sync is disabled (Parachute Computer mode)
+  bool get _isSyncDisabled => _ref.read(syncDisabledProvider);
+
   /// Schedule a file to be pushed to server (debounced)
   /// Call this after any local file modification.
   void schedulePush(String relativePath) {
+    if (_isSyncDisabled) return; // No sync needed - same filesystem
     debugPrint('[SyncNotifier] schedulePush($relativePath)');
     _pendingPushFiles.add(relativePath);
     _schedulePushDebounced();
@@ -139,6 +150,7 @@ class SyncNotifier extends StateNotifier<SyncState> {
 
   /// Schedule multiple files to be pushed
   void schedulePushFiles(List<String> relativePaths) {
+    if (_isSyncDisabled) return; // No sync needed - same filesystem
     if (relativePaths.isEmpty) return;
     debugPrint('[SyncNotifier] schedulePushFiles(${relativePaths.length} files)');
     _pendingPushFiles.addAll(relativePaths);
@@ -529,8 +541,12 @@ final syncProvider = StateNotifierProvider<SyncNotifier, SyncState>((ref) {
   return SyncNotifier(ref);
 });
 
-/// Provider for checking if sync is available (server configured)
+/// Provider for checking if sync is available (server configured AND not in Computer mode)
 final syncAvailableProvider = Provider<bool>((ref) {
+  // Sync is not available in Parachute Computer mode - app and server share filesystem
+  final syncDisabled = ref.watch(syncDisabledProvider);
+  if (syncDisabled) return false;
+
   final serverUrl = ref.watch(serverUrlProvider);
   return serverUrl.when(
     data: (url) => url != null && url.isNotEmpty,

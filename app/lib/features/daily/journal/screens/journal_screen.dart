@@ -21,6 +21,7 @@ import '../widgets/journal_entry_row.dart';
 import '../widgets/journal_input_bar.dart';
 import '../widgets/mini_audio_player.dart';
 import '../widgets/agent_output_header.dart';
+import '../widgets/send_to_chat_sheet.dart';
 import '../models/agent_output.dart';
 import 'package:parachute/features/settings/screens/settings_screen.dart';
 
@@ -1627,6 +1628,19 @@ class _JournalScreenState extends ConsumerState<JournalScreen>
                 onTap: () {
                   Navigator.pop(context);
                   _copyEntryContent(entry);
+                },
+              ),
+            if (entry.content.isNotEmpty)
+              ListTile(
+                leading: Icon(Icons.chat_bubble_outline, color: BrandColors.turquoise),
+                title: const Text('Send to Chat'),
+                onTap: () {
+                  Navigator.pop(context);
+                  SendToChatSheet.show(
+                    context,
+                    content: entry.content,
+                    title: entry.title,
+                  );
                 },
               ),
             ListTile(

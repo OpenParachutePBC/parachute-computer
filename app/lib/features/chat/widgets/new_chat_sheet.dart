@@ -3,13 +3,55 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
 import 'directory_picker.dart';
 
+/// Available agent types for new chats
+class AgentOption {
+  final String? id; // null = default vault agent
+  final String? path; // path to agent definition file
+  final String label;
+  final String description;
+  final IconData icon;
+
+  const AgentOption({
+    this.id,
+    this.path,
+    required this.label,
+    required this.description,
+    required this.icon,
+  });
+}
+
+const _availableAgents = [
+  AgentOption(
+    id: null,
+    path: null,
+    label: 'Default',
+    description: 'Standard vault agent',
+    icon: Icons.chat_bubble_outline,
+  ),
+  AgentOption(
+    id: 'orchestrator',
+    path: 'Daily/.agents/orchestrator.md',
+    label: 'Daily Orchestrator',
+    description: 'Thinking partner for your day',
+    icon: Icons.auto_awesome,
+  ),
+];
+
 /// Result from the new chat sheet
 class NewChatConfig {
   /// Optional working directory for file operations
   final String? workingDirectory;
 
+  /// Agent type identifier (null = default)
+  final String? agentType;
+
+  /// Path to agent definition file
+  final String? agentPath;
+
   const NewChatConfig({
     this.workingDirectory,
+    this.agentType,
+    this.agentPath,
   });
 
   /// Legacy getter for backwards compatibility - always returns root context
@@ -41,6 +83,7 @@ class NewChatSheet extends ConsumerStatefulWidget {
 
 class _NewChatSheetState extends ConsumerState<NewChatSheet> {
   String? _workingDirectory;
+  String? _selectedAgentId; // null = default
 
   @override
   Widget build(BuildContext context) {
@@ -112,6 +155,42 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // Agent Type Section
+                Text(
+                  'Agent',
+                  style: TextStyle(
+                    fontSize: TypographyTokens.labelMedium,
+                    fontWeight: FontWeight.w600,
+                    color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+                  ),
+                ),
+                const SizedBox(height: Spacing.xs),
+                Text(
+                  'Choose which AI agent to chat with',
+                  style: TextStyle(
+                    fontSize: TypographyTokens.bodySmall,
+                    color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+                  ),
+                ),
+                const SizedBox(height: Spacing.sm),
+
+                // Agent selector chips
+                Row(
+                  children: _availableAgents.map((agent) {
+                    final isSelected = _selectedAgentId == agent.id;
+                    return Expanded(
+                      child: Padding(
+                        padding: EdgeInsets.only(
+                          right: agent != _availableAgents.last ? Spacing.sm : 0,
+                        ),
+                        child: _buildAgentChip(agent, isSelected, isDark),
+                      ),
+                    );
+                  }).toList(),
+                ),
+
+                const SizedBox(height: Spacing.lg),
+
                 // Working Directory Section
                 Text(
                   'Working Directory',
@@ -227,14 +306,24 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
               child: SizedBox(
                 width: double.infinity,
                 child: FilledButton.icon(
-                  onPressed: () => Navigator.pop(
-                    context,
-                    NewChatConfig(
-                      workingDirectory: _workingDirectory,
-                    ),
-                  ),
+                  onPressed: () {
+                    final selectedAgent = _availableAgents.firstWhere(
+                      (a) => a.id == _selectedAgentId,
+                      orElse: () => _availableAgents.first,
+                    );
+                    Navigator.pop(
+                      context,
+                      NewChatConfig(
+                        workingDirectory: _workingDirectory,
+                        agentType: selectedAgent.id,
+                        agentPath: selectedAgent.path,
+                      ),
+                    );
+                  },
                   icon: const Icon(Icons.arrow_forward),
-                  label: const Text('Start Chat'),
+                  label: Text(_selectedAgentId == null
+                      ? 'Start Chat'
+                      : 'Start ${_availableAgents.firstWhere((a) => a.id == _selectedAgentId).label}'),
                   style: FilledButton.styleFrom(
                     backgroundColor:
                         isDark ? BrandColors.nightForest : BrandColors.forest,
@@ -253,6 +342,72 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
     // Show just the last folder name for the title
     final parts = path.split('/');
     return parts.isNotEmpty ? parts.last : path;
+  }
+
+  Widget _buildAgentChip(AgentOption agent, bool isSelected, bool isDark) {
+    return GestureDetector(
+      onTap: () => setState(() => _selectedAgentId = agent.id),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+        decoration: BoxDecoration(
+          color: isSelected
+              ? BrandColors.turquoise.withValues(alpha: 0.15)
+              : (isDark
+                  ? BrandColors.nightSurfaceElevated
+                  : BrandColors.stone.withValues(alpha: 0.2)),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: isSelected ? BrandColors.turquoise : Colors.transparent,
+            width: 1.5,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              agent.icon,
+              size: 16,
+              color: isSelected
+                  ? BrandColors.turquoise
+                  : (isDark
+                      ? BrandColors.nightTextSecondary
+                      : BrandColors.driftwood),
+            ),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    agent.label,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: isSelected
+                          ? BrandColors.turquoise
+                          : (isDark
+                              ? BrandColors.nightText
+                              : BrandColors.charcoal),
+                    ),
+                  ),
+                  Text(
+                    agent.description,
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: isDark
+                          ? BrandColors.nightTextSecondary
+                          : BrandColors.driftwood,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> _selectWorkingDirectory() async {

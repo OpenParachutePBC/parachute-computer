@@ -108,6 +108,22 @@ class BaseServerService {
     }
   }
 
+  /// Get the server's vault path
+  ///
+  /// Fetches the vault path from the server's health endpoint.
+  /// This is the canonical source of truth for where files live.
+  /// In Parachute Computer mode, the app should use this path directly
+  /// instead of maintaining a separate vault path setting.
+  Future<String?> getServerVaultPath() async {
+    final health = await getHealthStatus();
+    if (health == null) return null;
+
+    final vault = health['vault'] as Map<String, dynamic>?;
+    if (vault == null) return null;
+
+    return vault['path'] as String?;
+  }
+
   // ============================================================
   // Daily Curator
   // ============================================================

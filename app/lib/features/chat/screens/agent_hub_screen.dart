@@ -686,7 +686,10 @@ class _AgentHubScreenState extends ConsumerState<AgentHubScreen> {
     if (mounted) {
       Navigator.of(context).push(
         MaterialPageRoute(
-          builder: (context) => const ChatScreen(),
+          builder: (context) => ChatScreen(
+            agentType: config.agentType,
+            agentPath: config.agentPath,
+          ),
         ),
       );
     }
@@ -718,7 +721,11 @@ class _AgentHubScreenState extends ConsumerState<AgentHubScreen> {
     if (mounted) {
       Navigator.of(context).push(
         MaterialPageRoute(
-          builder: (context) => ChatScreen(initialMessage: prompt),
+          builder: (context) => ChatScreen(
+            initialMessage: prompt,
+            agentType: config.agentType,
+            agentPath: config.agentPath,
+          ),
         ),
       );
     }

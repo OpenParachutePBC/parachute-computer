@@ -34,6 +34,8 @@ final pendingDeepLinkProvider = StateProvider<DeepLinkTarget?>((ref) => null);
 /// - `parachute://chat/new` - Start new chat
 /// - `parachute://chat/new?context=projects/parachute` - New chat with context folder
 /// - `parachute://chat/new?prompt=Help%20me&send=true` - New chat with auto-send prompt
+/// - `parachute://chat/new?agentType=orchestrator` - New chat with specific agent type
+/// - `parachute://chat/{session_id}?prompt=...&send=true` - Send message to existing session
 /// - `parachute://vault` - Open Vault tab
 /// - `parachute://vault/projects/parachute` - Open specific path
 /// - `parachute://settings` - Open settings
@@ -100,11 +102,17 @@ class DeepLinkTarget {
   /// Get context folder for new chats (relative to vault)
   String? get context => params['context'];
 
+  /// Get agent type for new chats (e.g., 'orchestrator', 'vault-agent')
+  String? get agentType => params['agentType'];
+
   /// Whether to send the prompt immediately (default: false)
   bool get autoSend => params['send'] == 'true';
 
   /// Whether this is a "new chat" deep link
   bool get isNewChat => tab == 'chat' && action == 'new';
+
+  /// Whether this targets an existing session with a message to send
+  bool get isSendToSession => tab == 'chat' && sessionId != null && prompt != null && autoSend;
 
   @override
   String toString() =>
@@ -296,10 +304,12 @@ class DeepLinkService {
   ///
   /// - [prompt]: Pre-fills the input field
   /// - [context]: Context folder relative to vault (e.g., "projects/parachute")
+  /// - [agentType]: Agent type for the session (e.g., "orchestrator", "vault-agent")
   /// - [autoSend]: If true, sends the prompt immediately (default: false)
   static String newChatUrl({
     String? prompt,
     String? context,
+    String? agentType,
     bool autoSend = false,
   }) =>
       buildUrl(
@@ -308,6 +318,26 @@ class DeepLinkService {
         params: {
           if (prompt != null) 'prompt': prompt,
           if (context != null) 'context': context,
+          if (agentType != null) 'agentType': agentType,
+          if (autoSend) 'send': 'true',
+        },
+      );
+
+  /// Build a deep link to send a message to an existing session.
+  ///
+  /// - [sessionId]: The session to send to
+  /// - [prompt]: The message to send
+  /// - [autoSend]: If true (default), sends immediately; if false, pre-fills input
+  static String sendToSessionUrl(
+    String sessionId, {
+    required String prompt,
+    bool autoSend = true,
+  }) =>
+      buildUrl(
+        tab: 'chat',
+        path: sessionId,
+        params: {
+          'prompt': prompt,
           if (autoSend) 'send': 'true',
         },
       );

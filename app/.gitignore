@@ -44,3 +44,17 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 dist/
+
+# Pods (CocoaPods)
+macos/Pods/
+ios/Pods/
+
+# Platform build artifacts
+macos/Flutter/ephemeral/
+
+# Runtime model downloads
+assets/models/*.bin
+assets/firmware/*.bin
+
+# Logs
+flutter_*.log

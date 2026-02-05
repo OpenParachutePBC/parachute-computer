@@ -61,6 +61,7 @@ class ChatSession {
   final String id;
   final String? agentPath;
   final String? agentName;
+  final String? agentType;
   final String? title;
   final DateTime createdAt;
   final DateTime? updatedAt;
@@ -89,6 +90,7 @@ class ChatSession {
     required this.id,
     this.agentPath,
     this.agentName,
+    this.agentType,
     this.title,
     required this.createdAt,
     this.updatedAt,
@@ -120,6 +122,7 @@ class ChatSession {
       id: json['id'] as String? ?? '',
       agentPath: json['agentPath'] as String?,
       agentName: json['agentName'] as String?,
+      agentType: json['agentType'] as String?,
       title: json['title'] as String?,
       createdAt: json['createdAt'] != null
           ? DateTime.parse(json['createdAt'] as String)
@@ -139,6 +142,7 @@ class ChatSession {
       'id': id,
       'agentPath': agentPath,
       'agentName': agentName,
+      'agentType': agentType,
       'title': title,
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt?.toIso8601String(),
@@ -167,10 +171,26 @@ class ChatSession {
     return 'New Chat';
   }
 
+  /// Get the display name for the agent
+  String? get agentDisplayName {
+    if (agentName != null && agentName!.isNotEmpty) return agentName;
+    if (agentType != null && agentType!.isNotEmpty) {
+      // Convert agent type to display name (e.g., 'orchestrator' -> 'Orchestrator')
+      return agentType!.split('-').map((word) =>
+        word.isNotEmpty ? '${word[0].toUpperCase()}${word.substring(1)}' : ''
+      ).join(' ');
+    }
+    return null;
+  }
+
+  /// Whether this session uses a custom agent (not the default vault agent)
+  bool get hasCustomAgent => agentType != null || agentPath != null || agentName != null;
+
   ChatSession copyWith({
     String? id,
     String? agentPath,
     String? agentName,
+    String? agentType,
     String? title,
     DateTime? createdAt,
     DateTime? updatedAt,
@@ -186,6 +206,7 @@ class ChatSession {
       id: id ?? this.id,
       agentPath: agentPath ?? this.agentPath,
       agentName: agentName ?? this.agentName,
+      agentType: agentType ?? this.agentType,
       title: title ?? this.title,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,

@@ -21,6 +21,7 @@ class JournalEntryCard extends ConsumerWidget {
   final VoidCallback? onEdit;
   final VoidCallback? onDelete;
   final VoidCallback? onTranscribe;
+  final VoidCallback? onSendToChat;
 
   const JournalEntryCard({
     super.key,
@@ -30,6 +31,7 @@ class JournalEntryCard extends ConsumerWidget {
     this.onEdit,
     this.onDelete,
     this.onTranscribe,
+    this.onSendToChat,
   });
 
   /// Check if this is imported markdown content (no para:ID)
@@ -285,9 +287,22 @@ class JournalEntryCard extends ConsumerWidget {
           case 'delete':
             onDelete?.call();
             break;
+          case 'send_to_chat':
+            onSendToChat?.call();
+            break;
         }
       },
       itemBuilder: (context) => [
+        const PopupMenuItem(
+          value: 'send_to_chat',
+          child: Row(
+            children: [
+              Icon(Icons.chat_bubble_outline, size: 18),
+              SizedBox(width: 8),
+              Text('Send to Chat'),
+            ],
+          ),
+        ),
         const PopupMenuItem(
           value: 'edit',
           child: Row(
