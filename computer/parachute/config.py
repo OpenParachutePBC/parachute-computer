@@ -19,7 +19,7 @@ class Settings(BaseSettings):
         default=Path("./sample-vault"),
         description="Path to the Parachute vault directory",
     )
-    port: int = Field(default=3333, description="Server port")
+    port: int = Field(default=3336, description="Server port")
     host: str = Field(default="0.0.0.0", description="Server bind address")
 
     # Security
@@ -55,11 +55,11 @@ class Settings(BaseSettings):
     debug: bool = Field(default=False, description="Enable debug mode")
     reload: bool = Field(default=False, description="Enable auto-reload")
 
-    # Curator settings
-    curator_model: Optional[str] = Field(
-        default=None,
-        description="Model for curator agent (e.g., 'claude-sonnet-4-20250514'). If not set, uses account default.",
-    )
+    # CURATOR REMOVED - curator settings disabled for modular architecture
+    # curator_model: Optional[str] = Field(
+    #     default=None,
+    #     description="Model for curator agent (e.g., 'claude-sonnet-4-20250514'). If not set, uses account default.",
+    # )
 
     model_config = {
         "env_prefix": "",

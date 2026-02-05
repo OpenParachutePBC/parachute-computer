@@ -203,6 +203,7 @@ class SessionManager:
         sdk_session_id: str,
         model: Optional[str] = None,
         title: Optional[str] = None,
+        agent_type: Optional[str] = None,
     ) -> Session:
         """
         Finalize a new session with the SDK-provided session ID.
@@ -211,6 +212,8 @@ class SessionManager:
         """
         # Convert working_directory to relative for storage
         relative_wd = self.make_working_directory_relative(placeholder.working_directory)
+        # Use provided agent_type, or fall back to placeholder's agent_type
+        final_agent_type = agent_type or placeholder.get_agent_type()
         session = await self.db.create_session(
             SessionCreate(
                 id=sdk_session_id,
@@ -220,9 +223,10 @@ class SessionManager:
                 working_directory=relative_wd,
                 model=model,
                 continued_from=placeholder.continued_from,
+                agent_type=final_agent_type,
             )
         )
-        logger.info(f"Finalized session: {sdk_session_id[:8]}... title='{title or 'none'}'")
+        logger.info(f"Finalized session: {sdk_session_id[:8]}... title='{title or 'none'}' agent_type='{final_agent_type or 'none'}'")
         return session
 
     async def update_session(
@@ -260,6 +264,7 @@ class SessionManager:
         self,
         module: Optional[str] = None,
         archived: bool = False,
+        agent_type: Optional[str] = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[Session]:
@@ -267,6 +272,7 @@ class SessionManager:
         return await self.db.list_sessions(
             module=module,
             archived=archived,
+            agent_type=agent_type,
             limit=limit,
             offset=offset,
         )
