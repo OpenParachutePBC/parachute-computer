@@ -222,6 +222,33 @@ class Database:
             await self._connection.commit()
             logger.info("Added agent_type column to sessions")
 
+        # Migration: Add trust_level and linked_bot columns (v11)
+        try:
+            async with self._connection.execute(
+                "SELECT trust_level FROM sessions LIMIT 1"
+            ):
+                pass  # Column exists
+        except Exception:
+            await self._connection.execute(
+                "ALTER TABLE sessions ADD COLUMN trust_level TEXT DEFAULT 'full'"
+            )
+            await self._connection.execute(
+                "ALTER TABLE sessions ADD COLUMN linked_bot_platform TEXT"
+            )
+            await self._connection.execute(
+                "ALTER TABLE sessions ADD COLUMN linked_bot_chat_id TEXT"
+            )
+            await self._connection.execute(
+                "ALTER TABLE sessions ADD COLUMN linked_bot_chat_type TEXT"
+            )
+            await self._connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_sessions_trust_level ON sessions(trust_level)"
+            )
+            await self._connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_sessions_linked_bot ON sessions(linked_bot_platform, linked_bot_chat_id)"
+            )
+            await self._connection.commit()
+            logger.info("Added trust_level and linked_bot columns to sessions (v11)")
 
     async def close(self) -> None:
         """Close database connection."""
@@ -263,16 +290,22 @@ class Database:
             message_count = 0
             archived = 0
 
-        # Get agent_type (may be None)
+        # Get optional fields (may be None)
         agent_type = getattr(session, 'agent_type', None)
+        trust_level = getattr(session, 'trust_level', None)
+        linked_bot_platform = getattr(session, 'linked_bot_platform', None)
+        linked_bot_chat_id = getattr(session, 'linked_bot_chat_id', None)
+        linked_bot_chat_type = getattr(session, 'linked_bot_chat_type', None)
 
         await self.connection.execute(
             """
             INSERT INTO sessions (
                 id, title, module, source, working_directory, vault_root, model,
                 message_count, archived, created_at, last_accessed,
-                continued_from, agent_type, metadata
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                continued_from, agent_type, trust_level,
+                linked_bot_platform, linked_bot_chat_id, linked_bot_chat_type,
+                metadata
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 session.id,
@@ -288,6 +321,10 @@ class Database:
                 last_accessed,
                 session.continued_from,
                 agent_type,
+                trust_level,
+                linked_bot_platform,
+                linked_bot_chat_id,
+                linked_bot_chat_type,
                 metadata_json,
             ),
         )
@@ -584,6 +621,25 @@ class Database:
             rows = await cursor.fetchall()
             return [self._row_to_session(row) for row in rows]
 
+    async def get_session_by_bot_link(
+        self, platform: str, chat_id: str
+    ) -> Optional[Session]:
+        """Get the most recent active session linked to a bot chat."""
+        async with self.connection.execute(
+            """
+            SELECT * FROM sessions
+            WHERE linked_bot_platform = ? AND linked_bot_chat_id = ?
+                AND archived = 0
+            ORDER BY last_accessed DESC
+            LIMIT 1
+            """,
+            (platform, chat_id),
+        ) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                return self._row_to_session(row)
+        return None
+
     # =========================================================================
     # Chunks (RAG Index)
     # =========================================================================
@@ -788,20 +844,25 @@ class Database:
             except json.JSONDecodeError:
                 pass
 
+        keys = row.keys()
         return Session(
             id=row["id"],
             title=row["title"],
             module=row["module"],
             source=SessionSource(row["source"]),
             working_directory=row["working_directory"],
-            vault_root=row["vault_root"] if "vault_root" in row.keys() else None,
+            vault_root=row["vault_root"] if "vault_root" in keys else None,
             model=row["model"],
             message_count=row["message_count"],
             archived=bool(row["archived"]),
             created_at=datetime.fromisoformat(row["created_at"]),
             last_accessed=datetime.fromisoformat(row["last_accessed"]),
             continued_from=row["continued_from"],
-            agent_type=row["agent_type"] if "agent_type" in row.keys() else None,
+            agent_type=row["agent_type"] if "agent_type" in keys else None,
+            trust_level=row["trust_level"] if "trust_level" in keys else None,
+            linked_bot_platform=row["linked_bot_platform"] if "linked_bot_platform" in keys else None,
+            linked_bot_chat_id=row["linked_bot_chat_id"] if "linked_bot_chat_id" in keys else None,
+            linked_bot_chat_type=row["linked_bot_chat_type"] if "linked_bot_chat_type" in keys else None,
             metadata=metadata,
         )
 
