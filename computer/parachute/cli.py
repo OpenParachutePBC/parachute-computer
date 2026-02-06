@@ -10,28 +10,23 @@ Usage:
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
-import yaml
-
-from parachute.core.module_loader import compute_module_hash
+from parachute.core.module_loader import ModuleLoader, compute_module_hash
 
 
 def _get_vault_path() -> Path:
     """Resolve vault path from VAULT_PATH env or default."""
-    import os
-
     path = os.environ.get("VAULT_PATH", "./vault")
     return Path(path).resolve()
 
 
 def _get_server_url() -> str:
     """Resolve server URL from PORT env or default."""
-    import os
-
     port = os.environ.get("PORT", "3336")
     return f"http://localhost:{port}"
 
@@ -60,66 +55,14 @@ def _api_post(url: str, data: dict | None = None) -> dict:
 def cmd_module_list(args: argparse.Namespace) -> None:
     """List modules from vault (offline — no server needed)."""
     vault_path = _get_vault_path()
-    modules_dir = vault_path / ".modules"
-    hash_file = vault_path / ".parachute" / "module_hashes.json"
-
-    if not modules_dir.exists():
-        print(f"No .modules directory at {modules_dir}")
-        sys.exit(1)
-
-    # Load known hashes
-    known_hashes: dict[str, str] = {}
-    if hash_file.exists():
-        try:
-            known_hashes = json.loads(hash_file.read_text())
-        except (json.JSONDecodeError, OSError):
-            pass
-
-    # Scan modules
-    modules = []
-    for module_dir in sorted(modules_dir.iterdir()):
-        if not module_dir.is_dir():
-            continue
-
-        manifest_path = module_dir / "manifest.yaml"
-        if not manifest_path.exists():
-            continue
-
-        try:
-            with open(manifest_path) as f:
-                manifest = yaml.safe_load(f)
-        except Exception:
-            manifest = {}
-
-        name = manifest.get("name", module_dir.name)
-        version = manifest.get("version", "?")
-        description = manifest.get("description", "")
-        provides = manifest.get("provides", [])
-
-        current_hash = compute_module_hash(module_dir)
-        known_hash = known_hashes.get(name)
-
-        if known_hash is None:
-            status = "new"
-        elif known_hash == current_hash:
-            status = "approved"
-        else:
-            status = "modified"
-
-        modules.append({
-            "name": name,
-            "version": version,
-            "status": status,
-            "provides": provides,
-            "description": description,
-            "hash": current_hash[:12],
-        })
+    loader = ModuleLoader(vault_path)
+    modules = loader.scan_offline_status()
 
     if not modules:
         print("No modules found.")
         return
 
-    # Display
+    modules_dir = vault_path / ".modules"
     print(f"\nModules in {modules_dir}/:\n")
 
     name_width = max(len(m["name"]) for m in modules)
@@ -154,7 +97,6 @@ def cmd_module_approve(args: argparse.Namespace) -> None:
     """Approve a module by recording its hash (offline)."""
     vault_path = _get_vault_path()
     modules_dir = vault_path / ".modules"
-    hash_file = vault_path / ".parachute" / "module_hashes.json"
 
     module_dir = modules_dir / args.name
     if not module_dir.exists():
@@ -163,20 +105,14 @@ def cmd_module_approve(args: argparse.Namespace) -> None:
 
     current_hash = compute_module_hash(module_dir)
 
-    # Load existing hashes
-    known_hashes: dict[str, str] = {}
-    if hash_file.exists():
-        try:
-            known_hashes = json.loads(hash_file.read_text())
-        except (json.JSONDecodeError, OSError):
-            pass
-
+    # Use ModuleLoader to load/save hashes consistently
+    loader = ModuleLoader(vault_path)
+    known_hashes = loader._load_known_hashes()
     known_hashes[args.name] = current_hash
-    hash_file.parent.mkdir(parents=True, exist_ok=True)
-    hash_file.write_text(json.dumps(known_hashes, indent=2))
+    loader._save_known_hashes(known_hashes)
 
     print(f"\nComputed hash: {current_hash[:12]}...")
-    print(f"Wrote to {hash_file}")
+    print(f"Wrote to {loader._hash_file}")
     print("Restart server to load module.")
 
 

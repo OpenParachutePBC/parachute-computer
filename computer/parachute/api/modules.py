@@ -18,6 +18,18 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# Allowlisted module names — only these can be used in path-based endpoints
+_ALLOWED_MODULES = {"chat", "daily", "brain", "build"}
+
+
+def _validate_module_name(mod: str) -> str:
+    """Validate and normalize a module name. Raises 404 if not allowlisted."""
+    normalized = mod.lower().strip()
+    if normalized not in _ALLOWED_MODULES:
+        raise HTTPException(404, f"Module '{mod}' not found")
+    return normalized.capitalize()
+
+
 # Default prompt when no CLAUDE.md exists
 DEFAULT_PROMPT = """# Parachute Agent
 
@@ -44,6 +56,7 @@ async def list_modules(request: Request) -> dict[str, Any]:
 
     # Enrich with manifest data from loaded modules
     loaded_modules = request.app.state.modules or {}
+    module_has_router = getattr(request.app.state, 'module_has_router', {})
     for entry in status:
         name = entry["name"]
         if name in loaded_modules:
@@ -52,10 +65,7 @@ async def list_modules(request: Request) -> dict[str, Any]:
             entry["version"] = manifest.get("version", "unknown")
             entry["description"] = manifest.get("description", "")
             entry["provides"] = getattr(module, 'provides', [])
-            entry["has_router"] = (
-                hasattr(module, 'get_router')
-                and module.get_router() is not None
-            )
+            entry["has_router"] = module_has_router.get(name, False)
 
     return {"modules": status}
 
@@ -83,7 +93,7 @@ async def get_module_prompt(mod: str) -> dict[str, Any]:
     """Get system prompt for a module (e.g., Chat/CLAUDE.md)."""
     settings = get_settings()
 
-    module_name = mod.capitalize()
+    module_name = _validate_module_name(mod)
     prompt_path = settings.vault_path / module_name / "CLAUDE.md"
 
     content = None
@@ -107,7 +117,7 @@ async def update_module_prompt(mod: str, body: ModulePromptUpdate) -> dict[str, 
     """Update system prompt for a module."""
     settings = get_settings()
 
-    module_name = mod.capitalize()
+    module_name = _validate_module_name(mod)
     prompt_path = settings.vault_path / module_name / "CLAUDE.md"
 
     if body.reset:
@@ -128,7 +138,7 @@ async def get_module_stats(mod: str) -> dict[str, Any]:
     """Get file stats for a specific module's vault directory."""
     settings = get_settings()
 
-    module_name = mod.capitalize()
+    module_name = _validate_module_name(mod)
     module_path = settings.vault_path / module_name
 
     if not module_path.exists():

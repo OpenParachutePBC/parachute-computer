@@ -162,6 +162,51 @@ class ModuleLoader:
 
         raise ValueError(f"No Module class found in {module_path}")
 
+    def scan_offline_status(self) -> list[dict]:
+        """Scan modules from disk without loading them (for CLI offline use).
+
+        Returns a list of dicts with name, version, status, provides, description, hash.
+        """
+        if not self.modules_dir.exists():
+            return []
+
+        known_hashes = self._load_known_hashes()
+        modules = []
+
+        for module_dir in sorted(self.modules_dir.iterdir()):
+            if not module_dir.is_dir():
+                continue
+            manifest_path = module_dir / "manifest.yaml"
+            if not manifest_path.exists():
+                continue
+            try:
+                with open(manifest_path) as f:
+                    manifest = yaml.safe_load(f)
+            except Exception:
+                manifest = {}
+
+            name = manifest.get("name", module_dir.name)
+            current_hash = compute_module_hash(module_dir)
+            known_hash = known_hashes.get(name)
+
+            if known_hash is None:
+                status = "new"
+            elif known_hash == current_hash:
+                status = "approved"
+            else:
+                status = "modified"
+
+            modules.append({
+                "name": name,
+                "version": manifest.get("version", "?"),
+                "status": status,
+                "provides": manifest.get("provides", []),
+                "description": manifest.get("description", ""),
+                "hash": current_hash[:12],
+            })
+
+        return modules
+
     def get_module_status(self) -> list[dict]:
         """Return status of all known modules (for /api/modules endpoint)."""
         status = []
