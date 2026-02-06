@@ -77,6 +77,7 @@ async def lifespan(app: FastAPI):
     # Load modules from vault/.modules/
     module_loader = ModuleLoader(settings.vault_path)
     modules = await module_loader.discover_and_load()
+    app.state.module_loader = module_loader
     app.state.modules = modules
     logger.info(f"Loaded {len(modules)} modules: {list(modules.keys())}")
 
@@ -100,6 +101,7 @@ async def lifespan(app: FastAPI):
     await close_database()
     app.state.orchestrator = None
     app.state.database = None
+    app.state.module_loader = None
     app.state.modules = None
     app.state.scheduler = None
     app.state.server_config = None
@@ -133,8 +135,10 @@ def _get_cors_origins() -> list[str]:
         # Wildcard mode - but we still want some basic protection
         # Allow localhost variants and Parachute app
         return [
+            "http://localhost:3333",
             "http://localhost:3336",
             "http://localhost:3337",  # Test server
+            "http://127.0.0.1:3333",
             "http://127.0.0.1:3336",
             "http://127.0.0.1:3337",
             # Allow requests from any device on local network with Parachute user-agent
