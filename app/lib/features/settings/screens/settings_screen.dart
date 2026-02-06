@@ -15,6 +15,8 @@ import '../widgets/server_settings_section.dart';
 import '../widgets/vault_settings_section.dart';
 import '../widgets/sync_settings_section.dart';
 import '../widgets/daily_agents_section.dart';
+import '../widgets/bot_connectors_section.dart';
+import '../widgets/hooks_section.dart';
 import '../widgets/migration_section.dart';
 import '../widgets/about_section.dart';
 import '../widgets/settings_card.dart';
@@ -166,6 +168,24 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             SettingsCard(
               isDark: isDark,
               child: const ApiKeySection(),
+            ),
+          ],
+
+          // Bot Connectors Section
+          if (showFullModeSettings) ...[
+            SizedBox(height: Spacing.xl),
+            SettingsCard(
+              isDark: isDark,
+              child: const BotConnectorsSection(),
+            ),
+          ],
+
+          // Hooks Section
+          if (showFullModeSettings) ...[
+            SizedBox(height: Spacing.xl),
+            SettingsCard(
+              isDark: isDark,
+              child: const HooksSection(),
             ),
           ],
 

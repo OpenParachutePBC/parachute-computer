@@ -8,10 +8,9 @@ import 'package:parachute/features/chat/models/stream_event.dart';
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
-  group('Chat Feature', () {
+  group('Chat Models', () {
     testWidgets('ChatSession model parses correctly',
         (WidgetTester tester) async {
-      // Test that chat models are properly structured
       final session = ChatSession(
         id: 'test-123',
         title: 'Test Session',
@@ -21,9 +20,18 @@ void main() {
 
       expect(session.id, 'test-123');
       expect(session.title, 'Test Session');
+      expect(session.displayTitle, 'Test Session');
       expect(session.source, ChatSource.parachute);
 
-      // Render a simple widget to satisfy integration test requirements
+      // Nullable title
+      final untitled = ChatSession(
+        id: 'test-456',
+        createdAt: DateTime.now(),
+        updatedAt: DateTime.now(),
+      );
+      expect(untitled.title, isNull);
+      expect(untitled.displayTitle, isNotEmpty); // Falls back to a default
+
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
@@ -38,15 +46,13 @@ void main() {
           ),
         ),
       );
-
       await tester.pumpAndSettle();
       expect(find.text('Test Session'), findsOneWidget);
-      expect(find.text('test-123'), findsOneWidget);
     });
 
-    testWidgets('StreamEvent types are defined',
+    testWidgets('StreamEventType has all expected values',
         (WidgetTester tester) async {
-      // Verify all SSE event types exist
+      // Core event types
       expect(StreamEventType.values, contains(StreamEventType.session));
       expect(StreamEventType.values, contains(StreamEventType.text));
       expect(StreamEventType.values, contains(StreamEventType.thinking));
@@ -54,6 +60,11 @@ void main() {
       expect(StreamEventType.values, contains(StreamEventType.toolResult));
       expect(StreamEventType.values, contains(StreamEventType.done));
       expect(StreamEventType.values, contains(StreamEventType.error));
+
+      // Extended event types added in later phases
+      expect(StreamEventType.values, contains(StreamEventType.typedError));
+      expect(StreamEventType.values, contains(StreamEventType.userQuestion));
+      expect(StreamEventType.values, contains(StreamEventType.promptMetadata));
 
       await tester.pumpWidget(
         const MaterialApp(
@@ -63,39 +74,6 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(find.text('Stream events verified'), findsOneWidget);
-    });
-
-    testWidgets('Empty session list renders', (WidgetTester tester) async {
-      await tester.pumpWidget(
-        ProviderScope(
-          child: MaterialApp(
-            home: Scaffold(
-              appBar: AppBar(title: const Text('Chat')),
-              body: const Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.chat_bubble_outline, size: 64),
-                    SizedBox(height: 16),
-                    Text('No sessions yet'),
-                    Text('Start a new chat to begin'),
-                  ],
-                ),
-              ),
-              floatingActionButton: FloatingActionButton(
-                onPressed: () {},
-                child: const Icon(Icons.add),
-              ),
-            ),
-          ),
-        ),
-      );
-
-      await tester.pumpAndSettle();
-      expect(find.text('Chat'), findsOneWidget);
-      expect(find.text('No sessions yet'), findsOneWidget);
-      expect(find.byIcon(Icons.add), findsOneWidget);
     });
   });
 }

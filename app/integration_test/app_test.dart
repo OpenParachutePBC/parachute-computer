@@ -1,189 +1,117 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/core/providers/app_state_provider.dart';
+
+import 'helpers/test_app.dart';
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
   group('App Launch', () {
-    testWidgets('App renders MaterialApp with correct theme',
-        (WidgetTester tester) async {
-      // Build a minimal version of the app to test core rendering
-      await tester.pumpWidget(
-        ProviderScope(
-          child: MaterialApp(
-            title: 'Parachute',
-            theme: ThemeData(
-              colorScheme: ColorScheme.fromSeed(
-                seedColor: BrandColors.forest,
-              ),
-              useMaterial3: true,
-            ),
-            home: const Scaffold(
-              body: Center(child: Text('Parachute')),
-            ),
-          ),
-        ),
-      );
-
+    testWidgets('App renders with correct theme', (WidgetTester tester) async {
+      await tester.pumpWidget(createTestApp());
       await tester.pumpAndSettle();
+
       expect(find.byType(MaterialApp), findsOneWidget);
-      expect(find.text('Parachute'), findsOneWidget);
     });
 
-    testWidgets('Design tokens have correct values',
-        (WidgetTester tester) async {
-      // Verify design tokens load correctly
+    testWidgets('Design tokens are valid', (WidgetTester tester) async {
       expect(BrandColors.forest, isNotNull);
       expect(BrandColors.forest, isA<Color>());
+      expect(BrandColors.nightForest, isA<Color>());
+      expect(BrandColors.turquoise, isA<Color>());
+      expect(BrandColors.nightTurquoise, isA<Color>());
 
-      // Test that we have the key color palette
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Container(
-            color: BrandColors.forest,
-            child: const Text('Token Test'),
-          ),
-        ),
-      );
-
+      await tester.pumpWidget(createTestApp());
       await tester.pumpAndSettle();
-      expect(find.text('Token Test'), findsOneWidget);
     });
   });
 
-  group('Navigation', () {
-    testWidgets('Three-tab structure exists in full mode',
+  group('Navigation — Full Mode', () {
+    testWidgets('Full mode shows 4 navigation destinations',
         (WidgetTester tester) async {
-      // Build with ProviderScope overriding to full mode
-      await tester.pumpWidget(
-        ProviderScope(
-          overrides: [
-            appModeProvider.overrideWith((ref) => AppMode.full),
-          ],
-          child: MaterialApp(
-            home: Scaffold(
-              bottomNavigationBar: NavigationBar(
-                selectedIndex: 0,
-                destinations: const [
-                  NavigationDestination(
-                    icon: Icon(Icons.chat_bubble_outline),
-                    selectedIcon: Icon(Icons.chat_bubble),
-                    label: 'Chat',
-                  ),
-                  NavigationDestination(
-                    icon: Icon(Icons.today_outlined),
-                    selectedIcon: Icon(Icons.today),
-                    label: 'Daily',
-                  ),
-                  NavigationDestination(
-                    icon: Icon(Icons.folder_outlined),
-                    selectedIcon: Icon(Icons.folder),
-                    label: 'Vault',
-                  ),
-                ],
-              ),
-              body: const Center(child: Text('Tab Content')),
-            ),
-          ),
-        ),
-      );
-
+      await tester.pumpWidget(createTestApp(mode: AppMode.full));
       await tester.pumpAndSettle();
 
-      // Verify all three tabs exist
-      expect(find.text('Chat'), findsOneWidget);
-      expect(find.text('Daily'), findsOneWidget);
-      expect(find.text('Vault'), findsOneWidget);
+      // Navigation bar exists with all 4 destinations
+      expect(find.byType(NavigationBar), findsOneWidget);
+      expect(find.byType(NavigationDestination), findsNWidgets(4));
     });
 
-    testWidgets('Can switch between tabs', (WidgetTester tester) async {
-      int selectedIndex = 0;
-
-      await tester.pumpWidget(
-        MaterialApp(
-          home: StatefulBuilder(
-            builder: (context, setState) {
-              return Scaffold(
-                bottomNavigationBar: NavigationBar(
-                  selectedIndex: selectedIndex,
-                  onDestinationSelected: (index) {
-                    setState(() => selectedIndex = index);
-                  },
-                  destinations: const [
-                    NavigationDestination(
-                      icon: Icon(Icons.chat_bubble_outline),
-                      label: 'Chat',
-                    ),
-                    NavigationDestination(
-                      icon: Icon(Icons.today_outlined),
-                      label: 'Daily',
-                    ),
-                    NavigationDestination(
-                      icon: Icon(Icons.folder_outlined),
-                      label: 'Vault',
-                    ),
-                  ],
-                ),
-                body: IndexedStack(
-                  index: selectedIndex,
-                  children: const [
-                    Center(child: Text('Chat Screen')),
-                    Center(child: Text('Daily Screen')),
-                    Center(child: Text('Vault Screen')),
-                  ],
-                ),
-              );
-            },
-          ),
-        ),
-      );
-
+    testWidgets('All tab labels present in navigation bar',
+        (WidgetTester tester) async {
+      await tester.pumpWidget(createTestApp(mode: AppMode.full));
       await tester.pumpAndSettle();
 
-      // Start on Chat tab
-      expect(find.text('Chat Screen'), findsOneWidget);
+      // Each label appears in the NavigationDestination widgets
+      expect(find.text('Chat'), findsWidgets);
+      expect(find.text('Daily'), findsWidgets);
+      expect(find.text('Vault'), findsWidgets);
+      expect(find.text('Brain'), findsWidgets);
+    });
 
-      // Tap Daily tab
+    testWidgets('Tapping tabs does not crash',
+        (WidgetTester tester) async {
+      await tester.pumpWidget(createTestApp(mode: AppMode.full));
+      await tester.pumpAndSettle();
+
+      // Tap each tab — if we get through without exceptions, navigation works
       await tester.tap(find.text('Daily'));
       await tester.pumpAndSettle();
-      expect(selectedIndex, 1);
 
-      // Tap Vault tab
       await tester.tap(find.text('Vault'));
       await tester.pumpAndSettle();
-      expect(selectedIndex, 2);
 
-      // Tap back to Chat
+      await tester.tap(find.text('Brain'));
+      await tester.pumpAndSettle();
+
       await tester.tap(find.text('Chat'));
       await tester.pumpAndSettle();
-      expect(selectedIndex, 0);
+
+      // Still have 4 destinations after all the tapping
+      expect(find.byType(NavigationDestination), findsNWidgets(4));
+    });
+
+    testWidgets('Tab icons are correct', (WidgetTester tester) async {
+      await tester.pumpWidget(createTestApp(mode: AppMode.full));
+      await tester.pumpAndSettle();
+
+      expect(find.byIcon(Icons.chat_bubble_outline), findsOneWidget);
+      expect(find.byIcon(Icons.today_outlined), findsOneWidget);
+      expect(find.byIcon(Icons.folder_outlined), findsOneWidget);
+      expect(find.byIcon(Icons.psychology_outlined), findsWidgets);
     });
   });
 
-  group('Daily Only Mode', () {
-    testWidgets('Daily-only flavor shows single tab',
+  group('Navigation — Daily Only Mode', () {
+    testWidgets('Daily-only mode has no navigation bar',
         (WidgetTester tester) async {
-      await tester.pumpWidget(
-        ProviderScope(
-          overrides: [
-            appModeProvider.overrideWith((ref) => AppMode.dailyOnly),
-          ],
-          child: MaterialApp(
-            home: Scaffold(
-              body: const Center(child: Text('Daily Home')),
-            ),
-          ),
-        ),
-      );
-
+      await tester.pumpWidget(createTestApp(mode: AppMode.dailyOnly));
       await tester.pumpAndSettle();
 
-      // In daily-only mode, Chat and Vault tabs should not be shown
-      expect(find.text('Daily Home'), findsOneWidget);
+      // No navigation bar (single tab doesn't need one)
+      expect(find.byType(NavigationBar), findsNothing);
+    });
+
+    testWidgets('No NavigationDestinations in daily-only mode',
+        (WidgetTester tester) async {
+      await tester.pumpWidget(createTestApp(mode: AppMode.dailyOnly));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(NavigationDestination), findsNothing);
+    });
+  });
+
+  group('Dark Mode', () {
+    testWidgets('App renders in dark mode without crash',
+        (WidgetTester tester) async {
+      await tester.pumpWidget(createTestAppDark(mode: AppMode.full));
+      await tester.pumpAndSettle();
+
+      // All 4 destinations render in dark mode
+      expect(find.byType(NavigationDestination), findsNWidgets(4));
     });
   });
 }

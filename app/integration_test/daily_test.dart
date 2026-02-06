@@ -1,13 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/features/daily/journal/models/journal_entry.dart';
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
-  group('Daily Feature', () {
+  group('Daily Models', () {
     testWidgets('JournalEntry model works correctly',
         (WidgetTester tester) async {
       final entry = JournalEntry(
@@ -21,12 +20,12 @@ void main() {
       expect(entry.id, 'abc123');
       expect(entry.title, 'Voice Meeting');
       expect(entry.content, contains('Kevin'));
+      expect(entry.type, JournalEntryType.text);
       expect(entry.createdAt.year, 2026);
 
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
-            appBar: AppBar(title: const Text('Daily Journal')),
             body: ListView(
               children: [
                 Card(
@@ -36,10 +35,8 @@ void main() {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          'Feb 5, 2026',
-                          style: const TextStyle(fontWeight: FontWeight.bold),
-                        ),
+                        Text(entry.title,
+                            style: const TextStyle(fontWeight: FontWeight.bold)),
                         const SizedBox(height: 8),
                         Text(entry.content),
                       ],
@@ -53,38 +50,21 @@ void main() {
       );
 
       await tester.pumpAndSettle();
-      expect(find.text('Daily Journal'), findsOneWidget);
-      expect(find.text('Feb 5, 2026'), findsOneWidget);
-      expect(
-          find.text('Met with Kevin about voice-first features'), findsOneWidget);
+      expect(find.text('Voice Meeting'), findsOneWidget);
+      expect(find.text('Met with Kevin about voice-first features'), findsOneWidget);
     });
 
-    testWidgets('Empty journal state renders', (WidgetTester tester) async {
+    testWidgets('JournalEntryType enum has expected values',
+        (WidgetTester tester) async {
+      expect(JournalEntryType.values, contains(JournalEntryType.text));
+      expect(JournalEntryType.values, contains(JournalEntryType.voice));
+
       await tester.pumpWidget(
-        ProviderScope(
-          child: MaterialApp(
-            home: Scaffold(
-              appBar: AppBar(title: const Text('Daily')),
-              body: const Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.mic_none, size: 64),
-                    SizedBox(height: 16),
-                    Text('Tap to start recording'),
-                    Text('Your voice notes appear here'),
-                  ],
-                ),
-              ),
-            ),
-          ),
+        const MaterialApp(
+          home: Scaffold(body: Center(child: Text('Types OK'))),
         ),
       );
-
       await tester.pumpAndSettle();
-      expect(find.text('Daily'), findsOneWidget);
-      expect(find.text('Tap to start recording'), findsOneWidget);
-      expect(find.byIcon(Icons.mic_none), findsOneWidget);
     });
   });
 }

@@ -8,6 +8,8 @@ import 'package:opus_dart/opus_dart.dart' as opus_dart;
 import 'package:opus_flutter/opus_flutter.dart' as opus_flutter;
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:marionette_flutter/marionette_flutter.dart';
+
 import 'core/theme/app_theme.dart';
 import 'core/theme/design_tokens.dart';
 import 'core/providers/app_state_provider.dart';
@@ -29,11 +31,16 @@ import 'features/chat/widgets/message_bubble.dart' show currentlyRenderingMarkdo
 import 'features/daily/journal/providers/journal_providers.dart';
 import 'features/vault/screens/vault_browser_screen.dart';
 import 'features/vault/screens/remote_files_screen.dart';
+import 'features/brain/screens/brain_screen.dart';
 import 'features/settings/screens/settings_screen.dart';
 import 'features/onboarding/screens/onboarding_screen.dart';
 
 void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
+  if (kDebugMode) {
+    MarionetteBinding.ensureInitialized();
+  } else {
+    WidgetsFlutterBinding.ensureInitialized();
+  }
 
   // Create provider container for early initialization
   final container = ProviderContainer();
@@ -243,6 +250,7 @@ class _TabShellState extends ConsumerState<_TabShell> with WidgetsBindingObserve
   final GlobalKey<NavigatorState> _chatNavigatorKey = GlobalKey<NavigatorState>();
   final GlobalKey<NavigatorState> _dailyNavigatorKey = GlobalKey<NavigatorState>();
   final GlobalKey<NavigatorState> _vaultNavigatorKey = GlobalKey<NavigatorState>();
+  final GlobalKey<NavigatorState> _brainNavigatorKey = GlobalKey<NavigatorState>();
 
   @override
   void initState() {
@@ -343,6 +351,7 @@ class _TabShellState extends ConsumerState<_TabShell> with WidgetsBindingObserve
         'chat' => visibleTabs.indexOf(AppTab.chat),
         'daily' => visibleTabs.indexOf(AppTab.daily),
         'vault' => visibleTabs.indexOf(AppTab.vault),
+        'brain' => visibleTabs.indexOf(AppTab.brain),
         'settings' => -1, // Settings is a route, not a tab
         _ => -1,
       };
@@ -590,6 +599,18 @@ class _TabShellState extends ConsumerState<_TabShell> with WidgetsBindingObserve
           ),
           label: 'Vault',
         ),
+      if (showAllTabs)
+        NavigationDestination(
+          icon: Icon(
+            Icons.psychology_outlined,
+            color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+          ),
+          selectedIcon: Icon(
+            Icons.psychology,
+            color: isDark ? BrandColors.nightTurquoise : BrandColors.turquoise,
+          ),
+          label: 'Brain',
+        ),
     ];
 
     // Clamp index to valid range when tabs change
@@ -639,6 +660,16 @@ class _TabShellState extends ConsumerState<_TabShell> with WidgetsBindingObserve
                   onGenerateRoute: (settings) {
                     return MaterialPageRoute(
                       builder: (context) => const VaultBrowserScreen(),
+                      settings: settings,
+                    );
+                  },
+                ),
+                // Brain tab (index 3) - hidden when not in full mode
+                Navigator(
+                  key: _brainNavigatorKey,
+                  onGenerateRoute: (settings) {
+                    return MaterialPageRoute(
+                      builder: (context) => const BrainScreen(),
                       settings: settings,
                     );
                   },

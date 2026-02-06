@@ -991,6 +991,22 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "0.2.1"
+  marionette_flutter:
+    dependency: "direct main"
+    description:
+      name: marionette_flutter
+      sha256: "0077073f62a8031879a91be41aa91629f741a7f1348b18feacd53443dae3819f"
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.3.0"
+  marionette_mcp:
+    dependency: "direct dev"
+    description:
+      name: marionette_mcp
+      sha256: "1a1d559b77f9a81e120580facf098c50c4bc43ce924b6014e3fbcb2236884cf5"
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.3.0"
   markdown:
     dependency: "direct main"
     description:
@@ -1015,6 +1031,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "0.11.1"
+  mcp_dart:
+    dependency: transitive
+    description:
+      name: mcp_dart
+      sha256: "9b4f808d739c563bd6c68b5829d6a7a7a5b0a15928927b8e548e30b66a61eb9b"
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.2.2"
   meta:
     dependency: transitive
     description:
@@ -1884,5 +1908,5 @@ packages:
     source: hosted
     version: "3.1.3"
 sdks:
-  dart: ">=3.9.0 <4.0.0"
+  dart: ">=3.10.0 <4.0.0"
   flutter: ">=3.35.0"
