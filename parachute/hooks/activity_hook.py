@@ -297,7 +297,7 @@ TITLE: <new title or NO_CHANGE>"""
         tools=[],
         resume=resume_session_id,
         setting_sources=[],  # Don't load CLAUDE.md
-        vault_path=vault_path,
+        claude_token=settings.claude_code_oauth_token,
     ):
         if event.get("type") == "system" and event.get("session_id"):
             new_session_id = event["session_id"]

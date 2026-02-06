@@ -32,5 +32,5 @@ def test_root_endpoint(test_client):
 
     assert response.status_code == 200
     data = response.json()
-    assert data["name"] == "Parachute Base Server"
+    assert data["name"] == "Parachute Computer"
     assert data["status"] == "running"

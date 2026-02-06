@@ -15,7 +15,7 @@ import time
 from pathlib import Path
 from typing import Any, AsyncGenerator, Optional
 
-from parachute.config import Settings
+from parachute.config import Settings, get_settings
 from parachute.core.claude_sdk import query_streaming, QueryInterrupt
 from parachute.core.permission_handler import PermissionHandler
 from parachute.core.skills import generate_runtime_plugin, cleanup_runtime_plugin
@@ -502,9 +502,8 @@ class Orchestrator:
             if session.id != "pending" and not is_new and not force_new:
                 resume_id = session.id
 
-            # SDK session storage always uses vault_path
-            # (working_directory is stored relative to vault, so this is always correct)
-            sdk_vault_path = self.vault_path
+            # Get Claude token from settings for SDK auth
+            claude_token = get_settings().claude_code_oauth_token
 
             logger.info(f"Resume decision: session.id={session.id}, is_new={is_new}, force_new={force_new}, resume_id={resume_id}")
 
@@ -541,7 +540,7 @@ class Orchestrator:
                 can_use_tool=sdk_can_use_tool,  # Enable interactive tool permission checks (AskUserQuestion)
                 plugin_dirs=plugin_dirs if plugin_dirs else None,
                 agents=agents_dict,
-                vault_path=sdk_vault_path,  # Store sessions in vault/.claude/ (None for pre-migration sessions)
+                claude_token=claude_token,
             ):
                 # Check for interrupt
                 if interrupt.is_interrupted:
@@ -1078,34 +1077,32 @@ The user is now continuing this conversation with you. Respond naturally as if y
         from pathlib import Path
 
         # Look for SDK session file in two locations:
-        # 1. {vault}/.claude/projects/ - new vault-based location (bare metal)
-        # 2. ~/.claude/projects/ - original HOME-based location (pre-migration sessions)
+        # 1. ~/.claude/projects/ - primary location (real home)
+        # 2. {vault}/.claude/projects/ - legacy from HOME override era
 
         session_file = None
 
-        # First, search in vault's .claude directory (new location)
-        projects_dir = self.vault_path / ".claude" / "projects"
-        if projects_dir.exists():
-            for project_dir in projects_dir.iterdir():
+        # Search in ~/.claude (primary location)
+        home_projects_dir = Path.home() / ".claude" / "projects"
+        if home_projects_dir.exists():
+            for project_dir in home_projects_dir.iterdir():
                 if project_dir.is_dir():
                     candidate = project_dir / f"{session_id}.jsonl"
                     if candidate.exists():
                         session_file = candidate
                         break
 
-        # Fallback: search in original ~/.claude directory (pre-migration sessions)
+        # Fallback: search in vault/.claude (legacy from HOME override era)
         if not session_file:
-            original_home = Path.home()
-            if original_home != self.vault_path:
-                original_projects_dir = original_home / ".claude" / "projects"
-                if original_projects_dir.exists():
-                    for project_dir in original_projects_dir.iterdir():
-                        if project_dir.is_dir():
-                            candidate = project_dir / f"{session_id}.jsonl"
-                            if candidate.exists():
-                                session_file = candidate
-                                logger.debug(f"Found transcript in original HOME location: {candidate}")
-                                break
+            vault_projects_dir = self.vault_path / ".claude" / "projects"
+            if vault_projects_dir.exists():
+                for project_dir in vault_projects_dir.iterdir():
+                    if project_dir.is_dir():
+                        candidate = project_dir / f"{session_id}.jsonl"
+                        if candidate.exists():
+                            session_file = candidate
+                            logger.debug(f"Found transcript in legacy vault location: {candidate}")
+                            break
 
         if not session_file:
             return None
