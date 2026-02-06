@@ -11,6 +11,17 @@ from typing import Any, Optional
 from pydantic import BaseModel, Field
 
 
+class TrustLevel(str, Enum):
+    """Trust level for agent execution.
+
+    Determines what isolation and permissions an agent session gets.
+    """
+
+    FULL = "full"  # Direct execution, unrestricted (personal chat)
+    VAULT = "vault"  # Vault filesystem only, no bash, no network
+    SANDBOXED = "sandboxed"  # Docker container, scoped mounts, no network
+
+
 class SessionPermissions(BaseModel):
     """
     Permissions granted for a session.
@@ -18,6 +29,14 @@ class SessionPermissions(BaseModel):
     Controls what file operations and tools the agent can use.
     Stored in session metadata and checked at runtime.
     """
+
+    # Trust level (three-tier model)
+    trust_level: TrustLevel = Field(
+        default=TrustLevel.FULL,
+        alias="trustLevel",
+        serialization_alias="trustLevel",
+        description="Trust level: full (unrestricted), vault (filesystem only), sandboxed (Docker)",
+    )
 
     # File access patterns (glob-style, relative to vault)
     read: list[str] = Field(
@@ -29,6 +48,14 @@ class SessionPermissions(BaseModel):
         description="Glob patterns for allowed write paths",
     )
 
+    # Allowed vault paths for VAULT/SANDBOXED levels
+    allowed_paths: list[str] = Field(
+        default_factory=list,
+        alias="allowedPaths",
+        serialization_alias="allowedPaths",
+        description="Allowed vault paths for restricted trust levels",
+    )
+
     # Bash command access
     bash: list[str] | bool = Field(
         default_factory=lambda: ["ls", "pwd", "tree"],
@@ -37,31 +64,59 @@ class SessionPermissions(BaseModel):
 
     # Trust mode bypasses all permission checks (except deny list)
     # Default to True so existing sessions continue to work without prompts
+    # Deprecated: use trust_level=FULL instead. Kept for backward compat.
     trust_mode: bool = Field(
         default=True,
         alias="trustMode",
         serialization_alias="trustMode",
-        description="If true, skip all permission prompts",
+        description="Deprecated: use trustLevel instead. If true, maps to trust_level=FULL",
     )
 
     model_config = {"populate_by_name": True}
 
+    @property
+    def effective_trust_level(self) -> TrustLevel:
+        """Resolve effective trust level, accounting for legacy trust_mode."""
+        if self.trust_mode and self.trust_level == TrustLevel.FULL:
+            return TrustLevel.FULL
+        # If trust_level was explicitly set to something other than FULL,
+        # honor it even if trust_mode is True (explicit > implicit)
+        if self.trust_level != TrustLevel.FULL:
+            return self.trust_level
+        # Legacy: trust_mode=False with no explicit trust_level
+        if not self.trust_mode:
+            return TrustLevel.VAULT
+        return TrustLevel.FULL
+
     def can_read(self, path: str) -> bool:
         """Check if reading the given path is allowed."""
-        if self.trust_mode:
+        level = self.effective_trust_level
+        if level == TrustLevel.FULL:
             return True
+        if level in (TrustLevel.VAULT, TrustLevel.SANDBOXED):
+            if self.allowed_paths:
+                return self._matches_any_pattern(path, self.allowed_paths)
+            # Fall through to read patterns
         return self._matches_any_pattern(path, self.read)
 
     def can_write(self, path: str) -> bool:
         """Check if writing to the given path is allowed."""
-        if self.trust_mode:
+        level = self.effective_trust_level
+        if level == TrustLevel.FULL:
             return True
+        if level in (TrustLevel.VAULT, TrustLevel.SANDBOXED):
+            if self.allowed_paths:
+                return self._matches_any_pattern(path, self.allowed_paths)
         return self._matches_any_pattern(path, self.write)
 
     def can_bash(self, command: str) -> bool:
         """Check if running the given bash command is allowed."""
-        if self.trust_mode:
+        level = self.effective_trust_level
+        if level == TrustLevel.FULL:
             return True
+        if level == TrustLevel.SANDBOXED:
+            return False  # Sandboxed agents run in containers, no host bash
+        # VAULT and restricted modes: check the bash whitelist
         if isinstance(self.bash, bool):
             return self.bash
         # Extract base command (first word)
@@ -93,6 +148,8 @@ class SessionSource(str, Enum):
     CLAUDE_CODE = "claude-code"
     CLAUDE_WEB = "claude"  # Imported from Claude.ai web app
     CHATGPT = "chatgpt"  # Imported from ChatGPT
+    TELEGRAM = "telegram"  # From Telegram bot connector
+    DISCORD = "discord"  # From Discord bot connector
 
 
 class Session(BaseModel):
@@ -146,11 +203,44 @@ class Session(BaseModel):
         serialization_alias="agentType",
         description="Agent type/name (e.g., 'vault-agent', 'orchestrator', 'summarizer')",
     )
+    trust_level: Optional[str] = Field(
+        default=None,
+        alias="trustLevel",
+        serialization_alias="trustLevel",
+        description="Trust level: full, vault, sandboxed (NULL = full for backward compat)",
+    )
+    linked_bot_platform: Optional[str] = Field(
+        default=None,
+        alias="linkedBotPlatform",
+        serialization_alias="linkedBotPlatform",
+        description="Bot platform: telegram, discord, or NULL",
+    )
+    linked_bot_chat_id: Optional[str] = Field(
+        default=None,
+        alias="linkedBotChatId",
+        serialization_alias="linkedBotChatId",
+        description="Platform-specific chat ID",
+    )
+    linked_bot_chat_type: Optional[str] = Field(
+        default=None,
+        alias="linkedBotChatType",
+        serialization_alias="linkedBotChatType",
+        description="Chat type: dm, group, or NULL",
+    )
     metadata: Optional[dict[str, Any]] = Field(
         default=None, description="Additional metadata"
     )
 
     model_config = {"from_attributes": True, "populate_by_name": True}
+
+    def get_trust_level(self) -> TrustLevel:
+        """Get effective trust level, defaulting to FULL for backward compat."""
+        if self.trust_level:
+            try:
+                return TrustLevel(self.trust_level)
+            except ValueError:
+                return TrustLevel.FULL
+        return TrustLevel.FULL
 
     @property
     def permissions(self) -> SessionPermissions:
@@ -186,6 +276,10 @@ class SessionCreate(BaseModel):
     model: Optional[str] = None
     continued_from: Optional[str] = None
     agent_type: Optional[str] = None
+    trust_level: Optional[str] = None
+    linked_bot_platform: Optional[str] = None
+    linked_bot_chat_id: Optional[str] = None
+    linked_bot_chat_type: Optional[str] = None
     metadata: Optional[dict[str, Any]] = None
 
 

@@ -19,7 +19,7 @@ from typing import Any, Callable, Optional
 from uuid import uuid4
 
 from parachute.lib.ignore_patterns import get_ignore_patterns
-from parachute.models.session import Session, SessionPermissions
+from parachute.models.session import Session, SessionPermissions, TrustLevel
 
 logger = logging.getLogger(__name__)
 
@@ -242,8 +242,19 @@ class PermissionHandler:
         """
         logger.debug(f"Permission check: {tool_name}")
 
-        # Trust mode bypasses checks (except deny list)
-        trust_mode = self._permissions.trust_mode
+        # Resolve effective trust level (handles backward compat with trust_mode)
+        trust_level = self._permissions.effective_trust_level
+        trust_mode = trust_level == TrustLevel.FULL
+
+        # Sandboxed agents: deny all host tools - they run in containers
+        if trust_level == TrustLevel.SANDBOXED:
+            # Only allow MCP tools and web tools in sandboxed mode
+            if tool_name.startswith("mcp__") or tool_name in ALWAYS_ALLOWED_TOOLS:
+                return PermissionDecision(behavior="allow", updated_input=input_data)
+            return PermissionDecision(
+                behavior="deny",
+                message=f"Sandboxed agents cannot use host tool: {tool_name}",
+            )
 
         # Always allow MCP tools (they provide structured access)
         if tool_name.startswith("mcp__"):
