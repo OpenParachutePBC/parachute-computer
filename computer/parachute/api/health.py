@@ -39,6 +39,7 @@ _start_time = time.time()
 
 @router.get("/health")
 async def health_check(
+    request: Request,
     detailed: bool = Query(False, description="Include detailed information"),
 ) -> dict[str, Any]:
     """
@@ -64,12 +65,19 @@ async def health_check(
     if not settings.vault_path.exists():
         vault_status = "inaccessible"
 
+    # Module status
+    modules_status = []
+    module_loader = getattr(request.app.state, 'module_loader', None)
+    if module_loader:
+        modules_status = module_loader.get_module_status()
+
     return {
         **basic,
         "vault": {
             "path": str(settings.vault_path),
             "status": vault_status,
         },
+        "modules": modules_status,
         "uptime": time.time() - _start_time,
     }
 

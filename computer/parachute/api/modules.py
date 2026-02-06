@@ -1,16 +1,15 @@
 """
 Module management API endpoints.
 
-Modules are top-level directories in the vault (Chat, Daily, Build, etc.)
+Uses ModuleLoader for real module status instead of hardcoded lists.
+Prompt management reads/writes vault/{Module}/CLAUDE.md for system prompts.
 """
 
 import logging
-from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
+from fastapi import APIRouter, HTTPException, Request
 
 from parachute.config import get_settings
 from parachute.models.requests import ModulePromptUpdate
@@ -35,41 +34,55 @@ You are a **thinking partner and memory extension**. Help the user:
 
 
 @router.get("/modules")
-async def list_modules() -> dict[str, Any]:
-    """
-    List all modules and their status.
-    """
-    settings = get_settings()
-    vault_path = settings.vault_path
+async def list_modules(request: Request) -> dict[str, Any]:
+    """List all loaded modules and their status from ModuleLoader."""
+    loader = request.app.state.module_loader
+    if loader is None:
+        return {"modules": [], "error": "ModuleLoader not initialized"}
 
-    known_modules = ["Chat", "Daily", "Build"]
-    modules = []
+    status = loader.get_module_status()
 
-    for module_name in known_modules:
-        module_path = vault_path / module_name
-        if module_path.exists():
-            has_prompt = (module_path / "CLAUDE.md").exists()
-            has_sessions = (module_path / "sessions").exists()
+    # Enrich with manifest data from loaded modules
+    loaded_modules = request.app.state.modules or {}
+    for entry in status:
+        name = entry["name"]
+        if name in loaded_modules:
+            module = loaded_modules[name]
+            manifest = getattr(module, 'manifest', {}) or {}
+            entry["version"] = manifest.get("version", "unknown")
+            entry["description"] = manifest.get("description", "")
+            entry["provides"] = getattr(module, 'provides', [])
+            entry["has_router"] = (
+                hasattr(module, 'get_router')
+                and module.get_router() is not None
+            )
 
-            modules.append({
-                "name": module_name.lower(),
-                "displayName": module_name,
-                "exists": True,
-                "hasPrompt": has_prompt,
-                "hasSessions": has_sessions,
-            })
+    return {"modules": status}
 
-    return {"modules": modules}
+
+@router.post("/modules/{name}/approve")
+async def approve_module(name: str, request: Request) -> dict[str, Any]:
+    """Approve a pending module by recording its current hash."""
+    loader = request.app.state.module_loader
+    if loader is None:
+        raise HTTPException(500, "ModuleLoader not initialized")
+
+    result = loader.approve_module(name)
+    if not result:
+        raise HTTPException(404, f"Module '{name}' not pending approval")
+
+    return {
+        "approved": True,
+        "name": name,
+        "message": "Restart server to load module",
+    }
 
 
 @router.get("/modules/{mod}/prompt")
 async def get_module_prompt(mod: str) -> dict[str, Any]:
-    """
-    Get system prompt for a module (e.g., Chat/CLAUDE.md).
-    """
+    """Get system prompt for a module (e.g., Chat/CLAUDE.md)."""
     settings = get_settings()
 
-    # Normalize module name
     module_name = mod.capitalize()
     prompt_path = settings.vault_path / module_name / "CLAUDE.md"
 
@@ -91,24 +104,18 @@ async def get_module_prompt(mod: str) -> dict[str, Any]:
 
 @router.put("/modules/{mod}/prompt")
 async def update_module_prompt(mod: str, body: ModulePromptUpdate) -> dict[str, Any]:
-    """
-    Update system prompt for a module.
-
-    Body: { content: string } or { reset: true } to use default
-    """
+    """Update system prompt for a module."""
     settings = get_settings()
 
     module_name = mod.capitalize()
     prompt_path = settings.vault_path / module_name / "CLAUDE.md"
 
     if body.reset:
-        # Delete the file to use default
         if prompt_path.exists():
             prompt_path.unlink()
         return {"success": True, "reset": True}
 
     if body.content is not None:
-        # Ensure module directory exists
         prompt_path.parent.mkdir(parents=True, exist_ok=True)
         prompt_path.write_text(body.content, encoding="utf-8")
         return {"success": True, "path": f"{module_name}/CLAUDE.md"}
@@ -116,49 +123,9 @@ async def update_module_prompt(mod: str, body: ModulePromptUpdate) -> dict[str, 
     raise HTTPException(status_code=400, detail="content or reset required")
 
 
-@router.get("/modules/{mod}/search")
-async def search_module(
-    mod: str,
-    q: str = Query(..., description="Search query"),
-    limit: int = Query(20, ge=1, le=100),
-) -> dict[str, Any]:
-    """
-    Search module content.
-
-    Query params:
-    - q: Search query (required)
-    - limit: Maximum results
-    """
-    # TODO: Implement semantic search with ModuleIndexer
-    return {
-        "module": mod,
-        "query": q,
-        "results": [],
-        "message": "Search not yet implemented",
-    }
-
-
-@router.post("/modules/{mod}/index")
-async def rebuild_module_index(
-    mod: str,
-    with_embeddings: bool = Query(True, description="Include embeddings"),
-) -> dict[str, Any]:
-    """
-    Rebuild search index for a module.
-    """
-    # TODO: Implement with ModuleIndexer
-    return {
-        "success": True,
-        "module": mod,
-        "message": "Indexing not yet implemented",
-    }
-
-
 @router.get("/modules/{mod}/stats")
 async def get_module_stats(mod: str) -> dict[str, Any]:
-    """
-    Get stats for a specific module.
-    """
+    """Get file stats for a specific module's vault directory."""
     settings = get_settings()
 
     module_name = mod.capitalize()
@@ -167,7 +134,6 @@ async def get_module_stats(mod: str) -> dict[str, Any]:
     if not module_path.exists():
         raise HTTPException(status_code=404, detail=f"Module '{mod}' not found")
 
-    # Count files
     file_count = 0
     total_size = 0
     for item in module_path.rglob("*"):
@@ -181,42 +147,3 @@ async def get_module_stats(mod: str) -> dict[str, Any]:
         "totalSize": total_size,
         "hasPrompt": (module_path / "CLAUDE.md").exists(),
     }
-
-
-# =============================================================================
-# CURATOR REMOVED - Curator endpoints excluded from modular architecture
-# =============================================================================
-
-
-class AgentRunRequest(BaseModel):
-    """Request body for running a daily agent."""
-    date: Optional[str] = None  # YYYY-MM-DD, defaults to yesterday
-    force: bool = False  # Run even if already processed
-
-
-# CURATOR REMOVED - curate_module endpoint removed
-
-
-# =============================================================================
-# DAILY_AGENT REMOVED - Daily agent endpoints disabled for modular architecture.
-# These endpoints depend on parachute.core.daily_agent which is Phase 3.
-# They will be restored when daily_agent module is implemented.
-#
-# Removed endpoints:
-# - GET  /modules/daily/agents/status
-# - GET  /modules/daily/agents
-# - GET  /modules/daily/agents/{agent_name}
-# - POST /modules/daily/agents/{agent_name}/run
-# - GET  /modules/daily/agents/{agent_name}/transcript
-# - POST /modules/daily/agents/{agent_name}/reset
-# =============================================================================
-
-
-# =============================================================================
-# CURATOR REMOVED - Curator status/transcript endpoints disabled.
-# These endpoints depend on parachute.core.daily_curator which is excluded.
-#
-# Removed endpoints:
-# - GET /modules/{mod}/curator
-# - GET /modules/{mod}/curator/transcript
-# =============================================================================
