@@ -1,3 +1,4 @@
+#if canImport(FluidAudio)
 import FlutterMacOS
 import Foundation
 import FluidAudio
@@ -410,3 +411,5 @@ class ParakeetBridge {
         }
     }
 }
+
+#endif

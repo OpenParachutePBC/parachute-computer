@@ -1,6 +1,8 @@
 import Cocoa
 import FlutterMacOS
+#if canImport(FluidAudio)
 import FluidAudio
+#endif
 
 @main
 class AppDelegate: FlutterAppDelegate {
@@ -13,7 +15,8 @@ class AppDelegate: FlutterAppDelegate {
   }
 
   override func applicationDidFinishLaunching(_ notification: Notification) {
-    // Setup Parakeet method channel
+    #if canImport(FluidAudio)
+    // Setup Parakeet method channel (FluidAudio CoreML transcription)
     if let flutterViewController = mainFlutterWindow?.contentViewController as? FlutterViewController {
       let parakeetChannel = FlutterMethodChannel(
         name: "com.parachute.app/parakeet",
@@ -65,6 +68,7 @@ class AppDelegate: FlutterAppDelegate {
         }
       }
     }
+    #endif
 
     super.applicationDidFinishLaunching(notification)
   }
