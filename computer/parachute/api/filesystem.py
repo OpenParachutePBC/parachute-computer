@@ -30,6 +30,15 @@ def get_vault_path(request: Request) -> Path:
     return settings.vault_path
 
 
+def _check_vault_path(vault_path: Path, target: Path) -> Path:
+    """Resolve target and verify it's within vault. Returns resolved path."""
+    resolved = target.resolve()
+    vault_resolved = vault_path.resolve()
+    if not str(resolved).startswith(str(vault_resolved)):
+        raise HTTPException(status_code=403, detail="Access denied: path outside vault")
+    return resolved
+
+
 @router.get("/ls")
 async def list_directory(
     request: Request,
@@ -48,17 +57,9 @@ async def list_directory(
     - hasAgentsMd: (directories only) Whether AGENTS.md exists
     - hasClaudeMd: (directories only) Whether CLAUDE.md exists
     """
-    vault_path = get_vault_path(request)
+    vault_path = get_vault_path(request).resolve()
     target_path = vault_path / path if path else vault_path
-
-    # Security: ensure path is within vault
-    try:
-        target_path = target_path.resolve()
-        vault_resolved = vault_path.resolve()
-        if not str(target_path).startswith(str(vault_resolved)):
-            raise HTTPException(status_code=403, detail="Access denied: path outside vault")
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid path: {e}")
+    target_path = _check_vault_path(vault_path, target_path)
 
     if not target_path.exists():
         raise HTTPException(status_code=404, detail="Path not found")
@@ -150,17 +151,8 @@ async def read_file(
     - size: File size in bytes
     - lastModified: ISO timestamp
     """
-    vault_path = get_vault_path(request)
-    file_path = vault_path / path
-
-    # Security: ensure path is within vault
-    try:
-        file_path = file_path.resolve()
-        vault_resolved = vault_path.resolve()
-        if not str(file_path).startswith(str(vault_resolved)):
-            raise HTTPException(status_code=403, detail="Access denied: path outside vault")
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid path: {e}")
+    vault_path = get_vault_path(request).resolve()
+    file_path = _check_vault_path(vault_path, vault_path / path)
 
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="File not found")
@@ -194,18 +186,9 @@ async def write_file(
 
     Creates parent directories if needed.
     """
-    vault_path = get_vault_path(request)
+    vault_path = get_vault_path(request).resolve()
     file_path = vault_path / body.path
-
-    # Security: ensure path is within vault
-    try:
-        # Use parent to check since file might not exist yet
-        parent_path = file_path.parent.resolve()
-        vault_resolved = vault_path.resolve()
-        if not str(parent_path).startswith(str(vault_resolved)):
-            raise HTTPException(status_code=403, detail="Access denied: path outside vault")
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid path: {e}")
+    _check_vault_path(vault_path, file_path.parent)
 
     try:
         # Create parent directories if needed

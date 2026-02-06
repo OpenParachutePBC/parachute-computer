@@ -365,27 +365,25 @@ class SessionManager:
             return "vault"
 
         # Fallback: search all known locations
-        # Check vault .claude first
+        # Check ~/.claude first (primary location)
         filename = f"{session_id}.jsonl"
-        claude_projects = self.vault_path / ".claude" / "projects"
-        if claude_projects.exists():
-            for project_dir in claude_projects.iterdir():
+        home_projects = Path.home() / ".claude" / "projects"
+        if home_projects.exists():
+            for project_dir in home_projects.iterdir():
                 if project_dir.is_dir():
                     candidate = project_dir / filename
                     if candidate.exists():
-                        return "vault"
+                        return "home"
 
-        # Check ~/.claude (pre-migration location)
-        original_home = Path.home()
-        if original_home != self.vault_path:
-            original_claude_projects = original_home / ".claude" / "projects"
-            if original_claude_projects.exists():
-                for project_dir in original_claude_projects.iterdir():
-                    if project_dir.is_dir():
-                        candidate = project_dir / filename
-                        if candidate.exists():
-                            logger.debug(f"Found transcript in HOME location: {candidate}")
-                            return "home"
+        # Check vault/.claude (legacy location from HOME override era)
+        vault_projects = self.vault_path / ".claude" / "projects"
+        if vault_projects.exists():
+            for project_dir in vault_projects.iterdir():
+                if project_dir.is_dir():
+                    candidate = project_dir / filename
+                    if candidate.exists():
+                        logger.debug(f"Found transcript in legacy vault location: {candidate}")
+                        return "vault"
 
         return None
 
@@ -411,8 +409,8 @@ class SessionManager:
 
         # SDK encodes path by replacing / with -
         encoded_path = effective_cwd.replace("/", "-")
-        # Sessions are stored in {vault}/.claude/ since we set HOME=vault during SDK queries
-        claude_dir = self.vault_path / ".claude" / "projects" / encoded_path
+        # Sessions are stored in ~/.claude/ (real home)
+        claude_dir = Path.home() / ".claude" / "projects" / encoded_path
 
         return claude_dir / f"{session_id}.jsonl"
 
@@ -454,28 +452,26 @@ class SessionManager:
                 return "/" + encoded_name[1:].replace("-", "/")
             return encoded_name.replace("-", "/")
 
-        # First, search in vault's .claude directory (new location)
-        claude_projects = self.vault_path / ".claude" / "projects"
-        if claude_projects.exists():
-            for project_dir in claude_projects.iterdir():
+        # Search in ~/.claude (primary location)
+        home_projects = Path.home() / ".claude" / "projects"
+        if home_projects.exists():
+            for project_dir in home_projects.iterdir():
                 if project_dir.is_dir():
                     candidate = project_dir / filename
                     if candidate.exists():
                         decoded_cwd = decode_project_path(project_dir.name)
-                        return (candidate, decoded_cwd, "vault")
+                        return (candidate, decoded_cwd, "home")
 
-        # Fallback: search in original ~/.claude directory (pre-migration sessions)
-        original_home = Path.home()
-        if original_home != self.vault_path:
-            original_claude_projects = original_home / ".claude" / "projects"
-            if original_claude_projects.exists():
-                for project_dir in original_claude_projects.iterdir():
-                    if project_dir.is_dir():
-                        candidate = project_dir / filename
-                        if candidate.exists():
-                            decoded_cwd = decode_project_path(project_dir.name)
-                            logger.debug(f"Found transcript in HOME location: {candidate}, cwd={decoded_cwd}")
-                            return (candidate, decoded_cwd, "home")
+        # Fallback: search in vault/.claude (legacy from HOME override era)
+        vault_projects = self.vault_path / ".claude" / "projects"
+        if vault_projects.exists():
+            for project_dir in vault_projects.iterdir():
+                if project_dir.is_dir():
+                    candidate = project_dir / filename
+                    if candidate.exists():
+                        decoded_cwd = decode_project_path(project_dir.name)
+                        logger.debug(f"Found transcript in legacy vault location: {candidate}, cwd={decoded_cwd}")
+                        return (candidate, decoded_cwd, "vault")
 
         return None
 
@@ -678,9 +674,9 @@ class SessionManager:
     async def _load_claude_code_messages(self, session: Session) -> list[dict[str, Any]]:
         """Load messages from a Claude Code session's JSONL file."""
         # Claude Code sessions use the original session ID to find the file
-        # Sessions are stored in {vault}/.claude/ since we set HOME=vault during SDK queries
+        # Sessions are stored in ~/.claude/ (real home)
 
-        projects_dir = self.vault_path / ".claude" / "projects"
+        projects_dir = Path.home() / ".claude" / "projects"
         if not projects_dir.exists():
             return []
 

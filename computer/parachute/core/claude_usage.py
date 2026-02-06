@@ -1,16 +1,13 @@
 """
 Claude usage tracking service.
 
-Fetches usage limits from Claude's OAuth API using credentials
-stored by Claude Code. When Parachute is fully self-contained,
-credentials are stored at {vault}/.claude/.credentials.json.
+Fetches usage limits from Claude's OAuth API using the OAuth token
+from `claude setup-token` (CLAUDE_CODE_OAUTH_TOKEN).
 """
 
-import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
 from typing import Optional
 
 import httpx
@@ -49,43 +46,14 @@ class ClaudeUsage:
     error: Optional[str] = None
 
 
-def get_claude_credentials(vault_path: Optional[Path] = None) -> Optional[dict]:
+def get_claude_token() -> Optional[str]:
     """
-    Retrieve Claude Code credentials.
+    Get the Claude OAuth token from settings.
 
-    When vault_path is provided, looks for credentials in {vault}/.claude/.credentials.json
-    (self-contained Parachute mode). Otherwise falls back to ~/.claude/.credentials.json.
-
-    Returns the full credentials dict or None if not available.
+    Returns the token string or None if not configured.
     """
-    # Try vault-based credentials first if vault_path is provided
-    if vault_path:
-        creds_path = vault_path / ".claude" / ".credentials.json"
-        if creds_path.exists():
-            try:
-                with open(creds_path) as f:
-                    creds = json.load(f)
-                logger.debug(f"Using vault credentials from {creds_path}")
-                return creds
-            except (json.JSONDecodeError, Exception) as e:
-                logger.warning(f"Failed to read vault credentials: {e}")
-
-    # Fall back to system-wide credentials
-    creds_path = Path.home() / ".claude" / ".credentials.json"
-    if not creds_path.exists():
-        logger.debug(f"Credentials file not found: {creds_path}")
-        return None
-
-    try:
-        with open(creds_path) as f:
-            creds = json.load(f)
-        return creds
-    except json.JSONDecodeError as e:
-        logger.warning(f"Failed to parse credentials file: {e}")
-        return None
-    except Exception as e:
-        logger.warning(f"Error reading credentials file: {e}")
-        return None
+    from parachute.config import get_settings
+    return get_settings().claude_code_oauth_token
 
 
 def _parse_datetime(s: Optional[str]) -> Optional[datetime]:
@@ -125,32 +93,16 @@ def _parse_extra_usage(data: Optional[dict]) -> Optional[ExtraUsage]:
     )
 
 
-async def fetch_claude_usage(vault_path: Optional[Path] = None) -> ClaudeUsage:
+async def fetch_claude_usage() -> ClaudeUsage:
     """
     Fetch current Claude usage from the API.
 
-    Args:
-        vault_path: Optional vault path for self-contained credentials
+    Uses the OAuth token from settings (CLAUDE_CODE_OAUTH_TOKEN).
 
     Returns a ClaudeUsage object with current limits, or with an error
     message if the fetch failed.
     """
-    creds = get_claude_credentials(vault_path)
-
-    if not creds:
-        return ClaudeUsage(
-            five_hour=None,
-            seven_day=None,
-            seven_day_sonnet=None,
-            seven_day_opus=None,
-            extra_usage=None,
-            subscription_type=None,
-            rate_limit_tier=None,
-            error="Claude Code credentials not found in keychain",
-        )
-
-    oauth_data = creds.get("claudeAiOauth", {})
-    access_token = oauth_data.get("accessToken")
+    access_token = get_claude_token()
 
     if not access_token:
         return ClaudeUsage(
@@ -161,12 +113,12 @@ async def fetch_claude_usage(vault_path: Optional[Path] = None) -> ClaudeUsage:
             extra_usage=None,
             subscription_type=None,
             rate_limit_tier=None,
-            error="No access token in Claude Code credentials",
+            error="CLAUDE_CODE_OAUTH_TOKEN not configured (run `claude setup-token`)",
         )
 
-    # Extract subscription info from credentials
-    subscription_type = oauth_data.get("subscriptionType")
-    rate_limit_tier = oauth_data.get("rateLimitTier")
+    # subscription_type and rate_limit_tier are not available from token alone
+    subscription_type = None
+    rate_limit_tier = None
 
     try:
         async with httpx.AsyncClient() as client:

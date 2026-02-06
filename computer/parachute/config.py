@@ -22,6 +22,12 @@ class Settings(BaseSettings):
     port: int = Field(default=3336, description="Server port")
     host: str = Field(default="0.0.0.0", description="Server bind address")
 
+    # Claude authentication
+    claude_code_oauth_token: Optional[str] = Field(
+        default=None,
+        description="Long-lived OAuth token from `claude setup-token` (CLAUDE_CODE_OAUTH_TOKEN)",
+    )
+
     # Security
     api_key: Optional[str] = Field(
         default=None,

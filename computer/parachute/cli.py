@@ -1,22 +1,29 @@
 """
-Parachute CLI for module management.
+Parachute CLI.
 
 Usage:
-    python -m parachute module list          # List modules (offline)
-    python -m parachute module approve NAME  # Approve a module (offline)
-    python -m parachute module status        # Show live server status (online)
-    python -m parachute module test [NAME]   # Test module endpoints (online)
+    parachute setup                    # Configure vault path and Claude token
+    parachute status                   # System overview (offline + online)
+    parachute server                   # Start the server
+    parachute module list              # List modules (offline)
+    parachute module approve NAME      # Approve a module (offline)
+    parachute module status            # Show live server status (online)
+    parachute module test [NAME]       # Test module endpoints (online)
 """
 
 import argparse
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
 from parachute.core.module_loader import ModuleLoader, compute_module_hash
+
+
+# --- Helpers ---
 
 
 def _get_vault_path() -> Path:
@@ -29,6 +36,38 @@ def _get_server_url() -> str:
     """Resolve server URL from PORT env or default."""
     port = os.environ.get("PORT", "3336")
     return f"http://localhost:{port}"
+
+
+def _get_env_file() -> Path:
+    """Get the .env file path (next to the vault)."""
+    vault = _get_vault_path()
+    # .env lives in the server working directory
+    return Path.cwd() / ".env"
+
+
+def _load_env_file() -> dict[str, str]:
+    """Load key=value pairs from .env file."""
+    env_file = _get_env_file()
+    env = {}
+    if env_file.exists():
+        for line in env_file.read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "=" in line:
+                key, _, value = line.partition("=")
+                env[key.strip()] = value.strip()
+    return env
+
+
+def _save_env_file(env: dict[str, str]) -> Path:
+    """Save key=value pairs to .env file."""
+    env_file = _get_env_file()
+    lines = []
+    for key, value in sorted(env.items()):
+        lines.append(f"{key}={value}")
+    env_file.write_text("\n".join(lines) + "\n")
+    return env_file
 
 
 def _api_get(url: str) -> dict:
@@ -49,7 +88,154 @@ def _api_post(url: str, data: dict | None = None) -> dict:
         return json.loads(resp.read())
 
 
-# --- Offline commands ---
+# --- Top-level commands ---
+
+
+def cmd_setup(args: argparse.Namespace) -> None:
+    """Interactive setup: vault path, Claude token."""
+    print("Parachute Setup")
+    print("=" * 40)
+
+    env = _load_env_file()
+
+    # 1. Vault path
+    current_vault = env.get("VAULT_PATH", os.environ.get("VAULT_PATH", ""))
+    print(f"\nVault path [{current_vault or './vault'}]: ", end="")
+    vault_input = input().strip()
+    if vault_input:
+        env["VAULT_PATH"] = vault_input
+    elif not current_vault:
+        env["VAULT_PATH"] = "./vault"
+
+    vault_path = Path(env.get("VAULT_PATH", "./vault")).resolve()
+
+    # Ensure vault exists
+    vault_path.mkdir(parents=True, exist_ok=True)
+    (vault_path / ".parachute").mkdir(exist_ok=True)
+    print(f"  Vault: {vault_path}")
+
+    # 2. Port
+    current_port = env.get("PORT", os.environ.get("PORT", ""))
+    print(f"\nServer port [{current_port or '3336'}]: ", end="")
+    port_input = input().strip()
+    if port_input:
+        env["PORT"] = port_input
+    elif not current_port:
+        env["PORT"] = "3336"
+
+    # 3. Claude token
+    current_token = env.get("CLAUDE_CODE_OAUTH_TOKEN", os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", ""))
+    has_token = bool(current_token)
+
+    print(f"\nClaude token: {'configured' if has_token else 'not set'}")
+
+    if has_token:
+        print("Update token? [y/N]: ", end="")
+        update = input().strip().lower()
+        if update != "y":
+            print("  Keeping existing token.")
+        else:
+            has_token = False
+
+    if not has_token:
+        print("\nTo get a token, run: claude setup-token")
+        print("Then paste it here.")
+        print("\nCLAUDE_CODE_OAUTH_TOKEN: ", end="")
+        token = input().strip()
+        if token:
+            env["CLAUDE_CODE_OAUTH_TOKEN"] = token
+            print("  Token saved.")
+        else:
+            print("  Skipped (you can set this later).")
+
+    # Save
+    env_file = _save_env_file(env)
+    print(f"\nConfig written to {env_file}")
+    print("\nStart the server with: parachute server")
+
+
+def cmd_status(args: argparse.Namespace) -> None:
+    """Show system status: vault, token, server, modules."""
+    vault_path = _get_vault_path()
+    server_url = _get_server_url()
+
+    print("Parachute Status")
+    print("=" * 40)
+
+    # Vault
+    vault_exists = vault_path.exists()
+    print(f"\nVault: {vault_path}")
+    print(f"  exists: {'yes' if vault_exists else 'NO'}")
+    if vault_exists:
+        modules_dir = vault_path / ".modules"
+        if modules_dir.exists():
+            module_count = sum(1 for d in modules_dir.iterdir() if d.is_dir())
+            print(f"  modules: {module_count}")
+
+    # Token
+    token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
+    if not token:
+        # Check .env file
+        env = _load_env_file()
+        token = env.get("CLAUDE_CODE_OAUTH_TOKEN", "")
+    print(f"\nClaude token: {'configured' if token else 'NOT SET (run: parachute setup)'}")
+    if token:
+        print(f"  prefix: {token[:16]}...")
+
+    # Server
+    print(f"\nServer: {server_url}")
+    try:
+        health = _api_get(f"{server_url}/api/health?detailed=true")
+        version = health.get("version", "?")
+        commit = health.get("commit", "")
+        uptime = health.get("uptime", 0)
+        print(f"  status: running (v{version} {commit})")
+        print(f"  uptime: {uptime:.0f}s")
+
+        # Modules
+        modules = health.get("modules", [])
+        if modules:
+            print(f"\n  Modules ({len(modules)}):")
+            for m in modules:
+                print(f"    {m['name']}: {m['status']}")
+    except (URLError, OSError):
+        print("  status: not running")
+
+    print()
+
+
+def cmd_server(args: argparse.Namespace) -> None:
+    """Start the Parachute server."""
+    # Load .env into environment if it exists
+    env = _load_env_file()
+    for key, value in env.items():
+        if key not in os.environ:
+            os.environ[key] = value
+
+    vault_path = os.environ.get("VAULT_PATH", "./vault")
+    port = os.environ.get("PORT", "3336")
+    host = os.environ.get("HOST", "127.0.0.1")
+
+    token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
+    if not token:
+        print("Warning: CLAUDE_CODE_OAUTH_TOKEN not set. Chat will not work.")
+        print("Run 'parachute setup' to configure.\n")
+
+    print(f"Starting Parachute on {host}:{port} (vault: {vault_path})")
+
+    try:
+        import uvicorn
+        uvicorn.run(
+            "parachute.server:app",
+            host=host,
+            port=int(port),
+            log_level="info",
+        )
+    except KeyboardInterrupt:
+        print("\nServer stopped.")
+
+
+# --- Module commands ---
 
 
 def cmd_module_list(args: argparse.Namespace) -> None:
@@ -114,9 +300,6 @@ def cmd_module_approve(args: argparse.Namespace) -> None:
     print(f"\nComputed hash: {current_hash[:12]}...")
     print(f"Wrote to {loader._hash_file}")
     print("Restart server to load module.")
-
-
-# --- Online commands ---
 
 
 def cmd_module_status(args: argparse.Namespace) -> None:
@@ -257,9 +440,18 @@ def cmd_module_test(args: argparse.Namespace) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="parachute",
-        description="Parachute module management CLI",
+        description="Parachute — local-first AI computer",
     )
     subparsers = parser.add_subparsers(dest="command")
+
+    # setup
+    subparsers.add_parser("setup", help="Configure vault path and Claude token")
+
+    # status
+    subparsers.add_parser("status", help="Show system status")
+
+    # server
+    subparsers.add_parser("server", help="Start the server")
 
     # module subcommand
     module_parser = subparsers.add_parser("module", help="Module management")
@@ -281,7 +473,13 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    if args.command == "module":
+    if args.command == "setup":
+        cmd_setup(args)
+    elif args.command == "status":
+        cmd_status(args)
+    elif args.command == "server":
+        cmd_server(args)
+    elif args.command == "module":
         if args.action == "list":
             cmd_module_list(args)
         elif args.action == "approve":

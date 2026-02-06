@@ -25,7 +25,10 @@ dev = [
 ]
 
 [project.scripts]
-parachute = "parachute.server:main"
+parachute = "parachute.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["parachute*"]
 
 [build-system]
 requires = ["setuptools>=68.0"]

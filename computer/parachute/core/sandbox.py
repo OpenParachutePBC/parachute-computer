@@ -40,9 +40,9 @@ class AgentSandboxConfig:
 class DockerSandbox:
     """Manages Docker containers for sandboxed agent execution."""
 
-    def __init__(self, vault_path: Path, credentials_path: Optional[Path] = None):
+    def __init__(self, vault_path: Path, claude_token: Optional[str] = None):
         self.vault_path = vault_path
-        self.credentials_path = credentials_path or vault_path / ".claude" / "credentials.json"
+        self.claude_token = claude_token
         self._docker_available: Optional[bool] = None
 
     async def is_available(self) -> bool:
@@ -90,12 +90,6 @@ class DockerSandbox:
         """Build Docker volume mount flags based on config."""
         mounts = []
 
-        # Always mount credentials read-only
-        if self.credentials_path.exists():
-            mounts.extend([
-                "-v", f"{self.credentials_path}:/home/agent/.claude/credentials.json:ro"
-            ])
-
         # Mount allowed vault paths
         for path_pattern in config.allowed_paths:
             # Resolve pattern to actual path (no glob expansion in Docker mounts)
@@ -131,8 +125,11 @@ class DockerSandbox:
         args.extend([
             "-e", f"PARACHUTE_SESSION_ID={config.session_id}",
             "-e", f"PARACHUTE_AGENT_TYPE={config.agent_type}",
-            "-e", "HOME=/home/agent",
         ])
+
+        # Pass Claude token as env var (no credential files needed)
+        if self.claude_token:
+            args.extend(["-e", f"CLAUDE_CODE_OAUTH_TOKEN={self.claude_token}"])
 
         # Image
         args.append(SANDBOX_IMAGE)

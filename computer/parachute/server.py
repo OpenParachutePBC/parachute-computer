@@ -53,6 +53,7 @@ async def lifespan(app: FastAPI):
     app.state.server_config = server_config
     logger.info(f"Auth mode: {server_config.security.require_auth.value}")
     logger.info(f"API keys configured: {len(server_config.security.api_keys)}")
+    logger.info(f"Claude token: {'configured' if settings.claude_code_oauth_token else 'not set (run `claude setup-token`)'}")
 
     # Initialize database
     db = await init_database(settings.database_path)

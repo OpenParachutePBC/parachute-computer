@@ -193,12 +193,11 @@ class TestDockerSandbox:
     def test_init(self, vault_path):
         sandbox = DockerSandbox(vault_path=vault_path)
         assert sandbox.vault_path == vault_path
-        assert sandbox.credentials_path == vault_path / ".claude" / "credentials.json"
+        assert sandbox.claude_token is None
 
-    def test_custom_credentials_path(self, vault_path):
-        creds = vault_path / "custom_creds.json"
-        sandbox = DockerSandbox(vault_path=vault_path, credentials_path=creds)
-        assert sandbox.credentials_path == creds
+    def test_with_token(self, vault_path):
+        sandbox = DockerSandbox(vault_path=vault_path, claude_token="sk-ant-oat01-test")
+        assert sandbox.claude_token == "sk-ant-oat01-test"
 
     def test_health_info_initial(self, vault_path):
         sandbox = DockerSandbox(vault_path=vault_path)
