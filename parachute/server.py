@@ -81,7 +81,8 @@ async def lifespan(app: FastAPI):
     app.state.modules = modules
     logger.info(f"Loaded {len(modules)} modules: {list(modules.keys())}")
 
-    # Register module routes dynamically
+    # Register module routes dynamically and track which modules have routers
+    module_has_router: dict[str, bool] = {}
     for name, module in modules.items():
         if hasattr(module, 'get_router'):
             router = module.get_router()
@@ -89,6 +90,10 @@ async def lifespan(app: FastAPI):
                 prefix = f"/api/{name}"
                 app.include_router(router, prefix=prefix, tags=[name])
                 logger.info(f"Registered routes for module: {name} at {prefix}")
+                module_has_router[name] = True
+                continue
+        module_has_router[name] = False
+    app.state.module_has_router = module_has_router
 
     logger.info("Server ready")
 
@@ -103,18 +108,9 @@ async def lifespan(app: FastAPI):
     app.state.database = None
     app.state.module_loader = None
     app.state.modules = None
+    app.state.module_has_router = None
     app.state.scheduler = None
     app.state.server_config = None
-
-
-def get_orchestrator() -> Orchestrator:
-    """Get the orchestrator from app state. For use in route handlers."""
-    # This is a convenience function that will be called from request context
-    # We'll need to use request.app.state.orchestrator in actual routes
-    raise RuntimeError(
-        "get_orchestrator() should not be called directly. "
-        "Use request.app.state.orchestrator instead."
-    )
 
 
 # Create FastAPI application
@@ -147,42 +143,7 @@ def _get_cors_origins() -> list[str]:
     return settings.cors_origins_list
 
 
-# Custom CORS middleware that also validates User-Agent for app identification
-@app.middleware("http")
-async def cors_with_app_validation(request: Request, call_next):
-    """CORS middleware with Parachute app identification.
-
-    In addition to standard CORS origin checking, this middleware:
-    - Allows requests with User-Agent containing 'Parachute' from any origin
-    - Provides a way for the mobile app to identify itself
-    """
-    origin = request.headers.get("origin", "")
-    user_agent = request.headers.get("user-agent", "")
-
-    # Check if this is a Parachute app request (identified by User-Agent)
-    is_parachute_app = "Parachute" in user_agent
-
-    response = await call_next(request)
-
-    # Set CORS headers based on validation
-    if is_parachute_app:
-        # Trust Parachute app requests from any origin
-        response.headers["Access-Control-Allow-Origin"] = origin or "*"
-        response.headers["Access-Control-Allow-Credentials"] = "true"
-        response.headers["Access-Control-Allow-Methods"] = "*"
-        response.headers["Access-Control-Allow-Headers"] = "*"
-    elif origin:
-        cors_origins = _get_cors_origins()
-        if origin in cors_origins:
-            response.headers["Access-Control-Allow-Origin"] = origin
-            response.headers["Access-Control-Allow-Credentials"] = "true"
-            response.headers["Access-Control-Allow-Methods"] = "*"
-            response.headers["Access-Control-Allow-Headers"] = "*"
-
-    return response
-
-
-# Also keep standard CORS for preflight requests
+# CORS middleware — standard FastAPI CORSMiddleware handles origin checking and preflights
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_get_cors_origins(),
@@ -302,7 +263,6 @@ def main():
     DELETE /api/chat/:id       - Delete session
     GET  /api/modules/:mod/prompt   - Get module prompt
     PUT  /api/modules/:mod/prompt   - Update module prompt
-    GET  /api/modules/:mod/search   - Search module
 ===============================================================
     """)
 

@@ -18,7 +18,6 @@ router = APIRouter()
 def _get_git_commit() -> str | None:
     """Get the current git commit hash, if in a git repo."""
     try:
-        # Get the directory where this file lives (parachute/api/)
         base_dir = Path(__file__).parent.parent.parent
         result = subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"],
@@ -32,6 +31,9 @@ def _get_git_commit() -> str | None:
     except Exception:
         pass
     return None
+
+# Computed once at import time — avoids blocking the event loop on every request
+_GIT_COMMIT: str | None = _get_git_commit()
 
 # Server start time for uptime calculation
 _start_time = time.time()
@@ -49,12 +51,11 @@ async def health_check(
     """
     settings = get_settings()
 
-    commit = _get_git_commit()
     basic = {
         "status": "ok",
         "timestamp": int(time.time() * 1000),
         "version": __version__,
-        **({"commit": commit} if commit else {}),
+        **({"commit": _GIT_COMMIT} if _GIT_COMMIT else {}),
     }
 
     if not detailed:
@@ -79,28 +80,4 @@ async def health_check(
         },
         "modules": modules_status,
         "uptime": time.time() - _start_time,
-    }
-
-
-@router.get("/debug/auth")
-async def debug_auth(request: Request) -> dict[str, Any]:
-    """
-    Debug endpoint to check what auth headers are received.
-
-    This helps diagnose 401 issues by showing exactly what the server sees.
-    """
-    client_host = request.client.host if request.client else "unknown"
-
-    return {
-        "client_host": client_host,
-        "is_localhost": client_host in ("127.0.0.1", "::1", "localhost"),
-        "headers": {
-            "x-api-key": request.headers.get("x-api-key", "(not set)"),
-            "authorization": request.headers.get("authorization", "(not set)"),
-            "user-agent": request.headers.get("user-agent", "(not set)"),
-        },
-        "has_api_key": bool(
-            request.headers.get("x-api-key") or
-            request.headers.get("authorization", "").replace("Bearer ", "")
-        ),
     }
