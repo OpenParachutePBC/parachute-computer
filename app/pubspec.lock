@@ -1151,6 +1151,13 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "3.2.1"
+  parachute_app_core:
+    dependency: "direct main"
+    description:
+      path: "../parachute-app-core"
+      relative: true
+    source: path
+    version: "0.1.0"
   path:
     dependency: "direct main"
     description:
