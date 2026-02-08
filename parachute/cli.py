@@ -20,7 +20,6 @@ Usage:
     parachute module approve NAME      # Approve a module (offline)
     parachute module status            # Show live server status (online)
     parachute module test [NAME]       # Test module endpoints (online)
-    parachute setup                    # (deprecated) Alias for install
 """
 
 import argparse
@@ -31,6 +30,7 @@ import signal
 import socket
 import subprocess
 import sys
+import time
 from pathlib import Path
 from urllib.error import URLError
 from urllib.request import Request, urlopen
@@ -61,10 +61,14 @@ def _get_vault_path() -> Path:
     if "VAULT_PATH" in env:
         return Path(env["VAULT_PATH"]).expanduser().resolve()
 
-    # Check config.yaml in common locations
+    # Check config.yaml in common locations (~/Parachute or via symlink)
     home_vault = Path.home() / "Parachute"
     if (home_vault / ".parachute" / "config.yaml").exists():
-        return home_vault
+        # Read vault_path from config.yaml to get the canonical path
+        config = _load_yaml_config(home_vault)
+        if "vault_path" in config:
+            return Path(config["vault_path"]).expanduser().resolve()
+        return home_vault.resolve()
 
     return Path("./vault").resolve()
 
@@ -377,14 +381,6 @@ def _check_path() -> None:
         print(f'  export PATH="$HOME/.local/bin:$PATH"')
 
 
-# --- Setup (deprecated alias) ---
-
-
-def cmd_setup(args: argparse.Namespace) -> None:
-    """Interactive setup (deprecated — use 'parachute install')."""
-    print("Note: 'parachute setup' is deprecated. Use 'parachute install' instead.\n")
-    cmd_install(args)
-
 
 # --- Update command ---
 
@@ -415,6 +411,7 @@ def cmd_update(args: argparse.Namespace) -> None:
     if not local_only:
         if (repo_dir / ".git").exists():
             print("\nPulling latest code...")
+            # Try git pull, fall back to git pull origin main if no upstream
             result = subprocess.run(
                 ["git", "pull"],
                 cwd=repo_dir,
@@ -422,6 +419,15 @@ def cmd_update(args: argparse.Namespace) -> None:
                 text=True,
                 timeout=30,
             )
+            if result.returncode != 0 and "no tracking information" in result.stderr:
+                # Try pulling from origin main directly
+                result = subprocess.run(
+                    ["git", "pull", "origin", "main"],
+                    cwd=repo_dir,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
             if result.returncode != 0:
                 print(f"  git pull failed: {result.stderr.strip()}")
                 print("  Try pulling manually, or use: parachute update --local")
@@ -554,10 +560,20 @@ def _server_start() -> None:
             _server_foreground()
             return
 
+        port = config.get("port", 3333)
         status = daemon.status()
-        if status.get("running"):
-            print(f"Server already running (PID {status.get('pid')}, port {config.get('port', 3333)})")
-            return
+
+        # Check if actually responding, not just loaded
+        if status.get("running") or _port_in_use(port):
+            try:
+                _api_get(f"http://localhost:{port}/api/health")
+                print(f"Server already running (PID {status.get('pid')}, port {port})")
+                return
+            except Exception:
+                # Loaded but not responding — restart it
+                print("Server loaded but not responding. Restarting...")
+                daemon.stop()
+                time.sleep(1)
 
         daemon.start()
         print(f"Server started (port {config.get('port', 3333)})")
@@ -602,9 +618,10 @@ def _server_restart() -> None:
 
 
 def _server_status() -> None:
-    """Show daemon status."""
+    """Show daemon status with HTTP health correlation."""
     vault_path = _get_vault_path()
     config = _load_yaml_config(vault_path)
+    port = config.get("port", 3333)
 
     try:
         from parachute.daemon import get_daemon_manager
@@ -612,16 +629,31 @@ def _server_status() -> None:
         daemon = get_daemon_manager(vault_path, config)
         status = daemon.status()
 
-        if status.get("running"):
-            print(f"Server: running")
-            print(f"  PID: {status.get('pid')}")
-            print(f"  Port: {config.get('port', 3333)}")
-            if status.get("uptime"):
-                print(f"  Uptime: {status['uptime']}")
+        # Check actual HTTP health
+        http_ok = False
+        try:
+            health = _api_get(f"http://localhost:{port}/api/health")
+            http_ok = True
+        except Exception:
+            pass
+
+        if status.get("running") and http_ok:
+            print(f"Server: running (PID {status.get('pid')})")
+            print(f"  Port: {port}")
+        elif http_ok:
+            print(f"Server: running on port {port}")
+            print(f"  (not managed by daemon)")
+        elif status.get("loaded") and not status.get("running"):
+            print("Server: crashed")
+            if status.get("last_exit"):
+                print(f"  {status['last_exit']}")
+            if status.get("state"):
+                print(f"  State: {status['state']}")
+            print("  Check logs: parachute logs")
         else:
             print("Server: not running")
 
-        if status.get("installed"):
+        if status.get("installed") or status.get("loaded"):
             print(f"  Daemon: installed ({status.get('type', 'unknown')})")
         else:
             print("  Daemon: not installed")
@@ -1207,9 +1239,6 @@ def main() -> None:
         help="Skip git pull (just reinstall deps + restart)",
     )
 
-    # setup (deprecated alias)
-    subparsers.add_parser("setup", help=argparse.SUPPRESS)
-
     # status
     subparsers.add_parser("status", help="Show system status")
 
@@ -1258,14 +1287,15 @@ def main() -> None:
     test_parser = module_sub.add_parser("test", help="Test module endpoints (online)")
     test_parser.add_argument("name", nargs="?", help="Specific module to test")
 
+    # help (alias for --help)
+    subparsers.add_parser("help", help="Show this help message")
+
     args = parser.parse_args()
 
     if args.command == "install":
         cmd_install(args)
     elif args.command == "update":
         cmd_update(args)
-    elif args.command == "setup":
-        cmd_setup(args)
     elif args.command == "status":
         cmd_status(args)
     elif args.command == "server":
