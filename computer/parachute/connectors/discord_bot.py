@@ -161,6 +161,7 @@ class DiscordConnector(BotConnector):
             chat_id=chat_id,
             chat_type=chat_type,
             user_display=message.author.display_name,
+            user_id=str(message.author.id),
         )
 
         if not session:
@@ -230,6 +231,7 @@ class DiscordConnector(BotConnector):
             chat_id=chat_id,
             chat_type=chat_type,
             user_display=interaction.user.display_name,
+            user_id=str(interaction.user.id),
         )
 
         if not session:

@@ -37,6 +37,7 @@ class BotConnector(ABC):
         self.group_mention_mode = group_mention_mode
         self._running = False
         self._session_locks: dict[str, asyncio.Lock] = {}
+        self._trust_overrides: dict[str, str] = {}  # user_id -> trust_level cache
 
     @abstractmethod
     async def start(self) -> None:
@@ -92,11 +93,29 @@ class BotConnector(ABC):
         """Send approval confirmation to user. Override in subclasses."""
         logger.info(f"{self.platform}: approval message not implemented for chat {chat_id}")
 
-    def get_trust_level(self, chat_type: str) -> str:
-        """Get trust level based on chat type (dm vs group)."""
+    async def get_trust_level(self, chat_type: str, user_id: str | None = None) -> str:
+        """Get trust level with per-user override, falling back to platform defaults."""
+        if user_id:
+            # Check in-memory cache first
+            cache_key = str(user_id)
+            if cache_key in self._trust_overrides:
+                return self._trust_overrides[cache_key]
+
+            # Look up approved pairing request
+            db = getattr(self.server, "database", None)
+            if db:
+                request = await db.get_pairing_request_for_user(self.platform, str(user_id))
+                if request and request.status == "approved" and request.approved_trust_level:
+                    self._trust_overrides[cache_key] = request.approved_trust_level
+                    return request.approved_trust_level
+
         if chat_type == "dm":
             return self.dm_trust_level
         return self.group_trust_level
+
+    def update_trust_override(self, user_id: str, trust_level: str) -> None:
+        """Update the in-memory trust override cache (called on approval)."""
+        self._trust_overrides[str(user_id)] = trust_level
 
     def _get_session_lock(self, session_id: str) -> asyncio.Lock:
         """Get or create a per-session lock for concurrency control."""
@@ -110,6 +129,7 @@ class BotConnector(ABC):
         chat_id: str,
         chat_type: str,
         user_display: str,
+        user_id: str | None = None,
     ) -> Any:
         """Find existing session linked to this bot chat, or create a new one."""
         from parachute.db.database import Database
@@ -128,7 +148,7 @@ class BotConnector(ABC):
         import uuid
         from datetime import datetime
 
-        trust_level = self.get_trust_level(chat_type)
+        trust_level = await self.get_trust_level(chat_type, user_id=user_id)
         session_id = str(uuid.uuid4())
 
         from parachute.models.session import SessionCreate
