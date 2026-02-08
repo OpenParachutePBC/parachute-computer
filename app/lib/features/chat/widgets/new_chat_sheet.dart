@@ -92,6 +92,8 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
   TrustLevel? _selectedTrustLevel; // null = module default
   bool _showAdvanced = false;
 
+  bool get _isSandboxed => _selectedTrustLevel == TrustLevel.sandboxed;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -200,7 +202,7 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
 
                 // Working Directory Section
                 Text(
-                  'Working Directory',
+                  _isSandboxed ? 'Sandbox Workspace' : 'Working Directory',
                   style: TextStyle(
                     fontSize: TypographyTokens.labelMedium,
                     fontWeight: FontWeight.w600,
@@ -209,7 +211,9 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
                 ),
                 const SizedBox(height: Spacing.xs),
                 Text(
-                  'Where the AI can read/write files and run commands',
+                  _isSandboxed
+                      ? 'Folder mounted into the sandbox container'
+                      : 'Where the AI can read/write files and run commands',
                   style: TextStyle(
                     fontSize: TypographyTokens.bodySmall,
                     color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
@@ -296,6 +300,40 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
                           color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
                         ),
                       ),
+                    ),
+                  ),
+                ],
+
+                // Sandbox info when sandboxed but no directory
+                if (_isSandboxed && !hasDirectory) ...[
+                  const SizedBox(height: Spacing.sm),
+                  Container(
+                    padding: const EdgeInsets.all(Spacing.sm),
+                    decoration: BoxDecoration(
+                      color: BrandColors.warningLight,
+                      borderRadius: BorderRadius.circular(Radii.sm),
+                      border: Border.all(
+                        color: BrandColors.warning.withValues(alpha: 0.3),
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.info_outline,
+                          size: 16,
+                          color: BrandColors.warning,
+                        ),
+                        const SizedBox(width: Spacing.xs),
+                        Expanded(
+                          child: Text(
+                            'Select a folder to mount in the sandbox, or it will use the full vault (read-only).',
+                            style: TextStyle(
+                              fontSize: TypographyTokens.bodySmall,
+                              color: isDark ? BrandColors.nightText : BrandColors.charcoal,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ],
@@ -478,7 +516,9 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
         (isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood);
 
     return GestureDetector(
-      onTap: () => setState(() => _selectedTrustLevel = level),
+      onTap: () => setState(() {
+        _selectedTrustLevel = level;
+      }),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         decoration: BoxDecoration(
