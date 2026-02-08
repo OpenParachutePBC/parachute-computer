@@ -1,6 +1,9 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/services/base_server_service.dart';
 
+/// Set to true to re-enable curator UI (requires server curator endpoints).
+const bool showCuratorFeatures = false;
+
 /// Provider for the BaseServerService singleton
 final baseServerServiceProvider = Provider<BaseServerService>((ref) {
   return BaseServerService();

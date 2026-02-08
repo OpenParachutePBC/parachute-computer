@@ -689,6 +689,7 @@ class _AgentHubScreenState extends ConsumerState<AgentHubScreen> {
           builder: (context) => ChatScreen(
             agentType: config.agentType,
             agentPath: config.agentPath,
+            trustLevel: config.trustLevel?.name,
           ),
         ),
       );
@@ -725,6 +726,7 @@ class _AgentHubScreenState extends ConsumerState<AgentHubScreen> {
             initialMessage: prompt,
             agentType: config.agentType,
             agentPath: config.agentPath,
+            trustLevel: config.trustLevel?.name,
           ),
         ),
       );

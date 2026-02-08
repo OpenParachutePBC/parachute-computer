@@ -105,6 +105,7 @@ class ChatService {
     List<ChatAttachment>? attachments,
     String? agentType,  // Agent type for new sessions (e.g., 'orchestrator')
     String? agentPath,  // Path to agent definition file (e.g., 'Daily/.agents/orchestrator.md')
+    String? trustLevel,  // Trust level override (full, vault, sandboxed)
   }) async* {
     // Validate message length
     if (message.length > maxMessageLength) {
@@ -145,6 +146,7 @@ class ChatService {
       if (attachments != null && attachments.isNotEmpty) 'attachments': attachments.map((a) => a.toJson()).toList(),
       if (agentType != null) 'agentType': agentType,
       if (agentPath != null) 'agentPath': agentPath,
+      if (trustLevel != null) 'trustLevel': trustLevel,
     };
     debugPrint('[ChatService] Request body keys: ${requestBody.keys.toList()}');
     debugPrint('[ChatService] agentType: $agentType, agentPath: $agentPath');

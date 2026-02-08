@@ -107,6 +107,10 @@ class ChatMessagesState {
   /// Map contains: requestId, sessionId, questions
   final Map<String, dynamic>? pendingUserQuestion;
 
+  /// Trust level for this session (full, vault, sandboxed)
+  /// Set from SSE session event so config sheet can display it immediately
+  final String? trustLevel;
+
   const ChatMessagesState({
     this.messages = const [],
     this.isStreaming = false,
@@ -128,6 +132,7 @@ class ChatMessagesState {
     this.contextsExplicitlySet = false,
     this.reloadClaudeMd = false,
     this.pendingUserQuestion,
+    this.trustLevel,
   });
 
   /// Whether this session is continuing from another
@@ -163,6 +168,7 @@ class ChatMessagesState {
     bool? contextsExplicitlySet,
     bool? reloadClaudeMd,
     Map<String, dynamic>? pendingUserQuestion,
+    String? trustLevel,
     bool clearSessionUnavailable = false,
     bool clearWorkingDirectory = false,
     bool clearViewingSession = false,
@@ -189,6 +195,7 @@ class ChatMessagesState {
       contextsExplicitlySet: contextsExplicitlySet ?? this.contextsExplicitlySet,
       reloadClaudeMd: reloadClaudeMd ?? this.reloadClaudeMd,
       pendingUserQuestion: clearPendingUserQuestion ? null : (pendingUserQuestion ?? this.pendingUserQuestion),
+      trustLevel: trustLevel ?? this.trustLevel,
     );
   }
 }
@@ -421,6 +428,7 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
         transcriptSegmentCount: segmentCount,
         selectedContexts: effectiveContexts, // Use persisted or current contexts
         contextsExplicitlySet: effectiveContextsExplicit, // Mark explicit if loaded from DB
+        trustLevel: loadedSession.trustLevel, // Preserve trust level from server
       );
 
       // If there's an active background stream, reattach to receive updates
@@ -1009,6 +1017,7 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
     List<ChatAttachment>? attachments,
     String? agentType,
     String? agentPath,
+    String? trustLevel,
   }) async {
     if (state.isStreaming) return;
 
@@ -1066,6 +1075,7 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
       isStreaming: true,
       sessionId: displaySessionId,
       error: null,
+      trustLevel: trustLevel ?? state.trustLevel,
     );
 
     // Track accumulated content for streaming
@@ -1142,6 +1152,7 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
         attachments: attachments,
         agentType: agentType,
         agentPath: agentPath,
+        trustLevel: trustLevel,
       )) {
         // Check if session has changed (user switched chats during stream)
         // Don't break the stream - let it continue in background so server keeps processing
@@ -1187,6 +1198,11 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
             } else {
               debugPrint('[ChatMessagesNotifier] Session event has no valid session ID (new session) - will get ID from done event');
               // Don't refresh session list yet - session not created on server
+            }
+            // Capture trust level from session event
+            final eventTrustLevel = event.trustLevel;
+            if (eventTrustLevel != null && eventTrustLevel.isNotEmpty) {
+              state = state.copyWith(trustLevel: eventTrustLevel);
             }
             // Capture session title if present
             final sessionTitle = event.sessionTitle;

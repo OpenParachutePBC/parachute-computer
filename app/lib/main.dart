@@ -272,22 +272,7 @@ class _TabShellState extends ConsumerState<_TabShell> with WidgetsBindingObserve
         });
       }
 
-      // Listen for deep links
-      _setupDeepLinkListener();
     });
-  }
-
-  /// Set up listener for deep link navigation
-  void _setupDeepLinkListener() {
-    debugPrint('[TabShell] Setting up deep link listener');
-
-    ref.listen<AsyncValue<DeepLinkTarget>>(deepLinkStreamProvider, (previous, next) {
-      next.whenData((target) {
-        _handleDeepLink(target);
-      });
-    });
-
-    debugPrint('[TabShell] Deep link listener set up complete');
   }
 
   /// Handle a pending chat prompt by navigating to ChatScreen
@@ -550,6 +535,13 @@ class _TabShellState extends ConsumerState<_TabShell> with WidgetsBindingObserve
         // Clear the event
         ref.read(sendToChatEventProvider.notifier).state = null;
       }
+    });
+
+    // Listen for deep links (must be in build() for ref.listen)
+    ref.listen<AsyncValue<DeepLinkTarget>>(deepLinkStreamProvider, (previous, next) {
+      next.whenData((target) {
+        _handleDeepLink(target);
+      });
     });
 
     final appMode = ref.watch(appModeProvider);

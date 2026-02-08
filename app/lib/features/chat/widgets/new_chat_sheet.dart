@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
+import 'package:parachute/features/settings/models/trust_level.dart';
 import 'directory_picker.dart';
 
 /// Available agent types for new chats
@@ -48,10 +49,14 @@ class NewChatConfig {
   /// Path to agent definition file
   final String? agentPath;
 
+  /// Trust level override (null = use module default)
+  final TrustLevel? trustLevel;
+
   const NewChatConfig({
     this.workingDirectory,
     this.agentType,
     this.agentPath,
+    this.trustLevel,
   });
 
   /// Legacy getter for backwards compatibility - always returns root context
@@ -84,6 +89,8 @@ class NewChatSheet extends ConsumerStatefulWidget {
 class _NewChatSheetState extends ConsumerState<NewChatSheet> {
   String? _workingDirectory;
   String? _selectedAgentId; // null = default
+  TrustLevel? _selectedTrustLevel; // null = module default
+  bool _showAdvanced = false;
 
   @override
   Widget build(BuildContext context) {
@@ -292,6 +299,60 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
                     ),
                   ),
                 ],
+
+                // Advanced section toggle
+                const SizedBox(height: Spacing.md),
+                GestureDetector(
+                  onTap: () => setState(() => _showAdvanced = !_showAdvanced),
+                  child: Row(
+                    children: [
+                      Icon(
+                        _showAdvanced ? Icons.expand_less : Icons.expand_more,
+                        size: 18,
+                        color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+                      ),
+                      const SizedBox(width: Spacing.xxs),
+                      Text(
+                        'Advanced',
+                        style: TextStyle(
+                          fontSize: TypographyTokens.labelMedium,
+                          color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                // Trust level picker (collapsed by default)
+                if (_showAdvanced) ...[
+                  const SizedBox(height: Spacing.md),
+                  Text(
+                    'Trust Level',
+                    style: TextStyle(
+                      fontSize: TypographyTokens.labelMedium,
+                      fontWeight: FontWeight.w600,
+                      color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+                    ),
+                  ),
+                  const SizedBox(height: Spacing.xs),
+                  Text(
+                    'Override the module default execution sandbox',
+                    style: TextStyle(
+                      fontSize: TypographyTokens.bodySmall,
+                      color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+                    ),
+                  ),
+                  const SizedBox(height: Spacing.sm),
+                  Wrap(
+                    spacing: Spacing.sm,
+                    children: [
+                      _buildTrustChip(null, 'Module Default', Icons.settings, isDark),
+                      ...TrustLevel.values.map((tl) =>
+                        _buildTrustChip(tl, tl.displayName, tl.icon, isDark),
+                      ),
+                    ],
+                  ),
+                ],
               ],
             ),
           ),
@@ -317,6 +378,7 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
                         workingDirectory: _workingDirectory,
                         agentType: selectedAgent.id,
                         agentPath: selectedAgent.path,
+                        trustLevel: _selectedTrustLevel,
                       ),
                     );
                   },
@@ -402,6 +464,46 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
                     overflow: TextOverflow.ellipsis,
                   ),
                 ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTrustChip(TrustLevel? level, String label, IconData icon, bool isDark) {
+    final isSelected = _selectedTrustLevel == level;
+    final color = level?.iconColor(isDark) ??
+        (isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood);
+
+    return GestureDetector(
+      onTap: () => setState(() => _selectedTrustLevel = level),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: isSelected
+              ? color.withValues(alpha: 0.15)
+              : (isDark
+                  ? BrandColors.nightSurfaceElevated
+                  : BrandColors.stone.withValues(alpha: 0.2)),
+          borderRadius: BorderRadius.circular(Radii.sm),
+          border: Border.all(
+            color: isSelected ? color : Colors.transparent,
+            width: 1.5,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 14, color: isSelected ? color : (isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood)),
+            const SizedBox(width: 4),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w500,
+                color: isSelected ? color : (isDark ? BrandColors.nightText : BrandColors.charcoal),
               ),
             ),
           ],

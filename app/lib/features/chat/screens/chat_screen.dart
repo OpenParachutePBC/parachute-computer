@@ -16,9 +16,12 @@ import '../widgets/resume_marker.dart';
 import '../widgets/session_resume_banner.dart';
 import '../widgets/directory_picker.dart';
 import '../widgets/session_info_sheet.dart';
+import '../widgets/session_config_sheet.dart';
 import '../widgets/context_settings_sheet.dart';
 import '../widgets/curator_session_viewer_sheet.dart';
+import 'package:parachute/core/providers/base_server_provider.dart' show showCuratorFeatures;
 import '../widgets/user_question_card.dart';
+import '../../settings/models/trust_level.dart';
 import '../../settings/screens/settings_screen.dart';
 
 /// Main chat screen for AI conversations
@@ -48,6 +51,9 @@ class ChatScreen extends ConsumerStatefulWidget {
   /// Path to agent definition file (e.g., 'Daily/.agents/orchestrator.md')
   final String? agentPath;
 
+  /// Trust level override (full, vault, sandboxed). Null = module default.
+  final String? trustLevel;
+
   const ChatScreen({
     super.key,
     this.initialMessage,
@@ -56,6 +62,7 @@ class ChatScreen extends ConsumerStatefulWidget {
     this.autoRunMessage,
     this.agentType,
     this.agentPath,
+    this.trustLevel,
   });
 
   @override
@@ -67,6 +74,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   String? _pendingInitialContext;
   String? _pendingAgentType;
   String? _pendingAgentPath;
+  String? _pendingTrustLevel;
   bool _hasAutoRun = false;
   bool _resumeBannerDismissed = false;
 
@@ -82,6 +90,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     _pendingInitialContext = widget.initialContext;
     _pendingAgentType = widget.agentType;
     _pendingAgentPath = widget.agentPath;
+    _pendingTrustLevel = widget.trustLevel;
 
     // Listen to scroll position to show/hide scroll-to-bottom FAB
     _scrollController.addListener(_onScroll);
@@ -247,12 +256,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           attachments: attachments,
           agentType: _pendingAgentType,
           agentPath: _pendingAgentPath,
+          trustLevel: _pendingTrustLevel,
         );
 
-    // Clear pending context, agentType, and agentPath after first message
+    // Clear pending context, agentType, agentPath, and trustLevel after first message
     _pendingInitialContext = null;
     _pendingAgentType = null;
     _pendingAgentPath = null;
+    _pendingTrustLevel = null;
 
     _scrollToBottom();
   }
@@ -490,7 +501,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                 tooltip: 'Session info',
               ),
             // Curator activity button (shows background curator status)
-            if (chatState.sessionId != null)
+            if (showCuratorFeatures && chatState.sessionId != null)
               IconButton(
                 onPressed: () => _showCuratorSheet(context),
                 icon: Icon(
@@ -499,6 +510,17 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                   color: isDark ? BrandColors.nightTextSecondary : BrandColors.charcoal,
                 ),
                 tooltip: 'Curator activity',
+              ),
+            // Session config (trust level, per-chat settings)
+            if (chatState.sessionId != null)
+              IconButton(
+                onPressed: () => _showSessionConfigSheet(context),
+                icon: Icon(
+                  Icons.settings_outlined,
+                  size: 20,
+                  color: isDark ? BrandColors.nightTextSecondary : BrandColors.charcoal,
+                ),
+                tooltip: 'Session config',
               ),
             // More actions menu (archive, delete)
             if (chatState.sessionId != null)
@@ -915,12 +937,152 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                 ),
               ],
             ),
+            const SizedBox(height: Spacing.xl),
+            // Trust level selector for new chats
+            _buildTrustLevelSelector(isDark),
           ],
         ),
       ),
     ),
   );
 }
+
+  Widget _buildTrustLevelSelector(bool isDark) {
+    final currentLevel = _pendingTrustLevel != null
+        ? TrustLevel.fromString(_pendingTrustLevel)
+        : TrustLevel.full;
+
+    return Column(
+      children: [
+        Text(
+          'Execution Mode',
+          style: TextStyle(
+            fontSize: TypographyTokens.labelSmall,
+            fontWeight: FontWeight.w500,
+            color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+          ),
+        ),
+        const SizedBox(height: Spacing.xs),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: TrustLevel.values.map((tl) {
+            final isSelected = currentLevel == tl;
+            final color = tl.iconColor(isDark);
+            return Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 3),
+              child: Tooltip(
+                message: tl.description,
+                child: GestureDetector(
+                  onTap: () => setState(() {
+                    _pendingTrustLevel = tl == TrustLevel.full ? null : tl.name;
+                  }),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: isSelected
+                          ? color.withValues(alpha: 0.15)
+                          : (isDark
+                              ? BrandColors.nightSurfaceElevated
+                              : BrandColors.stone.withValues(alpha: 0.2)),
+                      borderRadius: BorderRadius.circular(Radii.sm),
+                      border: Border.all(
+                        color: isSelected ? color : Colors.transparent,
+                        width: 1.5,
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(tl.icon, size: 13, color: isSelected ? color : (isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood)),
+                        const SizedBox(width: 4),
+                        Text(
+                          tl.displayName,
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w500,
+                            color: isSelected ? color : (isDark ? BrandColors.nightText : BrandColors.charcoal),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            );
+          }).toList(),
+        ),
+        // Description text for selected trust level
+        const SizedBox(height: Spacing.xs),
+        Text(
+          currentLevel.description,
+          style: TextStyle(
+            fontSize: 10,
+            color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+          ),
+        ),
+        // Sandbox config panel (shown when Isolated is selected)
+        if (currentLevel == TrustLevel.sandboxed)
+          _buildSandboxConfigPanel(isDark),
+      ],
+    );
+  }
+
+  Widget _buildSandboxConfigPanel(bool isDark) {
+    return AnimatedSize(
+      duration: const Duration(milliseconds: 200),
+      child: Container(
+        margin: const EdgeInsets.only(top: Spacing.sm),
+        padding: const EdgeInsets.all(Spacing.sm),
+        decoration: BoxDecoration(
+          color: isDark
+              ? BrandColors.nightSurface
+              : Colors.blue.withValues(alpha: 0.05),
+          borderRadius: BorderRadius.circular(Radii.sm),
+          border: Border.all(
+            color: Colors.blue.withValues(alpha: 0.2),
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Docker status
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 6,
+                  height: 6,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.amber,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  'Docker required for full isolation',
+                  style: TextStyle(
+                    fontSize: 10,
+                    color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            // Resource info
+            Text(
+              '512MB memory, 1 CPU core',
+              style: TextStyle(
+                fontSize: 10,
+                color: isDark
+                    ? BrandColors.nightTextSecondary.withValues(alpha: 0.7)
+                    : BrandColors.driftwood.withValues(alpha: 0.7),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   Widget _buildContextBanner(BuildContext context, bool isDark) {
     return Container(
@@ -1181,6 +1343,36 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     if (chatState.sessionId != null) {
       CuratorSessionViewerSheet.show(context, chatState.sessionId!);
     }
+  }
+
+  /// Show session config sheet for trust level and per-chat settings
+  void _showSessionConfigSheet(BuildContext context) {
+    final chatState = ref.read(chatMessagesProvider);
+    if (chatState.sessionId == null) return;
+
+    // Try to find the full session from the sessions list
+    final sessionsAsync = ref.read(chatSessionsProvider);
+    ChatSession? currentSession;
+    sessionsAsync.whenData((sessions) {
+      currentSession = sessions.where((s) => s.id == chatState.sessionId).firstOrNull;
+    });
+
+    // Fall back to a minimal session if not found in the list
+    // Include trustLevel from chat state so config sheet shows correct value
+    final session = currentSession ?? ChatSession(
+      id: chatState.sessionId!,
+      createdAt: DateTime.now(),
+      title: chatState.sessionTitle,
+      trustLevel: chatState.trustLevel,
+    );
+
+    SessionConfigSheet.show(context, session).then((result) {
+      if (result == true) {
+        // Refresh session after config update
+        ref.read(chatMessagesProvider.notifier).refreshSession();
+        ref.invalidate(chatSessionsProvider);
+      }
+    });
   }
 
   /// Handle menu actions (archive, delete)

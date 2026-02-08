@@ -113,6 +113,9 @@ class StreamEvent {
   /// Get session ID from session event
   String? get sessionId => data['sessionId'] as String?;
 
+  /// Get trust level from session event (full, vault, sandboxed)
+  String? get trustLevel => data['trustLevel'] as String?;
+
   /// Get session title from session or done event
   String? get sessionTitle => data['title'] as String?;
 

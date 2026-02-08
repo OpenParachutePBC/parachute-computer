@@ -51,7 +51,8 @@ class _HooksSectionState extends ConsumerState<HooksSection> {
           final data = json.decode(response.body) as Map<String, dynamic>;
           setState(() {
             _hooks = List<Map<String, dynamic>>.from(data['hooks'] ?? []);
-            _recentErrors = data['recent_errors'] as int? ?? 0;
+            final health = data['health'] as Map<String, dynamic>? ?? {};
+            _recentErrors = health['recent_errors_count'] as int? ?? 0;
             _isLoading = false;
           });
         } else {

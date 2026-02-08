@@ -187,6 +187,50 @@ extension ChatSessionService on ChatService {
     }
   }
 
+  /// Update session configuration (trust level, config overrides)
+  ///
+  /// [trustLevel] - New trust level: full, vault, sandboxed
+  /// [configOverrides] - Config overrides merged into session metadata
+  Future<ChatSession> updateSessionConfig(
+    String sessionId, {
+    String? trustLevel,
+    Map<String, dynamic>? configOverrides,
+  }) async {
+    try {
+      final body = <String, dynamic>{};
+      if (trustLevel != null) body['trustLevel'] = trustLevel;
+      if (configOverrides != null) body['configOverrides'] = configOverrides;
+
+      final response = await client.patch(
+        Uri.parse('$baseUrl/api/chat/${Uri.encodeComponent(sessionId)}/config'),
+        headers: defaultHeaders,
+        body: jsonEncode(body),
+      ).timeout(ChatService.requestTimeout);
+
+      if (response.statusCode != 200) {
+        throw NetworkError(
+          'Failed to update session config',
+          statusCode: response.statusCode,
+        );
+      }
+
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      return ChatSession.fromJson(data['session'] as Map<String, dynamic>);
+    } on SocketException catch (e) {
+      debugPrint('[ChatService] Socket error updating session config: $e');
+      throw ServerUnreachableError(cause: e);
+    } on http.ClientException catch (e) {
+      debugPrint('[ChatService] HTTP client error updating session config: $e');
+      throw NetworkError('Network error updating session config', cause: e);
+    } on TimeoutException catch (e) {
+      debugPrint('[ChatService] Timeout updating session config: $e');
+      throw ServerUnreachableError(cause: e);
+    } catch (e) {
+      debugPrint('[ChatService] Error updating session config: $e');
+      rethrow;
+    }
+  }
+
   /// Submit answers to a user question (AskUserQuestion tool)
   ///
   /// When Claude asks the user a question via the AskUserQuestion tool,

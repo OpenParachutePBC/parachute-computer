@@ -9,6 +9,12 @@ enum ChatSource {
   /// Imported from Claude (web)
   claude,
 
+  /// Bot connector: Telegram
+  telegram,
+
+  /// Bot connector: Discord
+  discord,
+
   /// Imported from other source
   other,
 }
@@ -23,6 +29,10 @@ extension ChatSourceExtension on ChatSource {
         return 'chatgpt';
       case ChatSource.claude:
         return 'claude';
+      case ChatSource.telegram:
+        return 'telegram';
+      case ChatSource.discord:
+        return 'discord';
       case ChatSource.other:
         return 'other';
     }
@@ -36,10 +46,17 @@ extension ChatSourceExtension on ChatSource {
         return 'ChatGPT';
       case ChatSource.claude:
         return 'Claude';
+      case ChatSource.telegram:
+        return 'Telegram';
+      case ChatSource.discord:
+        return 'Discord';
       case ChatSource.other:
         return 'Imported';
     }
   }
+
+  bool get isBotSession =>
+      this == ChatSource.telegram || this == ChatSource.discord;
 
   static ChatSource fromString(String? value) {
     switch (value) {
@@ -47,6 +64,10 @@ extension ChatSourceExtension on ChatSource {
         return ChatSource.chatgpt;
       case 'claude':
         return ChatSource.claude;
+      case 'telegram':
+        return ChatSource.telegram;
+      case 'discord':
+        return ChatSource.discord;
       case 'other':
         return ChatSource.other;
       case 'parachute':
@@ -86,6 +107,18 @@ class ChatSession {
   /// Allows operating on external codebases while storing sessions in vault
   final String? workingDirectory;
 
+  /// Trust level for this session (full, vault, sandboxed)
+  final String? trustLevel;
+
+  /// Bot platform this session is linked to (telegram, discord)
+  final String? linkedBotPlatform;
+
+  /// Platform-specific chat ID
+  final String? linkedBotChatId;
+
+  /// Chat type on the platform (dm, group)
+  final String? linkedBotChatType;
+
   const ChatSession({
     required this.id,
     this.agentPath,
@@ -101,6 +134,10 @@ class ChatSession {
     this.continuedFrom,
     this.originalId,
     this.workingDirectory,
+    this.trustLevel,
+    this.linkedBotPlatform,
+    this.linkedBotChatId,
+    this.linkedBotChatType,
   });
 
   /// Alias for archived (for consistency with local session reader)
@@ -134,6 +171,10 @@ class ChatSession {
       continuedFrom: json['continuedFrom'] as String?,
       originalId: json['originalId'] as String?,
       workingDirectory: json['workingDirectory'] as String?,
+      trustLevel: json['trustLevel'] as String? ?? json['trust_level'] as String?,
+      linkedBotPlatform: json['linkedBotPlatform'] as String? ?? json['linked_bot_platform'] as String?,
+      linkedBotChatId: json['linkedBotChatId'] as String? ?? json['linked_bot_chat_id'] as String?,
+      linkedBotChatType: json['linkedBotChatType'] as String? ?? json['linked_bot_chat_type'] as String?,
     );
   }
 
@@ -152,6 +193,10 @@ class ChatSession {
       if (continuedFrom != null) 'continuedFrom': continuedFrom,
       if (originalId != null) 'originalId': originalId,
       if (workingDirectory != null) 'workingDirectory': workingDirectory,
+      if (trustLevel != null) 'trustLevel': trustLevel,
+      if (linkedBotPlatform != null) 'linkedBotPlatform': linkedBotPlatform,
+      if (linkedBotChatId != null) 'linkedBotChatId': linkedBotChatId,
+      if (linkedBotChatType != null) 'linkedBotChatType': linkedBotChatType,
     };
   }
 
@@ -201,6 +246,10 @@ class ChatSession {
     String? continuedFrom,
     String? originalId,
     String? workingDirectory,
+    String? trustLevel,
+    String? linkedBotPlatform,
+    String? linkedBotChatId,
+    String? linkedBotChatType,
   }) {
     return ChatSession(
       id: id ?? this.id,
@@ -217,6 +266,10 @@ class ChatSession {
       continuedFrom: continuedFrom ?? this.continuedFrom,
       originalId: originalId ?? this.originalId,
       workingDirectory: workingDirectory ?? this.workingDirectory,
+      trustLevel: trustLevel ?? this.trustLevel,
+      linkedBotPlatform: linkedBotPlatform ?? this.linkedBotPlatform,
+      linkedBotChatId: linkedBotChatId ?? this.linkedBotChatId,
+      linkedBotChatType: linkedBotChatType ?? this.linkedBotChatType,
     );
   }
 }

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
+import 'package:parachute/features/settings/models/trust_level.dart';
 import '../models/chat_session.dart';
+import 'session_config_sheet.dart';
 
 /// List item for displaying a chat session
 ///
@@ -67,6 +69,7 @@ class SessionListItem extends StatelessWidget {
       color: Colors.transparent,
       child: InkWell(
         onTap: onTap,
+        onLongPress: () => SessionConfigSheet.show(context, session),
         borderRadius: Radii.card,
         child: Container(
           padding: const EdgeInsets.all(Spacing.md),
@@ -135,13 +138,35 @@ class SessionListItem extends StatelessWidget {
                               ),
                             ),
                           ),
+                        // Trust level badge (shown when not default 'full')
+                        if (session.trustLevel != null && session.trustLevel != 'full')
+                          _buildTrustBadge(session.trustLevel!, themeDark),
                       ],
                     ),
                     const SizedBox(height: Spacing.xxs),
                     Row(
                       children: [
-                        // Show source for imported sessions
-                        if (session.isImported) ...[
+                        // Show source for bot or imported sessions
+                        if (session.source.isBotSession) ...[
+                          Text(
+                            'via ${session.source.displayName}',
+                            style: TextStyle(
+                              fontSize: TypographyTokens.labelSmall,
+                              color: themeDark
+                                  ? BrandColors.nightForest
+                                  : BrandColors.forest,
+                            ),
+                          ),
+                          Text(
+                            ' • ',
+                            style: TextStyle(
+                              fontSize: TypographyTokens.labelSmall,
+                              color: themeDark
+                                  ? BrandColors.nightTextSecondary
+                                  : BrandColors.driftwood,
+                            ),
+                          ),
+                        ] else if (session.isImported) ...[
                           Text(
                             session.source.displayName,
                             style: TextStyle(
@@ -323,6 +348,14 @@ class SessionListItem extends StatelessWidget {
         icon = Icons.psychology_outlined;
         color = BrandColors.forest;
         break;
+      case ChatSource.telegram:
+        icon = Icons.send;
+        color = const Color(0xFF0088CC);
+        break;
+      case ChatSource.discord:
+        icon = Icons.gamepad;
+        color = const Color(0xFF5865F2);
+        break;
       case ChatSource.other:
         icon = Icons.download_outlined;
         color = BrandColors.driftwood;
@@ -365,5 +398,29 @@ class SessionListItem extends StatelessWidget {
     } else {
       return '${timestamp.month}/${timestamp.day}';
     }
+  }
+
+  Widget _buildTrustBadge(String trustLevelStr, bool isDark) {
+    final tl = TrustLevel.fromString(trustLevelStr);
+    final color = tl.iconColor(isDark);
+    return Tooltip(
+      message: tl.displayName,
+      child: Container(
+        margin: const EdgeInsets.only(left: Spacing.xs),
+        padding: const EdgeInsets.symmetric(
+          horizontal: Spacing.xs,
+          vertical: 2,
+        ),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.15),
+          borderRadius: Radii.badge,
+        ),
+        child: Icon(
+          tl.icon,
+          size: 12,
+          color: color,
+        ),
+      ),
+    );
   }
 }
