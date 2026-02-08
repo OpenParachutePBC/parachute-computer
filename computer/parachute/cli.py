@@ -35,7 +35,7 @@ def _get_vault_path() -> Path:
 
 def _get_server_url() -> str:
     """Resolve server URL from PORT env or default."""
-    port = os.environ.get("PORT", "3336")
+    port = os.environ.get("PORT", "3333")
     return f"http://localhost:{port}"
 
 
@@ -117,12 +117,12 @@ def cmd_setup(args: argparse.Namespace) -> None:
 
     # 2. Port
     current_port = env.get("PORT", os.environ.get("PORT", ""))
-    print(f"\nServer port [{current_port or '3336'}]: ", end="")
+    print(f"\nServer port [{current_port or '3333'}]: ", end="")
     port_input = input().strip()
     if port_input:
         env["PORT"] = port_input
     elif not current_port:
-        env["PORT"] = "3336"
+        env["PORT"] = "3333"
 
     # 3. Claude token
     current_token = env.get("CLAUDE_CODE_OAUTH_TOKEN", os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", ""))
@@ -244,7 +244,7 @@ def cmd_server(args: argparse.Namespace) -> None:
             os.environ[key] = value
 
     vault_path = os.environ.get("VAULT_PATH", "./vault")
-    port = os.environ.get("PORT", "3336")
+    port = os.environ.get("PORT", "3333")
     host = os.environ.get("HOST", "127.0.0.1")
 
     token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")

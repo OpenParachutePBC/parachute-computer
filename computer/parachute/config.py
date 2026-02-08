@@ -19,7 +19,7 @@ class Settings(BaseSettings):
         default=Path("./sample-vault"),
         description="Path to the Parachute vault directory",
     )
-    port: int = Field(default=3336, description="Server port")
+    port: int = Field(default=3333, description="Server port")
     host: str = Field(default="0.0.0.0", description="Server bind address")
 
     # Claude authentication
@@ -63,8 +63,8 @@ class Settings(BaseSettings):
 
     # Model
     default_model: Optional[str] = Field(
-        default="claude-opus-4-6",
-        description="Default Claude model. Override with DEFAULT_MODEL env var.",
+        default=None,
+        description="Optional model override. If not set, uses Claude Code default. Set DEFAULT_MODEL env var to override.",
     )
 
     # CURATOR REMOVED - curator settings disabled for modular architecture

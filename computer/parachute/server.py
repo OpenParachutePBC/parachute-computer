@@ -187,10 +187,8 @@ def _get_cors_origins() -> list[str]:
         # Allow localhost variants and Parachute app
         return [
             "http://localhost:3333",
-            "http://localhost:3336",
             "http://localhost:3337",  # Test server
             "http://127.0.0.1:3333",
-            "http://127.0.0.1:3336",
             "http://127.0.0.1:3337",
             # Allow requests from any device on local network with Parachute user-agent
             # The middleware below handles user-agent validation
