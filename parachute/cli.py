@@ -3,6 +3,8 @@ Parachute CLI.
 
 Usage:
     parachute install                  # First-time setup + daemon install
+    parachute update                   # Pull latest code, reinstall, restart
+    parachute update --local           # Reinstall + restart (no git pull)
     parachute server                   # Start daemon (background)
     parachute server --foreground      # Start in foreground (dev mode)
     parachute server stop              # Stop daemon
@@ -382,6 +384,95 @@ def cmd_setup(args: argparse.Namespace) -> None:
     """Interactive setup (deprecated — use 'parachute install')."""
     print("Note: 'parachute setup' is deprecated. Use 'parachute install' instead.\n")
     cmd_install(args)
+
+
+# --- Update command ---
+
+
+def _get_repo_dir() -> Path:
+    """Find the repo root from the installed package location."""
+    import parachute as pkg
+
+    # Editable install: parachute/__init__.py is inside the repo
+    pkg_dir = Path(pkg.__file__).parent  # parachute/
+    repo_dir = pkg_dir.parent            # computer/
+    if (repo_dir / "pyproject.toml").exists():
+        return repo_dir
+    # Fallback: CWD
+    return Path.cwd()
+
+
+def cmd_update(args: argparse.Namespace) -> None:
+    """Pull latest code, reinstall deps, and restart daemon."""
+    local_only = getattr(args, "local", False)
+    repo_dir = _get_repo_dir()
+    venv_pip = Path(sys.executable).parent / "pip"
+
+    print(f"Updating Parachute ({repo_dir})")
+    print("=" * 40)
+
+    # 1. Git pull (unless --local)
+    if not local_only:
+        if (repo_dir / ".git").exists():
+            print("\nPulling latest code...")
+            result = subprocess.run(
+                ["git", "pull"],
+                cwd=repo_dir,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if result.returncode != 0:
+                print(f"  git pull failed: {result.stderr.strip()}")
+                print("  Try pulling manually, or use: parachute update --local")
+                sys.exit(1)
+            output = result.stdout.strip()
+            if "Already up to date" in output:
+                print("  Already up to date.")
+            else:
+                print(f"  {output}")
+        else:
+            print("\nNot a git repo — skipping pull.")
+            print("  (Install from git clone for auto-updates)")
+
+    # 2. Reinstall deps
+    print("\nInstalling dependencies...")
+    result = subprocess.run(
+        [str(venv_pip), "install", "-e", str(repo_dir), "-q"],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    if result.returncode != 0:
+        print(f"  pip install failed: {result.stderr.strip()}")
+        sys.exit(1)
+    print("  Dependencies updated.")
+
+    # 3. Restart daemon if running
+    vault_path = _get_vault_path()
+    config = _load_yaml_config(vault_path)
+
+    try:
+        from parachute.daemon import get_daemon_manager
+
+        daemon = get_daemon_manager(vault_path, config)
+        status = daemon.status()
+
+        if status.get("running"):
+            print("\nRestarting server...")
+            daemon.restart()
+            print("  Server restarted.")
+        elif daemon.is_installed():
+            print("\nStarting server...")
+            daemon.start()
+            print("  Server started.")
+        else:
+            print("\nDaemon not installed. Run 'parachute install' for daemon support.")
+    except Exception as e:
+        print(f"\nCouldn't restart daemon: {e}")
+        print("  Restart manually: parachute server restart")
+
+    print("\nDone!")
 
 
 # --- Server command ---
@@ -1109,6 +1200,13 @@ def main() -> None:
     # install
     subparsers.add_parser("install", help="First-time setup + daemon install")
 
+    # update
+    update_parser = subparsers.add_parser("update", help="Pull latest code, reinstall, restart")
+    update_parser.add_argument(
+        "--local", action="store_true",
+        help="Skip git pull (just reinstall deps + restart)",
+    )
+
     # setup (deprecated alias)
     subparsers.add_parser("setup", help=argparse.SUPPRESS)
 
@@ -1164,6 +1262,8 @@ def main() -> None:
 
     if args.command == "install":
         cmd_install(args)
+    elif args.command == "update":
+        cmd_update(args)
     elif args.command == "setup":
         cmd_setup(args)
     elif args.command == "status":
