@@ -157,6 +157,65 @@ async def update_bots_config(body: BotsConfigUpdate):
     return await bots_config()
 
 
+async def _start_platform(platform: str) -> None:
+    """Start a connector for the given platform. Raises on failure."""
+    config = load_bots_config(_vault_path)
+    platform_config = getattr(config, platform)
+
+    if platform == "telegram":
+        from parachute.connectors.telegram import TelegramConnector, TELEGRAM_AVAILABLE
+        if not TELEGRAM_AVAILABLE:
+            raise RuntimeError("python-telegram-bot not installed")
+        connector = TelegramConnector(
+            bot_token=platform_config.bot_token,
+            server=_server_ref,
+            allowed_users=platform_config.allowed_users,
+            dm_trust_level=platform_config.dm_trust_level,
+            group_trust_level=platform_config.group_trust_level,
+            group_mention_mode=platform_config.group_mention_mode,
+        )
+    else:
+        from parachute.connectors.discord_bot import DiscordConnector, DISCORD_AVAILABLE
+        if not DISCORD_AVAILABLE:
+            raise RuntimeError("discord.py not installed")
+        connector = DiscordConnector(
+            bot_token=platform_config.bot_token,
+            server=_server_ref,
+            allowed_users=platform_config.allowed_users,
+            dm_trust_level=platform_config.dm_trust_level,
+            group_trust_level=platform_config.group_trust_level,
+            group_mention_mode=platform_config.group_mention_mode,
+        )
+
+    def _on_connector_error(task: asyncio.Task) -> None:
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc:
+            logger.error(f"{platform} connector crashed: {exc}")
+            _connectors.pop(platform, None)
+
+    task = asyncio.create_task(connector.start())
+    task.add_done_callback(_on_connector_error)
+    _connectors[platform] = connector
+
+
+async def auto_start_connectors() -> None:
+    """Start enabled connectors with valid tokens. Errors are logged, not raised."""
+    if not _vault_path:
+        return
+
+    config = load_bots_config(_vault_path)
+    for platform in ("telegram", "discord"):
+        cfg = getattr(config, platform)
+        if cfg.enabled and cfg.bot_token:
+            try:
+                await _start_platform(platform)
+                logger.info(f"Auto-started {platform} connector")
+            except Exception as e:
+                logger.error(f"Failed to auto-start {platform}: {e}")
+
+
 @router.post("/{platform}/start")
 async def start_connector(platform: str):
     """Start a bot connector."""
@@ -174,48 +233,11 @@ async def start_connector(platform: str):
         raise HTTPException(status_code=400, detail=f"{platform} bot token not configured")
 
     try:
-        if platform == "telegram":
-            from parachute.connectors.telegram import TelegramConnector, TELEGRAM_AVAILABLE
-            if not TELEGRAM_AVAILABLE:
-                raise HTTPException(status_code=400, detail="python-telegram-bot not installed")
-            connector = TelegramConnector(
-                bot_token=platform_config.bot_token,
-                server=_server_ref,
-                allowed_users=platform_config.allowed_users,
-                dm_trust_level=platform_config.dm_trust_level,
-                group_trust_level=platform_config.group_trust_level,
-                group_mention_mode=platform_config.group_mention_mode,
-            )
-        else:
-            from parachute.connectors.discord_bot import DiscordConnector, DISCORD_AVAILABLE
-            if not DISCORD_AVAILABLE:
-                raise HTTPException(status_code=400, detail="discord.py not installed")
-            connector = DiscordConnector(
-                bot_token=platform_config.bot_token,
-                server=_server_ref,
-                allowed_users=platform_config.allowed_users,
-                dm_trust_level=platform_config.dm_trust_level,
-                group_trust_level=platform_config.group_trust_level,
-                group_mention_mode=platform_config.group_mention_mode,
-            )
-
-        def _on_connector_error(task: asyncio.Task) -> None:
-            if task.cancelled():
-                return
-            exc = task.exception()
-            if exc:
-                logger.error(f"{platform} connector crashed: {exc}")
-                _connectors.pop(platform, None)
-
-        task = asyncio.create_task(connector.start())
-        task.add_done_callback(_on_connector_error)
-        _connectors[platform] = connector
+        await _start_platform(platform)
         return {"success": True, "message": f"{platform} connector started"}
-    except HTTPException:
-        raise
     except Exception as e:
         logger.error(f"Failed to start {platform} connector: {e}")
-        return {"success": False, "error": str(e)}
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/{platform}/stop")
