@@ -736,8 +736,11 @@ def cmd_logs(args: argparse.Namespace) -> None:
     lines = getattr(args, "lines", 50)
     follow = getattr(args, "follow", True)
 
-    # Check for log files in vault/.parachute/logs/
-    log_dir = vault_path / ".parachute" / "logs"
+    # Platform-specific log locations
+    if sys.platform == "darwin":
+        log_dir = Path.home() / "Library" / "Logs" / "Parachute"
+    else:
+        log_dir = vault_path / ".parachute" / "logs"
     stderr_log = log_dir / "stderr.log"
     stdout_log = log_dir / "stdout.log"
 

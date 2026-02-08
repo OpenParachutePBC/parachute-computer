@@ -78,7 +78,8 @@ class LaunchdDaemon(DaemonManager):
     def __init__(self, vault_path: Path, config: dict[str, Any]):
         super().__init__(vault_path, config)
         self.plist_path = Path.home() / "Library" / "LaunchAgents" / f"{LAUNCHD_LABEL}.plist"
-        self.log_dir = vault_path / ".parachute" / "logs"
+        # Use ~/Library/Logs/ — launchd can't write to external volumes
+        self.log_dir = Path.home() / "Library" / "Logs" / "Parachute"
 
     def _build_plist(self) -> dict:
         """Build the launchd plist dictionary."""
