@@ -1,4 +1,4 @@
-.PHONY: install install-global run test clean help
+.PHONY: install install-global update run test clean help
 
 VENV := .venv
 BIN := $(VENV)/bin
@@ -9,23 +9,29 @@ help:                                 ## Show this help
 
 $(VENV): pyproject.toml
 	$(PY) -m venv $(VENV)
-	$(BIN)/pip install --upgrade pip setuptools wheel
-	$(BIN)/pip install -e .
+	$(BIN)/pip install --upgrade pip setuptools wheel -q
+	$(BIN)/pip install -e . -q
 	@touch $(VENV)
 
-install: $(VENV)                      ## Full install: venv + deps + setup + daemon
+install: $(VENV)                      ## First-time install: venv + deps + config + daemon
 	$(BIN)/parachute install
 
-install-global: $(VENV)               ## Also install wrapper to ~/.local/bin
+install-global: $(VENV)               ## Install wrapper to ~/.local/bin
 	@mkdir -p $(HOME)/.local/bin
 	@printf '#!/usr/bin/env bash\nexec "$(CURDIR)/$(BIN)/python" -m parachute "$$@"\n' > $(HOME)/.local/bin/parachute
 	@chmod +x $(HOME)/.local/bin/parachute
 	@echo "Installed: $(HOME)/.local/bin/parachute"
 
+update:                               ## Pull latest code and reinstall deps
+	git pull
+	$(BIN)/pip install -e . -q
+	@echo "Updated. Restart the server: parachute server restart"
+
 run: $(VENV)                          ## Start server in foreground
 	$(BIN)/parachute server --foreground
 
 test: $(VENV)                         ## Run tests
+	$(BIN)/pip install -e ".[dev]" -q
 	$(BIN)/python -m pytest tests/ -v
 
 clean:                                ## Remove venv and caches
