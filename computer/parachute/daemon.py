@@ -206,7 +206,8 @@ class SystemdDaemon(DaemonManager):
         super().__init__(vault_path, config)
         self.unit_dir = Path.home() / ".config" / "systemd" / "user"
         self.unit_path = self.unit_dir / SYSTEMD_UNIT
-        self.log_dir = vault_path / ".parachute" / "logs"
+        # Use XDG state dir — avoids issues with vault on network/external mounts
+        self.log_dir = Path.home() / ".local" / "state" / "parachute" / "logs"
 
     def _build_unit(self) -> str:
         """Build the systemd unit file content."""
@@ -322,7 +323,11 @@ class PidDaemon(DaemonManager):
     def __init__(self, vault_path: Path, config: dict[str, Any]):
         super().__init__(vault_path, config)
         self.pid_file = vault_path / ".parachute" / "server.pid"
-        self.log_dir = vault_path / ".parachute" / "logs"
+        # Use same location as systemd on Linux, macOS logs on macOS
+        if sys.platform == "darwin":
+            self.log_dir = Path.home() / "Library" / "Logs" / "Parachute"
+        else:
+            self.log_dir = Path.home() / ".local" / "state" / "parachute" / "logs"
         self._installed_marker = vault_path / ".parachute" / ".daemon_installed"
 
     def install(self) -> None:
