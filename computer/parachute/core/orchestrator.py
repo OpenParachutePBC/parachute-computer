@@ -209,6 +209,7 @@ class Orchestrator:
         attachments: Optional[list[dict[str, Any]]] = None,
         agent_type: Optional[str] = None,
         trust_level: Optional[str] = None,
+        model: Optional[str] = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         """
         Run an agent with streaming response.
@@ -645,7 +646,7 @@ class Orchestrator:
                 plugin_dirs=plugin_dirs if plugin_dirs else None,
                 agents=agents_dict,
                 claude_token=claude_token,
-                **({"model": self.settings.default_model} if self.settings.default_model else {}),
+                **({"model": model or self.settings.default_model} if (model or self.settings.default_model) else {}),
             ):
                 # Check for interrupt
                 if interrupt.is_interrupted:
