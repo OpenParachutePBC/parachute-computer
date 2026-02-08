@@ -10,35 +10,28 @@ AI orchestration server for Parachute. Runs locally, manages Claude sessions, an
 
 ## Install
 
-### Quick start (recommended)
-
 ```bash
 git clone https://github.com/OpenParachutePBC/parachute-computer.git
 cd parachute-computer
 ./install.sh
 ```
 
-This creates a virtual environment, installs dependencies, puts a `parachute` wrapper in `~/.local/bin`, and runs interactive setup (vault path, token, daemon).
-
-### Using Make
-
-```bash
-make install          # Same as install.sh but via Make
-make install-global   # Just install the ~/.local/bin wrapper
-```
-
-### Manual
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e .
-parachute install
-```
-
-## Usage
+This creates a virtual environment, installs dependencies, puts a `parachute` command in `~/.local/bin`, and runs interactive setup (vault path, token, daemon).
 
 After install, the server runs as a background daemon automatically.
+
+## Updating
+
+```bash
+parachute update           # Pull latest from GitHub, reinstall deps, restart
+parachute update --local   # Same but skip git pull (for local code changes)
+```
+
+That's it. `parachute update` handles git pull, dependency updates, and restarting the daemon in one step.
+
+If something breaks, re-run `./install.sh` to rebuild from scratch.
+
+## Usage
 
 ```bash
 parachute server status    # Check if running
@@ -59,7 +52,7 @@ parachute config set port 4444  # Change a value
 parachute config get port       # Read a value
 ```
 
-Available config keys: `vault_path`, `port`, `host`, `default_model`, `log_level`, `cors_origins`, `auth_mode`, `debug`.
+Available keys: `vault_path`, `port`, `host`, `default_model`, `log_level`, `cors_origins`, `auth_mode`, `debug`.
 
 Environment variables override config.yaml (e.g., `PORT=4444 parachute server -f`).
 
@@ -79,30 +72,9 @@ parachute module status         # Live server module status
 parachute module test           # Test module endpoints
 ```
 
-## Updating
-
-After pulling new code:
-
-```bash
-make update    # git pull + reinstall deps + reminder to restart
-```
-
-Or manually:
-
-```bash
-git pull
-source .venv/bin/activate
-pip install -e .
-parachute server restart
-```
-
-The `parachute` wrapper in `~/.local/bin` calls into the venv directly, so `pip install -e .` picks up code changes immediately. You only need to restart the server for changes to take effect.
-
-If `pyproject.toml` dependencies changed, the `pip install -e .` step handles that. No need to rebuild the venv from scratch.
-
 ## How the daemon works
 
-`parachute install` sets up a background daemon appropriate for your platform:
+`parachute install` sets up a background daemon for your platform:
 
 | Platform | Method | Config file |
 |----------|--------|-------------|
@@ -110,22 +82,20 @@ If `pyproject.toml` dependencies changed, the `pip install -e .` step handles th
 | Linux | systemd | `~/.config/systemd/user/parachute.service` |
 | Other | PID file | `~/Parachute/.parachute/server.pid` |
 
-The daemon starts automatically on login (macOS: `RunAtLoad`, Linux: `WantedBy=default.target`). It restarts on crash (macOS: `KeepAlive`, Linux: `Restart=on-failure`).
-
-Logs go to `~/Parachute/.parachute/logs/stdout.log` and `stderr.log`.
+The daemon starts on login and restarts on crash. Logs go to `~/Parachute/.parachute/logs/`.
 
 ## Authentication
 
-The server needs a Claude OAuth token to run AI sessions:
+The server needs a Claude OAuth token:
 
 ```bash
 claude setup-token    # Get token from Claude Code CLI
 parachute install     # Paste it during setup
 ```
 
-The token is stored at `~/Parachute/.parachute/.token` with 0600 permissions.
+Token is stored at `~/Parachute/.parachute/.token` (0600 permissions).
 
-For multi-device access, API keys can be managed through the app's Settings screen or via the API.
+For multi-device access, API keys can be managed through the app's Settings screen.
 
 ## Development
 
