@@ -361,12 +361,14 @@ async def approve_pairing(request_id: str, body: PairingApproval):
     # Add user to connector's allowlist in bots.yaml
     await _add_to_allowlist(pr.platform, pr.platform_user_id)
 
-    # Update running connector's in-memory allowlist
+    # Update running connector's in-memory allowlist and trust cache
     connector = _connectors.get(pr.platform)
     if connector and hasattr(connector, "allowed_users"):
         if pr.platform_user_id not in [str(u) for u in connector.allowed_users]:
             typed_id = int(pr.platform_user_id) if pr.platform == "telegram" else pr.platform_user_id
             connector.allowed_users.append(typed_id)
+        if hasattr(connector, "update_trust_override"):
+            connector.update_trust_override(pr.platform_user_id, body.trust_level)
 
     # Send approval message to user
     if connector and hasattr(connector, "send_approval_message"):

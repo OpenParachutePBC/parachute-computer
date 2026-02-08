@@ -223,6 +223,7 @@ class TelegramConnector(BotConnector):
             chat_id=chat_id,
             chat_type=chat_type,
             user_display=update.effective_user.full_name,
+            user_id=str(update.effective_user.id),
         )
 
         if not session:
