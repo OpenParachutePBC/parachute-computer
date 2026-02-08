@@ -736,11 +736,11 @@ def cmd_logs(args: argparse.Namespace) -> None:
     lines = getattr(args, "lines", 50)
     follow = getattr(args, "follow", True)
 
-    # Platform-specific log locations
+    # Platform-specific log locations (must match daemon.py)
     if sys.platform == "darwin":
         log_dir = Path.home() / "Library" / "Logs" / "Parachute"
     else:
-        log_dir = vault_path / ".parachute" / "logs"
+        log_dir = Path.home() / ".local" / "state" / "parachute" / "logs"
     stderr_log = log_dir / "stderr.log"
     stdout_log = log_dir / "stdout.log"
 
