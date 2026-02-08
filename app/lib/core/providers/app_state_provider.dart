@@ -448,6 +448,53 @@ String getDefaultVaultPath() {
 }
 
 // ============================================================================
+// Model Preference
+// ============================================================================
+
+/// Available Claude models for chat
+enum ClaudeModel {
+  sonnet('Sonnet', 'sonnet'),
+  opus('Opus', 'opus'),
+  haiku('Haiku', 'haiku');
+
+  final String displayName;
+  final String apiValue;
+
+  const ClaudeModel(this.displayName, this.apiValue);
+
+  static ClaudeModel fromApiValue(String value) {
+    return ClaudeModel.values.firstWhere(
+      (m) => m.apiValue == value,
+      orElse: () => ClaudeModel.sonnet,
+    );
+  }
+}
+
+/// Notifier for model preference with persistence
+class ModelPreferenceNotifier extends AsyncNotifier<ClaudeModel> {
+  static const _key = 'parachute_model_preference';
+
+  @override
+  Future<ClaudeModel> build() async {
+    final prefs = await SharedPreferences.getInstance();
+    final value = prefs.getString(_key);
+    if (value == null) return ClaudeModel.sonnet;
+    return ClaudeModel.fromApiValue(value);
+  }
+
+  Future<void> setModel(ClaudeModel model) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_key, model.apiValue);
+    state = AsyncData(model);
+  }
+}
+
+/// Model preference provider
+final modelPreferenceProvider = AsyncNotifierProvider<ModelPreferenceNotifier, ClaudeModel>(() {
+  return ModelPreferenceNotifier();
+});
+
+// ============================================================================
 // App Version
 // ============================================================================
 

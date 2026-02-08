@@ -57,6 +57,13 @@ void main() async {
   FlutterError.onError = (FlutterErrorDetails details) {
     final errorString = details.toString().toLowerCase();
 
+    // Suppress known macOS Flutter bug: duplicate KeyDownEvent without KeyUpEvent
+    // https://github.com/flutter/flutter/issues/139437
+    if (errorString.contains('keydownevent') &&
+        errorString.contains('physical key is already pressed')) {
+      return;
+    }
+
     // Catch flutter_markdown builder errors and trigger fallback to plain text
     if (errorString.contains('_inlines') ||
         errorString.contains('flutter_markdown') ||
