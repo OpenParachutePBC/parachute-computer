@@ -3,7 +3,10 @@ __pycache__/
 *.egg-info/
 .venv/
 .env
+.env.migrated
 *.db
 dist/
 build/
 .eggs/
+vault/
+sample-vault/
