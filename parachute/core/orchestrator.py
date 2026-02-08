@@ -645,7 +645,7 @@ class Orchestrator:
                 plugin_dirs=plugin_dirs if plugin_dirs else None,
                 agents=agents_dict,
                 claude_token=claude_token,
-                model=self.settings.default_model,
+                **({"model": self.settings.default_model} if self.settings.default_model else {}),
             ):
                 # Check for interrupt
                 if interrupt.is_interrupted:
