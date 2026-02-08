@@ -12,12 +12,14 @@ Central controller that manages agent execution:
 import asyncio
 import logging
 import time
+import uuid
 from pathlib import Path
 from typing import Any, AsyncGenerator, Optional
 
 from parachute.config import Settings, get_settings
 from parachute.core.claude_sdk import query_streaming, QueryInterrupt
 from parachute.core.permission_handler import PermissionHandler
+from parachute.core.sandbox import DockerSandbox, AgentSandboxConfig
 from parachute.core.skills import generate_runtime_plugin, cleanup_runtime_plugin
 from parachute.core.agents import discover_agents, agents_to_sdk_format
 from parachute.core.session_manager import SessionManager
@@ -45,7 +47,7 @@ from parachute.models.events import (
     UserMessageEvent,
     UserQuestionEvent,
 )
-from parachute.models.session import ResumeInfo, SessionSource
+from parachute.models.session import ResumeInfo, SessionSource, TrustLevel
 
 logger = logging.getLogger(__name__)
 
@@ -180,6 +182,12 @@ class Orchestrator:
         # Session manager
         self.session_manager = SessionManager(vault_path, database)
 
+        # Shared Docker sandbox instance (TTL-cached availability checks)
+        self._sandbox = DockerSandbox(
+            vault_path=vault_path,
+            claude_token=settings.claude_code_oauth_token,
+        )
+
         # Active streams for abort functionality
         self.active_streams: dict[str, QueryInterrupt] = {}
 
@@ -200,6 +208,7 @@ class Orchestrator:
         recovery_mode: Optional[str] = None,
         attachments: Optional[list[dict[str, Any]]] = None,
         agent_type: Optional[str] = None,
+        trust_level: Optional[str] = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         """
         Run an agent with streaming response.
@@ -230,6 +239,7 @@ class Orchestrator:
             session_id=session_id,
             module=module,
             working_directory=working_directory,
+            trust_level=trust_level,
         )
 
         # For imported sessions, handle context continuity
@@ -257,10 +267,14 @@ class Orchestrator:
                     # Force new SDK session since we're injecting context, not resuming
                     is_new = True
 
+        # Extract config overrides from session metadata (set via PATCH /config endpoint)
+        config_overrides = (session.metadata or {}).get("config_overrides", {}) if hasattr(session, "metadata") else {}
+
         # Determine working directory first (needed for prompt building)
-        # Priority: explicit param > session's stored value > vault path
+        # Priority: explicit param > config_overrides > session's stored value > vault path
         # Note: working_directory is stored as RELATIVE to vault_path in the database
-        effective_working_dir: Optional[str] = working_directory or session.working_directory
+        override_working_dir = config_overrides.get("working_directory")
+        effective_working_dir: Optional[str] = working_directory or override_working_dir or session.working_directory
         effective_cwd = self.session_manager.resolve_working_directory(effective_working_dir)
 
         # Validate working directory exists - fall back appropriately
@@ -291,10 +305,14 @@ class Orchestrator:
                 effective_cwd = self.vault_path
                 effective_working_dir = None
 
+        # Apply system prompt override from config_overrides (only if no explicit prompt given)
+        override_system_prompt = config_overrides.get("system_prompt")
+        effective_custom_prompt = system_prompt or override_system_prompt
+
         # Build system prompt (after loading prior conversation, with working dir)
         effective_prompt, prompt_metadata = await self._build_system_prompt(
             agent=agent,
-            custom_prompt=system_prompt,
+            custom_prompt=effective_custom_prompt,
             contexts=contexts,
             prior_conversation=effective_prior_conversation,
             working_directory=effective_working_dir,
@@ -310,6 +328,7 @@ class Orchestrator:
             session_id=session.id if session.id != "pending" else None,
             working_directory=working_directory,
             resume_info=resume_info.model_dump(),
+            trust_level=trust_level,
         ).model_dump(by_alias=True)
 
         # Yield prompt metadata event for UI transparency
@@ -498,9 +517,21 @@ class Orchestrator:
             # 1. Session ID is not "pending" (i.e., we have an ID)
             # 2. Not a new session (is_new=False means SDK has this session)
             # 3. Not forcing a fresh start
+            # 4. SDK actually has a JSONL transcript for this session
             resume_id = None
             if session.id != "pending" and not is_new and not force_new:
-                resume_id = session.id
+                # Verify SDK actually has a session file to resume
+                # Bot-created sessions have DB records but no SDK JSONL yet
+                if self.session_manager._check_sdk_session_exists(
+                    session.id, session.working_directory
+                ):
+                    resume_id = session.id
+                else:
+                    logger.info(
+                        f"Session {session.id[:8]} exists in DB but has no SDK transcript, "
+                        f"treating as new"
+                    )
+                    is_new = True
 
             # Get Claude token from settings for SDK auth
             claude_token = get_settings().claude_code_oauth_token
@@ -519,6 +550,79 @@ class Orchestrator:
             # Create SDK callback for tool permission checks
             # This enables interactive tools like AskUserQuestion to pause and wait for user input
             sdk_can_use_tool = permission_handler.create_sdk_callback()
+
+            # Trust level routing: determine effective trust from session + client override
+            session_trust = session.get_trust_level()
+
+            # Apply client trust_level override (can only restrict, never escalate)
+            if trust_level:
+                try:
+                    requested = TrustLevel(trust_level)
+                    # Trust restrictiveness order: FULL < VAULT < SANDBOXED
+                    _trust_order = {TrustLevel.FULL: 0, TrustLevel.VAULT: 1, TrustLevel.SANDBOXED: 2}
+                    if _trust_order.get(requested, 0) >= _trust_order.get(session_trust, 0):
+                        session_trust = requested
+                    else:
+                        logger.warning(
+                            f"Client tried to escalate trust from {session_trust.value} to {requested.value}, ignoring"
+                        )
+                except ValueError:
+                    logger.warning(f"Invalid trust_level from client: {trust_level}")
+
+            effective_trust = session_trust.value
+
+            if effective_trust == "sandboxed":
+                if await self._sandbox.is_available():
+                    # Use a real session ID for sandbox — "pending" would cause the SDK
+                    # inside the container to try resuming a nonexistent session
+                    sandbox_sid = session.id if session.id != "pending" else str(uuid.uuid4())
+                    logger.info(f"Running sandboxed execution for session {sandbox_sid[:8]}")
+                    sandbox_config = AgentSandboxConfig(
+                        session_id=sandbox_sid,
+                        agent_type=agent.type.value if agent.type else "chat",
+                        allowed_paths=session.permissions.allowed_paths,
+                        network_enabled=True,  # SDK needs network for Anthropic API
+                    )
+                    had_text = False
+                    async for event in self._sandbox.run_agent(sandbox_config, actual_message):
+                        event_type = event.get("type", "")
+                        if event_type == "error":
+                            sandbox_err = event.get("error") or event.get("message") or "Unknown sandbox error"
+                            logger.error(f"Sandbox error: {sandbox_err}")
+                            yield ErrorEvent(
+                                error=f"Sandbox: {sandbox_err}",
+                            ).model_dump(by_alias=True)
+                        else:
+                            # Rewrite session IDs in sandbox events to use our canonical
+                            # sandbox_sid (the one saved to DB), not the container's
+                            # internal SDK session ID which the client can't resume
+                            if event_type in ("session", "done") and "sessionId" in event:
+                                event = {**event, "sessionId": sandbox_sid, "trustLevel": effective_trust}
+                            yield event
+                            if event_type == "text":
+                                had_text = True
+
+                    # Finalize sandbox session so trust_level persists in DB
+                    # Use sandbox_sid as the canonical session ID (not the container's internal ID)
+                    if is_new and not session_finalized:
+                        title = generate_title_from_message(message) if message.strip() else None
+                        session = await self.session_manager.finalize_session(
+                            session, sandbox_sid, captured_model, title=title,
+                            agent_type=agent_type,
+                        )
+                        session_finalized = True
+                        logger.info(f"Finalized sandbox session: {sandbox_sid[:8]} trust={effective_trust}")
+
+                    if not had_text:
+                        logger.warning("Sandbox produced no text output")
+                    return
+                else:
+                    # Fallback: degrade to vault trust, warn user via typed event
+                    effective_trust = "vault"
+                    yield ErrorEvent(
+                        error="Docker not available — falling back to vault trust level. "
+                              "Install Docker to enable sandboxed execution.",
+                    ).model_dump(by_alias=True)
 
             # Determine if this is a full custom prompt or append content
             # Custom agents and explicit custom_prompt return full prompts (override preset)
@@ -541,6 +645,7 @@ class Orchestrator:
                 plugin_dirs=plugin_dirs if plugin_dirs else None,
                 agents=agents_dict,
                 claude_token=claude_token,
+                model=self.settings.default_model,
             ):
                 # Check for interrupt
                 if interrupt.is_interrupted:
@@ -580,6 +685,7 @@ class Orchestrator:
                             session_id=captured_session_id,
                             working_directory=working_directory,
                             resume_info=resume_info.model_dump(),
+                            trust_level=trust_level,
                         ).model_dump(by_alias=True)
 
                 # Handle different event types

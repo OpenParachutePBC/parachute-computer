@@ -66,6 +66,7 @@ async def lifespan(app: FastAPI):
         settings=settings,
     )
     app.state.orchestrator = orchestrator
+    app.state.sandbox = orchestrator._sandbox  # Shared DockerSandbox for health checks
     app.state.database = db
 
     # CURATOR REMOVED - curator service excluded from modular architecture
@@ -96,22 +97,75 @@ async def lifespan(app: FastAPI):
         module_has_router[name] = False
     app.state.module_has_router = module_has_router
 
+    # Initialize hooks runner
+    from parachute.core.hooks.runner import HookRunner
+    from parachute.api.hooks import init_hooks_api
+    try:
+        hook_runner = HookRunner(settings.vault_path)
+        await hook_runner.discover()
+        init_hooks_api(hook_runner)
+        app.state.hook_runner = hook_runner
+        logger.info(f"Hooks: {len(hook_runner.get_registered_hooks())} hooks discovered")
+    except Exception as e:
+        logger.warning(f"Failed to initialize hooks: {e}")
+        app.state.hook_runner = None
+
+    # Initialize bots API (pass server_ref with database for connector sessions)
+    from parachute.api.bots import init_bots_api
+    from types import SimpleNamespace
+
+    async def orchestrate(session_id, message, source="bot"):
+        """Wrapper that bridges connector call signature to orchestrator.run_streaming().
+
+        Connectors call: orchestrate(session_id, message, source)
+        Orchestrator expects: run_streaming(message, session_id, ..., trust_level)
+        """
+        session = await db.get_session(session_id)
+        trust_level = getattr(session, 'trust_level', None) if session else None
+
+        async for event in orchestrator.run_streaming(
+            message=message,
+            session_id=session_id,
+            trust_level=trust_level,
+        ):
+            yield event
+
+    server_ref = SimpleNamespace(
+        database=db,
+        orchestrator=orchestrator,
+        orchestrate=orchestrate,
+    )
+    init_bots_api(vault_path=settings.vault_path, server_ref=server_ref)
+
     logger.info("Server ready")
 
     yield
 
     # Shutdown
     logger.info("Shutting down...")
+
+    # Stop any running bot connectors
+    from parachute.api.bots import _connectors as bot_connectors
+    for platform, connector in list(bot_connectors.items()):
+        try:
+            await connector.stop()
+            logger.info(f"Stopped {platform} connector")
+        except Exception as e:
+            logger.warning(f"Error stopping {platform} connector: {e}")
+    bot_connectors.clear()
+
     await stop_scheduler()
     # CURATOR REMOVED - no curator to stop
     await close_database()
     app.state.orchestrator = None
+    app.state.sandbox = None
     app.state.database = None
     app.state.module_loader = None
     app.state.modules = None
     app.state.module_has_router = None
     app.state.scheduler = None
     app.state.server_config = None
+    app.state.hook_runner = None
 
 
 # Create FastAPI application

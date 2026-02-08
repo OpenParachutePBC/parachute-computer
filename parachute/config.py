@@ -61,6 +61,12 @@ class Settings(BaseSettings):
     debug: bool = Field(default=False, description="Enable debug mode")
     reload: bool = Field(default=False, description="Enable auto-reload")
 
+    # Model
+    default_model: Optional[str] = Field(
+        default="claude-opus-4-6",
+        description="Default Claude model. Override with DEFAULT_MODEL env var.",
+    )
+
     # CURATOR REMOVED - curator settings disabled for modular architecture
     # curator_model: Optional[str] = Field(
     #     default=None,

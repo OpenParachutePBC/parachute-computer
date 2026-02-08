@@ -65,6 +65,7 @@ async def list_modules(request: Request) -> dict[str, Any]:
             entry["version"] = manifest.get("version", "unknown")
             entry["description"] = manifest.get("description", "")
             entry["provides"] = getattr(module, 'provides', [])
+            entry["trust_level"] = manifest.get("trust_level", "full")
             entry["has_router"] = module_has_router.get(name, False)
 
     return {"modules": status}

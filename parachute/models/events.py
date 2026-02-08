@@ -18,6 +18,7 @@ class SessionEvent(BaseModel):
     session_id: Optional[str] = Field(alias="sessionId")
     working_directory: Optional[str] = Field(alias="workingDirectory", default=None)
     resume_info: dict[str, Any] = Field(alias="resumeInfo")
+    trust_level: Optional[str] = Field(alias="trustLevel", default=None)
 
     model_config = {"populate_by_name": True}
 

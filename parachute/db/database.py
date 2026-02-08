@@ -12,7 +12,7 @@ from typing import Any, Optional, Union
 
 import aiosqlite
 
-from parachute.models.session import Session, SessionCreate, SessionSource, SessionUpdate
+from parachute.models.session import PairingRequest, Session, SessionCreate, SessionSource, SessionUpdate
 
 logger = logging.getLogger(__name__)
 
@@ -137,6 +137,24 @@ CREATE TABLE IF NOT EXISTS session_contexts (
 CREATE INDEX IF NOT EXISTS idx_session_contexts_session ON session_contexts(session_id);
 CREATE INDEX IF NOT EXISTS idx_session_contexts_folder ON session_contexts(folder_path);
 
+-- Pairing requests (bot connector user approval flow)
+CREATE TABLE IF NOT EXISTS pairing_requests (
+    id TEXT PRIMARY KEY,
+    platform TEXT NOT NULL,
+    platform_user_id TEXT NOT NULL,
+    platform_user_display TEXT,
+    platform_chat_id TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    approved_trust_level TEXT,
+    created_at TEXT NOT NULL,
+    resolved_at TEXT,
+    resolved_by TEXT,
+    UNIQUE(platform, platform_user_id, status)
+);
+
+CREATE INDEX IF NOT EXISTS idx_pairing_requests_status ON pairing_requests(status);
+CREATE INDEX IF NOT EXISTS idx_pairing_requests_platform ON pairing_requests(platform, platform_user_id);
+
 -- Schema version tracking
 CREATE TABLE IF NOT EXISTS schema_version (
     version INTEGER PRIMARY KEY,
@@ -249,6 +267,33 @@ class Database:
             )
             await self._connection.commit()
             logger.info("Added trust_level and linked_bot columns to sessions (v11)")
+
+        # Migration: Add pairing_requests table (v12)
+        try:
+            async with self._connection.execute(
+                "SELECT id FROM pairing_requests LIMIT 1"
+            ):
+                pass  # Table exists
+        except Exception:
+            await self._connection.executescript("""
+                CREATE TABLE IF NOT EXISTS pairing_requests (
+                    id TEXT PRIMARY KEY,
+                    platform TEXT NOT NULL,
+                    platform_user_id TEXT NOT NULL,
+                    platform_user_display TEXT,
+                    platform_chat_id TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    approved_trust_level TEXT,
+                    created_at TEXT NOT NULL,
+                    resolved_at TEXT,
+                    resolved_by TEXT,
+                    UNIQUE(platform, platform_user_id, status)
+                );
+                CREATE INDEX IF NOT EXISTS idx_pairing_requests_status ON pairing_requests(status);
+                CREATE INDEX IF NOT EXISTS idx_pairing_requests_platform ON pairing_requests(platform, platform_user_id);
+            """)
+            await self._connection.commit()
+            logger.info("Added pairing_requests table (v12)")
 
     async def close(self) -> None:
         """Close database connection."""
@@ -372,6 +417,10 @@ class Database:
         if update.agent_type is not None:
             updates.append("agent_type = ?")
             params.append(update.agent_type)
+
+        if update.trust_level is not None:
+            updates.append("trust_level = ?")
+            params.append(update.trust_level)
 
         if not updates:
             return await self.get_session(session_id)
@@ -639,6 +688,132 @@ class Database:
             if row:
                 return self._row_to_session(row)
         return None
+
+    # =========================================================================
+    # Pairing Requests
+    # =========================================================================
+
+    async def create_pairing_request(
+        self,
+        id: str,
+        platform: str,
+        platform_user_id: str,
+        platform_chat_id: str,
+        platform_user_display: Optional[str] = None,
+    ) -> PairingRequest:
+        """Create a new pairing request from an unknown bot user."""
+        now = datetime.now(timezone.utc).isoformat()
+        await self.connection.execute(
+            """
+            INSERT OR REPLACE INTO pairing_requests
+            (id, platform, platform_user_id, platform_user_display, platform_chat_id, status, created_at)
+            VALUES (?, ?, ?, ?, ?, 'pending', ?)
+            """,
+            (id, platform, platform_user_id, platform_user_display, platform_chat_id, now),
+        )
+        await self.connection.commit()
+        return PairingRequest(
+            id=id,
+            platform=platform,
+            platform_user_id=platform_user_id,
+            platform_user_display=platform_user_display,
+            platform_chat_id=platform_chat_id,
+            status="pending",
+            created_at=datetime.fromisoformat(now),
+        )
+
+    async def get_pending_pairing_requests(self) -> list[PairingRequest]:
+        """Get all pending pairing requests."""
+        async with self.connection.execute(
+            "SELECT * FROM pairing_requests WHERE status = 'pending' ORDER BY created_at DESC"
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [self._row_to_pairing_request(row) for row in rows]
+
+    async def get_pairing_request(self, request_id: str) -> Optional[PairingRequest]:
+        """Get a pairing request by ID."""
+        async with self.connection.execute(
+            "SELECT * FROM pairing_requests WHERE id = ?", (request_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                return self._row_to_pairing_request(row)
+            return None
+
+    async def get_pairing_request_for_user(
+        self, platform: str, user_id: str
+    ) -> Optional[PairingRequest]:
+        """Get the most recent pairing request for a platform user."""
+        async with self.connection.execute(
+            """
+            SELECT * FROM pairing_requests
+            WHERE platform = ? AND platform_user_id = ?
+            ORDER BY created_at DESC LIMIT 1
+            """,
+            (platform, user_id),
+        ) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                return self._row_to_pairing_request(row)
+            return None
+
+    async def resolve_pairing_request(
+        self,
+        request_id: str,
+        approved: bool,
+        trust_level: Optional[str] = None,
+        resolved_by: Optional[str] = "owner",
+    ) -> Optional[PairingRequest]:
+        """Resolve a pairing request (approve or deny)."""
+        now = datetime.now(timezone.utc).isoformat()
+        status = "approved" if approved else "denied"
+        await self.connection.execute(
+            """
+            UPDATE pairing_requests
+            SET status = ?, approved_trust_level = ?, resolved_at = ?, resolved_by = ?
+            WHERE id = ?
+            """,
+            (status, trust_level if approved else None, now, resolved_by, request_id),
+        )
+        await self.connection.commit()
+        return await self.get_pairing_request(request_id)
+
+    def _row_to_pairing_request(self, row: aiosqlite.Row) -> PairingRequest:
+        """Convert a database row to a PairingRequest model."""
+        return PairingRequest(
+            id=row["id"],
+            platform=row["platform"],
+            platform_user_id=row["platform_user_id"],
+            platform_user_display=row["platform_user_display"],
+            platform_chat_id=row["platform_chat_id"],
+            status=row["status"],
+            approved_trust_level=row["approved_trust_level"],
+            created_at=datetime.fromisoformat(row["created_at"]),
+            resolved_at=datetime.fromisoformat(row["resolved_at"]) if row["resolved_at"] else None,
+            resolved_by=row["resolved_by"],
+        )
+
+    # =========================================================================
+    # Session Config Update
+    # =========================================================================
+
+    async def update_session_config(
+        self, session_id: str, **kwargs: Any
+    ) -> None:
+        """Update session config fields (trust_level, module, etc.)."""
+        set_clauses = []
+        values: list[Any] = []
+        for key, value in kwargs.items():
+            if key in ("trust_level", "module"):
+                set_clauses.append(f"{key} = ?")
+                values.append(value)
+        if set_clauses:
+            set_clauses.append("last_accessed = ?")
+            values.append(datetime.now(timezone.utc).isoformat())
+            values.append(session_id)
+            sql = f"UPDATE sessions SET {', '.join(set_clauses)} WHERE id = ?"
+            await self.connection.execute(sql, values)
+            await self.connection.commit()
 
     # =========================================================================
     # Chunks (RAG Index)

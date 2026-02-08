@@ -14,6 +14,7 @@ Usage:
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -148,6 +149,27 @@ def cmd_setup(args: argparse.Namespace) -> None:
         else:
             print("  Skipped (you can set this later).")
 
+    # 4. Docker/container runtime detection
+    print("\nContainer runtime:")
+    docker_path = shutil.which("docker")
+    if docker_path:
+        print(f"  Docker: {docker_path}")
+        try:
+            result = subprocess.run(
+                ["docker", "info"],
+                capture_output=True,
+                timeout=5,
+            )
+            if result.returncode == 0:
+                print("  Daemon: running")
+            else:
+                print("  Daemon: not running (sandbox features unavailable)")
+        except (subprocess.TimeoutExpired, OSError):
+            print("  Daemon: check timed out")
+    else:
+        print("  Docker: not found")
+        print("  Tip: Install OrbStack (https://orbstack.dev) for sandbox features")
+
     # Save
     env_file = _save_env_file(env)
     print(f"\nConfig written to {env_file}")
@@ -198,6 +220,15 @@ def cmd_status(args: argparse.Namespace) -> None:
             print(f"\n  Modules ({len(modules)}):")
             for m in modules:
                 print(f"    {m['name']}: {m['status']}")
+
+        # Docker
+        docker = health.get("docker", {})
+        if docker:
+            available = docker.get("available", False)
+            print(f"\n  Docker: {'available' if available else 'not available'}")
+            if available:
+                image_exists = docker.get("image_exists", False)
+                print(f"  Sandbox image: {'ready' if image_exists else 'not built'}")
     except (URLError, OSError):
         print("  status: not running")
 

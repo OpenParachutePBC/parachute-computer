@@ -71,6 +71,7 @@ async def query_streaming(
     plugin_dirs: Optional[list[Path]] = None,
     agents: Optional[dict[str, Any]] = None,
     claude_token: Optional[str] = None,
+    model: Optional[str] = None,
 ) -> AsyncGenerator[dict[str, Any], None]:
     """
     Run a Claude SDK query with streaming response.
@@ -157,6 +158,10 @@ async def query_streaming(
     if plugin_dirs:
         # SDK expects plugins as list of SdkPluginConfig: {"type": "local", "path": "..."}
         options_kwargs["plugins"] = [{"type": "local", "path": str(pd)} for pd in plugin_dirs]
+
+    # Model override
+    if model:
+        options_kwargs["model"] = model
 
     # Pass OAuth token as env var to the SDK subprocess
     if claude_token:

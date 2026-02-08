@@ -1,0 +1,27 @@
+FROM python:3.13-slim
+
+# Install Node.js (required for Claude Code CLI) and curl
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    ca-certificates \
+    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Claude Code CLI globally
+RUN npm install -g @anthropic-ai/claude-code
+
+# Install Claude Agent SDK (Python wrapper that calls the CLI)
+RUN pip install --no-cache-dir claude-agent-sdk
+
+# Create non-root user for sandbox execution
+RUN useradd -m -s /bin/bash sandbox
+
+WORKDIR /workspace
+
+# Copy entrypoint
+COPY entrypoint.py /workspace/entrypoint.py
+
+USER sandbox
+
+ENTRYPOINT ["python", "/workspace/entrypoint.py"]

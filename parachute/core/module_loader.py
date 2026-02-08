@@ -201,6 +201,7 @@ class ModuleLoader:
                 "version": manifest.get("version", "?"),
                 "status": status,
                 "provides": manifest.get("provides", []),
+                "trust_level": manifest.get("trust_level", "full"),
                 "description": manifest.get("description", ""),
                 "hash": current_hash[:12],
             })

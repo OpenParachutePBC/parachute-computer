@@ -12,6 +12,20 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
+class SessionConfigUpdate(BaseModel):
+    """Request body for updating session configuration."""
+
+    trust_level: Optional[str] = Field(None, alias="trustLevel", description="Trust level: full, vault, sandboxed")
+    module: Optional[str] = Field(None, description="Module to use for this session")
+    config_overrides: Optional[dict[str, Any]] = Field(
+        None,
+        alias="configOverrides",
+        description="Config overrides merged into session metadata",
+    )
+
+    model_config = {"populate_by_name": True}
+
+
 class PermissionGrantRequest(BaseModel):
     """Request body for granting a permission."""
 
@@ -139,6 +153,58 @@ async def unarchive_session(request: Request, session_id: str) -> dict[str, Any]
         raise HTTPException(status_code=404, detail="Session not found")
 
     return {"success": True, "session": session}
+
+
+@router.patch("/chat/{session_id}/config")
+async def update_session_config(
+    request: Request,
+    session_id: str,
+    body: SessionConfigUpdate,
+) -> dict[str, Any]:
+    """
+    Update session configuration (trust level, module).
+    """
+    db = request.app.state.database
+    if not db:
+        raise HTTPException(status_code=503, detail="Database not ready")
+
+    session = await db.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    from parachute.models.session import SessionUpdate
+
+    update = SessionUpdate()
+    has_changes = False
+
+    if body.trust_level is not None:
+        if body.trust_level not in ("full", "vault", "sandboxed"):
+            raise HTTPException(status_code=400, detail="Invalid trust level")
+        update.trust_level = body.trust_level
+        has_changes = True
+
+    if body.module is not None:
+        has_changes = True
+        await db.update_session_config(session_id, module=body.module)
+
+    if body.config_overrides is not None:
+        existing_meta = session.metadata or {} if hasattr(session, "metadata") else {}
+        existing_meta["config_overrides"] = body.config_overrides
+        update.metadata = existing_meta
+        has_changes = True
+
+    if not has_changes:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    if update.trust_level is not None or update.metadata is not None:
+        await db.update_session(session_id, update)
+
+    updated = await db.get_session(session_id)
+
+    return {
+        "success": True,
+        "session": updated.model_dump(by_alias=True) if updated else None,
+    }
 
 
 @router.post("/chat/{session_id}/abort")
