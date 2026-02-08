@@ -12,6 +12,7 @@ import hashlib
 import importlib.util
 import json
 import logging
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -73,6 +74,17 @@ class ModuleLoader:
         from parachute.core.interfaces import get_registry
         registry = get_registry()
         modules = {}
+
+        # Bootstrap: copy bundled modules if vault/.modules/ is missing or empty
+        bundled_dir = Path(__file__).parent.parent.parent / "modules"
+        if bundled_dir.exists():
+            needs_bootstrap = (
+                not self.modules_dir.exists()
+                or not any(self.modules_dir.iterdir())
+            )
+            if needs_bootstrap:
+                logger.info(f"Bootstrapping modules from {bundled_dir}")
+                shutil.copytree(bundled_dir, self.modules_dir, dirs_exist_ok=True)
 
         if not self.modules_dir.exists():
             logger.info("No .modules directory found")
