@@ -4,7 +4,7 @@ Unified Flutter app - voice journaling, AI chat, knowledge vault, and brain sear
 
 **Package**: `io.openparachute.parachute`
 
-**Related**: [Base Server](../base/CLAUDE.md) | [Parent Project](../CLAUDE.md)
+**Related**: [Parachute Computer (Server)](../computer/CLAUDE.md) | [Parent Project](../CLAUDE.md)
 
 ---
 
@@ -127,7 +127,7 @@ Audio processing services have a SINGLE canonical location:
 flutter run -d macos
 
 # Server required for Chat/Vault/Brain
-cd ../base && parachute server
+cd ../computer && parachute server
 
 # Static analysis
 flutter analyze
