@@ -22,8 +22,17 @@ class PairingApproval(BaseModel):
     trust_level: TrustLevelStr = "vault"
 
 
-class PlatformConfigUpdate(BaseModel):
-    """Partial update for a single platform's bot config."""
+class TelegramConfigUpdate(BaseModel):
+    """Partial update for Telegram bot config."""
+    enabled: Optional[bool] = None
+    bot_token: Optional[str] = None
+    allowed_users: Optional[list[int]] = None
+    dm_trust_level: Optional[TrustLevelStr] = None
+    group_trust_level: Optional[TrustLevelStr] = None
+
+
+class DiscordConfigUpdate(BaseModel):
+    """Partial update for Discord bot config."""
     enabled: Optional[bool] = None
     bot_token: Optional[str] = None
     allowed_users: Optional[list[str]] = None
@@ -34,8 +43,8 @@ class PlatformConfigUpdate(BaseModel):
 
 class BotsConfigUpdate(BaseModel):
     """Request body for PUT /bots/config."""
-    telegram: Optional[PlatformConfigUpdate] = None
-    discord: Optional[PlatformConfigUpdate] = None
+    telegram: Optional[TelegramConfigUpdate] = None
+    discord: Optional[DiscordConfigUpdate] = None
 
 logger = logging.getLogger(__name__)
 
@@ -307,7 +316,8 @@ async def approve_pairing(request_id: str, body: PairingApproval):
     connector = _connectors.get(pr.platform)
     if connector and hasattr(connector, "allowed_users"):
         if pr.platform_user_id not in [str(u) for u in connector.allowed_users]:
-            connector.allowed_users.append(pr.platform_user_id)
+            typed_id = int(pr.platform_user_id) if pr.platform == "telegram" else pr.platform_user_id
+            connector.allowed_users.append(typed_id)
 
     # Send approval message to user
     if connector and hasattr(connector, "send_approval_message"):
@@ -350,7 +360,9 @@ def _add_to_allowlist(platform: str, user_id: str) -> None:
     if user_id in current_users:
         return
 
-    platform_config.allowed_users.append(user_id)
+    # Telegram uses int IDs, Discord uses string IDs
+    typed_id = int(user_id) if platform == "telegram" else user_id
+    platform_config.allowed_users.append(typed_id)
 
     # Write updated config
     import os
