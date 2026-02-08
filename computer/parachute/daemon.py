@@ -32,12 +32,14 @@ class DaemonManager(ABC):
 
     def _find_python(self) -> str:
         """Find the Python executable in the current venv."""
-        # Use the same Python that's running this script
         return sys.executable
 
-    def _find_venv_bin(self) -> Path:
-        """Find the venv bin directory."""
-        return Path(self._find_python()).parent
+    def _find_repo_dir(self) -> Path:
+        """Find the repo root directory from the package location."""
+        import parachute as pkg
+
+        pkg_dir = Path(pkg.__file__).parent  # parachute/
+        return pkg_dir.parent                # computer/
 
     @abstractmethod
     def install(self) -> None:
@@ -101,7 +103,7 @@ class LaunchdDaemon(DaemonManager):
             "ThrottleInterval": 10,
             "StandardOutPath": str(self.log_dir / "stdout.log"),
             "StandardErrorPath": str(self.log_dir / "stderr.log"),
-            "WorkingDirectory": str(Path(python).parent.parent),
+            "WorkingDirectory": str(self._find_repo_dir()),
         }
 
     def install(self) -> None:
@@ -168,15 +170,25 @@ class LaunchdDaemon(DaemonManager):
                 capture_output=True, text=True, timeout=5,
             )
             if result.returncode == 0:
-                info["running"] = True
-                # Parse PID from output
+                info["loaded"] = True
+                # Parse state and PID from output
                 for line in result.stdout.splitlines():
                     line = line.strip()
                     if line.startswith("pid = "):
                         try:
-                            info["pid"] = int(line.split("=")[1].strip())
+                            pid = int(line.split("=")[1].strip())
+                            info["pid"] = pid
+                            info["running"] = True
                         except ValueError:
                             pass
+                    elif line.startswith("state = "):
+                        info["state"] = line.split("=")[1].strip()
+                    elif "last exit code" in line:
+                        info["last_exit"] = line.strip()
+
+                # If no PID found, it's loaded but not running
+                if "pid" not in info:
+                    info["running"] = False
         except Exception:
             pass
 
@@ -207,7 +219,7 @@ After=network.target
 [Service]
 Type=simple
 ExecStart={python} -m uvicorn parachute.server:app --host {self.host} --port {self.port}
-WorkingDirectory={Path(python).parent.parent}
+WorkingDirectory={self._find_repo_dir()}
 Environment=VAULT_PATH={self.vault_path}
 Environment=PARACHUTE_CONFIG={self.vault_path / '.parachute' / 'config.yaml'}
 Environment=PYTHONUNBUFFERED=1
