@@ -1,3 +1,8 @@
-// Re-export from parachute_app_core package.
-// Import 'package:parachute_app_core/providers/app_events_provider.dart' directly in new code.
-export 'package:parachute_app_core/providers/app_events_provider.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../models/send_to_chat_event.dart';
+
+/// Provider for cross-feature events: Send to Chat
+///
+/// This allows features like Daily to send content to Chat without
+/// directly importing from the chat feature package.
+final sendToChatEventProvider = StateProvider<SendToChatEvent?>((ref) => null);

@@ -10,11 +10,6 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-
-  # Parachute Core (shared package)
-  parachute_app_core:
-    path: ../parachute-app-core
-
   # UI
   cupertino_icons: ^1.0.8
   google_fonts: ^6.1.0

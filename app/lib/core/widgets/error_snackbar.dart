@@ -1,3 +1,13 @@
-// Re-export from parachute_app_core package.
-// Import 'package:parachute_app_core/widgets/error_snackbar.dart' directly in new code.
-export 'package:parachute_app_core/widgets/error_snackbar.dart';
+import 'package:flutter/material.dart';
+import '../errors/app_error.dart';
+import '../theme/design_tokens.dart';
+
+void showAppError(BuildContext context, AppError error) {
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(
+      content: Text(error.userMessage),
+      backgroundColor: BrandColors.error,
+      behavior: SnackBarBehavior.floating,
+    ),
+  );
+}
