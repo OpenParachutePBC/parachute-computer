@@ -81,6 +81,7 @@ async def event_generator(request: Request, chat_request: ChatRequest):
             attachments=attachments_data,
             agent_type=chat_request.agent_type,
             trust_level=chat_request.trust_level,
+            model=chat_request.model,
         ):
             # Check if client disconnected
             if await request.is_disconnected():
