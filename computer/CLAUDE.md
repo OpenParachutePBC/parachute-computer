@@ -38,6 +38,9 @@ Router → Orchestrator → Claude Agent SDK → AI
 - Message transcripts: JSONL files (Claude SDK managed)
 - Module hashes: `vault/.parachute/module_hashes.json`
 - Bot config: `vault/.parachute/bots.yaml`
+- Server config: `vault/.parachute/config.yaml`
+- Claude token: `vault/.parachute/.token`
+- Daemon logs: `vault/.parachute/logs/`
 
 ---
 
@@ -84,8 +87,9 @@ parachute/
 ├── docker/        # Sandbox Dockerfile + entrypoint
 ├── lib/           # Utilities
 ├── models/        # Pydantic models
-├── cli.py         # CLI (parachute setup/status/server/module)
-├── config.py      # Settings via pydantic-settings
+├── cli.py         # CLI (install/update/server/logs/doctor/config/module)
+├── config.py      # Settings (env vars + config.yaml + .token)
+├── daemon.py      # Daemon management (launchd/systemd/PID)
 └── server.py      # FastAPI application
 
 modules/           # Bundled modules (brain, chat, daily)
@@ -97,16 +101,19 @@ modules/           # Bundled modules (brain, chat, daily)
 - **Pydantic models** everywhere for validation
 - **SSE streaming** via async generators in orchestrator
 - **Logging**: module-level `logger = logging.getLogger(__name__)`
-- **Config**: `config.py` with empty `env_prefix` — field names map directly to env vars
+- **Config**: `config.py` loads env vars > `.env` > `vault/.parachute/config.yaml` > defaults
+- **Daemon**: `daemon.py` manages launchd (macOS), systemd (Linux), or PID file fallback
 
 ---
 
 ## Running
 
 ```bash
-parachute setup    # Configure vault path, port, Claude token
-parachute server   # Start on configured port (default 3333)
-parachute status   # System overview
+./install.sh              # First-time: venv + deps + config + daemon
+parachute server status   # Check daemon
+parachute server -f       # Foreground (dev mode)
+parachute update          # Pull latest + reinstall + restart
+parachute update --local  # Reinstall + restart (no git pull)
 ```
 
 Or directly:
@@ -131,15 +138,23 @@ API key authentication for multi-device access:
 
 ---
 
-## Environment
+## Configuration
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `VAULT_PATH` | `./sample-vault` | Path to vault directory |
-| `PORT` | `3333` | Server port |
-| `CLAUDE_CODE_OAUTH_TOKEN` | — | OAuth token for Claude SDK |
-| `DEFAULT_MODEL` | — | Optional model override (uses SDK default if unset) |
-| `API_KEY` | — | Optional API key for remote auth |
+Config precedence: env vars > `.env` file > `vault/.parachute/config.yaml` > defaults.
+
+| Setting | Env var | Default | Description |
+|---------|---------|---------|-------------|
+| `vault_path` | `VAULT_PATH` | `./sample-vault` | Path to vault directory |
+| `port` | `PORT` | `3333` | Server port |
+| `host` | `HOST` | `0.0.0.0` | Server bind address |
+| `claude_code_oauth_token` | `CLAUDE_CODE_OAUTH_TOKEN` | — | OAuth token (also read from `.token` file) |
+| `default_model` | `DEFAULT_MODEL` | — | Optional model override |
+| `auth_mode` | `AUTH_MODE` | `remote` | Auth mode: remote / always / disabled |
+| `log_level` | `LOG_LEVEL` | `INFO` | Log level |
+
+Token is stored separately at `vault/.parachute/.token` (0600 permissions).
+
+Manage config via CLI: `parachute config show/set/get`.
 
 ---
 
@@ -149,6 +164,8 @@ API key authentication for multi-device access:
 - The pointer architecture means sessions.db is metadata only
 - `VAULT_PATH` defaults to `./sample-vault` (set to `~/Parachute` in prod)
 - `config.py` has `env_prefix: ""` — env var names match field names exactly
+- Config lives in `vault/.parachute/config.yaml`, token in `vault/.parachute/.token`
 - Modules must be approved (hash verified) before the server loads them
 - Bot connectors use per-platform trust levels configured in `bots.yaml`
 - Docker must be running for sandboxed sessions (falls back to vault trust)
+- Daemon plist/service is at `io.openparachute.server` — shared label with app

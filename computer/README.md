@@ -16,9 +16,15 @@ cd parachute-computer
 ./install.sh
 ```
 
-This creates a virtual environment, installs dependencies, puts a `parachute` command in `~/.local/bin`, and runs interactive setup (vault path, token, daemon).
+The install script will:
+1. Check your Python version
+2. Create a virtual environment and install dependencies
+3. Add a `parachute` command to `~/.local/bin`
+4. Ask for your **vault path** (default: `~/Parachute`)
+5. Ask for your **Claude token** (get one with `claude setup-token`)
+6. Install and start the background daemon
 
-After install, the server runs as a background daemon automatically.
+After install, the server is running. Verify with `parachute server status`.
 
 ## Updating
 
@@ -27,9 +33,9 @@ parachute update           # Pull latest from GitHub, reinstall deps, restart
 parachute update --local   # Same but skip git pull (for local code changes)
 ```
 
-That's it. `parachute update` handles git pull, dependency updates, and restarting the daemon in one step.
+That's it. One command handles pulling code, updating dependencies, and restarting the daemon.
 
-If something breaks, re-run `./install.sh` to rebuild from scratch.
+If something goes wrong, re-run `./install.sh` to rebuild from scratch.
 
 ## Usage
 
@@ -96,6 +102,27 @@ parachute install     # Paste it during setup
 Token is stored at `~/Parachute/.parachute/.token` (0600 permissions).
 
 For multi-device access, API keys can be managed through the app's Settings screen.
+
+## Troubleshooting
+
+**`parachute: command not found`** — `~/.local/bin` is not in your PATH. Add to your shell rc file:
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+**Server won't start** — Run `parachute doctor` to check all prerequisites.
+
+**Port already in use** — Another process is on port 3333. Change it:
+```bash
+parachute config set port 4444
+parachute server restart
+```
+
+**After git pull, things broke** — Re-run `./install.sh` to rebuild the venv from scratch.
+
+**Daemon not starting on boot** — Check platform-specific config:
+- macOS: `launchctl list | grep parachute`
+- Linux: `systemctl --user status parachute`
 
 ## Development
 
