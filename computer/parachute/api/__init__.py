@@ -5,7 +5,11 @@ API routes for Parachute server.
 from fastapi import APIRouter
 
 # CURATOR REMOVED - curator module excluded from modular architecture
-from parachute.api import auth, chat, sessions, modules, health, filesystem, claude_code, mcp, skills, imports, prompts, context_folders, scheduler, sync, usage
+from parachute.api import (
+    auth, bots, chat, claude_code, context_folders, filesystem,
+    health, hooks, imports, mcp, modules, prompts,
+    sandbox, scheduler, sessions, skills, sync, usage,
+)
 
 # Create main API router
 api_router = APIRouter(prefix="/api")
@@ -27,3 +31,6 @@ api_router.include_router(context_folders.router, prefix="/contexts", tags=["con
 api_router.include_router(scheduler.router, tags=["scheduler"])
 api_router.include_router(sync.router, tags=["sync"])
 api_router.include_router(usage.router, tags=["usage"])
+api_router.include_router(hooks.router, tags=["hooks"])
+api_router.include_router(bots.router, tags=["bots"])
+api_router.include_router(sandbox.router, tags=["sandbox"])

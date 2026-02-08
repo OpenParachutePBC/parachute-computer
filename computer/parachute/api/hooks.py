@@ -11,7 +11,7 @@ from fastapi import APIRouter
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/hooks", tags=["hooks"])
+router = APIRouter(prefix="/hooks", tags=["hooks"])
 
 # Module-level state (set during server startup)
 _hook_runner: Any = None

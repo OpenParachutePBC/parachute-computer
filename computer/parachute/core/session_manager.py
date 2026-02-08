@@ -101,6 +101,7 @@ class SessionManager:
         module: str = "chat",
         working_directory: Optional[str] = None,
         continued_from: Optional[str] = None,
+        trust_level: Optional[str] = None,
     ) -> tuple[Session, ResumeInfo, bool]:
         """
         Get an existing session or prepare for a new one.
@@ -167,6 +168,7 @@ class SessionManager:
                 source=SessionSource.PARACHUTE,
                 working_directory=working_directory,
                 continued_from=continued_from,
+                trust_level=trust_level,
                 created_at=datetime.utcnow(),
                 last_accessed=datetime.utcnow(),
             )
@@ -186,6 +188,7 @@ class SessionManager:
             source=SessionSource.PARACHUTE,
             working_directory=working_directory,
             continued_from=continued_from,
+            trust_level=trust_level,
             created_at=datetime.utcnow(),
             last_accessed=datetime.utcnow(),
         )
@@ -209,11 +212,21 @@ class SessionManager:
         Finalize a new session with the SDK-provided session ID.
 
         Called after the first SDK response when we get the actual session ID.
+        For bot-created sessions, carries forward linked_bot fields and trust_level
+        from the placeholder, then removes the placeholder to avoid duplicate lookups.
         """
         # Convert working_directory to relative for storage
         relative_wd = self.make_working_directory_relative(placeholder.working_directory)
         # Use provided agent_type, or fall back to placeholder's agent_type
         final_agent_type = agent_type or placeholder.get_agent_type()
+
+        # Carry forward bot-linked fields from placeholder
+        linked_bot_platform = getattr(placeholder, 'linked_bot_platform', None)
+        linked_bot_chat_id = getattr(placeholder, 'linked_bot_chat_id', None)
+        linked_bot_chat_type = getattr(placeholder, 'linked_bot_chat_type', None)
+        trust_level = getattr(placeholder, 'trust_level', None)
+        metadata = getattr(placeholder, 'metadata', None)
+
         session = await self.db.create_session(
             SessionCreate(
                 id=sdk_session_id,
@@ -224,8 +237,24 @@ class SessionManager:
                 model=model,
                 continued_from=placeholder.continued_from,
                 agent_type=final_agent_type,
+                trust_level=trust_level,
+                linked_bot_platform=linked_bot_platform,
+                linked_bot_chat_id=linked_bot_chat_id,
+                linked_bot_chat_type=linked_bot_chat_type,
+                metadata=metadata,
             )
         )
+
+        # Remove the placeholder session so get_session_by_bot_link finds the
+        # finalized session (with the SDK session ID) on the next message
+        placeholder_id = placeholder.id
+        if placeholder_id and placeholder_id != sdk_session_id:
+            try:
+                await self.db.delete_session(placeholder_id)
+                logger.debug(f"Removed placeholder session {placeholder_id[:8]} after finalization")
+            except Exception as e:
+                logger.warning(f"Could not remove placeholder session {placeholder_id[:8]}: {e}")
+
         logger.info(f"Finalized session: {sdk_session_id[:8]}... title='{title or 'none'}' agent_type='{final_agent_type or 'none'}'")
         return session
 

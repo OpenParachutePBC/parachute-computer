@@ -125,6 +125,12 @@ class ChatRequest(BaseModel):
         default=None,
         description="Agent type for new sessions (e.g., 'orchestrator', 'vault-agent')",
     )
+    trust_level: Optional[str] = Field(
+        alias="trustLevel",
+        default=None,
+        description="Trust level override: full, vault, sandboxed. "
+                    "Can only restrict below module default, never escalate.",
+    )
 
     # Legacy fields for compatibility
     agent_path: Optional[str] = Field(alias="agentPath", default=None)

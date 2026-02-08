@@ -11,6 +11,7 @@ from fastapi import APIRouter, Query, Request
 
 from parachute import __version__
 from parachute.config import get_settings
+from parachute.core.sandbox import DockerSandbox
 
 router = APIRouter()
 
@@ -72,6 +73,19 @@ async def health_check(
     if module_loader:
         modules_status = module_loader.get_module_status()
 
+    # Docker sandbox availability (use shared instance from app.state or create without token)
+    sandbox = getattr(request.app.state, 'sandbox', None)
+    if sandbox is None:
+        # Fallback: create without token (health check doesn't need it)
+        sandbox = DockerSandbox(vault_path=settings.vault_path)
+    docker_available = await sandbox.is_available()
+    docker_info = {
+        "available": docker_available,
+        "image": "parachute-sandbox:latest",
+    }
+    if docker_available:
+        docker_info["image_exists"] = await sandbox.image_exists()
+
     return {
         **basic,
         "vault": {
@@ -79,5 +93,6 @@ async def health_check(
             "status": vault_status,
         },
         "modules": modules_status,
+        "docker": docker_info,
         "uptime": time.time() - _start_time,
     }

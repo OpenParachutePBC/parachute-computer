@@ -5,6 +5,7 @@ All platform connectors (Telegram, Discord) inherit from BotConnector
 and implement platform-specific message handling.
 """
 
+import asyncio
 import logging
 from abc import ABC, abstractmethod
 from typing import Any, Optional
@@ -25,6 +26,7 @@ class BotConnector(ABC):
         default_trust_level: str = "vault",
         dm_trust_level: str = "vault",
         group_trust_level: str = "sandboxed",
+        group_mention_mode: str = "mention_only",
     ):
         self.bot_token = bot_token
         self.server = server
@@ -32,7 +34,9 @@ class BotConnector(ABC):
         self.default_trust_level = default_trust_level
         self.dm_trust_level = dm_trust_level
         self.group_trust_level = group_trust_level
+        self.group_mention_mode = group_mention_mode
         self._running = False
+        self._session_locks: dict[str, asyncio.Lock] = {}
 
     @abstractmethod
     async def start(self) -> None:
@@ -58,11 +62,47 @@ class BotConnector(ABC):
         """Check if user is in the allowlist."""
         return user_id in self.allowed_users or str(user_id) in [str(u) for u in self.allowed_users]
 
+    async def handle_unknown_user(
+        self, platform: str, user_id: str, user_display: str, chat_id: str
+    ) -> str:
+        """Handle message from unknown user — create pairing request."""
+        db = getattr(self.server, "database", None)
+        if not db:
+            return "Service unavailable."
+
+        # Check for existing pending request
+        existing = await db.get_pairing_request_for_user(platform, str(user_id))
+        if existing and existing.status == "pending":
+            return "Your request is still pending. The owner will approve it shortly."
+
+        # Create new request
+        import uuid
+        request_id = str(uuid.uuid4())
+        await db.create_pairing_request(
+            id=request_id,
+            platform=platform,
+            platform_user_id=str(user_id),
+            platform_user_display=user_display,
+            platform_chat_id=chat_id,
+        )
+        logger.info(f"Created pairing request {request_id} for {platform} user {user_id}")
+        return "Hi! I need approval before we can chat. Your request has been sent to the owner."
+
+    async def send_approval_message(self, chat_id: str) -> None:
+        """Send approval confirmation to user. Override in subclasses."""
+        logger.info(f"{self.platform}: approval message not implemented for chat {chat_id}")
+
     def get_trust_level(self, chat_type: str) -> str:
         """Get trust level based on chat type (dm vs group)."""
         if chat_type == "dm":
             return self.dm_trust_level
         return self.group_trust_level
+
+    def _get_session_lock(self, session_id: str) -> asyncio.Lock:
+        """Get or create a per-session lock for concurrency control."""
+        if session_id not in self._session_locks:
+            self._session_locks[session_id] = asyncio.Lock()
+        return self._session_locks[session_id]
 
     async def get_or_create_session(
         self,

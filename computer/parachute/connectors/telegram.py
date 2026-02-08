@@ -47,6 +47,7 @@ class TelegramConnector(BotConnector):
         default_trust_level: str = "vault",
         dm_trust_level: str = "vault",
         group_trust_level: str = "sandboxed",
+        group_mention_mode: str = "mention_only",
     ):
         super().__init__(
             bot_token=bot_token,
@@ -55,6 +56,7 @@ class TelegramConnector(BotConnector):
             default_trust_level=default_trust_level,
             dm_trust_level=dm_trust_level,
             group_trust_level=group_trust_level,
+            group_mention_mode=group_mention_mode,
         )
         self._app: Optional[Application] = None
         self._polling_task: Optional[asyncio.Task] = None
@@ -72,6 +74,7 @@ class TelegramConnector(BotConnector):
         # Register handlers
         self._app.add_handler(CommandHandler("start", self._cmd_start))
         self._app.add_handler(CommandHandler("help", self._cmd_help))
+        self._app.add_handler(CommandHandler("new", self._cmd_new))
         self._app.add_handler(CommandHandler("journal", self._cmd_journal))
         self._app.add_handler(CommandHandler("j", self._cmd_journal))
         self._app.add_handler(
@@ -115,9 +118,13 @@ class TelegramConnector(BotConnector):
         """Handle /start command."""
         user_id = update.effective_user.id
         if not self.is_user_allowed(user_id):
-            await update.message.reply_text(
-                "Not authorized. Contact the vault owner to add your Telegram user ID."
+            response = await self.handle_unknown_user(
+                platform="telegram",
+                user_id=str(user_id),
+                user_display=update.effective_user.full_name,
+                chat_id=str(update.effective_chat.id),
             )
+            await update.message.reply_text(response)
             return
 
         await update.message.reply_text(
@@ -125,11 +132,30 @@ class TelegramConnector(BotConnector):
             "or use /journal to create a journal entry."
         )
 
+    async def _cmd_new(self, update: Any, context: Any) -> None:
+        """Handle /new command - archive current session and start fresh."""
+        user_id = update.effective_user.id
+        if not self.is_user_allowed(user_id):
+            return
+
+        chat_id = str(update.effective_chat.id)
+        db = getattr(self.server, "database", None)
+        if db:
+            session = await db.get_session_by_bot_link("telegram", chat_id)
+            if session:
+                await db.archive_session(session.id)
+                logger.info(f"Archived Telegram session {session.id[:8]} for chat {chat_id}")
+
+        await update.message.reply_text(
+            "Starting fresh! Previous conversation archived."
+        )
+
     async def _cmd_help(self, update: Any, context: Any) -> None:
         """Handle /help command."""
         await update.message.reply_text(
             "Parachute Bot Commands:\n\n"
             "/start - Connect to Parachute\n"
+            "/new - Start a new conversation\n"
             "/journal <text> - Create a journal entry\n"
             "/j <text> - Shorthand for /journal\n"
             "/help - Show this help\n\n"
@@ -140,7 +166,13 @@ class TelegramConnector(BotConnector):
         """Handle /journal command - route to Daily module."""
         user_id = update.effective_user.id
         if not self.is_user_allowed(user_id):
-            await update.message.reply_text("Not authorized.")
+            response = await self.handle_unknown_user(
+                platform="telegram",
+                user_id=str(user_id),
+                user_display=update.effective_user.full_name,
+                chat_id=str(update.effective_chat.id),
+            )
+            await update.message.reply_text(response)
             return
 
         text = " ".join(context.args) if context.args else ""
@@ -160,11 +192,30 @@ class TelegramConnector(BotConnector):
         """Handle incoming text message."""
         user_id = update.effective_user.id
         if not self.is_user_allowed(user_id):
-            await update.message.reply_text("Not authorized.")
+            response = await self.handle_unknown_user(
+                platform="telegram",
+                user_id=str(user_id),
+                user_display=update.effective_user.full_name,
+                chat_id=str(update.effective_chat.id),
+            )
+            await update.message.reply_text(response)
             return
 
         chat_id = str(update.effective_chat.id)
         chat_type = "dm" if update.effective_chat.type == "private" else "group"
+        message_text = update.message.text
+
+        # Group mention gating: only respond to @mentions in group chats
+        if chat_type == "group" and self.group_mention_mode == "mention_only":
+            bot_me = await self._app.bot.get_me()
+            bot_username = bot_me.username
+            if bot_username and f"@{bot_username}" not in message_text:
+                return  # Silently ignore non-mentions in groups
+            # Strip the mention from the message
+            if bot_username:
+                message_text = message_text.replace(f"@{bot_username}", "").strip()
+            if not message_text:
+                return  # Nothing left after stripping mention
 
         # Find or create linked session
         session = await self.get_or_create_session(
@@ -181,11 +232,13 @@ class TelegramConnector(BotConnector):
         # Send "typing" indicator
         await update.effective_chat.send_action("typing")
 
-        # Route through Chat orchestrator
-        response_text = await self._route_to_chat(
-            session_id=session.id,
-            message=update.message.text,
-        )
+        # Route through Chat orchestrator (with per-session lock)
+        lock = self._get_session_lock(session.id)
+        async with lock:
+            response_text = await self._route_to_chat(
+                session_id=session.id,
+                message=message_text,
+            )
 
         if not response_text:
             response_text = "No response from agent."
@@ -203,7 +256,13 @@ class TelegramConnector(BotConnector):
         """Handle incoming voice message."""
         user_id = update.effective_user.id
         if not self.is_user_allowed(user_id):
-            await update.message.reply_text("Not authorized.")
+            response = await self.handle_unknown_user(
+                platform="telegram",
+                user_id=str(user_id),
+                user_display=update.effective_user.full_name,
+                chat_id=str(update.effective_chat.id),
+            )
+            await update.message.reply_text(response)
             return
 
         # Download voice file
@@ -240,18 +299,24 @@ class TelegramConnector(BotConnector):
             return "Chat orchestrator not available."
 
         try:
+            event_count = 0
             async for event in orchestrate(
                 session_id=session_id,
                 message=message,
                 source="telegram",
             ):
-                event_type = getattr(event, "type", None) or event.get("type", "")
+                event_count += 1
+                event_type = event.get("type", "") if isinstance(event, dict) else getattr(event, "type", "")
                 if event_type == "text":
-                    delta = getattr(event, "delta", None) or event.get("delta", "")
+                    delta = event.get("delta", "") if isinstance(event, dict) else getattr(event, "delta", "")
                     response_text += delta
+                elif event_type == "error":
+                    error_msg = event.get("error", "") if isinstance(event, dict) else getattr(event, "error", "")
+                    logger.error(f"Orchestrator error event: {error_msg}")
+            logger.info(f"Telegram orchestration: {event_count} events, {len(response_text)} chars response")
         except Exception as e:
-            logger.error(f"Chat orchestration failed: {e}")
-            return f"Error: {e}"
+            logger.error(f"Chat orchestration failed: {e}", exc_info=True)
+            return "Something went wrong. Please try again later."
 
         return response_text
 
@@ -271,3 +336,11 @@ class TelegramConnector(BotConnector):
         except Exception as e:
             logger.error(f"Daily entry creation failed: {e}")
             raise
+
+    async def send_approval_message(self, chat_id: str) -> None:
+        """Send approval confirmation to user via Telegram."""
+        if self._app and self._app.bot:
+            await self._app.bot.send_message(
+                chat_id=int(chat_id),
+                text="You've been approved! Send me a message to start chatting.",
+            )

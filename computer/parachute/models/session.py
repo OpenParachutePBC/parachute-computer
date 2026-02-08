@@ -292,6 +292,56 @@ class SessionUpdate(BaseModel):
     model: Optional[str] = None
     agent_type: Optional[str] = None
     metadata: Optional[dict[str, Any]] = None
+    trust_level: Optional[str] = None
+
+
+class PairingRequest(BaseModel):
+    """A request from an unknown bot user to be paired/approved."""
+
+    id: str = Field(description="Unique request ID (UUID)")
+    platform: str = Field(description="Bot platform: telegram, discord")
+    platform_user_id: str = Field(
+        alias="platformUserId",
+        serialization_alias="platformUserId",
+        description="Platform-specific user ID",
+    )
+    platform_user_display: Optional[str] = Field(
+        default=None,
+        alias="platformUserDisplay",
+        serialization_alias="platformUserDisplay",
+        description="User display name on the platform",
+    )
+    platform_chat_id: str = Field(
+        alias="platformChatId",
+        serialization_alias="platformChatId",
+        description="Platform-specific chat ID where request originated",
+    )
+    status: str = Field(default="pending", description="Request status: pending, approved, denied")
+    approved_trust_level: Optional[str] = Field(
+        default=None,
+        alias="approvedTrustLevel",
+        serialization_alias="approvedTrustLevel",
+        description="Trust level granted on approval",
+    )
+    created_at: datetime = Field(
+        alias="createdAt",
+        serialization_alias="createdAt",
+        description="When the request was created",
+    )
+    resolved_at: Optional[datetime] = Field(
+        default=None,
+        alias="resolvedAt",
+        serialization_alias="resolvedAt",
+        description="When the request was resolved",
+    )
+    resolved_by: Optional[str] = Field(
+        default=None,
+        alias="resolvedBy",
+        serialization_alias="resolvedBy",
+        description="Who resolved the request",
+    )
+
+    model_config = {"from_attributes": True, "populate_by_name": True}
 
 
 class SessionWithMessages(Session):

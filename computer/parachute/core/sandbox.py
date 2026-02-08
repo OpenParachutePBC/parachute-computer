@@ -11,7 +11,11 @@ Fallback: When Docker is not available, degrades to VAULT trust level
 import asyncio
 import json
 import logging
+import os
+import re
 import shutil
+import tempfile
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import AsyncGenerator, Optional
@@ -40,19 +44,25 @@ class AgentSandboxConfig:
 class DockerSandbox:
     """Manages Docker containers for sandboxed agent execution."""
 
+    # Re-check Docker availability every 60 seconds
+    _CACHE_TTL = 60
+
     def __init__(self, vault_path: Path, claude_token: Optional[str] = None):
         self.vault_path = vault_path
         self.claude_token = claude_token
         self._docker_available: Optional[bool] = None
+        self._checked_at: float = 0
 
     async def is_available(self) -> bool:
-        """Check if Docker is installed and running."""
-        if self._docker_available is not None:
+        """Check if Docker is installed and running (cached with TTL)."""
+        if (self._docker_available is not None
+                and (time.time() - self._checked_at) < self._CACHE_TTL):
             return self._docker_available
 
         if not shutil.which("docker"):
             logger.warning("Docker not found in PATH")
             self._docker_available = False
+            self._checked_at = time.time()
             return False
 
         try:
@@ -63,12 +73,14 @@ class DockerSandbox:
             )
             await asyncio.wait_for(proc.wait(), timeout=5.0)
             self._docker_available = proc.returncode == 0
+            self._checked_at = time.time()
             if not self._docker_available:
                 logger.warning("Docker daemon not running")
             return self._docker_available
         except (asyncio.TimeoutError, OSError):
             logger.warning("Docker check timed out or failed")
             self._docker_available = False
+            self._checked_at = time.time()
             return False
 
     async def image_exists(self) -> bool:
@@ -92,10 +104,13 @@ class DockerSandbox:
 
         # Mount allowed vault paths
         for path_pattern in config.allowed_paths:
-            # Resolve pattern to actual path (no glob expansion in Docker mounts)
-            full_path = self.vault_path / path_pattern.rstrip("/**/*").rstrip("/*")
+            # Strip glob suffixes to get directory path
+            clean = re.sub(r'(/\*\*?)*$', '', path_pattern)
+            if not clean:
+                continue
+            full_path = self.vault_path / clean
             if full_path.exists():
-                container_path = f"/vault/{path_pattern.rstrip('/**/*').rstrip('/*')}"
+                container_path = f"/vault/{clean}"
                 mounts.extend(["-v", f"{full_path}:{container_path}:rw"])
 
         # If no specific paths, mount entire vault read-only
@@ -104,11 +119,20 @@ class DockerSandbox:
 
         return mounts
 
-    def _build_run_args(self, config: AgentSandboxConfig) -> list[str]:
-        """Build complete docker run arguments."""
+    def _build_run_args(self, config: AgentSandboxConfig) -> tuple[list[str], Optional[str]]:
+        """Build complete docker run arguments.
+
+        Returns (args, env_file_path) where env_file_path is a temp file
+        that must be cleaned up after the container starts.
+        """
+        # Validate session_id is safe for Docker --name
+        if not re.match(r'^[a-zA-Z0-9_-]+$', config.session_id):
+            raise ValueError(f"Invalid session_id format: {config.session_id[:20]}")
+
         args = [
             "docker", "run",
             "--rm",
+            "-i",  # Interactive mode: accept stdin for message passing
             "--name", f"parachute-sandbox-{config.session_id[:8]}",
             "--memory", CONTAINER_MEMORY_LIMIT,
             "--cpus", CONTAINER_CPU_LIMIT,
@@ -121,20 +145,32 @@ class DockerSandbox:
         # Volume mounts
         args.extend(self._build_mounts(config))
 
-        # Environment
-        args.extend([
-            "-e", f"PARACHUTE_SESSION_ID={config.session_id}",
-            "-e", f"PARACHUTE_AGENT_TYPE={config.agent_type}",
-        ])
-
-        # Pass Claude token as env var (no credential files needed)
+        # Environment variables via --env-file to avoid token exposure in process table
+        env_file_path = None
+        env_lines = [
+            f"PARACHUTE_SESSION_ID={config.session_id}",
+            f"PARACHUTE_AGENT_TYPE={config.agent_type}",
+        ]
         if self.claude_token:
-            args.extend(["-e", f"CLAUDE_CODE_OAUTH_TOKEN={self.claude_token}"])
+            env_lines.append(f"CLAUDE_CODE_OAUTH_TOKEN={self.claude_token}")
+        else:
+            logger.warning("No claude_token configured for sandbox — container will fail auth")
+
+        fd, env_file_path = tempfile.mkstemp(suffix='.env', prefix='parachute-sandbox-')
+        try:
+            with os.fdopen(fd, 'w') as f:
+                f.write('\n'.join(env_lines) + '\n')
+            os.chmod(env_file_path, 0o600)
+            args.extend(["--env-file", env_file_path])
+        except Exception:
+            # Clean up on error
+            os.unlink(env_file_path)
+            raise
 
         # Image
         args.append(SANDBOX_IMAGE)
 
-        return args
+        return args, env_file_path
 
     async def run_agent(
         self,
@@ -148,48 +184,83 @@ class DockerSandbox:
         if not await self.is_available():
             raise RuntimeError("Docker not available for sandboxed execution")
 
-        args = self._build_run_args(config)
-        # Pass message as stdin
-        args.extend(["--input", json.dumps({"message": message})])
+        args, env_file_path = self._build_run_args(config)
 
         try:
             proc = await asyncio.create_subprocess_exec(
                 *args,
+                stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
 
-            # Stream stdout line by line (JSONL events)
-            async def read_events():
-                while True:
-                    line = await proc.stdout.readline()
-                    if not line:
-                        break
-                    try:
-                        event = json.loads(line.decode().strip())
-                        yield event
-                    except json.JSONDecodeError:
-                        logger.debug(f"Non-JSON output from sandbox: {line.decode().strip()}")
+            # Note: env file cleanup is deferred to the finally block.
+            # Docker needs time to read the --env-file after process start.
 
-            async for event in read_events():
-                yield event
+            # Guard against None pipes (subprocess failed to start fully)
+            if proc.stdin is None or proc.stdout is None:
+                yield {"type": "error", "message": "Failed to open pipes to sandbox container"}
+                return
 
-            # Wait for completion with timeout
-            try:
-                await asyncio.wait_for(proc.wait(), timeout=config.timeout_seconds)
-            except asyncio.TimeoutError:
+            # Pass message via stdin (Docker -i flag enables this)
+            proc.stdin.write(json.dumps({"message": message}).encode() + b"\n")
+            await proc.stdin.drain()
+            proc.stdin.close()
+
+            # Stream stdout line by line (JSONL events) with timeout enforcement
+            # Each readline has a per-chunk timeout, plus overall deadline
+            deadline = time.time() + config.timeout_seconds
+            timed_out = False
+            while True:
+                remaining = deadline - time.time()
+                if remaining <= 0:
+                    timed_out = True
+                    break
+                try:
+                    line = await asyncio.wait_for(
+                        proc.stdout.readline(),
+                        timeout=min(remaining, 180),  # Per-chunk cap of 3 min
+                    )
+                except asyncio.TimeoutError:
+                    timed_out = True
+                    break
+                if not line:
+                    break
+                try:
+                    event = json.loads(line.decode().strip())
+                    yield event
+                except json.JSONDecodeError:
+                    logger.debug(f"Non-JSON output from sandbox: {line.decode().strip()}")
+
+            if timed_out:
                 logger.error(f"Sandbox timed out for session {config.session_id}")
                 proc.kill()
                 yield {"type": "error", "message": "Sandbox execution timed out"}
+                return
+
+            # Wait for process exit
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=10)
+            except asyncio.TimeoutError:
+                proc.kill()
 
             if proc.returncode and proc.returncode != 0:
-                stderr = await proc.stderr.read()
-                logger.error(f"Sandbox exited with code {proc.returncode}: {stderr.decode()}")
+                stderr_data = b""
+                if proc.stderr:
+                    stderr_data = await proc.stderr.read()
+                logger.error(f"Sandbox exited with code {proc.returncode}: {stderr_data.decode()}")
                 yield {"type": "error", "message": f"Sandbox error (exit {proc.returncode})"}
 
         except OSError as e:
             logger.error(f"Failed to start sandbox: {e}")
             yield {"type": "error", "message": f"Failed to start sandbox: {e}"}
+        finally:
+            # Ensure env file is cleaned up even on error
+            if env_file_path:
+                try:
+                    os.unlink(env_file_path)
+                except OSError:
+                    pass
 
     def health_info(self) -> dict:
         """Return Docker health info for /health endpoint."""

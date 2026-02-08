@@ -6,10 +6,12 @@ Loads bot settings from vault/.parachute/bots.yaml.
 
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 import yaml
 from pydantic import BaseModel, Field
+
+TrustLevelStr = Literal["full", "vault", "sandboxed"]
 
 logger = logging.getLogger(__name__)
 
@@ -20,9 +22,10 @@ class TelegramConfig(BaseModel):
     enabled: bool = False
     bot_token: str = ""
     allowed_users: list[int] = Field(default_factory=list)
-    default_trust_level: str = "vault"
-    dm_trust_level: str = "vault"
-    group_trust_level: str = "sandboxed"
+    default_trust_level: TrustLevelStr = "vault"
+    dm_trust_level: TrustLevelStr = "vault"
+    group_trust_level: TrustLevelStr = "sandboxed"
+    group_mention_mode: Literal["mention_only", "all_messages"] = "mention_only"
 
 
 class DiscordConfig(BaseModel):
@@ -32,9 +35,10 @@ class DiscordConfig(BaseModel):
     bot_token: str = ""
     allowed_users: list[str] = Field(default_factory=list)
     allowed_guilds: list[str] = Field(default_factory=list)
-    default_trust_level: str = "vault"
-    dm_trust_level: str = "vault"
-    group_trust_level: str = "sandboxed"
+    default_trust_level: TrustLevelStr = "vault"
+    dm_trust_level: TrustLevelStr = "vault"
+    group_trust_level: TrustLevelStr = "sandboxed"
+    group_mention_mode: Literal["mention_only", "all_messages"] = "mention_only"
 
 
 class BotsConfig(BaseModel):
