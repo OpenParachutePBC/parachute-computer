@@ -98,6 +98,8 @@ class LaunchdDaemon(DaemonManager):
                 "VAULT_PATH": str(self.vault_path),
                 "PARACHUTE_CONFIG": str(self.vault_path / ".parachute" / "config.yaml"),
                 "PYTHONUNBUFFERED": "1",
+                # launchd has minimal PATH — add standard locations for docker, git, etc.
+                "PATH": "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin",
             },
             "RunAtLoad": True,
             "KeepAlive": True,
