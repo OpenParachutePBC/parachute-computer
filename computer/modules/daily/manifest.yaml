@@ -1,0 +1,6 @@
+name: daily
+version: "0.1.0"
+description: "Daily journal entries and agent framework"
+trust_level: full
+optional_requires:
+  - BrainInterface
