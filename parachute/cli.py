@@ -20,6 +20,14 @@ Usage:
     parachute module approve NAME      # Approve a module (offline)
     parachute module status            # Show live server status (online)
     parachute module test [NAME]       # Test module endpoints (online)
+    parachute bot status               # Show bot connector status
+    parachute bot start <platform>     # Start a bot connector
+    parachute bot stop <platform>      # Stop a bot connector
+    parachute bot config               # Show bot configuration
+    parachute bot config set KEY VAL   # Set bot config (e.g. telegram.bot_token)
+    parachute bot approve [ID]         # Approve pending user (list if no ID)
+    parachute bot deny ID              # Deny a pending user
+    parachute bot users                # List approved users
 """
 
 import argparse
@@ -124,6 +132,16 @@ def _api_post(url: str, data: dict | None = None) -> dict:
     req.add_header("Content-Type", "application/json")
     req.add_header("Accept", "application/json")
     with urlopen(req, timeout=5) as resp:
+        return json.loads(resp.read())
+
+
+def _api_put(url: str, data: dict) -> dict:
+    """Make a PUT request to the server API."""
+    body = json.dumps(data).encode()
+    req = Request(url, data=body, method="PUT")
+    req.add_header("Content-Type", "application/json")
+    req.add_header("Accept", "application/json")
+    with urlopen(req, timeout=10) as resp:
         return json.loads(resp.read())
 
 
@@ -1222,6 +1240,350 @@ def cmd_module_test(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+# --- Bot commands ---
+
+
+def cmd_bot(args: argparse.Namespace) -> None:
+    """Bot connector management."""
+    action = getattr(args, "action", None)
+
+    if action == "status":
+        _bot_status()
+    elif action == "start":
+        _bot_start(args.platform)
+    elif action == "stop":
+        _bot_stop(args.platform)
+    elif action == "config":
+        sub = getattr(args, "config_action", None)
+        if sub == "set":
+            _bot_config_set(args.key, args.value)
+        else:
+            _bot_config_show()
+    elif action == "approve":
+        _bot_approve(getattr(args, "request_id", None))
+    elif action == "deny":
+        _bot_deny(args.request_id)
+    elif action == "users":
+        _bot_users()
+    else:
+        print("Usage: parachute bot {status|start|stop|config|approve|deny|users}")
+
+
+def _bot_status() -> None:
+    """Show bot connector status — tries server API, falls back to config file."""
+    server_url = _get_server_url()
+
+    try:
+        data = _api_get(f"{server_url}/api/bots/status")
+        connectors = data.get("connectors", {})
+
+        print("\nBot Connectors")
+        print("-" * 40)
+
+        for platform, info in connectors.items():
+            running = info.get("running", False)
+            enabled = info.get("enabled", False)
+            has_token = info.get("has_token", False)
+
+            if running:
+                state = "running"
+            elif enabled and has_token:
+                state = "enabled (stopped)"
+            elif enabled:
+                state = "enabled (no token)"
+            else:
+                state = "disabled"
+
+            print(f"  {platform}: {state}")
+            if has_token:
+                print(f"    token: configured")
+            users_count = info.get("allowed_users_count", info.get("allowed_guilds_count", 0))
+            if users_count:
+                print(f"    allowed users: {users_count}")
+
+        print()
+
+    except (URLError, OSError):
+        # Offline fallback — read bots.yaml directly
+        vault_path = _get_vault_path()
+        config_path = vault_path / ".parachute" / "bots.yaml"
+
+        if not config_path.exists():
+            print("No bot configuration found.")
+            print("Tip: Configure bots in Settings or run 'parachute bot config set telegram.bot_token <token>'")
+            return
+
+        try:
+            with open(config_path) as f:
+                data = yaml.safe_load(f) or {}
+
+            print("\nBot Configuration (offline — server not running)")
+            print("-" * 40)
+
+            for platform in ("telegram", "discord"):
+                cfg = data.get(platform, {})
+                enabled = cfg.get("enabled", False)
+                has_token = bool(cfg.get("bot_token", ""))
+                print(f"  {platform}: {'enabled' if enabled else 'disabled'}")
+                if has_token:
+                    print(f"    token: configured")
+        except Exception as e:
+            print(f"Error reading bot config: {e}")
+
+
+def _bot_start(platform: str) -> None:
+    """Start a bot connector via the server API."""
+    if platform not in ("telegram", "discord"):
+        print(f"Unknown platform: {platform}")
+        print("Valid platforms: telegram, discord")
+        sys.exit(1)
+
+    server_url = _get_server_url()
+    try:
+        result = _api_post(f"{server_url}/api/bots/{platform}/start")
+        if result.get("success"):
+            print(f"{platform} connector started.")
+        else:
+            print(f"Start failed: {result.get('error', 'unknown error')}")
+            sys.exit(1)
+    except URLError as e:
+        print(f"Cannot connect to server: {e}")
+        print("Is the server running? Try: parachute server status")
+        sys.exit(1)
+
+
+def _bot_stop(platform: str) -> None:
+    """Stop a bot connector via the server API."""
+    if platform not in ("telegram", "discord"):
+        print(f"Unknown platform: {platform}")
+        print("Valid platforms: telegram, discord")
+        sys.exit(1)
+
+    server_url = _get_server_url()
+    try:
+        result = _api_post(f"{server_url}/api/bots/{platform}/stop")
+        if result.get("success"):
+            print(f"{platform} connector stopped.")
+        else:
+            print(f"Stop failed: {result.get('error', 'unknown error')}")
+            sys.exit(1)
+    except URLError as e:
+        print(f"Cannot connect to server: {e}")
+        sys.exit(1)
+
+
+def _bot_config_show() -> None:
+    """Show bot configuration."""
+    server_url = _get_server_url()
+
+    try:
+        data = _api_get(f"{server_url}/api/bots/config")
+    except (URLError, OSError):
+        # Offline fallback
+        vault_path = _get_vault_path()
+        config_path = vault_path / ".parachute" / "bots.yaml"
+        if not config_path.exists():
+            print("No bot configuration found.")
+            return
+        with open(config_path) as f:
+            data = yaml.safe_load(f) or {}
+
+    print("\nBot Configuration")
+    print("-" * 40)
+
+    for platform in ("telegram", "discord"):
+        cfg = data.get(platform, {})
+        print(f"\n  {platform}:")
+
+        has_token = cfg.get("has_token", bool(cfg.get("bot_token", "")))
+        enabled = cfg.get("enabled", False)
+        print(f"    enabled: {enabled}")
+        print(f"    token: {'configured' if has_token else 'not set'}")
+
+        dm_trust = cfg.get("dm_trust_level", "vault")
+        group_trust = cfg.get("group_trust_level", "sandboxed")
+        print(f"    dm_trust_level: {dm_trust}")
+        print(f"    group_trust_level: {group_trust}")
+
+        # Platform-specific fields
+        if platform == "telegram":
+            users = cfg.get("allowed_users", [])
+            if users:
+                print(f"    allowed_users: {', '.join(str(u) for u in users)}")
+        else:
+            guilds = cfg.get("allowed_guilds", [])
+            if guilds:
+                print(f"    allowed_guilds: {', '.join(guilds)}")
+
+    print()
+
+
+def _bot_config_set(key: str, value: str) -> None:
+    """Set a bot config value. Key format: platform.field (e.g. telegram.bot_token)."""
+    parts = key.split(".", 1)
+    if len(parts) != 2 or parts[0] not in ("telegram", "discord"):
+        print(f"Invalid key: {key}")
+        print("Format: <platform>.<field>  (e.g. telegram.bot_token, discord.enabled)")
+        sys.exit(1)
+
+    platform, field = parts
+
+    valid_fields = {"enabled", "bot_token", "allowed_users", "allowed_guilds", "dm_trust_level", "group_trust_level"}
+    if field not in valid_fields:
+        print(f"Unknown field: {field}")
+        print(f"Valid fields: {', '.join(sorted(valid_fields))}")
+        sys.exit(1)
+
+    # Build update payload
+    update: dict = {}
+    if field == "enabled":
+        update["enabled"] = value.lower() in ("true", "1", "yes")
+    elif field == "bot_token":
+        update["bot_token"] = value
+    elif field == "allowed_users":
+        if platform == "telegram":
+            update["allowed_users"] = [int(x.strip()) for x in value.split(",") if x.strip()]
+        else:
+            update["allowed_users"] = [x.strip() for x in value.split(",") if x.strip()]
+    elif field == "allowed_guilds":
+        update["allowed_guilds"] = [x.strip() for x in value.split(",") if x.strip()]
+    elif field in ("dm_trust_level", "group_trust_level"):
+        if value not in ("full", "vault", "sandboxed"):
+            print(f"Invalid trust level: {value}")
+            print("Valid levels: full, vault, sandboxed")
+            sys.exit(1)
+        update[field] = value
+
+    server_url = _get_server_url()
+    try:
+        result = _api_put(f"{server_url}/api/bots/config", {platform: update})
+        print(f"Set {key} = {value}")
+    except URLError:
+        # Offline: write directly to bots.yaml
+        vault_path = _get_vault_path()
+        config_path = vault_path / ".parachute" / "bots.yaml"
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+
+        existing = {}
+        if config_path.exists():
+            with open(config_path) as f:
+                existing = yaml.safe_load(f) or {}
+
+        if platform not in existing:
+            existing[platform] = {}
+
+        # Convert the update value for YAML
+        if field == "enabled":
+            existing[platform][field] = value.lower() in ("true", "1", "yes")
+        elif field == "allowed_users" and platform == "telegram":
+            existing[platform][field] = [int(x.strip()) for x in value.split(",") if x.strip()]
+        elif field in ("allowed_users", "allowed_guilds"):
+            existing[platform][field] = [x.strip() for x in value.split(",") if x.strip()]
+        else:
+            existing[platform][field] = value
+
+        with open(config_path, "w") as f:
+            yaml.safe_dump(existing, f, default_flow_style=False)
+        os.chmod(config_path, 0o600)
+
+        print(f"Set {key} = {value} (written to bots.yaml)")
+        print("Note: Restart the server for changes to take effect.")
+
+
+def _bot_approve(request_id: str | None) -> None:
+    """Approve a pending pairing request. Lists pending if no ID given."""
+    server_url = _get_server_url()
+
+    try:
+        data = _api_get(f"{server_url}/api/bots/pairing")
+    except URLError as e:
+        print(f"Cannot connect to server: {e}")
+        sys.exit(1)
+
+    requests = data.get("requests", [])
+
+    if not request_id:
+        # List pending requests
+        if not requests:
+            print("No pending pairing requests.")
+            return
+
+        print("\nPending Pairing Requests")
+        print("-" * 40)
+        for r in requests:
+            rid = r.get("id", "")
+            display = r.get("platformUserDisplay", r.get("platform_user_display", "Unknown"))
+            platform = r.get("platform", "?")
+            user_id = r.get("platformUserId", r.get("platform_user_id", "?"))
+            print(f"  [{rid[:8]}] {display} on {platform} (ID: {user_id})")
+            print(f"           Full ID: {rid}")
+        print(f"\nApprove with: parachute bot approve <id>")
+        return
+
+    # Approve specific request
+    try:
+        result = _api_post(f"{server_url}/api/bots/pairing/{request_id}/approve", {"trust_level": "vault"})
+        if result.get("success"):
+            print(f"Approved: {request_id}")
+        else:
+            print(f"Approval failed: {result}")
+            sys.exit(1)
+    except URLError as e:
+        print(f"Failed: {e}")
+        sys.exit(1)
+
+
+def _bot_deny(request_id: str) -> None:
+    """Deny a pairing request."""
+    server_url = _get_server_url()
+
+    try:
+        result = _api_post(f"{server_url}/api/bots/pairing/{request_id}/deny")
+        if result.get("success"):
+            print(f"Denied: {request_id}")
+        else:
+            print(f"Denial failed: {result}")
+            sys.exit(1)
+    except URLError as e:
+        print(f"Failed: {e}")
+        sys.exit(1)
+
+
+def _bot_users() -> None:
+    """List approved users across platforms."""
+    server_url = _get_server_url()
+
+    try:
+        data = _api_get(f"{server_url}/api/bots/config")
+    except (URLError, OSError):
+        # Offline fallback
+        vault_path = _get_vault_path()
+        config_path = vault_path / ".parachute" / "bots.yaml"
+        if not config_path.exists():
+            print("No bot configuration found.")
+            return
+        with open(config_path) as f:
+            data = yaml.safe_load(f) or {}
+
+    print("\nApproved Bot Users")
+    print("-" * 40)
+
+    any_users = False
+    for platform in ("telegram", "discord"):
+        cfg = data.get(platform, {})
+        users = cfg.get("allowed_users", [])
+        if users:
+            any_users = True
+            print(f"\n  {platform}:")
+            for u in users:
+                print(f"    {u}")
+
+    if not any_users:
+        print("  No approved users.")
+
+    print()
+
+
 # --- CLI entry point ---
 
 
@@ -1290,6 +1652,27 @@ def main() -> None:
     test_parser = module_sub.add_parser("test", help="Test module endpoints (online)")
     test_parser.add_argument("name", nargs="?", help="Specific module to test")
 
+    # bot subcommand
+    bot_parser = subparsers.add_parser("bot", help="Bot connector management")
+    bot_sub = bot_parser.add_subparsers(dest="action")
+    bot_sub.add_parser("status", help="Show bot connector status")
+    bot_start_parser = bot_sub.add_parser("start", help="Start a bot connector")
+    bot_start_parser.add_argument("platform", choices=["telegram", "discord"])
+    bot_stop_parser = bot_sub.add_parser("stop", help="Stop a bot connector")
+    bot_stop_parser.add_argument("platform", choices=["telegram", "discord"])
+
+    bot_config_parser = bot_sub.add_parser("config", help="Bot configuration")
+    bot_config_sub = bot_config_parser.add_subparsers(dest="config_action")
+    bot_config_set_parser = bot_config_sub.add_parser("set", help="Set a config value")
+    bot_config_set_parser.add_argument("key", help="Config key (e.g. telegram.bot_token)")
+    bot_config_set_parser.add_argument("value", help="Config value")
+
+    bot_approve_parser = bot_sub.add_parser("approve", help="Approve a pending pairing request")
+    bot_approve_parser.add_argument("request_id", nargs="?", help="Request ID (list all if omitted)")
+    bot_deny_parser = bot_sub.add_parser("deny", help="Deny a pairing request")
+    bot_deny_parser.add_argument("request_id", help="Request ID to deny")
+    bot_sub.add_parser("users", help="List approved users across platforms")
+
     # help (alias for --help)
     subparsers.add_parser("help", help="Show this help message")
 
@@ -1321,5 +1704,7 @@ def main() -> None:
             cmd_module_test(args)
         else:
             module_parser.print_help()
+    elif args.command == "bot":
+        cmd_bot(args)
     else:
         parser.print_help()
