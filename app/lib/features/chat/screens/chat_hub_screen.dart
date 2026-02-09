@@ -9,8 +9,9 @@ import 'package:parachute/core/providers/feature_flags_provider.dart';
 import 'package:parachute/features/settings/models/trust_level.dart';
 import 'package:parachute/features/settings/screens/settings_screen.dart';
 import '../providers/chat_providers.dart';
+import '../providers/session_search_provider.dart';
 import '../models/chat_session.dart';
-import '../widgets/session_list_item.dart';
+import '../widgets/date_grouped_session_list.dart';
 import '../widgets/usage_bar.dart';
 import 'chat_screen.dart';
 
@@ -33,6 +34,14 @@ class ChatHubScreen extends ConsumerStatefulWidget {
 
 class _ChatHubScreenState extends ConsumerState<ChatHubScreen> {
   bool _showArchived = false;
+  bool _showSearch = false;
+  final _searchController = TextEditingController();
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -51,6 +60,34 @@ class _ChatHubScreenState extends ConsumerState<ChatHubScreen> {
         backgroundColor: isDark ? BrandColors.nightSurface : BrandColors.softWhite,
         elevation: 0,
         actions: [
+          // New chat button (moved from FAB)
+          if (!_showArchived && serverUrlAsync.valueOrNull?.isNotEmpty == true)
+            IconButton(
+              icon: Icon(
+                Icons.add_comment_outlined,
+                color: isDark ? BrandColors.nightTurquoise : BrandColors.turquoise,
+              ),
+              tooltip: 'New chat',
+              onPressed: () => _startNewChat(context),
+            ),
+          // Search toggle
+          if (!_showArchived && serverUrlAsync.valueOrNull?.isNotEmpty == true)
+            IconButton(
+              icon: Icon(
+                _showSearch ? Icons.search_off : Icons.search,
+                color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+              ),
+              tooltip: _showSearch ? 'Close search' : 'Search sessions',
+              onPressed: () {
+                setState(() {
+                  _showSearch = !_showSearch;
+                  if (!_showSearch) {
+                    _searchController.clear();
+                    ref.read(sessionSearchQueryProvider.notifier).state = '';
+                  }
+                });
+              },
+            ),
           // Archive toggle
           IconButton(
             icon: Icon(_showArchived ? Icons.inbox : Icons.archive_outlined),
@@ -58,6 +95,11 @@ class _ChatHubScreenState extends ConsumerState<ChatHubScreen> {
             onPressed: () {
               setState(() {
                 _showArchived = !_showArchived;
+                if (_showArchived) {
+                  _showSearch = false;
+                  _searchController.clear();
+                  ref.read(sessionSearchQueryProvider.notifier).state = '';
+                }
               });
             },
           ),
@@ -68,6 +110,7 @@ class _ChatHubScreenState extends ConsumerState<ChatHubScreen> {
             onPressed: () {
               ref.invalidate(chatSessionsProvider);
               ref.invalidate(archivedSessionsProvider);
+              ref.invalidate(searchedSessionsProvider);
             },
           ),
           // Settings button
@@ -98,6 +141,7 @@ class _ChatHubScreenState extends ConsumerState<ChatHubScreen> {
           return Column(
             children: [
               const UsageBar(),
+              if (_showSearch) _buildSearchBar(isDark),
               Expanded(child: _buildChatList(context, ref, isDark, serverUrl)),
             ],
           );
@@ -105,13 +149,7 @@ class _ChatHubScreenState extends ConsumerState<ChatHubScreen> {
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (e, _) => _buildErrorState(context, isDark, e),
       ),
-      floatingActionButton: serverUrlAsync.valueOrNull?.isNotEmpty == true && !_showArchived
-          ? FloatingActionButton(
-              onPressed: () => _startNewChat(context),
-              backgroundColor: isDark ? BrandColors.nightTurquoise : BrandColors.turquoise,
-              child: const Icon(Icons.add),
-            )
-          : null,
+      floatingActionButton: null,
     );
   }
 
@@ -438,11 +476,68 @@ class _ChatHubScreenState extends ConsumerState<ChatHubScreen> {
     );
   }
 
+  Widget _buildSearchBar(bool isDark) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(Spacing.lg, Spacing.sm, Spacing.lg, Spacing.xs),
+      child: TextField(
+        controller: _searchController,
+        autofocus: true,
+        style: TextStyle(
+          fontSize: TypographyTokens.bodyMedium,
+          color: isDark ? BrandColors.nightText : BrandColors.charcoal,
+        ),
+        decoration: InputDecoration(
+          hintText: 'Search conversations...',
+          hintStyle: TextStyle(
+            color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+          ),
+          prefixIcon: Icon(
+            Icons.search,
+            size: 20,
+            color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+          ),
+          suffixIcon: _searchController.text.isNotEmpty
+              ? IconButton(
+                  icon: const Icon(Icons.clear, size: 18),
+                  onPressed: () {
+                    _searchController.clear();
+                    ref.read(sessionSearchQueryProvider.notifier).state = '';
+                  },
+                )
+              : null,
+          filled: true,
+          fillColor: isDark
+              ? BrandColors.nightSurfaceElevated
+              : BrandColors.stone.withValues(alpha: 0.3),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(Radii.md),
+            borderSide: BorderSide.none,
+          ),
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: Spacing.md,
+            vertical: Spacing.sm,
+          ),
+          isDense: true,
+        ),
+        onChanged: (value) {
+          ref.read(sessionSearchQueryProvider.notifier).state = value;
+          setState(() {}); // Update clear button visibility
+        },
+      ),
+    );
+  }
+
   Widget _buildChatList(BuildContext context, WidgetRef ref, bool isDark, String serverUrl) {
-    // Watch the appropriate provider based on archive toggle
-    final sessionsAsync = _showArchived
-        ? ref.watch(archivedSessionsProvider)
-        : ref.watch(chatSessionsProvider);
+    // Watch the appropriate provider based on archive toggle and search state
+    final searchQuery = ref.watch(sessionSearchQueryProvider);
+    final AsyncValue<List<ChatSession>> sessionsAsync;
+    if (_showArchived) {
+      sessionsAsync = ref.watch(archivedSessionsProvider);
+    } else if (searchQuery.isNotEmpty) {
+      sessionsAsync = ref.watch(searchedSessionsProvider);
+    } else {
+      sessionsAsync = ref.watch(chatSessionsProvider);
+    }
 
     return sessionsAsync.when(
       data: (sessions) {
@@ -460,17 +555,10 @@ class _ChatHubScreenState extends ConsumerState<ChatHubScreen> {
               await ref.read(chatSessionsProvider.future);
             }
           },
-          child: ListView.builder(
-            padding: EdgeInsets.symmetric(vertical: Spacing.sm),
-            itemCount: sessions.length,
-            itemBuilder: (context, index) {
-              final session = sessions[index];
-              return SessionListItem(
-                session: session,
-                onTap: () => _openSession(context, session),
-                isDark: isDark,
-              );
-            },
+          child: DateGroupedSessionList(
+            sessions: sessions,
+            onTap: (session) => _openSession(context, session),
+            isDark: isDark,
           ),
         );
       },
