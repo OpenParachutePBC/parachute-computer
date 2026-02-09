@@ -125,6 +125,15 @@ class ChatSession {
   /// Whether this session is pending approval from the owner
   bool get isPendingApproval => metadata?['pending_approval'] == true;
 
+  /// Whether this bot session needs initialization before it can respond
+  bool get isPendingInitialization => metadata?['pending_initialization'] == true;
+
+  /// Per-session response mode (all_messages or mention_only)
+  String? get responseMode => (metadata?['bot_settings'] as Map?)?['response_mode'] as String?;
+
+  /// Custom mention trigger pattern for mention_only mode
+  String? get mentionPattern => (metadata?['bot_settings'] as Map?)?['mention_pattern'] as String?;
+
   /// The pairing request ID linked to this pending session
   String? get pairingRequestId => metadata?['pairing_request_id'] as String?;
 

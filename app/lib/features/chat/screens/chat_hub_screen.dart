@@ -12,6 +12,7 @@ import '../providers/chat_providers.dart';
 import '../providers/session_search_provider.dart';
 import '../models/chat_session.dart';
 import '../widgets/date_grouped_session_list.dart';
+import '../widgets/session_config_sheet.dart';
 import '../widgets/usage_bar.dart';
 import 'chat_screen.dart';
 
@@ -169,6 +170,16 @@ class _ChatHubScreenState extends ConsumerState<ChatHubScreen> {
     // Pending approval sessions show the approval dialog instead
     if (session.isPendingApproval && session.pairingRequestId != null) {
       _showApprovalDialog(context, session);
+      return;
+    }
+
+    // Pending initialization sessions show the config sheet for activation
+    if (session.isPendingInitialization) {
+      SessionConfigSheet.show(context, session).then((saved) {
+        if (saved == true) {
+          ref.invalidate(chatSessionsProvider);
+        }
+      });
       return;
     }
 

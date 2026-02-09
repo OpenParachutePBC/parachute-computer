@@ -135,6 +135,29 @@ class SessionListItem extends StatelessWidget {
                               ),
                             ),
                           ),
+                        // Pending initialization badge
+                        if (session.isPendingInitialization)
+                          Container(
+                            margin: const EdgeInsets.only(left: Spacing.xs),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: Spacing.xs,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.orange.withValues(alpha: 0.2),
+                              borderRadius: Radii.badge,
+                            ),
+                            child: Text(
+                              'Setup',
+                              style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.w600,
+                                color: themeDark
+                                    ? Colors.orange.shade300
+                                    : Colors.orange.shade800,
+                              ),
+                            ),
+                          ),
                         // Archived badge
                         if (session.archived)
                           Container(
