@@ -20,7 +20,7 @@ from parachute.config import Settings, get_settings
 from parachute.core.claude_sdk import query_streaming, QueryInterrupt
 from parachute.core.permission_handler import PermissionHandler
 from parachute.core.sandbox import DockerSandbox, AgentSandboxConfig
-from parachute.core.skills import generate_runtime_plugin, cleanup_runtime_plugin
+from parachute.core.skills import generate_runtime_plugin, cleanup_runtime_plugin, discover_skills
 from parachute.core.agents import discover_agents, agents_to_sdk_format
 from parachute.core.session_manager import SessionManager
 from parachute.db.database import Database
@@ -362,20 +362,8 @@ class Orchestrator:
             trust_level=trust_level,
         ).model_dump(by_alias=True)
 
-        # Yield prompt metadata event for UI transparency
-        yield PromptMetadataEvent(
-            prompt_source=prompt_metadata["prompt_source"],
-            prompt_source_path=prompt_metadata["prompt_source_path"],
-            context_files=prompt_metadata["context_files"],
-            context_tokens=prompt_metadata["context_tokens"],
-            context_truncated=prompt_metadata["context_truncated"],
-            agent_name=prompt_metadata["agent_name"],
-            available_agents=prompt_metadata["available_agents"],
-            base_prompt_tokens=prompt_metadata["base_prompt_tokens"],
-            total_prompt_tokens=prompt_metadata["total_prompt_tokens"],
-            trust_mode=(session.permissions.trust_level == TrustLevel.TRUSTED),
-            working_directory_claude_md=prompt_metadata.get("working_directory_claude_md"),
-        ).model_dump(by_alias=True)
+        # NOTE: PromptMetadataEvent is yielded after capability discovery (below)
+        # so it can include available_agents, available_skills, and available_mcps.
 
         # Handle initial context
         actual_message = message
@@ -503,9 +491,11 @@ class Orchestrator:
                 logger.error(f"Failed to load MCP servers (continuing without MCP): {e}")
                 resolved_mcps = None
 
-            # Generate runtime plugin for skills (if any skills exist)
+            # Discover skills and generate runtime plugin
             plugin_dirs: list[Path] = []
-            skills_plugin_dir = generate_runtime_plugin(self.vault_path)
+            discovered_skills = discover_skills(self.vault_path)
+            skill_names = [s.name for s in discovered_skills]
+            skills_plugin_dir = generate_runtime_plugin(self.vault_path, skills=discovered_skills)
             if skills_plugin_dir:
                 plugin_dirs.append(skills_plugin_dir)
                 logger.info(f"Generated skills plugin at {skills_plugin_dir}")
@@ -585,19 +575,39 @@ class Orchestrator:
                 filtered = filter_capabilities(
                     capabilities=workspace_config.capabilities,
                     all_mcps=resolved_mcps,
+                    all_skills=skill_names,
                     all_agents=agent_names,
                     plugin_dirs=plugin_dirs,
                 )
                 resolved_mcps = filtered.mcp_servers or None
                 plugin_dirs = filtered.plugin_dirs
+                skill_names = filtered.skills if filtered.skills is not None else skill_names
                 if agents_dict and filtered.agents is not None:
                     agents_dict = {k: v for k, v in agents_dict.items() if k in filtered.agents}
                 logger.info(
                     f"Workspace {workspace_id} filtered: "
                     f"mcps={len(resolved_mcps) if resolved_mcps else 0}, "
                     f"plugins={len(plugin_dirs)}, "
+                    f"skills={len(skill_names)}, "
                     f"agents={len(agents_dict) if agents_dict else 0}"
                 )
+
+            # Yield prompt metadata event (after capability discovery + filtering)
+            yield PromptMetadataEvent(
+                prompt_source=prompt_metadata["prompt_source"],
+                prompt_source_path=prompt_metadata["prompt_source_path"],
+                context_files=prompt_metadata["context_files"],
+                context_tokens=prompt_metadata["context_tokens"],
+                context_truncated=prompt_metadata["context_truncated"],
+                agent_name=prompt_metadata["agent_name"],
+                available_agents=list(agents_dict.keys()) if agents_dict else [],
+                available_skills=skill_names,
+                available_mcps=list(resolved_mcps.keys()) if resolved_mcps else [],
+                base_prompt_tokens=prompt_metadata["base_prompt_tokens"],
+                total_prompt_tokens=prompt_metadata["total_prompt_tokens"],
+                trust_mode=(session.permissions.trust_level == TrustLevel.TRUSTED),
+                working_directory_claude_md=prompt_metadata.get("working_directory_claude_md"),
+            ).model_dump(by_alias=True)
 
             # Set up permission handler with event callbacks
             def on_permission_denial(denial: dict) -> None:
