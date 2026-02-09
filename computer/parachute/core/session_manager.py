@@ -620,6 +620,43 @@ class SessionManager:
                 })
         return tool_calls
 
+    def write_sandbox_transcript(
+        self,
+        session_id: str,
+        user_message: str,
+        assistant_response: str,
+        working_directory: Optional[str] = None,
+    ) -> None:
+        """Write a synthetic JSONL transcript for a sandbox session.
+
+        Docker container transcripts are lost when the container exits.
+        This writes a minimal transcript to the host filesystem so messages
+        persist across app restarts and session reloads.
+        """
+        transcript_path = self.get_sdk_transcript_path(session_id, working_directory)
+        if not transcript_path:
+            logger.warning(f"Could not compute transcript path for sandbox session {session_id[:8]}")
+            return
+
+        try:
+            transcript_path.parent.mkdir(parents=True, exist_ok=True)
+
+            now = datetime.utcnow().isoformat() + "Z"
+            events = [
+                {"type": "user", "message": {"role": "user", "content": user_message}, "timestamp": now},
+                {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": assistant_response}]}, "timestamp": now},
+                {"type": "result", "result": assistant_response, "session_id": session_id, "timestamp": now},
+            ]
+
+            # Append to existing transcript (supports multi-turn sandbox sessions)
+            with open(transcript_path, "a", encoding="utf-8") as f:
+                for event in events:
+                    f.write(json.dumps(event) + "\n")
+
+            logger.info(f"Wrote sandbox transcript for session {session_id[:8]} at {transcript_path}")
+        except Exception as e:
+            logger.error(f"Failed to write sandbox transcript: {e}")
+
     async def _load_sdk_messages(self, session: Session) -> list[dict[str, Any]]:
         """Load messages from SDK JSONL file."""
         transcript_path = self.get_sdk_transcript_path(

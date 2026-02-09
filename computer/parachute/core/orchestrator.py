@@ -673,6 +673,7 @@ class Orchestrator:
                         working_directory=sandbox_wd,
                     )
                     had_text = False
+                    sandbox_response_text = ""
                     async for event in self._sandbox.run_agent(sandbox_config, actual_message):
                         event_type = event.get("type", "")
                         if event_type == "error":
@@ -690,6 +691,8 @@ class Orchestrator:
                             yield event
                             if event_type == "text":
                                 had_text = True
+                                # Track full response text for synthetic transcript
+                                sandbox_response_text = event.get("content", sandbox_response_text)
 
                     # Finalize sandbox session so trust_level persists in DB
                     # Use sandbox_sid as the canonical session ID (not the container's internal ID)
@@ -703,7 +706,14 @@ class Orchestrator:
                         session_finalized = True
                         logger.info(f"Finalized sandbox session: {sandbox_sid[:8]} trust={effective_trust}")
 
-                    if not had_text:
+                    # Write synthetic transcript to host so messages persist
+                    # Docker container transcripts are lost when the container exits
+                    if had_text:
+                        self.session_manager.write_sandbox_transcript(
+                            sandbox_sid, actual_message, sandbox_response_text,
+                            working_directory=effective_working_dir,
+                        )
+                    else:
                         logger.warning("Sandbox produced no text output")
                     return
                 else:

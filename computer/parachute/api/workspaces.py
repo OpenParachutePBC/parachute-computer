@@ -7,6 +7,7 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
+from parachute.config import get_settings
 from parachute.core import workspaces
 from parachute.db.database import get_database
 from parachute.models.workspace import WorkspaceCreate, WorkspaceUpdate
@@ -16,8 +17,8 @@ logger = logging.getLogger(__name__)
 
 
 def _get_vault_path(request: Request):
-    """Get vault path from app state."""
-    return request.app.state.vault_path
+    """Get vault path from settings."""
+    return get_settings().vault_path
 
 
 @router.get("")
