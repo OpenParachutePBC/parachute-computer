@@ -22,6 +22,9 @@ class SessionConfigUpdate(BaseModel):
         alias="configOverrides",
         description="Config overrides merged into session metadata",
     )
+    workspace_id: Optional[str] = Field(None, alias="workspaceId", description="Workspace slug for this session")
+    response_mode: Optional[str] = Field(None, alias="responseMode", description="Response mode: all_messages or mention_only")
+    mention_pattern: Optional[str] = Field(None, alias="mentionPattern", description="Custom mention trigger pattern")
 
     model_config = {"populate_by_name": True}
 
@@ -61,6 +64,7 @@ async def list_sessions(
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
     archived: Optional[bool] = Query(None, description="Filter by archived status"),
+    workspace_id: Optional[str] = Query(None, alias="workspaceId", description="Filter by workspace slug"),
 ) -> dict[str, Any]:
     """
     List all sessions.
@@ -71,6 +75,7 @@ async def list_sessions(
     - limit: Maximum number of sessions to return
     - offset: Number of sessions to skip
     - archived: Filter by archived status
+    - workspaceId: Filter by workspace slug
     """
     orchestrator = get_orchestrator(request)
 
@@ -83,6 +88,7 @@ async def list_sessions(
             archived=show_archived,
             search=search,
             limit=limit,
+            workspace_id=workspace_id,
         )
     except Exception as e:
         logger.error(f"Failed to list sessions: {e}", exc_info=True)
@@ -158,6 +164,78 @@ async def unarchive_session(request: Request, session_id: str) -> dict[str, Any]
     return {"success": True, "session": session}
 
 
+@router.post("/chat/{session_id}/activate")
+async def activate_session(
+    request: Request,
+    session_id: str,
+    body: SessionConfigUpdate,
+) -> dict[str, Any]:
+    """
+    Activate a pending bot session.
+
+    Clears pending_initialization, applies trust_level and workspace_id,
+    and notifies the bot connector.
+    """
+    db = request.app.state.database
+    if not db:
+        raise HTTPException(status_code=503, detail="Database not ready")
+
+    session = await db.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    # Verify session is pending initialization
+    if not session.metadata or not session.metadata.get("pending_initialization"):
+        raise HTTPException(status_code=400, detail="Session is not pending initialization")
+
+    from parachute.models.session import SessionUpdate
+
+    # Build metadata update: clear pending_initialization, set bot_settings
+    meta = dict(session.metadata or {})
+    meta.pop("pending_initialization", None)
+
+    if body.response_mode is not None or body.mention_pattern is not None:
+        bs = dict(meta.get("bot_settings", {}))
+        if body.response_mode is not None:
+            bs["response_mode"] = body.response_mode
+        if body.mention_pattern is not None:
+            bs["mention_pattern"] = body.mention_pattern
+        meta["bot_settings"] = bs
+
+    update = SessionUpdate(metadata=meta)
+
+    if body.trust_level is not None:
+        if body.trust_level not in ("full", "vault", "sandboxed"):
+            raise HTTPException(status_code=400, detail="Invalid trust level")
+        update.trust_level = body.trust_level
+
+    if body.workspace_id is not None:
+        ws_value = body.workspace_id if body.workspace_id else None
+        await db.update_session_config(session_id, workspace_id=ws_value)
+
+    await db.update_session(session_id, update)
+
+    # Notify connector to send activation message
+    chat_id = session.linked_bot_chat_id
+    platform = session.linked_bot_platform
+    if chat_id and platform:
+        try:
+            from parachute.api.bots import _connectors
+
+            connector = _connectors.get(platform)
+            if connector:
+                connector.clear_init_nudge(chat_id)
+                await connector.send_message(chat_id, "Session activated! You can start chatting now.")
+        except Exception as e:
+            logger.warning(f"Failed to send activation message: {e}")
+
+    updated = await db.get_session(session_id)
+    return {
+        "success": True,
+        "session": updated.model_dump(by_alias=True) if updated else None,
+    }
+
+
 @router.patch("/chat/{session_id}/config")
 async def update_session_config(
     request: Request,
@@ -194,6 +272,23 @@ async def update_session_config(
         existing_meta = session.metadata or {} if hasattr(session, "metadata") else {}
         existing_meta["config_overrides"] = body.config_overrides
         update.metadata = existing_meta
+        has_changes = True
+
+    if body.workspace_id is not None:
+        has_changes = True
+        # Empty string clears workspace, otherwise set slug
+        ws_value = body.workspace_id if body.workspace_id else None
+        await db.update_session_config(session_id, workspace_id=ws_value)
+
+    if body.response_mode is not None or body.mention_pattern is not None:
+        meta = dict(session.metadata or {}) if hasattr(session, "metadata") else {}
+        bs = dict(meta.get("bot_settings", {}))
+        if body.response_mode is not None:
+            bs["response_mode"] = body.response_mode
+        if body.mention_pattern is not None:
+            bs["mention_pattern"] = body.mention_pattern
+        meta["bot_settings"] = bs
+        update.metadata = meta
         has_changes = True
 
     if not has_changes:

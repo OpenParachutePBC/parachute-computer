@@ -27,6 +27,7 @@ from parachute.db.database import Database
 from parachute.lib.agent_loader import build_system_prompt, load_agent
 from parachute.lib.context_loader import format_context_for_prompt, load_agent_context
 from parachute.core.context_folders import ContextFolderService
+from parachute.core.capability_filter import filter_by_trust_level, filter_capabilities, trust_rank
 from parachute.lib.mcp_loader import load_mcp_servers, resolve_mcp_servers, validate_and_filter_servers
 from parachute.models.agent import AgentDefinition, AgentType, create_vault_agent
 from parachute.models.events import (
@@ -210,6 +211,7 @@ class Orchestrator:
         agent_type: Optional[str] = None,
         trust_level: Optional[str] = None,
         model: Optional[str] = None,
+        workspace_id: Optional[str] = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         """
         Run an agent with streaming response.
@@ -235,6 +237,21 @@ class Orchestrator:
             logger.info("Using default vault agent")
             agent = create_vault_agent()
 
+        # Load workspace config if specified
+        workspace_config = None
+        if workspace_id:
+            from parachute.core.workspaces import get_workspace
+            workspace_config = get_workspace(self.vault_path, workspace_id)
+            if workspace_config:
+                logger.info(f"Loaded workspace: {workspace_id} ({workspace_config.name})")
+                # Apply workspace defaults (explicit params take priority)
+                if not working_directory and workspace_config.working_directory:
+                    working_directory = workspace_config.working_directory
+                if not model and workspace_config.model:
+                    model = workspace_config.model
+            else:
+                logger.warning(f"Workspace not found: {workspace_id}")
+
         # Get or create session (before building prompt so we can load prior conversation)
         session, resume_info, is_new = await self.session_manager.get_or_create_session(
             session_id=session_id,
@@ -242,6 +259,19 @@ class Orchestrator:
             working_directory=working_directory,
             trust_level=trust_level,
         )
+
+        # Fall back to session's stored workspace for workspace defaults
+        # (e.g., when user resumes a session without the workspace filter active)
+        if not workspace_config and hasattr(session, 'workspace_id') and session.workspace_id:
+            from parachute.core.workspaces import get_workspace
+            workspace_config = get_workspace(self.vault_path, session.workspace_id)
+            if workspace_config:
+                workspace_id = session.workspace_id
+                logger.info(f"Using session's stored workspace: {workspace_id} ({workspace_config.name})")
+                if not working_directory and workspace_config.working_directory:
+                    working_directory = workspace_config.working_directory
+                if not model and workspace_config.model:
+                    model = workspace_config.model
 
         # For imported sessions, handle context continuity
         # - Claude Code sessions with existing JSONL: use SDK resume directly
@@ -505,6 +535,64 @@ class Orchestrator:
             if agents_dict:
                 logger.info(f"Loaded {len(agents_dict)} custom agents")
 
+            # Determine effective trust level early (needed for capability filtering)
+            # Trust level routing: session → workspace floor → client override
+            session_trust = session.get_trust_level()
+
+            if workspace_config and workspace_config.trust_level:
+                try:
+                    workspace_trust = TrustLevel(workspace_config.trust_level)
+                    if trust_rank(workspace_trust) > trust_rank(session_trust):
+                        logger.info(f"Workspace trust floor restricts session from {session_trust.value} to {workspace_trust.value}")
+                        session_trust = workspace_trust
+                except ValueError:
+                    logger.warning(f"Invalid workspace trust_level: {workspace_config.trust_level}")
+
+            if trust_level:
+                try:
+                    requested = TrustLevel(trust_level)
+                    if trust_rank(requested) >= trust_rank(session_trust):
+                        session_trust = requested
+                    else:
+                        logger.warning(
+                            f"Client tried to escalate trust from {session_trust.value} to {requested.value}, ignoring"
+                        )
+                except ValueError:
+                    logger.warning(f"Invalid trust_level from client: {trust_level}")
+
+            effective_trust = session_trust.value
+
+            # Stage 1: Trust-level capability filtering
+            # MCPs with trust_level annotation are only available at that trust or above
+            if resolved_mcps:
+                pre_count = len(resolved_mcps)
+                resolved_mcps = filter_by_trust_level(resolved_mcps, effective_trust)
+                if len(resolved_mcps) < pre_count:
+                    logger.info(
+                        f"Trust filter ({effective_trust}): "
+                        f"{pre_count} → {len(resolved_mcps)} MCPs"
+                    )
+
+            # Stage 2: Workspace capability filtering
+            if workspace_config and workspace_config.capabilities:
+                agent_names = list(agents_dict.keys()) if agents_dict else []
+                filtered = filter_capabilities(
+                    capabilities=workspace_config.capabilities,
+                    all_mcps=resolved_mcps,
+                    all_agents=agent_names,
+                    plugin_dirs=plugin_dirs,
+                )
+                resolved_mcps = filtered.mcp_servers or None
+                plugin_dirs = filtered.plugin_dirs
+                if agents_dict and filtered.agents is not None:
+                    agents_dict = {k: v for k, v in agents_dict.items() if k in filtered.agents}
+                logger.info(
+                    f"Workspace {workspace_id} filtered: "
+                    f"mcps={len(resolved_mcps) if resolved_mcps else 0}, "
+                    f"plugins={len(plugin_dirs)}, "
+                    f"agents={len(agents_dict) if agents_dict else 0}"
+                )
+
             # Set up permission handler with event callbacks
             def on_permission_denial(denial: dict) -> None:
                 """Track permission denials for reporting in done event."""
@@ -548,8 +636,8 @@ class Orchestrator:
                     resume_id = session.id
                 else:
                     logger.info(
-                        f"Session {session.id[:8]} exists in DB but has no SDK transcript, "
-                        f"treating as new"
+                        f"Session {session.id[:8]} exists in DB but has no SDK transcript "
+                        f"(working_dir={session.working_directory!r}), treating as new"
                     )
                     is_new = True
 
@@ -571,40 +659,59 @@ class Orchestrator:
             # This enables interactive tools like AskUserQuestion to pause and wait for user input
             sdk_can_use_tool = permission_handler.create_sdk_callback()
 
-            # Trust level routing: determine effective trust from session + client override
-            session_trust = session.get_trust_level()
-
-            # Apply client trust_level override (can only restrict, never escalate)
-            if trust_level:
-                try:
-                    requested = TrustLevel(trust_level)
-                    # Trust restrictiveness order: FULL < VAULT < SANDBOXED
-                    _trust_order = {TrustLevel.FULL: 0, TrustLevel.VAULT: 1, TrustLevel.SANDBOXED: 2}
-                    if _trust_order.get(requested, 0) >= _trust_order.get(session_trust, 0):
-                        session_trust = requested
-                    else:
-                        logger.warning(
-                            f"Client tried to escalate trust from {session_trust.value} to {requested.value}, ignoring"
-                        )
-                except ValueError:
-                    logger.warning(f"Invalid trust_level from client: {trust_level}")
-
-            effective_trust = session_trust.value
+            # effective_trust was determined earlier (before capability filtering)
 
             if effective_trust == "sandboxed":
                 if await self._sandbox.is_available():
                     # Use a real session ID for sandbox — "pending" would cause the SDK
                     # inside the container to try resuming a nonexistent session
                     sandbox_sid = session.id if session.id != "pending" else str(uuid.uuid4())
-                    logger.info(f"Running sandboxed execution for session {sandbox_sid[:8]}")
+                    # Compute vault-relative working directory for sandbox
+                    sandbox_wd = self.session_manager.make_working_directory_relative(
+                        effective_working_dir
+                    ) if effective_working_dir else None
+
+                    sandbox_paths = list(session.permissions.allowed_paths)
+                    # Auto-add working directory to allowed_paths so it gets mounted
+                    if sandbox_wd and sandbox_wd not in sandbox_paths:
+                        sandbox_paths.append(sandbox_wd)
+
+                    logger.info(
+                        f"Running sandboxed execution for session {sandbox_sid[:8]} "
+                        f"wd={sandbox_wd} paths={sandbox_paths}"
+                    )
+
                     sandbox_config = AgentSandboxConfig(
                         session_id=sandbox_sid,
                         agent_type=agent.type.value if agent.type else "chat",
-                        allowed_paths=session.permissions.allowed_paths,
+                        allowed_paths=sandbox_paths,
                         network_enabled=True,  # SDK needs network for Anthropic API
+                        mcp_servers=resolved_mcps,  # Pass filtered MCPs to container
+                        working_directory=sandbox_wd,
                     )
+                    # For continuing sandbox sessions, inject prior conversation
+                    # as context. Each container is fresh and can't resume from transcripts.
+                    sandbox_message = actual_message
+                    if not is_new:
+                        prior_messages = await self.session_manager._load_sdk_messages(session)
+                        if prior_messages:
+                            history_lines = []
+                            for msg in prior_messages:
+                                role = msg["role"].upper()
+                                history_lines.append(f"[{role}]: {msg['content']}")
+                            history_block = "\n".join(history_lines)
+                            sandbox_message = (
+                                f"<conversation_history>\n{history_block}\n"
+                                f"</conversation_history>\n\n{actual_message}"
+                            )
+                            logger.info(
+                                f"Injected {len(prior_messages)} prior messages "
+                                f"into sandbox prompt for session {sandbox_sid[:8]}"
+                            )
+
                     had_text = False
-                    async for event in self._sandbox.run_agent(sandbox_config, actual_message):
+                    sandbox_response_text = ""
+                    async for event in self._sandbox.run_agent(sandbox_config, sandbox_message):
                         event_type = event.get("type", "")
                         if event_type == "error":
                             sandbox_err = event.get("error") or event.get("message") or "Unknown sandbox error"
@@ -618,23 +725,47 @@ class Orchestrator:
                             # internal SDK session ID which the client can't resume
                             if event_type in ("session", "done") and "sessionId" in event:
                                 event = {**event, "sessionId": sandbox_sid, "trustLevel": effective_trust}
-                            yield event
                             if event_type == "text":
                                 had_text = True
+                                # Track full response text for synthetic transcript
+                                sandbox_response_text = event.get("content", sandbox_response_text)
 
-                    # Finalize sandbox session so trust_level persists in DB
-                    # Use sandbox_sid as the canonical session ID (not the container's internal ID)
-                    if is_new and not session_finalized:
-                        title = generate_title_from_message(message) if message.strip() else None
-                        session = await self.session_manager.finalize_session(
-                            session, sandbox_sid, captured_model, title=title,
-                            agent_type=agent_type,
-                        )
-                        session_finalized = True
-                        logger.info(f"Finalized sandbox session: {sandbox_sid[:8]} trust={effective_trust}")
+                            # Finalize BEFORE yielding "done" to prevent race condition:
+                            # client receives "done", sends next message, but server
+                            # hasn't written the transcript yet
+                            if event_type == "done":
+                                if is_new and not session_finalized:
+                                    try:
+                                        title = generate_title_from_message(message) if message.strip() else None
+                                        session = await self.session_manager.finalize_session(
+                                            session, sandbox_sid, captured_model, title=title,
+                                            agent_type=agent_type,
+                                            workspace_id=workspace_id,
+                                        )
+                                        session_finalized = True
+                                        logger.info(f"Finalized sandbox session: {sandbox_sid[:8]} trust={effective_trust}")
+                                    except Exception as e:
+                                        logger.error(f"Failed to finalize sandbox session {sandbox_sid[:8]}: {e}")
+
+                                # Write synthetic transcript to host so messages persist
+                                # Docker container transcripts are lost when container exits
+                                if had_text:
+                                    self.session_manager.write_sandbox_transcript(
+                                        sandbox_sid, actual_message, sandbox_response_text,
+                                        working_directory=effective_working_dir,
+                                    )
+
+                            yield event
 
                     if not had_text:
                         logger.warning("Sandbox produced no text output")
+
+                    # Increment message count for sandbox sessions
+                    if had_text and sandbox_sid:
+                        try:
+                            await self.session_manager.increment_message_count(sandbox_sid, 2)
+                        except Exception as e:
+                            logger.warning(f"Failed to increment message count for {sandbox_sid[:8]}: {e}")
                     return
                 else:
                     # Fallback: degrade to vault trust, warn user via typed event
@@ -688,6 +819,7 @@ class Orchestrator:
                         session = await self.session_manager.finalize_session(
                             session, captured_session_id, captured_model, title=title,
                             agent_type=agent_type,
+                            workspace_id=workspace_id,
                         )
                         session_finalized = True
                         logger.info(f"Early finalized session: {captured_session_id[:8]}...")
@@ -837,6 +969,7 @@ class Orchestrator:
                 session = await self.session_manager.finalize_session(
                     session, captured_session_id, captured_model, title=title,
                     agent_type=agent_type,
+                    workspace_id=workspace_id,
                 )
                 session_finalized = True
                 logger.info(f"Finalized session: {captured_session_id[:8]}...")
@@ -1140,6 +1273,7 @@ The user is now continuing this conversation with you. Respond naturally as if y
         archived: bool = False,
         search: Optional[str] = None,
         limit: int = 100,
+        workspace_id: Optional[str] = None,
     ) -> list[dict[str, Any]]:
         """List all chat sessions."""
         sessions = await self.session_manager.list_sessions(
@@ -1147,6 +1281,7 @@ The user is now continuing this conversation with you. Respond naturally as if y
             archived=archived,
             search=search,
             limit=limit,
+            workspace_id=workspace_id,
         )
         return [s.model_dump(by_alias=True) for s in sessions]
 

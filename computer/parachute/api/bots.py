@@ -36,7 +36,6 @@ class DiscordConfigUpdate(BaseModel):
     enabled: Optional[bool] = None
     bot_token: Optional[str] = None
     allowed_users: Optional[list[str]] = None
-    allowed_guilds: Optional[list[str]] = None
     dm_trust_level: Optional[TrustLevelStr] = None
     group_trust_level: Optional[TrustLevelStr] = None
 
@@ -85,7 +84,7 @@ async def bots_status():
             "discord": {
                 "enabled": config.discord.enabled,
                 "has_token": bool(config.discord.bot_token),
-                "allowed_guilds_count": len(config.discord.allowed_guilds),
+                "allowed_users_count": len(config.discord.allowed_users),
                 "running": "discord" in _connectors and _connectors["discord"]._running,
             },
         },
@@ -113,7 +112,7 @@ async def bots_config():
         "discord": {
             "enabled": config.discord.enabled,
             "has_token": bool(config.discord.bot_token),
-            "allowed_guilds": config.discord.allowed_guilds,
+            "allowed_users": config.discord.allowed_users,
             "dm_trust_level": config.discord.dm_trust_level,
             "group_trust_level": config.discord.group_trust_level,
         },
@@ -202,6 +201,7 @@ async def _start_platform(platform: str) -> None:
             dm_trust_level=platform_config.dm_trust_level,
             group_trust_level=platform_config.group_trust_level,
             group_mention_mode=platform_config.group_mention_mode,
+            ack_emoji=platform_config.ack_emoji,
         )
     else:
         from parachute.connectors.discord_bot import DiscordConnector, DISCORD_AVAILABLE
@@ -214,6 +214,7 @@ async def _start_platform(platform: str) -> None:
             dm_trust_level=platform_config.dm_trust_level,
             group_trust_level=platform_config.group_trust_level,
             group_mention_mode=platform_config.group_mention_mode,
+            ack_emoji=platform_config.ack_emoji,
         )
 
     def _on_connector_error(task: asyncio.Task) -> None:
@@ -313,7 +314,11 @@ async def test_connector(platform: str):
             if not DISCORD_AVAILABLE:
                 return {"success": False, "error": "discord.py not installed"}
             import aiohttp
-            async with aiohttp.ClientSession() as session:
+            import ssl
+            import certifi
+            ssl_ctx = ssl.create_default_context(cafile=certifi.where())
+            conn = aiohttp.TCPConnector(ssl=ssl_ctx)
+            async with aiohttp.ClientSession(connector=conn) as session:
                 headers = {"Authorization": f"Bot {platform_config.bot_token}"}
                 async with session.get(
                     "https://discord.com/api/v10/users/@me", headers=headers

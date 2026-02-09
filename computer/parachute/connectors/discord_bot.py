@@ -38,11 +38,11 @@ class DiscordConnector(BotConnector):
         bot_token: str,
         server: Any,
         allowed_users: list[int | str],
-        allowed_guilds: list[str] | None = None,
         default_trust_level: str = "vault",
         dm_trust_level: str = "vault",
         group_trust_level: str = "sandboxed",
         group_mention_mode: str = "mention_only",
+        ack_emoji: str | None = "👀",
     ):
         super().__init__(
             bot_token=bot_token,
@@ -52,8 +52,8 @@ class DiscordConnector(BotConnector):
             dm_trust_level=dm_trust_level,
             group_trust_level=group_trust_level,
             group_mention_mode=group_mention_mode,
+            ack_emoji=ack_emoji,
         )
-        self.allowed_guilds = allowed_guilds or []
         self._client: Optional[Any] = None
         self._tree: Optional[Any] = None
 
@@ -87,28 +87,23 @@ class DiscordConnector(BotConnector):
         @self._client.event
         async def on_ready():
             logger.info(f"Discord bot logged in as {self._client.user}")
-            # Sync commands to guilds
-            for guild_id in self.allowed_guilds:
-                try:
-                    guild = discord.Object(id=int(guild_id))
-                    self._tree.copy_global_to(guild=guild)
-                    await self._tree.sync(guild=guild)
-                    logger.info(f"Synced commands to guild {guild_id}")
-                except Exception as e:
-                    logger.error(f"Failed to sync commands to guild {guild_id}: {e}")
-            self._running = True
+            # Sync slash commands globally
+            try:
+                await self._tree.sync()
+                logger.info("Synced slash commands globally")
+            except Exception as e:
+                logger.error(f"Failed to sync global commands: {e}")
 
         @self._client.event
         async def on_message(message: discord.Message):
             if message.author == self._client.user:
                 return
-            # Only handle DMs or allowed guilds
-            if message.guild and str(message.guild.id) not in self.allowed_guilds:
-                return
             await self.on_text_message(message, None)
 
         # Start bot (this blocks, so run in background)
         asyncio.create_task(self._run_client())
+        self._running = True
+        logger.info("Discord connector started")
 
     async def _run_client(self) -> None:
         """Run the Discord client."""
@@ -148,14 +143,25 @@ class DiscordConnector(BotConnector):
         chat_id = str(message.channel.id)
         message_text = message.content
 
-        # Group mention gating: only respond to @mentions in guild channels
-        if message.guild and self.group_mention_mode == "mention_only":
-            if self._client.user not in message.mentions:
-                return  # Silently ignore non-mentions in groups
+        # Session-aware response mode gating
+        db = getattr(self.server, "database", None)
+        session = await db.get_session_by_bot_link("discord", chat_id) if db else None
+
+        default_mode = "all_messages" if chat_type == "dm" else self.group_mention_mode
+        if session and session.metadata:
+            bs = session.metadata.get("bot_settings", {})
+            response_mode = bs.get("response_mode", default_mode)
+        else:
+            response_mode = default_mode
+
+        if response_mode == "mention_only":
+            # Discord provides parsed mentions - use that for reliable detection
+            if message.guild and self._client.user not in message.mentions:
+                return  # Silently ignore non-mentions
             # Strip the bot mention from the message
             message_text = message_text.replace(f"<@{self._client.user.id}>", "").strip()
             if not message_text:
-                return  # Nothing left after stripping mention
+                return
 
         # Find or create linked session
         session = await self.get_or_create_session(
@@ -170,13 +176,49 @@ class DiscordConnector(BotConnector):
             await message.reply("Internal error: could not create session.")
             return
 
-        # Show typing indicator with per-session lock
-        lock = self._get_session_lock(session.id)
+        # Check initialization status
+        if not await self.is_session_initialized(session):
+            count = self._init_nudge_sent.get(chat_id, 0)
+            if count == 0:
+                await message.reply(
+                    "Session created! Configure it in the Parachute app "
+                    "(set workspace and trust level), then activate it."
+                )
+            elif count == 1:
+                await message.reply(
+                    "Still being configured. Please activate in the Parachute app."
+                )
+            self._init_nudge_sent[chat_id] = count + 1
+            return
+
+        # Ack reaction — instant feedback before acquiring lock
+        ack_sent = False
+        if self.ack_emoji and message:
+            try:
+                await message.add_reaction(self.ack_emoji)
+                ack_sent = True
+            except Exception as e:
+                logger.debug(f"Ack reaction failed (non-critical): {e}")
+
+        # Inject group history for context (wrapped in XML tags to resist prompt injection)
+        effective_message = message_text
+        if chat_type == "group":
+            history = await self._get_group_history(
+                message.channel, exclude_id=message.id
+            )
+            if history:
+                effective_message = (
+                    f"{history}\n\n"
+                    f"{message_text}"
+                )
+
+        # Show typing indicator with per-chat lock
+        lock = self._get_chat_lock(chat_id)
         async with lock:
             async with message.channel.typing():
                 response_text = await self._route_to_chat(
                     session_id=session.id,
-                    message=message_text,
+                    message=effective_message,
                 )
 
         if not response_text:
@@ -186,6 +228,13 @@ class DiscordConnector(BotConnector):
         formatted = claude_to_discord(response_text)
         for chunk in self.split_response(formatted, DISCORD_MAX_MESSAGE_LENGTH):
             await message.reply(chunk)
+
+        # Remove ack reaction after response
+        if ack_sent:
+            try:
+                await message.remove_reaction(self.ack_emoji, self._client.user)
+            except Exception:
+                pass
 
     async def _handle_new(self, interaction: Any) -> None:
         """Handle /new slash command - archive current session and start fresh."""
@@ -243,6 +292,21 @@ class DiscordConnector(BotConnector):
             await interaction.followup.send("Internal error: could not create session.")
             return
 
+        # Check initialization status
+        if not await self.is_session_initialized(session):
+            count = self._init_nudge_sent.get(chat_id, 0)
+            if count == 0:
+                await interaction.followup.send(
+                    "Session created! Configure it in the Parachute app "
+                    "(set workspace and trust level), then activate it."
+                )
+            else:
+                await interaction.followup.send(
+                    "Still being configured. Please activate in the Parachute app."
+                )
+            self._init_nudge_sent[chat_id] = count + 1
+            return
+
         response_text = await self._route_to_chat(
             session_id=session.id,
             message=message,
@@ -292,6 +356,43 @@ class DiscordConnector(BotConnector):
             logger.error(f"Journal entry failed: {e}")
             await interaction.followup.send("Failed to save journal entry.")
 
+    async def _get_group_history(
+        self, channel: Any, exclude_id: int, limit: int = 20
+    ) -> str:
+        """Fetch recent channel messages for group context injection.
+
+        Intentionally includes messages from ALL channel members (not just
+        allowed users) to give the AI full conversation context. Messages
+        can only trigger this code path when an allowed user mentions the bot.
+        Display names are sanitized to resist prompt injection.
+        """
+        if isinstance(channel, discord.DMChannel):
+            return ""
+        try:
+            messages = []
+            async for msg in channel.history(limit=limit + 5):
+                if msg.id == exclude_id or msg.author == self._client.user:
+                    continue
+                if not msg.content:
+                    continue
+                messages.append(msg)
+                if len(messages) >= limit:
+                    break
+            if not messages:
+                return ""
+            messages.reverse()  # Chronological order
+            from parachute.connectors.base import GroupHistoryBuffer
+            sanitize = GroupHistoryBuffer._sanitize_display_name
+            lines = []
+            for msg in messages:
+                name = sanitize(msg.author.display_name)
+                text = msg.content[:500]
+                lines.append(f"  {name}: {text}")
+            return "<group_context>\n" + "\n".join(lines) + "\n</group_context>"
+        except Exception as e:
+            logger.warning(f"Failed to fetch channel history: {e}")
+            return ""
+
     async def _route_to_chat(self, session_id: str, message: str) -> str:
         """Route a message through the Chat orchestrator and collect response."""
         response_text = ""
@@ -310,8 +411,11 @@ class DiscordConnector(BotConnector):
                 event_count += 1
                 event_type = event.get("type", "") if isinstance(event, dict) else getattr(event, "type", "")
                 if event_type == "text":
-                    delta = event.get("delta", "") if isinstance(event, dict) else getattr(event, "delta", "")
-                    response_text += delta
+                    # Use 'content' (full accumulated text) — more resilient than
+                    # accumulating 'delta' fragments, and consistent with Telegram streaming
+                    content = event.get("content", "") if isinstance(event, dict) else getattr(event, "content", "")
+                    if content:
+                        response_text = content
                 elif event_type == "error":
                     error_msg = event.get("error", "") if isinstance(event, dict) else getattr(event, "error", "")
                     logger.error(f"Orchestrator error event: {error_msg}")
@@ -321,6 +425,13 @@ class DiscordConnector(BotConnector):
             return "Something went wrong. Please try again later."
 
         return response_text
+
+    async def send_message(self, chat_id: str, text: str) -> None:
+        """Send a message to a Discord channel."""
+        if self._client:
+            channel = self._client.get_channel(int(chat_id))
+            if channel:
+                await channel.send(text)
 
     async def send_approval_message(self, chat_id: str) -> None:
         """Send approval confirmation to user via Discord."""
