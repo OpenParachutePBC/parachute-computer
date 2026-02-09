@@ -70,9 +70,9 @@ class WorkspaceConfig(BaseModel):
     name: str = Field(description="Display name")
     slug: str = Field(description="URL-safe identifier (kebab-case)")
     description: str = Field(default="", description="Description")
-    trust_level: TrustLevelStr = Field(
+    default_trust_level: TrustLevelStr = Field(
         default="trusted",
-        description="Trust floor: trusted (bare metal) or untrusted (Docker)",
+        description="Default trust level for new sessions in this workspace",
     )
     working_directory: Optional[str] = Field(
         default=None,
@@ -107,7 +107,7 @@ class WorkspaceCreate(BaseModel):
 
     name: str = Field(description="Display name")
     description: str = Field(default="", description="Description")
-    trust_level: TrustLevelStr = Field(default="trusted", description="Trust floor")
+    default_trust_level: TrustLevelStr = Field(default="trusted", description="Default trust level")
     working_directory: Optional[str] = Field(default=None)
     model: Optional[str] = Field(default=None)
     capabilities: Optional[WorkspaceCapabilities] = Field(default=None)
@@ -119,7 +119,7 @@ class WorkspaceUpdate(BaseModel):
 
     name: Optional[str] = Field(default=None)
     description: Optional[str] = Field(default=None)
-    trust_level: Optional[TrustLevelStr] = Field(default=None, description="Trust floor")
+    default_trust_level: Optional[TrustLevelStr] = Field(default=None, description="Default trust level")
     working_directory: Optional[str] = Field(default=None)
     model: Optional[str] = Field(default=None)
     capabilities: Optional[WorkspaceCapabilities] = Field(default=None)

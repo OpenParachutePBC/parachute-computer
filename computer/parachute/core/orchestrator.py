@@ -27,7 +27,7 @@ from parachute.db.database import Database
 from parachute.lib.agent_loader import build_system_prompt, load_agent
 from parachute.lib.context_loader import format_context_for_prompt, load_agent_context
 from parachute.core.context_folders import ContextFolderService
-from parachute.core.capability_filter import filter_by_trust_level, filter_capabilities, trust_rank
+from parachute.core.capability_filter import filter_by_trust_level, filter_capabilities
 from parachute.lib.mcp_loader import load_mcp_servers, resolve_mcp_servers, validate_and_filter_servers
 from parachute.models.agent import AgentDefinition, AgentType, create_vault_agent
 from parachute.models.events import (
@@ -526,35 +526,34 @@ class Orchestrator:
                 logger.info(f"Loaded {len(agents_dict)} custom agents")
 
             # Determine effective trust level early (needed for capability filtering)
-            # Trust level routing: session → workspace floor → client override
-            session_trust = session.get_trust_level()
-
-            if workspace_config and workspace_config.trust_level:
-                try:
-                    # Map legacy workspace trust values
-                    _legacy = {"full": "trusted", "vault": "trusted", "sandboxed": "untrusted"}
-                    ws_trust_str = _legacy.get(workspace_config.trust_level, workspace_config.trust_level)
-                    workspace_trust = TrustLevel(ws_trust_str)
-                    if trust_rank(workspace_trust) > trust_rank(session_trust):
-                        logger.info(f"Workspace trust floor restricts session from {session_trust.value} to {workspace_trust.value}")
-                        session_trust = workspace_trust
-                except ValueError:
-                    logger.warning(f"Invalid workspace trust_level: {workspace_config.trust_level}")
+            # Priority: client param > session stored > workspace default > trusted
+            _legacy = {"full": "trusted", "vault": "trusted", "sandboxed": "untrusted"}
 
             if trust_level:
+                # Client explicitly set trust level — use it
                 try:
-                    # Map legacy client trust values
-                    _legacy = {"full": "trusted", "vault": "trusted", "sandboxed": "untrusted"}
-                    client_trust_str = _legacy.get(trust_level, trust_level)
-                    requested = TrustLevel(client_trust_str)
-                    if trust_rank(requested) >= trust_rank(session_trust):
-                        session_trust = requested
-                    else:
-                        logger.warning(
-                            f"Client tried to escalate trust from {session_trust.value} to {requested.value}, ignoring"
-                        )
+                    mapped = _legacy.get(trust_level, trust_level)
+                    session_trust = TrustLevel(mapped)
                 except ValueError:
                     logger.warning(f"Invalid trust_level from client: {trust_level}")
+                    session_trust = session.get_trust_level()
+            elif session.trust_level:
+                # Session has stored trust level (resumed session)
+                session_trust = session.get_trust_level()
+            elif workspace_config and workspace_config.default_trust_level:
+                # Workspace provides default
+                try:
+                    ws_trust_str = _legacy.get(
+                        workspace_config.default_trust_level,
+                        workspace_config.default_trust_level,
+                    )
+                    session_trust = TrustLevel(ws_trust_str)
+                    logger.info(f"Using workspace default trust: {session_trust.value}")
+                except ValueError:
+                    logger.warning(f"Invalid workspace default_trust_level: {workspace_config.default_trust_level}")
+                    session_trust = TrustLevel.TRUSTED
+            else:
+                session_trust = TrustLevel.TRUSTED
 
             effective_trust = session_trust.value
 
