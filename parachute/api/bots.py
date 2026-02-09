@@ -22,8 +22,17 @@ class PairingApproval(BaseModel):
     trust_level: TrustLevelStr = "vault"
 
 
-class PlatformConfigUpdate(BaseModel):
-    """Partial update for a single platform's bot config."""
+class TelegramConfigUpdate(BaseModel):
+    """Partial update for Telegram bot config."""
+    enabled: Optional[bool] = None
+    bot_token: Optional[str] = None
+    allowed_users: Optional[list[int]] = None
+    dm_trust_level: Optional[TrustLevelStr] = None
+    group_trust_level: Optional[TrustLevelStr] = None
+
+
+class DiscordConfigUpdate(BaseModel):
+    """Partial update for Discord bot config."""
     enabled: Optional[bool] = None
     bot_token: Optional[str] = None
     allowed_users: Optional[list[str]] = None
@@ -34,8 +43,8 @@ class PlatformConfigUpdate(BaseModel):
 
 class BotsConfigUpdate(BaseModel):
     """Request body for PUT /bots/config."""
-    telegram: Optional[PlatformConfigUpdate] = None
-    discord: Optional[PlatformConfigUpdate] = None
+    telegram: Optional[TelegramConfigUpdate] = None
+    discord: Optional[DiscordConfigUpdate] = None
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +54,7 @@ router = APIRouter(prefix="/bots", tags=["bots"])
 _vault_path: Path | None = None
 _connectors: dict[str, Any] = {}
 _server_ref: Any = None  # Server-like object with .database for connector sessions
+_config_lock = asyncio.Lock()  # Serialize writes to bots.yaml
 
 
 def init_bots_api(vault_path: Path, connectors: dict[str, Any] | None = None, server_ref: Any = None) -> None:
@@ -116,36 +126,123 @@ async def update_bots_config(body: BotsConfigUpdate):
     if not _vault_path:
         raise HTTPException(status_code=400, detail="Server not configured")
 
-    existing = load_bots_config(_vault_path)
+    async with _config_lock:
+        existing = load_bots_config(_vault_path)
 
-    # Merge telegram config
-    tg = body.telegram.model_dump(exclude_none=True) if body.telegram else {}
-    tg_token = tg.get("bot_token", "")
-    if not tg_token and existing.telegram.bot_token:
-        tg["bot_token"] = existing.telegram.bot_token  # Preserve existing
+        # Merge telegram config
+        tg = body.telegram.model_dump(exclude_none=True) if body.telegram else {}
+        tg_token = tg.get("bot_token", "")
+        if not tg_token and existing.telegram.bot_token:
+            tg["bot_token"] = existing.telegram.bot_token  # Preserve existing
 
-    # Merge discord config
-    dc = body.discord.model_dump(exclude_none=True) if body.discord else {}
-    dc_token = dc.get("bot_token", "")
-    if not dc_token and existing.discord.bot_token:
-        dc["bot_token"] = existing.discord.bot_token
+        # Merge discord config
+        dc = body.discord.model_dump(exclude_none=True) if body.discord else {}
+        dc_token = dc.get("bot_token", "")
+        if not dc_token and existing.discord.bot_token:
+            dc["bot_token"] = existing.discord.bot_token
 
-    # Validate with pydantic
-    new_config = BotsConfig(
-        telegram=TelegramConfig(**{**existing.telegram.model_dump(), **tg}),
-        discord=DiscordConfig(**{**existing.discord.model_dump(), **dc}),
-    )
+        # Validate with pydantic
+        new_config = BotsConfig(
+            telegram=TelegramConfig(**{**existing.telegram.model_dump(), **tg}),
+            discord=DiscordConfig(**{**existing.discord.model_dump(), **dc}),
+        )
 
-    # Write YAML with restrictive permissions (tokens in plaintext)
+        _write_bots_config(new_config)
+
+    # Restart affected running connectors outside the lock
+    for platform in ("telegram", "discord"):
+        update = getattr(body, platform, None)
+        if update and platform in _connectors:
+            logger.info(f"Config changed for {platform}, restarting connector")
+            try:
+                await _stop_platform(platform)
+                await _start_platform(platform)
+            except Exception as e:
+                logger.error(f"Failed to restart {platform} after config change: {e}")
+
+    # Return masked config (reuse existing endpoint logic)
+    return await bots_config()
+
+
+def _write_bots_config(config: BotsConfig) -> None:
+    """Write bots config to YAML with restrictive permissions."""
     import os
     config_path = _vault_path / ".parachute" / "bots.yaml"
     config_path.parent.mkdir(parents=True, exist_ok=True)
     with open(config_path, "w") as f:
-        yaml.safe_dump(new_config.model_dump(), f, default_flow_style=False)
+        yaml.safe_dump(config.model_dump(), f, default_flow_style=False)
     os.chmod(config_path, 0o600)
 
-    # Return masked config (reuse existing endpoint logic)
-    return await bots_config()
+
+async def _stop_platform(platform: str) -> None:
+    """Stop a running connector. No-op if not running."""
+    connector = _connectors.get(platform)
+    if not connector:
+        return
+    try:
+        await connector.stop()
+    except Exception as e:
+        logger.warning(f"Error stopping {platform} connector: {e}")
+    _connectors.pop(platform, None)
+
+
+async def _start_platform(platform: str) -> None:
+    """Start a connector for the given platform. Raises on failure."""
+    config = load_bots_config(_vault_path)
+    platform_config = getattr(config, platform)
+
+    if platform == "telegram":
+        from parachute.connectors.telegram import TelegramConnector, TELEGRAM_AVAILABLE
+        if not TELEGRAM_AVAILABLE:
+            raise RuntimeError("python-telegram-bot not installed")
+        connector = TelegramConnector(
+            bot_token=platform_config.bot_token,
+            server=_server_ref,
+            allowed_users=platform_config.allowed_users,
+            dm_trust_level=platform_config.dm_trust_level,
+            group_trust_level=platform_config.group_trust_level,
+            group_mention_mode=platform_config.group_mention_mode,
+        )
+    else:
+        from parachute.connectors.discord_bot import DiscordConnector, DISCORD_AVAILABLE
+        if not DISCORD_AVAILABLE:
+            raise RuntimeError("discord.py not installed")
+        connector = DiscordConnector(
+            bot_token=platform_config.bot_token,
+            server=_server_ref,
+            allowed_users=platform_config.allowed_users,
+            dm_trust_level=platform_config.dm_trust_level,
+            group_trust_level=platform_config.group_trust_level,
+            group_mention_mode=platform_config.group_mention_mode,
+        )
+
+    def _on_connector_error(task: asyncio.Task) -> None:
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc:
+            logger.error(f"{platform} connector crashed: {exc}")
+            _connectors.pop(platform, None)
+
+    task = asyncio.create_task(connector.start())
+    task.add_done_callback(_on_connector_error)
+    _connectors[platform] = connector
+
+
+async def auto_start_connectors() -> None:
+    """Start enabled connectors with valid tokens. Errors are logged, not raised."""
+    if not _vault_path:
+        return
+
+    config = load_bots_config(_vault_path)
+    for platform in ("telegram", "discord"):
+        cfg = getattr(config, platform)
+        if cfg.enabled and cfg.bot_token:
+            try:
+                await _start_platform(platform)
+                logger.info(f"Auto-started {platform} connector")
+            except Exception as e:
+                logger.error(f"Failed to auto-start {platform}: {e}")
 
 
 @router.post("/{platform}/start")
@@ -165,48 +262,11 @@ async def start_connector(platform: str):
         raise HTTPException(status_code=400, detail=f"{platform} bot token not configured")
 
     try:
-        if platform == "telegram":
-            from parachute.connectors.telegram import TelegramConnector, TELEGRAM_AVAILABLE
-            if not TELEGRAM_AVAILABLE:
-                raise HTTPException(status_code=400, detail="python-telegram-bot not installed")
-            connector = TelegramConnector(
-                bot_token=platform_config.bot_token,
-                server=_server_ref,
-                allowed_users=platform_config.allowed_users,
-                dm_trust_level=platform_config.dm_trust_level,
-                group_trust_level=platform_config.group_trust_level,
-                group_mention_mode=platform_config.group_mention_mode,
-            )
-        else:
-            from parachute.connectors.discord_bot import DiscordConnector, DISCORD_AVAILABLE
-            if not DISCORD_AVAILABLE:
-                raise HTTPException(status_code=400, detail="discord.py not installed")
-            connector = DiscordConnector(
-                bot_token=platform_config.bot_token,
-                server=_server_ref,
-                allowed_users=platform_config.allowed_users,
-                dm_trust_level=platform_config.dm_trust_level,
-                group_trust_level=platform_config.group_trust_level,
-                group_mention_mode=platform_config.group_mention_mode,
-            )
-
-        def _on_connector_error(task: asyncio.Task) -> None:
-            if task.cancelled():
-                return
-            exc = task.exception()
-            if exc:
-                logger.error(f"{platform} connector crashed: {exc}")
-                _connectors.pop(platform, None)
-
-        task = asyncio.create_task(connector.start())
-        task.add_done_callback(_on_connector_error)
-        _connectors[platform] = connector
+        await _start_platform(platform)
         return {"success": True, "message": f"{platform} connector started"}
-    except HTTPException:
-        raise
     except Exception as e:
         logger.error(f"Failed to start {platform} connector: {e}")
-        return {"success": False, "error": str(e)}
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/{platform}/stop")
@@ -215,13 +275,11 @@ async def stop_connector(platform: str):
     if platform not in ("telegram", "discord"):
         raise HTTPException(status_code=400, detail=f"Unknown platform: {platform}")
 
-    connector = _connectors.get(platform)
-    if not connector:
+    if platform not in _connectors:
         return {"success": True, "message": f"{platform} connector not running"}
 
     try:
-        await connector.stop()
-        del _connectors[platform]
+        await _stop_platform(platform)
         return {"success": True, "message": f"{platform} connector stopped"}
     except Exception as e:
         logger.error(f"Failed to stop {platform} connector: {e}")
@@ -301,13 +359,28 @@ async def approve_pairing(request_id: str, body: PairingApproval):
     )
 
     # Add user to connector's allowlist in bots.yaml
-    _add_to_allowlist(pr.platform, pr.platform_user_id)
+    await _add_to_allowlist(pr.platform, pr.platform_user_id)
 
-    # Update running connector's in-memory allowlist
+    # Update running connector's in-memory allowlist and trust cache
     connector = _connectors.get(pr.platform)
     if connector and hasattr(connector, "allowed_users"):
         if pr.platform_user_id not in [str(u) for u in connector.allowed_users]:
-            connector.allowed_users.append(pr.platform_user_id)
+            typed_id = int(pr.platform_user_id) if pr.platform == "telegram" else pr.platform_user_id
+            connector.allowed_users.append(typed_id)
+        if hasattr(connector, "update_trust_override"):
+            connector.update_trust_override(pr.platform_user_id, body.trust_level)
+
+    # Activate the pending session: clear pending_approval, update trust level
+    linked_session = await db.get_session_by_bot_link(pr.platform, pr.platform_chat_id)
+    if linked_session and linked_session.metadata and linked_session.metadata.get("pending_approval"):
+        updated_metadata = dict(linked_session.metadata)
+        updated_metadata.pop("pending_approval", None)
+        from parachute.models.session import SessionUpdate
+        await db.update_session(linked_session.id, SessionUpdate(
+            metadata=updated_metadata,
+            trust_level=body.trust_level,
+        ))
+        logger.info(f"Activated pending session {linked_session.id[:8]} for approved user")
 
     # Send approval message to user
     if connector and hasattr(connector, "send_approval_message"):
@@ -333,30 +406,34 @@ async def deny_pairing(request_id: str):
         raise HTTPException(status_code=409, detail=f"Request already {pr.status}")
 
     await db.resolve_pairing_request(request_id, approved=False)
+
+    # Archive the pending session linked to this request
+    linked_session = await db.get_session_by_bot_link(pr.platform, pr.platform_chat_id)
+    if linked_session and linked_session.metadata and linked_session.metadata.get("pending_approval"):
+        await db.archive_session(linked_session.id)
+        logger.info(f"Archived pending session {linked_session.id[:8]} for denied user")
+
     return {"success": True}
 
 
-def _add_to_allowlist(platform: str, user_id: str) -> None:
+async def _add_to_allowlist(platform: str, user_id: str) -> None:
     """Persist a user addition to the platform's allowlist in bots.yaml."""
     if not _vault_path:
         return
 
-    config = load_bots_config(_vault_path)
-    platform_config = getattr(config, platform, None)
-    if not platform_config:
-        return
+    async with _config_lock:
+        config = load_bots_config(_vault_path)
+        platform_config = getattr(config, platform, None)
+        if not platform_config:
+            return
 
-    current_users = [str(u) for u in platform_config.allowed_users]
-    if user_id in current_users:
-        return
+        current_users = [str(u) for u in platform_config.allowed_users]
+        if user_id in current_users:
+            return
 
-    platform_config.allowed_users.append(user_id)
+        # Telegram uses int IDs, Discord uses string IDs
+        typed_id = int(user_id) if platform == "telegram" else user_id
+        platform_config.allowed_users.append(typed_id)
 
-    # Write updated config
-    import os
-    config_path = _vault_path / ".parachute" / "bots.yaml"
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(config_path, "w") as f:
-        yaml.safe_dump(config.model_dump(), f, default_flow_style=False)
-    os.chmod(config_path, 0o600)
-    logger.info(f"Added user {user_id} to {platform} allowlist")
+        _write_bots_config(config)
+        logger.info(f"Added user {user_id} to {platform} allowlist")

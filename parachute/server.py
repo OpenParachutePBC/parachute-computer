@@ -111,7 +111,7 @@ async def lifespan(app: FastAPI):
         app.state.hook_runner = None
 
     # Initialize bots API (pass server_ref with database for connector sessions)
-    from parachute.api.bots import init_bots_api
+    from parachute.api.bots import init_bots_api, auto_start_connectors
     from types import SimpleNamespace
 
     async def orchestrate(session_id, message, source="bot"):
@@ -136,6 +136,9 @@ async def lifespan(app: FastAPI):
         orchestrate=orchestrate,
     )
     init_bots_api(vault_path=settings.vault_path, server_ref=server_ref)
+
+    # Auto-start enabled bot connectors (errors logged, never crash server)
+    await auto_start_connectors()
 
     logger.info("Server ready")
 
