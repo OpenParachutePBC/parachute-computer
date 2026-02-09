@@ -360,10 +360,6 @@ def cmd_install(args: argparse.Namespace) -> None:
     config_file = save_yaml_config(vault_path, config)
     print(f"\nConfig written to {config_file}")
 
-    # 7b. Create /vault symlink for path unification
-    # Both bare metal and Docker sessions see /vault/... paths
-    _create_vault_symlink(vault_path)
-
     # 8. Install and start daemon
     print("\nInstalling daemon...")
     try:
@@ -402,51 +398,6 @@ def _check_path() -> None:
         print(f"  Add this to {rc_file}:")
         print(f'  export PATH="$HOME/.local/bin:$PATH"')
 
-
-def _create_vault_symlink(vault_path: Path) -> None:
-    """Create /vault → vault_path symlink for path unification.
-
-    Both bare metal and Docker sessions use /vault/... absolute paths.
-    Docker mounts the vault at /vault inside containers, and this symlink
-    makes the same paths resolve on the host too.
-    """
-    symlink = Path("/vault")
-
-    if symlink.exists() or symlink.is_symlink():
-        target = symlink.resolve() if symlink.is_symlink() else None
-        if target == vault_path:
-            print(f"\n  /vault → {vault_path} (already set)")
-            return
-        if symlink.is_symlink():
-            print(f"\n  /vault currently points to {target}")
-            print(f"  Updating to point to {vault_path}")
-            try:
-                symlink.unlink()
-            except PermissionError:
-                try:
-                    subprocess.run(["sudo", "rm", str(symlink)], check=True)
-                except Exception:
-                    print("  Could not update /vault symlink (permission denied)")
-                    return
-        else:
-            print(f"\n  /vault exists but is not a symlink — skipping")
-            return
-
-    print(f"\nCreating /vault → {vault_path}")
-    try:
-        symlink.symlink_to(vault_path)
-        print("  Done.")
-    except PermissionError:
-        print("  Needs elevated permissions. Running with sudo...")
-        try:
-            subprocess.run(
-                ["sudo", "ln", "-s", str(vault_path), str(symlink)],
-                check=True,
-            )
-            print("  Done.")
-        except Exception as e:
-            print(f"  Failed: {e}")
-            print("  You can create it manually: sudo ln -s {vault_path} /vault")
 
 
 # --- Update command ---
