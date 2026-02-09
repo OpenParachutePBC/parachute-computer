@@ -10,7 +10,7 @@ from typing import Any, Literal, Optional, Union
 
 from pydantic import BaseModel, Field
 
-TrustLevelStr = Literal["full", "vault", "sandboxed"]
+TrustLevelStr = Literal["trusted", "untrusted"]
 
 
 class PluginConfig(BaseModel):
@@ -71,8 +71,8 @@ class WorkspaceConfig(BaseModel):
     slug: str = Field(description="URL-safe identifier (kebab-case)")
     description: str = Field(default="", description="Description")
     trust_level: TrustLevelStr = Field(
-        default="full",
-        description="Trust floor: full, vault, sandboxed",
+        default="trusted",
+        description="Trust floor: trusted (bare metal) or untrusted (Docker)",
     )
     working_directory: Optional[str] = Field(
         default=None,
@@ -107,7 +107,7 @@ class WorkspaceCreate(BaseModel):
 
     name: str = Field(description="Display name")
     description: str = Field(default="", description="Description")
-    trust_level: TrustLevelStr = Field(default="full", description="Trust floor")
+    trust_level: TrustLevelStr = Field(default="trusted", description="Trust floor")
     working_directory: Optional[str] = Field(default=None)
     model: Optional[str] = Field(default=None)
     capabilities: Optional[WorkspaceCapabilities] = Field(default=None)
@@ -119,7 +119,7 @@ class WorkspaceUpdate(BaseModel):
 
     name: Optional[str] = Field(default=None)
     description: Optional[str] = Field(default=None)
-    trust_level: Optional[TrustLevelStr] = Field(default=None)
+    trust_level: Optional[TrustLevelStr] = Field(default=None, description="Trust floor")
     working_directory: Optional[str] = Field(default=None)
     model: Optional[str] = Field(default=None)
     capabilities: Optional[WorkspaceCapabilities] = Field(default=None)

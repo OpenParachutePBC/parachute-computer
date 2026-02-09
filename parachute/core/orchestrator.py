@@ -373,7 +373,7 @@ class Orchestrator:
             available_agents=prompt_metadata["available_agents"],
             base_prompt_tokens=prompt_metadata["base_prompt_tokens"],
             total_prompt_tokens=prompt_metadata["total_prompt_tokens"],
-            trust_mode=session.permissions.trust_mode,
+            trust_mode=(session.permissions.trust_level == TrustLevel.TRUSTED),
             working_directory_claude_md=prompt_metadata.get("working_directory_claude_md"),
         ).model_dump(by_alias=True)
 
@@ -541,7 +541,10 @@ class Orchestrator:
 
             if workspace_config and workspace_config.trust_level:
                 try:
-                    workspace_trust = TrustLevel(workspace_config.trust_level)
+                    # Map legacy workspace trust values
+                    _legacy = {"full": "trusted", "vault": "trusted", "sandboxed": "untrusted"}
+                    ws_trust_str = _legacy.get(workspace_config.trust_level, workspace_config.trust_level)
+                    workspace_trust = TrustLevel(ws_trust_str)
                     if trust_rank(workspace_trust) > trust_rank(session_trust):
                         logger.info(f"Workspace trust floor restricts session from {session_trust.value} to {workspace_trust.value}")
                         session_trust = workspace_trust
@@ -550,7 +553,10 @@ class Orchestrator:
 
             if trust_level:
                 try:
-                    requested = TrustLevel(trust_level)
+                    # Map legacy client trust values
+                    _legacy = {"full": "trusted", "vault": "trusted", "sandboxed": "untrusted"}
+                    client_trust_str = _legacy.get(trust_level, trust_level)
+                    requested = TrustLevel(client_trust_str)
                     if trust_rank(requested) >= trust_rank(session_trust):
                         session_trust = requested
                     else:
@@ -652,7 +658,7 @@ class Orchestrator:
             # Use session-based permission handler for tool access control
             # Trust mode (default): Use bypassPermissions for backwards compatibility
             # Restricted mode: Uses can_use_tool callback for interactive permission checks
-            trust_mode = session.permissions.trust_mode
+            trust_mode = session.permissions.trust_level == TrustLevel.TRUSTED
             logger.debug(f"Session trust_mode={trust_mode}: {session.id}")
 
             # Create SDK callback for tool permission checks
@@ -661,15 +667,13 @@ class Orchestrator:
 
             # effective_trust was determined earlier (before capability filtering)
 
-            if effective_trust == "sandboxed":
+            if effective_trust == "untrusted":
                 if await self._sandbox.is_available():
                     # Use a real session ID for sandbox — "pending" would cause the SDK
                     # inside the container to try resuming a nonexistent session
                     sandbox_sid = session.id if session.id != "pending" else str(uuid.uuid4())
-                    # Compute vault-relative working directory for sandbox
-                    sandbox_wd = self.session_manager.make_working_directory_relative(
-                        effective_working_dir
-                    ) if effective_working_dir else None
+                    # Working directory is already /vault/... — pass directly
+                    sandbox_wd = str(effective_working_dir) if effective_working_dir else None
 
                     sandbox_paths = list(session.permissions.allowed_paths)
                     # Auto-add working directory to allowed_paths so it gets mounted
@@ -768,12 +772,13 @@ class Orchestrator:
                             logger.warning(f"Failed to increment message count for {sandbox_sid[:8]}: {e}")
                     return
                 else:
-                    # Fallback: degrade to vault trust, warn user via typed event
-                    effective_trust = "vault"
+                    # No fallback — Docker is required for untrusted sessions
+                    logger.error("Docker not available for untrusted session")
                     yield ErrorEvent(
-                        error="Docker not available — falling back to vault trust level. "
-                              "Install Docker to enable sandboxed execution.",
+                        error="Docker is required for untrusted sessions but is not available. "
+                              "Install Docker to enable untrusted execution.",
                     ).model_dump(by_alias=True)
+                    return
 
             # Determine if this is a full custom prompt or append content
             # Custom agents and explicit custom_prompt return full prompts (override preset)

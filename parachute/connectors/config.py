@@ -11,7 +11,7 @@ from typing import Literal, Optional
 import yaml
 from pydantic import BaseModel, Field
 
-TrustLevelStr = Literal["full", "vault", "sandboxed"]
+TrustLevelStr = Literal["trusted", "untrusted"]
 
 logger = logging.getLogger(__name__)
 
@@ -22,9 +22,9 @@ class TelegramConfig(BaseModel):
     enabled: bool = False
     bot_token: str = ""
     allowed_users: list[int] = Field(default_factory=list)
-    default_trust_level: TrustLevelStr = "vault"
-    dm_trust_level: TrustLevelStr = "vault"
-    group_trust_level: TrustLevelStr = "sandboxed"
+    default_trust_level: TrustLevelStr = "untrusted"
+    dm_trust_level: TrustLevelStr = "untrusted"
+    group_trust_level: TrustLevelStr = "untrusted"
     group_mention_mode: Literal["mention_only", "all_messages"] = "mention_only"
     ack_emoji: Optional[str] = "👀"
 
@@ -35,9 +35,9 @@ class DiscordConfig(BaseModel):
     enabled: bool = False
     bot_token: str = ""
     allowed_users: list[str] = Field(default_factory=list)
-    default_trust_level: TrustLevelStr = "vault"
-    dm_trust_level: TrustLevelStr = "vault"
-    group_trust_level: TrustLevelStr = "sandboxed"
+    default_trust_level: TrustLevelStr = "untrusted"
+    dm_trust_level: TrustLevelStr = "untrusted"
+    group_trust_level: TrustLevelStr = "untrusted"
     group_mention_mode: Literal["mention_only", "all_messages"] = "mention_only"
     ack_emoji: Optional[str] = "👀"
 

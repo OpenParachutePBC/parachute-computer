@@ -360,6 +360,10 @@ def cmd_install(args: argparse.Namespace) -> None:
     config_file = save_yaml_config(vault_path, config)
     print(f"\nConfig written to {config_file}")
 
+    # 7b. Create /vault symlink for path unification
+    # Both bare metal and Docker sessions see /vault/... paths
+    _create_vault_symlink(vault_path)
+
     # 8. Install and start daemon
     print("\nInstalling daemon...")
     try:
@@ -398,6 +402,51 @@ def _check_path() -> None:
         print(f"  Add this to {rc_file}:")
         print(f'  export PATH="$HOME/.local/bin:$PATH"')
 
+
+def _create_vault_symlink(vault_path: Path) -> None:
+    """Create /vault → vault_path symlink for path unification.
+
+    Both bare metal and Docker sessions use /vault/... absolute paths.
+    Docker mounts the vault at /vault inside containers, and this symlink
+    makes the same paths resolve on the host too.
+    """
+    symlink = Path("/vault")
+
+    if symlink.exists() or symlink.is_symlink():
+        target = symlink.resolve() if symlink.is_symlink() else None
+        if target == vault_path:
+            print(f"\n  /vault → {vault_path} (already set)")
+            return
+        if symlink.is_symlink():
+            print(f"\n  /vault currently points to {target}")
+            print(f"  Updating to point to {vault_path}")
+            try:
+                symlink.unlink()
+            except PermissionError:
+                try:
+                    subprocess.run(["sudo", "rm", str(symlink)], check=True)
+                except Exception:
+                    print("  Could not update /vault symlink (permission denied)")
+                    return
+        else:
+            print(f"\n  /vault exists but is not a symlink — skipping")
+            return
+
+    print(f"\nCreating /vault → {vault_path}")
+    try:
+        symlink.symlink_to(vault_path)
+        print("  Done.")
+    except PermissionError:
+        print("  Needs elevated permissions. Running with sudo...")
+        try:
+            subprocess.run(
+                ["sudo", "ln", "-s", str(vault_path), str(symlink)],
+                check=True,
+            )
+            print("  Done.")
+        except Exception as e:
+            print(f"  Failed: {e}")
+            print("  You can create it manually: sudo ln -s {vault_path} /vault")
 
 
 # --- Update command ---
@@ -1400,8 +1449,8 @@ def _bot_config_show() -> None:
         print(f"    enabled: {enabled}")
         print(f"    token: {'configured' if has_token else 'not set'}")
 
-        dm_trust = cfg.get("dm_trust_level", "vault")
-        group_trust = cfg.get("group_trust_level", "sandboxed")
+        dm_trust = cfg.get("dm_trust_level", "untrusted")
+        group_trust = cfg.get("group_trust_level", "untrusted")
         print(f"    dm_trust_level: {dm_trust}")
         print(f"    group_trust_level: {group_trust}")
 
@@ -1448,9 +1497,9 @@ def _bot_config_set(key: str, value: str) -> None:
     elif field == "allowed_guilds":
         update["allowed_guilds"] = [x.strip() for x in value.split(",") if x.strip()]
     elif field in ("dm_trust_level", "group_trust_level"):
-        if value not in ("full", "vault", "sandboxed"):
+        if value not in ("trusted", "untrusted"):
             print(f"Invalid trust level: {value}")
-            print("Valid levels: full, vault, sandboxed")
+            print("Valid levels: trusted, untrusted")
             sys.exit(1)
         update[field] = value
 
@@ -1522,7 +1571,7 @@ def _bot_approve(request_id: str | None) -> None:
 
     # Approve specific request
     try:
-        result = _api_post(f"{server_url}/api/bots/pairing/{request_id}/approve", {"trust_level": "vault"})
+        result = _api_post(f"{server_url}/api/bots/pairing/{request_id}/approve", {"trust_level": "untrusted"})
         if result.get("success"):
             print(f"Approved: {request_id}")
         else:
