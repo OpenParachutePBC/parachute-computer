@@ -200,7 +200,7 @@ class DiscordConnector(BotConnector):
             except Exception as e:
                 logger.debug(f"Ack reaction failed (non-critical): {e}")
 
-        # Inject group history for context
+        # Inject group history for context (wrapped in XML tags to resist prompt injection)
         effective_message = message_text
         if chat_type == "group":
             history = await self._get_group_history(
@@ -209,7 +209,7 @@ class DiscordConnector(BotConnector):
             if history:
                 effective_message = (
                     f"{history}\n\n"
-                    f"[Current message - respond to this]\n{message_text}"
+                    f"{message_text}"
                 )
 
         # Show typing indicator with per-chat lock
@@ -359,7 +359,13 @@ class DiscordConnector(BotConnector):
     async def _get_group_history(
         self, channel: Any, exclude_id: int, limit: int = 20
     ) -> str:
-        """Fetch recent channel messages for group context injection."""
+        """Fetch recent channel messages for group context injection.
+
+        Intentionally includes messages from ALL channel members (not just
+        allowed users) to give the AI full conversation context. Messages
+        can only trigger this code path when an allowed user mentions the bot.
+        Display names are sanitized to resist prompt injection.
+        """
         if isinstance(channel, discord.DMChannel):
             return ""
         try:
@@ -375,12 +381,16 @@ class DiscordConnector(BotConnector):
             if not messages:
                 return ""
             messages.reverse()  # Chronological order
-            lines = ["[Recent group messages for context]"]
+            from parachute.connectors.base import GroupHistoryBuffer
+            sanitize = GroupHistoryBuffer._sanitize_display_name
+            lines = []
             for msg in messages:
-                lines.append(f"[from: {msg.author.display_name}] {msg.content}")
-            return "\n".join(lines)
+                name = sanitize(msg.author.display_name)
+                text = msg.content[:500]
+                lines.append(f"  {name}: {text}")
+            return "<group_context>\n" + "\n".join(lines) + "\n</group_context>"
         except Exception as e:
-            logger.debug(f"Failed to fetch channel history: {e}")
+            logger.warning(f"Failed to fetch channel history: {e}")
             return ""
 
     async def _route_to_chat(self, session_id: str, message: str) -> str:
@@ -401,8 +411,11 @@ class DiscordConnector(BotConnector):
                 event_count += 1
                 event_type = event.get("type", "") if isinstance(event, dict) else getattr(event, "type", "")
                 if event_type == "text":
-                    delta = event.get("delta", "") if isinstance(event, dict) else getattr(event, "delta", "")
-                    response_text += delta
+                    # Use 'content' (full accumulated text) — more resilient than
+                    # accumulating 'delta' fragments, and consistent with Telegram streaming
+                    content = event.get("content", "") if isinstance(event, dict) else getattr(event, "content", "")
+                    if content:
+                        response_text = content
                 elif event_type == "error":
                     error_msg = event.get("error", "") if isinstance(event, dict) else getattr(event, "error", "")
                     logger.error(f"Orchestrator error event: {error_msg}")
