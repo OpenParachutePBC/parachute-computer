@@ -217,6 +217,18 @@ class PromptMetadataEvent(BaseModel):
         description="List of specialized agents available",
     )
 
+    # Capability info (populated after workspace filtering)
+    available_skills: list[str] = Field(
+        alias="availableSkills",
+        default_factory=list,
+        description="List of skills available for this session",
+    )
+    available_mcps: list[str] = Field(
+        alias="availableMcps",
+        default_factory=list,
+        description="List of MCP servers available for this session",
+    )
+
     # Token estimates
     base_prompt_tokens: int = Field(
         alias="basePromptTokens",
