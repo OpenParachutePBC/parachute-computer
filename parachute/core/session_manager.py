@@ -33,8 +33,9 @@ class SessionManager:
     - SDK session ID is the ONLY identifier (no separate Parachute session ID)
     - Messages are stored in SDK JSONL files, not our database
     - We store metadata for indexing and quick listing
-    - working_directory is stored as /vault/... absolute path (consistent for bare metal and Docker)
-    - Empty/null working_directory means /vault (vault root)
+    - working_directory is stored as /vault/... in the DB (normalized for portability)
+    - SDK CWD uses the real vault host path (resolve_working_directory)
+    - Empty/null working_directory means vault root
     """
 
     def __init__(self, vault_path: Path, database: Database):
