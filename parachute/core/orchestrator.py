@@ -653,7 +653,6 @@ class Orchestrator:
                     # Use a real session ID for sandbox — "pending" would cause the SDK
                     # inside the container to try resuming a nonexistent session
                     sandbox_sid = session.id if session.id != "pending" else str(uuid.uuid4())
-                    logger.info(f"Running sandboxed execution for session {sandbox_sid[:8]}")
                     # Compute vault-relative working directory for sandbox
                     sandbox_wd = self.session_manager.make_working_directory_relative(
                         effective_working_dir
@@ -663,6 +662,11 @@ class Orchestrator:
                     # Auto-add working directory to allowed_paths so it gets mounted
                     if sandbox_wd and sandbox_wd not in sandbox_paths:
                         sandbox_paths.append(sandbox_wd)
+
+                    logger.info(
+                        f"Running sandboxed execution for session {sandbox_sid[:8]} "
+                        f"wd={sandbox_wd} paths={sandbox_paths}"
+                    )
 
                     sandbox_config = AgentSandboxConfig(
                         session_id=sandbox_sid,
@@ -688,32 +692,36 @@ class Orchestrator:
                             # internal SDK session ID which the client can't resume
                             if event_type in ("session", "done") and "sessionId" in event:
                                 event = {**event, "sessionId": sandbox_sid, "trustLevel": effective_trust}
-                            yield event
                             if event_type == "text":
                                 had_text = True
                                 # Track full response text for synthetic transcript
                                 sandbox_response_text = event.get("content", sandbox_response_text)
 
-                    # Finalize sandbox session so trust_level persists in DB
-                    # Use sandbox_sid as the canonical session ID (not the container's internal ID)
-                    if is_new and not session_finalized:
-                        title = generate_title_from_message(message) if message.strip() else None
-                        session = await self.session_manager.finalize_session(
-                            session, sandbox_sid, captured_model, title=title,
-                            agent_type=agent_type,
-                            workspace_id=workspace_id,
-                        )
-                        session_finalized = True
-                        logger.info(f"Finalized sandbox session: {sandbox_sid[:8]} trust={effective_trust}")
+                            # Finalize BEFORE yielding "done" to prevent race condition:
+                            # client receives "done", sends next message, but server
+                            # hasn't written the transcript yet
+                            if event_type == "done":
+                                if is_new and not session_finalized:
+                                    title = generate_title_from_message(message) if message.strip() else None
+                                    session = await self.session_manager.finalize_session(
+                                        session, sandbox_sid, captured_model, title=title,
+                                        agent_type=agent_type,
+                                        workspace_id=workspace_id,
+                                    )
+                                    session_finalized = True
+                                    logger.info(f"Finalized sandbox session: {sandbox_sid[:8]} trust={effective_trust}")
 
-                    # Write synthetic transcript to host so messages persist
-                    # Docker container transcripts are lost when the container exits
-                    if had_text:
-                        self.session_manager.write_sandbox_transcript(
-                            sandbox_sid, actual_message, sandbox_response_text,
-                            working_directory=effective_working_dir,
-                        )
-                    else:
+                                # Write synthetic transcript to host so messages persist
+                                # Docker container transcripts are lost when container exits
+                                if had_text:
+                                    self.session_manager.write_sandbox_transcript(
+                                        sandbox_sid, actual_message, sandbox_response_text,
+                                        working_directory=effective_working_dir,
+                                    )
+
+                            yield event
+
+                    if not had_text:
                         logger.warning("Sandbox produced no text output")
                     return
                 else:

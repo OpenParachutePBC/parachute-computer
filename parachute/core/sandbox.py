@@ -116,14 +116,19 @@ class DockerSandbox:
             if full_path.exists():
                 container_path = f"/vault/{clean}"
                 mounts.extend(["-v", f"{full_path}:{container_path}:rw"])
+                logger.debug(f"Mounting {full_path} -> {container_path}:rw")
+            else:
+                logger.warning(f"Skipping non-existent path: {full_path}")
 
         # If no specific paths, mount entire vault read-only
         if not config.allowed_paths:
             mounts.extend(["-v", f"{self.vault_path}:/vault:ro"])
+            logger.debug(f"Mounting entire vault read-only: {self.vault_path} -> /vault:ro")
 
         # Mount capability files/dirs
         mounts.extend(self._build_capability_mounts(config))
 
+        logger.info(f"Docker mounts: {len(mounts) // 2} volumes, wd={config.working_directory}")
         return mounts
 
     def _build_capability_mounts(self, config: AgentSandboxConfig) -> list[str]:
