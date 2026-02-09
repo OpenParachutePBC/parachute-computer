@@ -40,7 +40,7 @@ class AgentSandboxConfig:
     network_enabled: bool = False
     timeout_seconds: int = 300  # 5 minute default
     plugin_dirs: list[Path] = field(default_factory=list)
-    mcp_servers: Optional[dict] = None
+    mcp_servers: Optional[dict] = None  # Filtered MCP configs to pass to container
     agents: Optional[dict] = None
 
 
@@ -193,6 +193,11 @@ class DockerSandbox:
             env_lines.append(f"CLAUDE_CODE_OAUTH_TOKEN={self.claude_token}")
         else:
             logger.warning("No claude_token configured for sandbox — container will fail auth")
+
+        # Pass filtered MCP server names so the container knows what's allowed
+        if config.mcp_servers is not None:
+            mcp_names = ",".join(config.mcp_servers.keys())
+            env_lines.append(f"PARACHUTE_MCP_SERVERS={mcp_names}")
 
         fd, env_file_path = tempfile.mkstemp(suffix='.env', prefix='parachute-sandbox-')
         try:
