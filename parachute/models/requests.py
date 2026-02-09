@@ -136,6 +136,11 @@ class ChatRequest(BaseModel):
         description="Model to use (e.g., 'claude-sonnet-4-5-20250929'). "
                     "Overrides server DEFAULT_MODEL env var.",
     )
+    workspace_id: Optional[str] = Field(
+        alias="workspaceId",
+        default=None,
+        description="Workspace slug to use for this session's capabilities and defaults.",
+    )
 
     # Legacy fields for compatibility
     agent_path: Optional[str] = Field(alias="agentPath", default=None)

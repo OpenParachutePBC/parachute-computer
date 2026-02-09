@@ -40,8 +40,9 @@ class AgentSandboxConfig:
     network_enabled: bool = False
     timeout_seconds: int = 300  # 5 minute default
     plugin_dirs: list[Path] = field(default_factory=list)
-    mcp_servers: Optional[dict] = None
+    mcp_servers: Optional[dict] = None  # Filtered MCP configs to pass to container
     agents: Optional[dict] = None
+    working_directory: Optional[str] = None  # Vault-relative path for container CWD
 
 
 class DockerSandbox:
@@ -115,14 +116,19 @@ class DockerSandbox:
             if full_path.exists():
                 container_path = f"/vault/{clean}"
                 mounts.extend(["-v", f"{full_path}:{container_path}:rw"])
+                logger.debug(f"Mounting {full_path} -> {container_path}:rw")
+            else:
+                logger.warning(f"Skipping non-existent path: {full_path}")
 
         # If no specific paths, mount entire vault read-only
         if not config.allowed_paths:
             mounts.extend(["-v", f"{self.vault_path}:/vault:ro"])
+            logger.debug(f"Mounting entire vault read-only: {self.vault_path} -> /vault:ro")
 
         # Mount capability files/dirs
         mounts.extend(self._build_capability_mounts(config))
 
+        logger.info(f"Docker mounts: {len(mounts) // 2} volumes, wd={config.working_directory}")
         return mounts
 
     def _build_capability_mounts(self, config: AgentSandboxConfig) -> list[str]:
@@ -193,6 +199,15 @@ class DockerSandbox:
             env_lines.append(f"CLAUDE_CODE_OAUTH_TOKEN={self.claude_token}")
         else:
             logger.warning("No claude_token configured for sandbox — container will fail auth")
+
+        # Set container working directory
+        if config.working_directory:
+            env_lines.append(f"PARACHUTE_CWD=/vault/{config.working_directory}")
+
+        # Pass filtered MCP server names so the container knows what's allowed
+        if config.mcp_servers is not None:
+            mcp_names = ",".join(config.mcp_servers.keys())
+            env_lines.append(f"PARACHUTE_MCP_SERVERS={mcp_names}")
 
         fd, env_file_path = tempfile.mkstemp(suffix='.env', prefix='parachute-sandbox-')
         try:

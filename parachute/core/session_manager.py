@@ -52,6 +52,7 @@ class SessionManager:
 
         Returns:
             Absolute Path for use with SDK (which requires absolute paths).
+            Falls back to vault root if the resolved path escapes the vault.
         """
         if not working_directory:
             return self.vault_path
@@ -59,10 +60,22 @@ class SessionManager:
         wd_path = Path(working_directory)
         if wd_path.is_absolute():
             # Legacy absolute path - use as-is (will be migrated eventually)
-            return wd_path
+            resolved = wd_path
         else:
             # Relative path - combine with vault_path
-            return self.vault_path / wd_path
+            resolved = self.vault_path / wd_path
+
+        # Validate resolved path doesn't escape vault (e.g., via ../../../)
+        try:
+            resolved_real = resolved.resolve()
+            vault_real = self.vault_path.resolve()
+            if not str(resolved_real).startswith(str(vault_real)):
+                logger.warning(f"Working directory escapes vault: {working_directory}")
+                return self.vault_path
+        except Exception:
+            pass  # If resolution fails, use the original path
+
+        return resolved
 
     def make_working_directory_relative(self, working_directory: Optional[str]) -> Optional[str]:
         """
@@ -207,6 +220,7 @@ class SessionManager:
         model: Optional[str] = None,
         title: Optional[str] = None,
         agent_type: Optional[str] = None,
+        workspace_id: Optional[str] = None,
     ) -> Session:
         """
         Finalize a new session with the SDK-provided session ID.
@@ -226,34 +240,49 @@ class SessionManager:
         linked_bot_chat_type = getattr(placeholder, 'linked_bot_chat_type', None)
         trust_level = getattr(placeholder, 'trust_level', None)
         metadata = getattr(placeholder, 'metadata', None)
+        final_workspace_id = workspace_id or getattr(placeholder, 'workspace_id', None)
 
-        session = await self.db.create_session(
-            SessionCreate(
-                id=sdk_session_id,
+        if sdk_session_id == placeholder.id:
+            # Session ID unchanged (e.g., sandbox reused a connector-created session ID).
+            # The row already exists in DB — update it with finalization fields.
+            update = SessionUpdate(
                 title=title or placeholder.title,
-                module=placeholder.module,
-                source=placeholder.source,
-                working_directory=relative_wd,
                 model=model,
-                continued_from=placeholder.continued_from,
                 agent_type=final_agent_type,
-                trust_level=trust_level,
-                linked_bot_platform=linked_bot_platform,
-                linked_bot_chat_id=linked_bot_chat_id,
-                linked_bot_chat_type=linked_bot_chat_type,
-                metadata=metadata,
+                working_directory=relative_wd,
+                workspace_id=final_workspace_id,
             )
-        )
+            session = await self.db.update_session(sdk_session_id, update)
+            logger.debug(f"Updated existing session {sdk_session_id[:8]} with finalization fields")
+        else:
+            session = await self.db.create_session(
+                SessionCreate(
+                    id=sdk_session_id,
+                    title=title or placeholder.title,
+                    module=placeholder.module,
+                    source=placeholder.source,
+                    working_directory=relative_wd,
+                    model=model,
+                    continued_from=placeholder.continued_from,
+                    agent_type=final_agent_type,
+                    trust_level=trust_level,
+                    linked_bot_platform=linked_bot_platform,
+                    linked_bot_chat_id=linked_bot_chat_id,
+                    linked_bot_chat_type=linked_bot_chat_type,
+                    workspace_id=final_workspace_id,
+                    metadata=metadata,
+                )
+            )
 
-        # Remove the placeholder session so get_session_by_bot_link finds the
-        # finalized session (with the SDK session ID) on the next message
-        placeholder_id = placeholder.id
-        if placeholder_id and placeholder_id != sdk_session_id:
-            try:
-                await self.db.delete_session(placeholder_id)
-                logger.debug(f"Removed placeholder session {placeholder_id[:8]} after finalization")
-            except Exception as e:
-                logger.warning(f"Could not remove placeholder session {placeholder_id[:8]}: {e}")
+            # Remove the placeholder session so get_session_by_bot_link finds the
+            # finalized session (with the SDK session ID) on the next message
+            placeholder_id = placeholder.id
+            if placeholder_id and placeholder_id != sdk_session_id:
+                try:
+                    await self.db.delete_session(placeholder_id)
+                    logger.debug(f"Removed placeholder session {placeholder_id[:8]} after finalization")
+                except Exception as e:
+                    logger.warning(f"Could not remove placeholder session {placeholder_id[:8]}: {e}")
 
         logger.info(f"Finalized session: {sdk_session_id[:8]}... title='{title or 'none'}' agent_type='{final_agent_type or 'none'}'")
         return session
@@ -295,6 +324,7 @@ class SessionManager:
         archived: bool = False,
         agent_type: Optional[str] = None,
         search: Optional[str] = None,
+        workspace_id: Optional[str] = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[Session]:
@@ -304,6 +334,7 @@ class SessionManager:
             archived=archived,
             agent_type=agent_type,
             search=search,
+            workspace_id=workspace_id,
             limit=limit,
             offset=offset,
         )
@@ -601,6 +632,43 @@ class SessionManager:
                     "input": block.get("input", {}),
                 })
         return tool_calls
+
+    def write_sandbox_transcript(
+        self,
+        session_id: str,
+        user_message: str,
+        assistant_response: str,
+        working_directory: Optional[str] = None,
+    ) -> None:
+        """Write a synthetic JSONL transcript for a sandbox session.
+
+        Docker container transcripts are lost when the container exits.
+        This writes a minimal transcript to the host filesystem so messages
+        persist across app restarts and session reloads.
+        """
+        transcript_path = self.get_sdk_transcript_path(session_id, working_directory)
+        if not transcript_path:
+            logger.warning(f"Could not compute transcript path for sandbox session {session_id[:8]}")
+            return
+
+        try:
+            transcript_path.parent.mkdir(parents=True, exist_ok=True)
+
+            now = datetime.utcnow().isoformat() + "Z"
+            events = [
+                {"type": "user", "message": {"role": "user", "content": user_message}, "timestamp": now},
+                {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": assistant_response}]}, "timestamp": now},
+                {"type": "result", "result": assistant_response, "session_id": session_id, "timestamp": now},
+            ]
+
+            # Append to existing transcript (supports multi-turn sandbox sessions)
+            with open(transcript_path, "a", encoding="utf-8") as f:
+                for event in events:
+                    f.write(json.dumps(event) + "\n")
+
+            logger.info(f"Wrote sandbox transcript for session {session_id[:8]} at {transcript_path}")
+        except Exception as e:
+            logger.error(f"Failed to write sandbox transcript: {e}")
 
     async def _load_sdk_messages(self, session: Session) -> list[dict[str, Any]]:
         """Load messages from SDK JSONL file."""

@@ -42,6 +42,14 @@ async def run():
     session_id = os.environ.get("PARACHUTE_SESSION_ID", "")
     oauth_token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
 
+    # Set working directory if provided
+    cwd = os.environ.get("PARACHUTE_CWD")
+    if cwd:
+        if os.path.isdir(cwd):
+            os.chdir(cwd)
+        else:
+            emit({"type": "warning", "message": f"PARACHUTE_CWD={cwd} does not exist in container, staying at {os.getcwd()}"})
+
     if not oauth_token:
         emit({"type": "error", "error": "CLAUDE_CODE_OAUTH_TOKEN not set"})
         sys.exit(1)
@@ -59,9 +67,13 @@ async def run():
     try:
         from claude_agent_sdk import query, ClaudeAgentOptions
 
+        # Use the resolved CWD (either PARACHUTE_CWD or process default)
+        effective_cwd = os.getcwd()
+
         options_kwargs = {
             "permission_mode": "bypassPermissions",
             "env": {"CLAUDE_CODE_OAUTH_TOKEN": oauth_token},
+            "cwd": effective_cwd,
         }
 
         # Pass capabilities to SDK if available
