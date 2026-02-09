@@ -57,6 +57,7 @@ def get_orchestrator(request: Request):
 async def list_sessions(
     request: Request,
     module: Optional[str] = Query(None, description="Filter by module"),
+    search: Optional[str] = Query(None, description="Search sessions by title"),
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
     archived: Optional[bool] = Query(None, description="Filter by archived status"),
@@ -66,6 +67,7 @@ async def list_sessions(
 
     Query params:
     - module: Filter by module (chat, daily, build)
+    - search: Search sessions by title (case-insensitive LIKE match)
     - limit: Maximum number of sessions to return
     - offset: Number of sessions to skip
     - archived: Filter by archived status
@@ -79,6 +81,7 @@ async def list_sessions(
         sessions = await orchestrator.list_sessions(
             module=module,
             archived=show_archived,
+            search=search,
             limit=limit,
         )
     except Exception as e:

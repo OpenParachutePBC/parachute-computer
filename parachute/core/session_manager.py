@@ -294,6 +294,7 @@ class SessionManager:
         module: Optional[str] = None,
         archived: bool = False,
         agent_type: Optional[str] = None,
+        search: Optional[str] = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[Session]:
@@ -302,6 +303,7 @@ class SessionManager:
             module=module,
             archived=archived,
             agent_type=agent_type,
+            search=search,
             limit=limit,
             offset=offset,
         )
