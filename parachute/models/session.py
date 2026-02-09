@@ -14,12 +14,11 @@ from pydantic import BaseModel, Field
 class TrustLevel(str, Enum):
     """Trust level for agent execution.
 
-    Determines what isolation and permissions an agent session gets.
+    Binary model: either you trust the agent (bare metal) or you don't (Docker).
     """
 
-    FULL = "full"  # Direct execution, unrestricted (personal chat)
-    VAULT = "vault"  # Vault filesystem only, no bash, no network
-    SANDBOXED = "sandboxed"  # Docker container, scoped mounts, no network
+    TRUSTED = "trusted"  # Bare metal execution, bypass SDK permissions
+    UNTRUSTED = "untrusted"  # Docker container, scoped mounts
 
 
 class SessionPermissions(BaseModel):
@@ -30,12 +29,12 @@ class SessionPermissions(BaseModel):
     Stored in session metadata and checked at runtime.
     """
 
-    # Trust level (three-tier model)
+    # Trust level (binary model)
     trust_level: TrustLevel = Field(
-        default=TrustLevel.FULL,
+        default=TrustLevel.TRUSTED,
         alias="trustLevel",
         serialization_alias="trustLevel",
-        description="Trust level: full (unrestricted), vault (filesystem only), sandboxed (Docker)",
+        description="Trust level: trusted (bare metal) or untrusted (Docker)",
     )
 
     # File access patterns (glob-style, relative to vault)
@@ -62,66 +61,31 @@ class SessionPermissions(BaseModel):
         description="Allowed bash commands, or True for all, or False for none",
     )
 
-    # Trust mode bypasses all permission checks (except deny list)
-    # Default to True so existing sessions continue to work without prompts
-    # Deprecated: use trust_level=FULL instead. Kept for backward compat.
-    trust_mode: bool = Field(
-        default=True,
-        alias="trustMode",
-        serialization_alias="trustMode",
-        description="Deprecated: use trustLevel instead. If true, maps to trust_level=FULL",
-    )
-
     model_config = {"populate_by_name": True}
-
-    @property
-    def effective_trust_level(self) -> TrustLevel:
-        """Resolve effective trust level, accounting for legacy trust_mode."""
-        if self.trust_mode and self.trust_level == TrustLevel.FULL:
-            return TrustLevel.FULL
-        # If trust_level was explicitly set to something other than FULL,
-        # honor it even if trust_mode is True (explicit > implicit)
-        if self.trust_level != TrustLevel.FULL:
-            return self.trust_level
-        # Legacy: trust_mode=False with no explicit trust_level
-        if not self.trust_mode:
-            return TrustLevel.VAULT
-        return TrustLevel.FULL
 
     def can_read(self, path: str) -> bool:
         """Check if reading the given path is allowed."""
-        level = self.effective_trust_level
-        if level == TrustLevel.FULL:
+        if self.trust_level == TrustLevel.TRUSTED:
             return True
-        if level in (TrustLevel.VAULT, TrustLevel.SANDBOXED):
-            if self.allowed_paths:
-                return self._matches_any_pattern(path, self.allowed_paths)
-            # Fall through to read patterns
+        # Untrusted: Docker handles isolation, but check allowed_paths if set
+        if self.allowed_paths:
+            return self._matches_any_pattern(path, self.allowed_paths)
         return self._matches_any_pattern(path, self.read)
 
     def can_write(self, path: str) -> bool:
         """Check if writing to the given path is allowed."""
-        level = self.effective_trust_level
-        if level == TrustLevel.FULL:
+        if self.trust_level == TrustLevel.TRUSTED:
             return True
-        if level in (TrustLevel.VAULT, TrustLevel.SANDBOXED):
-            if self.allowed_paths:
-                return self._matches_any_pattern(path, self.allowed_paths)
+        if self.allowed_paths:
+            return self._matches_any_pattern(path, self.allowed_paths)
         return self._matches_any_pattern(path, self.write)
 
     def can_bash(self, command: str) -> bool:
         """Check if running the given bash command is allowed."""
-        level = self.effective_trust_level
-        if level == TrustLevel.FULL:
+        if self.trust_level == TrustLevel.TRUSTED:
             return True
-        if level == TrustLevel.SANDBOXED:
-            return False  # Sandboxed agents run in containers, no host bash
-        # VAULT and restricted modes: check the bash whitelist
-        if isinstance(self.bash, bool):
-            return self.bash
-        # Extract base command (first word)
-        base_cmd = command.strip().split()[0] if command.strip() else ""
-        return base_cmd in self.bash
+        # Untrusted runs in Docker — no host bash
+        return False
 
     def _matches_any_pattern(self, path: str, patterns: list[str]) -> bool:
         """Check if path matches any of the glob patterns."""
@@ -207,7 +171,7 @@ class Session(BaseModel):
         default=None,
         alias="trustLevel",
         serialization_alias="trustLevel",
-        description="Trust level: full, vault, sandboxed (NULL = full for backward compat)",
+        description="Trust level: trusted or untrusted (NULL = trusted for backward compat)",
     )
     linked_bot_platform: Optional[str] = Field(
         default=None,
@@ -240,13 +204,16 @@ class Session(BaseModel):
     model_config = {"from_attributes": True, "populate_by_name": True}
 
     def get_trust_level(self) -> TrustLevel:
-        """Get effective trust level, defaulting to FULL for backward compat."""
+        """Get effective trust level, defaulting to TRUSTED for backward compat."""
         if self.trust_level:
+            # Map legacy 3-tier values to binary model
+            legacy_map = {"full": "trusted", "vault": "trusted", "sandboxed": "untrusted"}
+            mapped = legacy_map.get(self.trust_level, self.trust_level)
             try:
-                return TrustLevel(self.trust_level)
+                return TrustLevel(mapped)
             except ValueError:
-                return TrustLevel.FULL
-        return TrustLevel.FULL
+                return TrustLevel.TRUSTED
+        return TrustLevel.TRUSTED
 
     @property
     def permissions(self) -> SessionPermissions:

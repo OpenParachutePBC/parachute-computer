@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 class SessionConfigUpdate(BaseModel):
     """Request body for updating session configuration."""
 
-    trust_level: Optional[str] = Field(None, alias="trustLevel", description="Trust level: full, vault, sandboxed")
+    trust_level: Optional[str] = Field(None, alias="trustLevel", description="Trust level: trusted or untrusted")
     module: Optional[str] = Field(None, description="Module to use for this session")
     config_overrides: Optional[dict[str, Any]] = Field(
         None,
@@ -205,8 +205,12 @@ async def activate_session(
     update = SessionUpdate(metadata=meta)
 
     if body.trust_level is not None:
-        if body.trust_level not in ("full", "vault", "sandboxed"):
+        # Accept both new and legacy trust values
+        _legacy = {"full": "trusted", "vault": "trusted", "sandboxed": "untrusted"}
+        mapped_trust = _legacy.get(body.trust_level, body.trust_level)
+        if mapped_trust not in ("trusted", "untrusted"):
             raise HTTPException(status_code=400, detail="Invalid trust level")
+        body.trust_level = mapped_trust
         update.trust_level = body.trust_level
 
     if body.workspace_id is not None:
@@ -259,8 +263,12 @@ async def update_session_config(
     has_changes = False
 
     if body.trust_level is not None:
-        if body.trust_level not in ("full", "vault", "sandboxed"):
+        # Accept both new and legacy trust values
+        _legacy = {"full": "trusted", "vault": "trusted", "sandboxed": "untrusted"}
+        mapped_trust = _legacy.get(body.trust_level, body.trust_level)
+        if mapped_trust not in ("trusted", "untrusted"):
             raise HTTPException(status_code=400, detail="Invalid trust level")
+        body.trust_level = mapped_trust
         update.trust_level = body.trust_level
         has_changes = True
 

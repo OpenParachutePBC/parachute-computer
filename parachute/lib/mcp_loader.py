@@ -59,7 +59,7 @@ def _get_builtin_mcp_servers(vault_path: Path) -> dict[str, dict[str, Any]]:
                 "PYTHONPATH": str(base_dir),
             },
             "_builtin": True,  # Marker to identify built-in servers
-            "trust_level": "sandboxed",  # Available at all trust levels
+            "trust_level": "untrusted",  # Available at all trust levels
         }
     }
 

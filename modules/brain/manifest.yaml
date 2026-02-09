@@ -1,6 +1,6 @@
 name: brain
 version: "0.1.0"
 description: "Knowledge graph entity management"
-trust_level: full
+trust_level: trusted
 provides:
   - BrainInterface

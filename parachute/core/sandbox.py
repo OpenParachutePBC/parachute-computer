@@ -4,8 +4,7 @@ Docker sandbox for agent execution.
 Provides per-agent Docker containers with scoped filesystem mounts
 and credential propagation for the Claude Agent SDK.
 
-Fallback: When Docker is not available, degrades to VAULT trust level
-(process-level isolation with restricted permissions).
+Used for all untrusted sessions. Docker must be available — no fallback.
 """
 
 import asyncio
@@ -42,7 +41,7 @@ class AgentSandboxConfig:
     plugin_dirs: list[Path] = field(default_factory=list)
     mcp_servers: Optional[dict] = None  # Filtered MCP configs to pass to container
     agents: Optional[dict] = None
-    working_directory: Optional[str] = None  # Vault-relative path for container CWD
+    working_directory: Optional[str] = None  # /vault/... absolute path for container CWD
 
 
 class DockerSandbox:
@@ -112,9 +111,17 @@ class DockerSandbox:
             clean = re.sub(r'(/\*\*?)*$', '', path_pattern)
             if not clean:
                 continue
-            full_path = self.vault_path / clean
-            if full_path.exists():
+            # Paths may be /vault/... absolute or legacy relative
+            if clean.startswith("/vault/"):
+                # Already absolute /vault/ path — resolve to host path
+                relative = clean[len("/vault/"):]
+                full_path = self.vault_path / relative
+                container_path = clean
+            else:
+                # Legacy relative path
+                full_path = self.vault_path / clean
                 container_path = f"/vault/{clean}"
+            if full_path.exists():
                 mounts.extend(["-v", f"{full_path}:{container_path}:rw"])
                 logger.debug(f"Mounting {full_path} -> {container_path}:rw")
             else:
@@ -200,9 +207,9 @@ class DockerSandbox:
         else:
             logger.warning("No claude_token configured for sandbox — container will fail auth")
 
-        # Set container working directory
+        # Set container working directory (path already starts with /vault/)
         if config.working_directory:
-            env_lines.append(f"PARACHUTE_CWD=/vault/{config.working_directory}")
+            env_lines.append(f"PARACHUTE_CWD={config.working_directory}")
 
         # Pass filtered MCP server names so the container knows what's allowed
         if config.mcp_servers is not None:

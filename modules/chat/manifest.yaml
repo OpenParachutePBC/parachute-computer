@@ -1,6 +1,6 @@
 name: chat
 version: "0.1.0"
 description: "Streaming chat with Claude Agent SDK"
-trust_level: full
+trust_level: trusted
 requires:
   - BrainInterface
