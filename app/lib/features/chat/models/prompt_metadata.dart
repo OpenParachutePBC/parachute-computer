@@ -24,6 +24,12 @@ class PromptMetadata {
   /// List of specialized agents available
   final List<String> availableAgents;
 
+  /// List of skills available for this session
+  final List<String> availableSkills;
+
+  /// List of MCP servers available for this session
+  final List<String> availableMcps;
+
   /// Estimated tokens in the base prompt
   final int basePromptTokens;
 
@@ -44,6 +50,8 @@ class PromptMetadata {
     this.contextTruncated = false,
     this.agentName,
     this.availableAgents = const [],
+    this.availableSkills = const [],
+    this.availableMcps = const [],
     this.basePromptTokens = 0,
     this.totalPromptTokens = 0,
     this.trustMode = true,
@@ -61,6 +69,10 @@ class PromptMetadata {
       agentName: json['agentName'] as String?,
       availableAgents:
           (json['availableAgents'] as List<dynamic>?)?.cast<String>() ?? [],
+      availableSkills:
+          (json['availableSkills'] as List<dynamic>?)?.cast<String>() ?? [],
+      availableMcps:
+          (json['availableMcps'] as List<dynamic>?)?.cast<String>() ?? [],
       basePromptTokens: json['basePromptTokens'] as int? ?? 0,
       totalPromptTokens: json['totalPromptTokens'] as int? ?? 0,
       trustMode: json['trustMode'] as bool? ?? true,
@@ -77,6 +89,8 @@ class PromptMetadata {
       'contextTruncated': contextTruncated,
       'agentName': agentName,
       'availableAgents': availableAgents,
+      'availableSkills': availableSkills,
+      'availableMcps': availableMcps,
       'basePromptTokens': basePromptTokens,
       'totalPromptTokens': totalPromptTokens,
       'trustMode': trustMode,
@@ -114,6 +128,8 @@ class PromptMetadata {
     bool? contextTruncated,
     String? agentName,
     List<String>? availableAgents,
+    List<String>? availableSkills,
+    List<String>? availableMcps,
     int? basePromptTokens,
     int? totalPromptTokens,
     bool? trustMode,
@@ -127,6 +143,8 @@ class PromptMetadata {
       contextTruncated: contextTruncated ?? this.contextTruncated,
       agentName: agentName ?? this.agentName,
       availableAgents: availableAgents ?? this.availableAgents,
+      availableSkills: availableSkills ?? this.availableSkills,
+      availableMcps: availableMcps ?? this.availableMcps,
       basePromptTokens: basePromptTokens ?? this.basePromptTokens,
       totalPromptTokens: totalPromptTokens ?? this.totalPromptTokens,
       trustMode: trustMode ?? this.trustMode,
@@ -161,6 +179,8 @@ class PromptPreviewResult extends PromptMetadata {
     super.contextTruncated = false,
     super.agentName,
     super.availableAgents = const [],
+    super.availableSkills = const [],
+    super.availableMcps = const [],
     super.basePromptTokens = 0,
     super.totalPromptTokens = 0,
     super.trustMode = true,
@@ -180,6 +200,10 @@ class PromptPreviewResult extends PromptMetadata {
       agentName: json['agentName'] as String?,
       availableAgents:
           (json['availableAgents'] as List<dynamic>?)?.cast<String>() ?? [],
+      availableSkills:
+          (json['availableSkills'] as List<dynamic>?)?.cast<String>() ?? [],
+      availableMcps:
+          (json['availableMcps'] as List<dynamic>?)?.cast<String>() ?? [],
       basePromptTokens: json['basePromptTokens'] as int? ?? 0,
       totalPromptTokens: json['totalPromptTokens'] as int? ?? 0,
       trustMode: json['trustMode'] as bool? ?? true,
@@ -206,6 +230,8 @@ class PromptPreviewResult extends PromptMetadata {
       contextTruncated: contextTruncated,
       agentName: agentName,
       availableAgents: availableAgents,
+      availableSkills: availableSkills,
+      availableMcps: availableMcps,
       basePromptTokens: basePromptTokens,
       totalPromptTokens: totalPromptTokens,
       trustMode: trustMode,

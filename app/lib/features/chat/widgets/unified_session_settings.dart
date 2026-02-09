@@ -220,6 +220,14 @@ class _UnifiedSessionSettingsState
                   // --- Section 3: Context ---
                   _buildContextSection(isDark, claudeMdPath),
 
+                  // --- Section 3.5: Active Capabilities ---
+                  if (metadata != null && _hasCapabilities(metadata)) ...[
+                    const SizedBox(height: Spacing.lg),
+                    _divider(isDark),
+                    const SizedBox(height: Spacing.lg),
+                    _buildCapabilitiesSection(isDark, metadata),
+                  ],
+
                   const SizedBox(height: Spacing.lg),
                   _divider(isDark),
                   const SizedBox(height: Spacing.lg),
@@ -532,6 +540,116 @@ class _UnifiedSessionSettingsState
           ),
         ),
       ],
+    );
+  }
+
+  // ---- Capabilities Section ----
+
+  bool _hasCapabilities(PromptMetadata metadata) {
+    return metadata.availableAgents.isNotEmpty ||
+        metadata.availableSkills.isNotEmpty ||
+        metadata.availableMcps.isNotEmpty;
+  }
+
+  Widget _buildCapabilitiesSection(bool isDark, PromptMetadata metadata) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _sectionLabel(isDark, 'Active Capabilities'),
+        const SizedBox(height: Spacing.sm),
+        if (metadata.availableAgents.isNotEmpty)
+          _capabilityRow(
+            isDark,
+            Icons.smart_toy_outlined,
+            'Agents',
+            metadata.availableAgents,
+          ),
+        if (metadata.availableSkills.isNotEmpty) ...[
+          if (metadata.availableAgents.isNotEmpty)
+            const SizedBox(height: Spacing.sm),
+          _capabilityRow(
+            isDark,
+            Icons.bolt_outlined,
+            'Skills',
+            metadata.availableSkills,
+          ),
+        ],
+        if (metadata.availableMcps.isNotEmpty) ...[
+          if (metadata.availableAgents.isNotEmpty ||
+              metadata.availableSkills.isNotEmpty)
+            const SizedBox(height: Spacing.sm),
+          _capabilityRow(
+            isDark,
+            Icons.dns_outlined,
+            'MCP Servers',
+            metadata.availableMcps,
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _capabilityRow(
+    bool isDark,
+    IconData icon,
+    String label,
+    List<String> items,
+  ) {
+    return Container(
+      padding: const EdgeInsets.all(Spacing.md),
+      decoration: BoxDecoration(
+        color: isDark
+            ? BrandColors.nightSurfaceElevated
+            : BrandColors.stone.withValues(alpha: 0.3),
+        borderRadius: BorderRadius.circular(Radii.md),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                icon,
+                size: 16,
+                color: isDark ? BrandColors.nightForest : BrandColors.forest,
+              ),
+              const SizedBox(width: Spacing.sm),
+              Text(
+                '$label (${items.length})',
+                style: TextStyle(
+                  fontSize: TypographyTokens.bodySmall,
+                  fontWeight: FontWeight.w500,
+                  color: isDark ? BrandColors.nightText : BrandColors.charcoal,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: Spacing.xs),
+          Wrap(
+            spacing: Spacing.xs,
+            runSpacing: Spacing.xs,
+            children: items.map((name) => Container(
+              padding: const EdgeInsets.symmetric(
+                horizontal: Spacing.sm,
+                vertical: 2,
+              ),
+              decoration: BoxDecoration(
+                color: isDark
+                    ? BrandColors.nightForest.withValues(alpha: 0.15)
+                    : BrandColors.forestMist,
+                borderRadius: BorderRadius.circular(Radii.sm),
+              ),
+              child: Text(
+                name,
+                style: TextStyle(
+                  fontSize: TypographyTokens.labelSmall,
+                  color: isDark ? BrandColors.nightForest : BrandColors.forest,
+                ),
+              ),
+            )).toList(),
+          ),
+        ],
+      ),
     );
   }
 
