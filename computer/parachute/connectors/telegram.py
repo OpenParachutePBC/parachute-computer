@@ -240,8 +240,8 @@ class TelegramConnector(BotConnector):
         # Send "typing" indicator
         await update.effective_chat.send_action("typing")
 
-        # Route through Chat orchestrator (with per-session lock)
-        lock = self._get_session_lock(session.id)
+        # Route through Chat orchestrator (with per-chat lock)
+        lock = self._get_chat_lock(chat_id)
         async with lock:
             response_text = await self._route_to_chat(
                 session_id=session.id,

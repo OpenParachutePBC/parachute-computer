@@ -170,8 +170,8 @@ class DiscordConnector(BotConnector):
             await message.reply("Internal error: could not create session.")
             return
 
-        # Show typing indicator with per-session lock
-        lock = self._get_session_lock(session.id)
+        # Show typing indicator with per-chat lock
+        lock = self._get_chat_lock(chat_id)
         async with lock:
             async with message.channel.typing():
                 response_text = await self._route_to_chat(
