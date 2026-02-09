@@ -8,9 +8,63 @@ and implement platform-specific message handling.
 import asyncio
 import logging
 from abc import ABC, abstractmethod
+from collections import deque
+from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class GroupMessage:
+    """A cached group message for history injection."""
+
+    user_display: str
+    text: str
+    timestamp: datetime
+    message_id: str | int
+
+
+class GroupHistoryBuffer:
+    """Per-chat ring buffer of recent group messages.
+
+    Telegram has no API to fetch chat history — we must cache messages
+    as they arrive. Discord has channel.history() but using a buffer
+    keeps the approach consistent.
+    """
+
+    def __init__(self, max_messages: int = 50):
+        self.max_messages = max_messages
+        self._buffers: dict[str, deque[GroupMessage]] = {}
+
+    def record(self, chat_id: str, msg: GroupMessage) -> None:
+        """Record a message in the buffer."""
+        if chat_id not in self._buffers:
+            self._buffers[chat_id] = deque(maxlen=self.max_messages)
+        self._buffers[chat_id].append(msg)
+
+    def get_recent(
+        self,
+        chat_id: str,
+        exclude_message_id: str | int | None = None,
+        limit: int = 20,
+    ) -> list[GroupMessage]:
+        """Get recent messages, optionally excluding the triggering message."""
+        buf = self._buffers.get(chat_id, deque())
+        messages = list(buf)
+        if exclude_message_id is not None:
+            messages = [m for m in messages if m.message_id != exclude_message_id]
+        return messages[-limit:]
+
+    def format_for_prompt(self, messages: list[GroupMessage]) -> str:
+        """Format buffered messages as context block for the prompt."""
+        if not messages:
+            return ""
+        lines = ["[Recent group messages for context]"]
+        for msg in messages:
+            lines.append(f"[from: {msg.user_display}] {msg.text}")
+        return "\n".join(lines)
 
 
 class BotConnector(ABC):
@@ -27,6 +81,7 @@ class BotConnector(ABC):
         dm_trust_level: str = "vault",
         group_trust_level: str = "sandboxed",
         group_mention_mode: str = "mention_only",
+        ack_emoji: str | None = "👀",
     ):
         self.bot_token = bot_token
         self.server = server
@@ -35,10 +90,12 @@ class BotConnector(ABC):
         self.dm_trust_level = dm_trust_level
         self.group_trust_level = group_trust_level
         self.group_mention_mode = group_mention_mode
+        self.ack_emoji = ack_emoji
         self._running = False
         self._chat_locks: dict[str, asyncio.Lock] = {}
         self._trust_overrides: dict[str, str] = {}  # user_id -> trust_level cache
         self._init_nudge_sent: dict[str, int] = {}
+        self.group_history = GroupHistoryBuffer(max_messages=50)
 
     @abstractmethod
     async def start(self) -> None:

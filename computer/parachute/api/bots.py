@@ -201,6 +201,7 @@ async def _start_platform(platform: str) -> None:
             dm_trust_level=platform_config.dm_trust_level,
             group_trust_level=platform_config.group_trust_level,
             group_mention_mode=platform_config.group_mention_mode,
+            ack_emoji=platform_config.ack_emoji,
         )
     else:
         from parachute.connectors.discord_bot import DiscordConnector, DISCORD_AVAILABLE
@@ -213,6 +214,7 @@ async def _start_platform(platform: str) -> None:
             dm_trust_level=platform_config.dm_trust_level,
             group_trust_level=platform_config.group_trust_level,
             group_mention_mode=platform_config.group_mention_mode,
+            ack_emoji=platform_config.ack_emoji,
         )
 
     def _on_connector_error(task: asyncio.Task) -> None:

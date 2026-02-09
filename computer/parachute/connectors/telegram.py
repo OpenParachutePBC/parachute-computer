@@ -10,9 +10,10 @@ Install: pip install 'python-telegram-bot>=21.0'
 import asyncio
 import logging
 import re
+from datetime import datetime, timezone
 from typing import Any, Optional
 
-from parachute.connectors.base import BotConnector
+from parachute.connectors.base import BotConnector, GroupMessage
 from parachute.connectors.message_formatter import claude_to_telegram
 
 logger = logging.getLogger(__name__)
@@ -49,6 +50,7 @@ class TelegramConnector(BotConnector):
         dm_trust_level: str = "vault",
         group_trust_level: str = "sandboxed",
         group_mention_mode: str = "mention_only",
+        ack_emoji: str | None = "👀",
     ):
         super().__init__(
             bot_token=bot_token,
@@ -58,6 +60,7 @@ class TelegramConnector(BotConnector):
             dm_trust_level=dm_trust_level,
             group_trust_level=group_trust_level,
             group_mention_mode=group_mention_mode,
+            ack_emoji=ack_emoji,
         )
         self._app: Optional[Application] = None
         self._polling_task: Optional[asyncio.Task] = None
@@ -309,9 +312,22 @@ class TelegramConnector(BotConnector):
 
         chat_type = "dm" if update.effective_chat.type == "private" else "group"
         message_text = update.message.text
+        chat_id = str(update.effective_chat.id)
+
+        # Record group messages for history injection (before mention gating,
+        # so the buffer captures the full conversation even for ignored messages)
+        if chat_type == "group" and update.message:
+            self.group_history.record(
+                chat_id=chat_id,
+                msg=GroupMessage(
+                    user_display=update.effective_user.full_name,
+                    text=message_text,
+                    timestamp=datetime.now(timezone.utc),
+                    message_id=update.message.message_id,
+                ),
+            )
 
         # Session-aware response mode gating
-        chat_id = str(update.effective_chat.id)
         db = getattr(self.server, "database", None)
         session = await db.get_session_by_bot_link("telegram", chat_id) if db else None
 
@@ -371,28 +387,57 @@ class TelegramConnector(BotConnector):
             await self._handle_uninitialized(update, chat_id)
             return
 
-        # Send "typing" indicator
-        await update.effective_chat.send_action("typing")
+        # Ack reaction — instant feedback before acquiring lock
+        ack_sent = False
+        if self.ack_emoji and update.message:
+            try:
+                from telegram import ReactionTypeEmoji
+                await update.message.set_reaction(
+                    reaction=[ReactionTypeEmoji(emoji=self.ack_emoji)]
+                )
+                ack_sent = True
+            except Exception as e:
+                logger.debug(f"Ack reaction failed (non-critical): {e}")
 
-        # Route through Chat orchestrator (with per-chat lock)
+        # Inject group history for context
+        effective_message = message_text
+        if chat_type == "group":
+            recent = self.group_history.get_recent(
+                chat_id,
+                exclude_message_id=update.message.message_id if update.message else None,
+                limit=20,
+            )
+            if recent:
+                history_block = self.group_history.format_for_prompt(recent)
+                effective_message = (
+                    f"{history_block}\n\n"
+                    f"[Current message - respond to this]\n{message_text}"
+                )
+
+        # Route through Chat orchestrator with streaming (per-chat lock)
         lock = self._get_chat_lock(chat_id)
         async with lock:
-            response_text = await self._route_to_chat(
+            # Send placeholder message
+            placeholder = None
+            try:
+                placeholder = await update.message.reply_text("Thinking...")
+            except Exception as e:
+                logger.debug(f"Placeholder send failed: {e}")
+
+            # Stream response — edits placeholder progressively
+            await self._stream_to_chat(
                 session_id=session.id,
-                message=message_text,
+                message=effective_message,
+                update=update,
+                placeholder=placeholder,
             )
 
-        if not response_text:
-            response_text = "No response from agent."
-
-        # Format and send (handle 4096 char limit)
-        formatted = claude_to_telegram(response_text)
-        for chunk in self.split_response(formatted, TELEGRAM_MAX_MESSAGE_LENGTH):
+        # Remove ack reaction after response
+        if ack_sent and update.message:
             try:
-                await update.message.reply_text(chunk, parse_mode="MarkdownV2")
+                await update.message.set_reaction(reaction=[])
             except Exception:
-                # Fallback to plain text if MarkdownV2 parsing fails
-                await update.message.reply_text(chunk)
+                pass
 
     async def on_voice_message(self, update: Any, context: Any) -> None:
         """Handle incoming voice message."""
@@ -414,24 +459,45 @@ class TelegramConnector(BotConnector):
         if not voice:
             return
 
-        await update.effective_chat.send_action("typing")
+        # Ack reaction for voice — _process_text_message handles its own ack for
+        # the text phase, but transcription may take a few seconds first
+        ack_sent = False
+        if self.ack_emoji and update.message:
+            try:
+                from telegram import ReactionTypeEmoji
+                await update.message.set_reaction(
+                    reaction=[ReactionTypeEmoji(emoji=self.ack_emoji)]
+                )
+                ack_sent = True
+            except Exception:
+                pass
 
         try:
             voice_file = await voice.get_file()
-            # Server-side transcription (if available)
             transcriber = getattr(self.server, "transcribe", None)
             if transcriber:
                 ogg_path = await voice_file.download_to_drive()
                 text = await transcriber(str(ogg_path))
-                # Process transcribed text directly
+                # _process_text_message will set its own ack (replacing ours) and
+                # remove it after response, so we don't need cleanup here
                 await self._process_text_message(update, text)
             else:
                 await update.message.reply_text(
                     "Voice transcription not available on server."
                 )
+                if ack_sent:
+                    try:
+                        await update.message.set_reaction(reaction=[])
+                    except Exception:
+                        pass
         except Exception as e:
             logger.error(f"Voice message handling failed: {e}")
             await update.message.reply_text("Failed to process voice message.")
+            if ack_sent:
+                try:
+                    await update.message.set_reaction(reaction=[])
+                except Exception:
+                    pass
 
     async def _route_to_chat(self, session_id: str, message: str) -> str:
         """Route a message through the Chat orchestrator and collect response."""
@@ -462,6 +528,168 @@ class TelegramConnector(BotConnector):
             return "Something went wrong. Please try again later."
 
         return response_text
+
+    async def _stream_to_chat(
+        self,
+        session_id: str,
+        message: str,
+        update: Any,
+        placeholder: Any | None = None,
+    ) -> None:
+        """Stream orchestrator response to Telegram, editing draft message progressively."""
+        orchestrate = getattr(self.server, "orchestrate", None)
+        if not orchestrate:
+            logger.error("Server has no orchestrate method")
+            error_text = "Chat orchestrator not available."
+            if placeholder:
+                try:
+                    await placeholder.edit_text(error_text)
+                except Exception:
+                    await update.message.reply_text(error_text)
+            else:
+                await update.message.reply_text(error_text)
+            return
+
+        draft_msg = placeholder
+        buffer = ""
+        last_edit_len = 0
+        edit_count = 0
+        max_edits = 25  # Stay under Telegram's ~30-40 edit limit
+        min_edit_delta = 150  # Min chars between edits
+        error_occurred = False
+
+        try:
+            event_count = 0
+            async for event in orchestrate(
+                session_id=session_id,
+                message=message,
+                source="telegram",
+            ):
+                event_count += 1
+                event_type = (
+                    event.get("type", "") if isinstance(event, dict)
+                    else getattr(event, "type", "")
+                )
+
+                if event_type == "text":
+                    content = (
+                        event.get("content", "") if isinstance(event, dict)
+                        else getattr(event, "content", "")
+                    )
+                    if content:
+                        buffer = content
+
+                        # Edit draft when enough new content has accumulated
+                        delta_since_edit = len(buffer) - last_edit_len
+                        if delta_since_edit >= min_edit_delta and edit_count < max_edits:
+                            draft_msg = await self._edit_draft(
+                                update, draft_msg, buffer
+                            )
+                            last_edit_len = len(buffer)
+                            edit_count += 1
+
+                elif event_type == "error":
+                    error_msg = (
+                        event.get("error", "") if isinstance(event, dict)
+                        else getattr(event, "error", "")
+                    )
+                    logger.error(f"Orchestrator error event: {error_msg}")
+                    error_occurred = True
+
+            # Final edit with complete formatted response
+            if buffer:
+                formatted = claude_to_telegram(buffer)
+                chunks = self.split_response(formatted, TELEGRAM_MAX_MESSAGE_LENGTH)
+
+                if len(chunks) == 1 and draft_msg:
+                    # Single chunk — final edit with MarkdownV2
+                    try:
+                        await draft_msg.edit_text(chunks[0], parse_mode="MarkdownV2")
+                    except Exception:
+                        try:
+                            await draft_msg.edit_text(chunks[0])
+                        except Exception:
+                            pass
+                elif len(chunks) >= 1:
+                    # Multi-chunk — edit first into draft, send rest as replies
+                    if draft_msg:
+                        try:
+                            await draft_msg.edit_text(chunks[0], parse_mode="MarkdownV2")
+                        except Exception:
+                            try:
+                                await draft_msg.edit_text(chunks[0])
+                            except Exception:
+                                pass
+                    else:
+                        try:
+                            await update.message.reply_text(
+                                chunks[0], parse_mode="MarkdownV2"
+                            )
+                        except Exception:
+                            await update.message.reply_text(chunks[0])
+
+                    for chunk in chunks[1:]:
+                        try:
+                            await update.message.reply_text(
+                                chunk, parse_mode="MarkdownV2"
+                            )
+                        except Exception:
+                            await update.message.reply_text(chunk)
+            elif not error_occurred:
+                no_response = "No response from agent."
+                if draft_msg:
+                    try:
+                        await draft_msg.edit_text(no_response)
+                    except Exception:
+                        await update.message.reply_text(no_response)
+                else:
+                    await update.message.reply_text(no_response)
+
+            logger.info(
+                f"Telegram streaming: {event_count} events, "
+                f"{edit_count} edits, {len(buffer)} chars response"
+            )
+
+        except Exception as e:
+            logger.error(f"Chat streaming failed: {e}", exc_info=True)
+            error_text = "Something went wrong. Please try again later."
+            if draft_msg:
+                try:
+                    await draft_msg.edit_text(error_text)
+                except Exception:
+                    await update.message.reply_text(error_text)
+            else:
+                await update.message.reply_text(error_text)
+
+    async def _edit_draft(
+        self,
+        update: Any,
+        draft_msg: Any | None,
+        text: str,
+    ) -> Any:
+        """Edit draft message with intermediate streaming content.
+
+        Uses plain text for intermediate edits (faster, no parse errors).
+        Returns the draft message object (creates one if needed).
+        """
+        # Truncate for intermediate display if over Telegram limit
+        display_text = text
+        if len(display_text) > TELEGRAM_MAX_MESSAGE_LENGTH:
+            display_text = display_text[: TELEGRAM_MAX_MESSAGE_LENGTH - 20] + "\n\n...streaming..."
+
+        if draft_msg is None:
+            try:
+                return await update.message.reply_text(display_text)
+            except Exception as e:
+                logger.debug(f"Draft creation failed: {e}")
+                return None
+        else:
+            try:
+                await draft_msg.edit_text(display_text)
+            except Exception as e:
+                if "not modified" not in str(e).lower():
+                    logger.debug(f"Draft edit failed: {e}")
+            return draft_msg
 
     async def _route_to_daily(self, text: str, update: Any) -> str:
         """Route to Daily module for journal entry creation."""
