@@ -52,7 +52,7 @@ class WorkspaceService {
   Future<Workspace> createWorkspace({
     required String name,
     String description = '',
-    String trustLevel = 'trusted',
+    String defaultTrustLevel = 'trusted',
     String? workingDirectory,
     String? model,
     WorkspaceCapabilities? capabilities,
@@ -60,7 +60,7 @@ class WorkspaceService {
     final body = {
       'name': name,
       'description': description,
-      'trust_level': trustLevel,
+      'default_trust_level': defaultTrustLevel,
       if (workingDirectory != null) 'working_directory': workingDirectory,
       if (model != null) 'model': model,
       if (capabilities != null) 'capabilities': capabilities.toJson(),
