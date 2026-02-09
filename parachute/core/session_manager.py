@@ -46,34 +46,50 @@ class SessionManager:
         """
         Resolve a working_directory to an absolute path.
 
+        Uses /vault/... paths so bare metal and Docker sessions see the same paths.
+        The /vault symlink points to the actual vault directory on the host.
+
         Args:
             working_directory: Path in /vault/... format, legacy relative path,
-                              or legacy absolute path. None or empty means vault root.
+                              or legacy absolute path. None or empty means /vault.
 
         Returns:
-            Absolute Path for use with SDK (which requires absolute paths).
-            Falls back to vault root if the resolved path escapes the vault.
+            Absolute Path (always /vault/...) for use with SDK.
+            Falls back to /vault if the resolved path escapes the vault.
         """
+        vault_root = Path("/vault")
+
         if not working_directory:
-            return self.vault_path
+            return vault_root
 
         wd_path = Path(working_directory)
         if wd_path.is_absolute():
-            # /vault/... paths or legacy absolute paths — use as-is
-            resolved = wd_path
+            if str(wd_path).startswith("/vault"):
+                # Already /vault/... — use as-is
+                resolved = wd_path
+            else:
+                # Legacy absolute host path — convert to /vault/...
+                try:
+                    rel = wd_path.relative_to(self.vault_path)
+                    resolved = vault_root / rel if str(rel) != "." else vault_root
+                except ValueError:
+                    # Not under vault_path — use as-is (external path)
+                    logger.warning(f"Working directory not under vault: {working_directory}")
+                    return wd_path
         else:
             # Legacy relative path (e.g., "Projects/foo") — prepend /vault/
-            resolved = Path("/vault") / wd_path
+            resolved = vault_root / wd_path
 
         # Validate resolved path doesn't escape vault (e.g., via ../../../)
-        try:
-            resolved_real = resolved.resolve()
-            vault_real = self.vault_path.resolve()
-            if not str(resolved_real).startswith(str(vault_real)):
+        # Use PurePosixPath to check for '..' without requiring the path to exist
+        resolved_str = str(resolved)
+        if ".." in resolved_str.split("/"):
+            # Normalize and verify it stays under /vault
+            normalized = Path(os.path.normpath(resolved_str))
+            if not str(normalized).startswith("/vault"):
                 logger.warning(f"Working directory escapes vault: {working_directory}")
-                return self.vault_path
-        except Exception:
-            pass  # If resolution fails, use the original path
+                return vault_root
+            resolved = normalized
 
         return resolved
 
@@ -457,14 +473,15 @@ class SessionManager:
         self, session_id: str, working_directory: Optional[str] = None
     ) -> Optional[Path]:
         """Get the path to the SDK's JSONL transcript for a session."""
-        # Determine effective cwd
+        # Determine effective cwd (use /vault/... paths, resolve() follows symlink)
         if working_directory:
             if os.path.isabs(working_directory):
                 effective_cwd = working_directory
             else:
-                effective_cwd = str(self.vault_path / working_directory)
+                # Legacy relative path → /vault/...
+                effective_cwd = str(Path("/vault") / working_directory)
         else:
-            effective_cwd = str(self.vault_path)
+            effective_cwd = "/vault"
 
         # Resolve symlinks (e.g., /tmp -> /private/tmp on macOS)
         # The SDK uses the resolved path for storage

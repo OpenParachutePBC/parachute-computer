@@ -53,6 +53,17 @@ exec "$REPO_DIR/.venv/bin/python" -m parachute "\$@"
 SCRIPT
 chmod +x "$WRAPPER"
 
+# --- Create /vault symlink for path unification ---
+# Both bare metal and Docker sessions use /vault/... paths.
+# The interactive `parachute install` flow also creates this.
+
+if [ ! -e /vault ]; then
+    echo ""
+    echo "Parachute uses /vault as a unified path for all sessions."
+    echo "This requires a symlink: /vault → your vault directory."
+    echo "(The interactive setup will prompt for your vault path.)"
+fi
+
 # --- Check PATH ---
 
 if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then

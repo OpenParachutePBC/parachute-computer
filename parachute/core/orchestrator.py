@@ -302,8 +302,8 @@ class Orchestrator:
         config_overrides = (session.metadata or {}).get("config_overrides", {}) if hasattr(session, "metadata") else {}
 
         # Determine working directory first (needed for prompt building)
-        # Priority: explicit param > config_overrides > session's stored value > vault path
-        # Note: working_directory is stored as RELATIVE to vault_path in the database
+        # Priority: explicit param > config_overrides > session's stored value > /vault
+        # Note: working_directory is stored as /vault/... absolute paths in the database
         override_working_dir = config_overrides.get("working_directory")
         effective_working_dir: Optional[str] = working_directory or override_working_dir or session.working_directory
         effective_cwd = self.session_manager.resolve_working_directory(effective_working_dir)
@@ -324,16 +324,16 @@ class Orchestrator:
                 else:
                     logger.warning(
                         f"Working directory does not exist: {effective_cwd}, "
-                        f"falling back to vault path: {self.vault_path}"
+                        f"falling back to /vault"
                     )
-                    effective_cwd = self.vault_path
+                    effective_cwd = Path("/vault")
                     effective_working_dir = None
             else:
                 logger.warning(
                     f"Working directory does not exist: {effective_cwd}, "
-                    f"falling back to vault path: {self.vault_path}"
+                    f"falling back to /vault"
                 )
-                effective_cwd = self.vault_path
+                effective_cwd = Path("/vault")
                 effective_working_dir = None
 
         # Apply system prompt override from config_overrides (only if no explicit prompt given)
