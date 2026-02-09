@@ -116,7 +116,7 @@ def create_workspace(vault_path: Path, create: WorkspaceCreate) -> WorkspaceConf
         name=create.name,
         slug=slug,
         description=create.description,
-        trust_level=create.trust_level,
+        default_trust_level=create.default_trust_level,
         working_directory=create.working_directory,
         model=create.model,
         capabilities=create.capabilities or WorkspaceCapabilities(),
@@ -173,6 +173,9 @@ def _load_workspace(slug: str, config_file: Path) -> WorkspaceConfig:
         data = yaml.safe_load(f) or {}
 
     data["slug"] = slug
+    # Migrate old field name: trust_level -> default_trust_level
+    if "trust_level" in data and "default_trust_level" not in data:
+        data["default_trust_level"] = data.pop("trust_level")
     return WorkspaceConfig(**data)
 
 
