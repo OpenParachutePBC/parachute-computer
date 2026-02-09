@@ -46,6 +46,16 @@ async def run():
         emit({"type": "error", "error": "CLAUDE_CODE_OAUTH_TOKEN not set"})
         sys.exit(1)
 
+    # Load capabilities config if mounted by the host
+    capabilities = {}
+    caps_path = "/tmp/capabilities.json"
+    if os.path.exists(caps_path):
+        try:
+            with open(caps_path) as f:
+                capabilities = json.load(f)
+        except (json.JSONDecodeError, OSError) as e:
+            emit({"type": "warning", "message": f"Failed to load capabilities: {e}"})
+
     try:
         from claude_agent_sdk import query, ClaudeAgentOptions
 
@@ -53,6 +63,15 @@ async def run():
             "permission_mode": "bypassPermissions",
             "env": {"CLAUDE_CODE_OAUTH_TOKEN": oauth_token},
         }
+
+        # Pass capabilities to SDK if available
+        if capabilities.get("mcp_servers"):
+            options_kwargs["mcp_servers"] = capabilities["mcp_servers"]
+        if capabilities.get("plugin_dirs"):
+            from pathlib import Path
+            options_kwargs["plugin_dirs"] = [Path(d) for d in capabilities["plugin_dirs"]]
+        if capabilities.get("agents"):
+            options_kwargs["agents"] = capabilities["agents"]
 
         # Note: We intentionally do NOT use "resume" here. The container has no
         # access to SDK session transcripts (stored in host's .claude/ directory),

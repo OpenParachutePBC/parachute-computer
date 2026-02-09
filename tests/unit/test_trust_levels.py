@@ -228,7 +228,7 @@ class TestDockerSandbox:
     def test_build_run_args_network_disabled(self, vault_path):
         sandbox = DockerSandbox(vault_path=vault_path)
         config = AgentSandboxConfig(session_id="test-session-id")
-        args = sandbox._build_run_args(config)
+        args, _, _ = sandbox._build_run_args(config)
         assert "--network" in args
         assert "none" in args
         assert "--memory" in args
@@ -239,13 +239,13 @@ class TestDockerSandbox:
         config = AgentSandboxConfig(
             session_id="test", network_enabled=True
         )
-        args = sandbox._build_run_args(config)
+        args, _, _ = sandbox._build_run_args(config)
         assert "--network" not in args
 
     def test_build_run_args_container_name(self, vault_path):
         sandbox = DockerSandbox(vault_path=vault_path)
         config = AgentSandboxConfig(session_id="abcdef1234567890")
-        args = sandbox._build_run_args(config)
+        args, _, _ = sandbox._build_run_args(config)
         assert "parachute-sandbox-abcdef12" in args
 
 

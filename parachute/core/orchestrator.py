@@ -480,6 +480,25 @@ class Orchestrator:
                 plugin_dirs.append(skills_plugin_dir)
                 logger.info(f"Generated skills plugin at {skills_plugin_dir}")
 
+            # Discover user plugins (~/.claude/plugins/)
+            settings = get_settings()
+            if settings.include_user_plugins:
+                user_plugin_dir = Path.home() / ".claude" / "plugins"
+                if user_plugin_dir.is_dir():
+                    for entry in user_plugin_dir.iterdir():
+                        if entry.is_dir():
+                            plugin_dirs.append(entry)
+                            logger.info(f"Loaded user plugin: {entry.name}")
+
+            # Load additional configured plugin directories
+            for dir_str in settings.plugin_dirs:
+                plugin_path = Path(dir_str).expanduser().resolve()
+                if plugin_path.is_dir():
+                    plugin_dirs.append(plugin_path)
+                    logger.info(f"Loaded configured plugin: {plugin_path}")
+                else:
+                    logger.warning(f"Plugin directory not found, skipping: {plugin_path}")
+
             # Load custom agents from .parachute/agents/
             custom_agents = discover_agents(self.vault_path)
             agents_dict = agents_to_sdk_format(custom_agents) if custom_agents else None
@@ -1119,12 +1138,14 @@ The user is now continuing this conversation with you. Respond naturally as if y
         self,
         module: Optional[str] = None,
         archived: bool = False,
+        search: Optional[str] = None,
         limit: int = 100,
     ) -> list[dict[str, Any]]:
         """List all chat sessions."""
         sessions = await self.session_manager.list_sessions(
             module=module,
             archived=archived,
+            search=search,
             limit=limit,
         )
         return [s.model_dump(by_alias=True) for s in sessions]
