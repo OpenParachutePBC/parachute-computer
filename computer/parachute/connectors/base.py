@@ -95,9 +95,9 @@ class BotConnector(ABC):
         bot_token: str,
         server: Any,
         allowed_users: list[int | str],
-        default_trust_level: str = "vault",
-        dm_trust_level: str = "vault",
-        group_trust_level: str = "sandboxed",
+        default_trust_level: str = "untrusted",
+        dm_trust_level: str = "untrusted",
+        group_trust_level: str = "untrusted",
         group_mention_mode: str = "mention_only",
         ack_emoji: str | None = "👀",
     ):

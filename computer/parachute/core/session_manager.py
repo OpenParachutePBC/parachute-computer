@@ -33,8 +33,8 @@ class SessionManager:
     - SDK session ID is the ONLY identifier (no separate Parachute session ID)
     - Messages are stored in SDK JSONL files, not our database
     - We store metadata for indexing and quick listing
-    - working_directory is stored RELATIVE to vault_path (e.g., "Projects/foo")
-    - Empty/null working_directory means vault root itself
+    - working_directory is stored as /vault/... absolute path (consistent for bare metal and Docker)
+    - Empty/null working_directory means /vault (vault root)
     """
 
     def __init__(self, vault_path: Path, database: Database):
@@ -47,8 +47,8 @@ class SessionManager:
         Resolve a working_directory to an absolute path.
 
         Args:
-            working_directory: Relative path (e.g., "Projects/foo") or absolute path.
-                              None or empty means vault root.
+            working_directory: Path in /vault/... format, legacy relative path,
+                              or legacy absolute path. None or empty means vault root.
 
         Returns:
             Absolute Path for use with SDK (which requires absolute paths).
@@ -59,11 +59,11 @@ class SessionManager:
 
         wd_path = Path(working_directory)
         if wd_path.is_absolute():
-            # Legacy absolute path - use as-is (will be migrated eventually)
+            # /vault/... paths or legacy absolute paths — use as-is
             resolved = wd_path
         else:
-            # Relative path - combine with vault_path
-            resolved = self.vault_path / wd_path
+            # Legacy relative path (e.g., "Projects/foo") — prepend /vault/
+            resolved = Path("/vault") / wd_path
 
         # Validate resolved path doesn't escape vault (e.g., via ../../../)
         try:
@@ -77,34 +77,38 @@ class SessionManager:
 
         return resolved
 
-    def make_working_directory_relative(self, working_directory: Optional[str]) -> Optional[str]:
+    def normalize_working_directory(self, working_directory: Optional[str]) -> Optional[str]:
         """
-        Convert a working_directory to relative form for storage.
+        Convert a working_directory to /vault/... format for storage.
 
         Args:
-            working_directory: Absolute or relative path.
+            working_directory: Absolute host path, relative path, or /vault/... path.
 
         Returns:
-            Relative path string (e.g., "Projects/foo"), or None if it's the vault root.
+            /vault/... path string, or None if it's the vault root.
         """
         if not working_directory:
             return None
 
         wd_path = Path(working_directory)
-        if not wd_path.is_absolute():
-            # Already relative
-            return working_directory
 
-        # Try to make it relative to vault_path
+        if not wd_path.is_absolute():
+            # Relative path (e.g., "Projects/foo") → /vault/Projects/foo
+            result = str(Path("/vault") / wd_path)
+            return result if result != "/vault" else None
+
+        # Already /vault/... — keep as-is
+        if working_directory.startswith("/vault"):
+            return working_directory if working_directory != "/vault" else None
+
+        # Absolute host path (e.g., /Users/user/Parachute/Projects/foo) → /vault/...
         try:
             rel_path = wd_path.relative_to(self.vault_path)
-            # If it's "." (vault root), return None
             if str(rel_path) == ".":
                 return None
-            return str(rel_path)
+            return str(Path("/vault") / rel_path)
         except ValueError:
-            # Path is not under vault_path - this is an external project
-            # Keep as absolute (legacy behavior)
+            # Path is not under vault_path — keep as-is (external project)
             logger.warning(f"working_directory {working_directory} is not under vault_path {self.vault_path}")
             return working_directory
 
@@ -153,7 +157,7 @@ class SessionManager:
             if sdk_location:
                 # SDK has the session, we just don't have metadata
                 # Create a placeholder session with relative working_directory
-                relative_wd = self.make_working_directory_relative(working_directory)
+                relative_wd = self.normalize_working_directory(working_directory)
                 session = await self.db.create_session(
                     SessionCreate(
                         id=session_id,
@@ -230,7 +234,7 @@ class SessionManager:
         from the placeholder, then removes the placeholder to avoid duplicate lookups.
         """
         # Convert working_directory to relative for storage
-        relative_wd = self.make_working_directory_relative(placeholder.working_directory)
+        relative_wd = self.normalize_working_directory(placeholder.working_directory)
         # Use provided agent_type, or fall back to placeholder's agent_type
         final_agent_type = agent_type or placeholder.get_agent_type()
 

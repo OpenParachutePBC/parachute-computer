@@ -311,6 +311,55 @@ class Database:
             await self._connection.commit()
             logger.info("Added workspace_id column to sessions (v13)")
 
+        # Migration: Trust model simplification (v14)
+        # Map old 3-tier trust levels to binary: full/vault → trusted, sandboxed → untrusted
+        async with self._connection.execute(
+            "SELECT version FROM schema_version WHERE version = 14"
+        ) as cursor:
+            row = await cursor.fetchone()
+        if not row:
+            await self._connection.execute(
+                "UPDATE sessions SET trust_level = 'trusted' WHERE trust_level IN ('full', 'vault')"
+            )
+            await self._connection.execute(
+                "UPDATE sessions SET trust_level = 'untrusted' WHERE trust_level = 'sandboxed'"
+            )
+            # Also update pairing_requests
+            await self._connection.execute(
+                "UPDATE pairing_requests SET approved_trust_level = 'trusted' "
+                "WHERE approved_trust_level IN ('full', 'vault')"
+            )
+            await self._connection.execute(
+                "UPDATE pairing_requests SET approved_trust_level = 'untrusted' "
+                "WHERE approved_trust_level = 'sandboxed'"
+            )
+            await self._connection.execute(
+                "INSERT OR IGNORE INTO schema_version (version, applied_at) VALUES (14, datetime('now'))"
+            )
+            await self._connection.commit()
+            logger.info("Migrated trust levels: full/vault → trusted, sandboxed → untrusted (v14)")
+
+        # Migration: Unify working_directory paths to /vault/... format (v15)
+        # Convert relative paths (e.g., "Projects/foo") to absolute ("/vault/Projects/foo")
+        async with self._connection.execute(
+            "SELECT version FROM schema_version WHERE version = 15"
+        ) as cursor:
+            row = await cursor.fetchone()
+        if not row:
+            await self._connection.execute("""
+                UPDATE sessions
+                SET working_directory = '/vault/' || working_directory
+                WHERE working_directory IS NOT NULL
+                  AND working_directory != ''
+                  AND working_directory NOT LIKE '/vault/%'
+                  AND working_directory NOT LIKE '/%'
+            """)
+            await self._connection.execute(
+                "INSERT OR IGNORE INTO schema_version (version, applied_at) VALUES (15, datetime('now'))"
+            )
+            await self._connection.commit()
+            logger.info("Migrated working_directory paths to /vault/... format (v15)")
+
     async def close(self) -> None:
         """Close database connection."""
         if self._connection:
