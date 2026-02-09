@@ -227,6 +227,12 @@ class Session(BaseModel):
         serialization_alias="linkedBotChatType",
         description="Chat type: dm, group, or NULL",
     )
+    workspace_id: Optional[str] = Field(
+        default=None,
+        alias="workspaceId",
+        serialization_alias="workspaceId",
+        description="Workspace slug this session belongs to",
+    )
     metadata: Optional[dict[str, Any]] = Field(
         default=None, description="Additional metadata"
     )
@@ -280,6 +286,7 @@ class SessionCreate(BaseModel):
     linked_bot_platform: Optional[str] = None
     linked_bot_chat_id: Optional[str] = None
     linked_bot_chat_type: Optional[str] = None
+    workspace_id: Optional[str] = None
     metadata: Optional[dict[str, Any]] = None
 
 

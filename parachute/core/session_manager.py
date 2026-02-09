@@ -207,6 +207,7 @@ class SessionManager:
         model: Optional[str] = None,
         title: Optional[str] = None,
         agent_type: Optional[str] = None,
+        workspace_id: Optional[str] = None,
     ) -> Session:
         """
         Finalize a new session with the SDK-provided session ID.
@@ -226,6 +227,7 @@ class SessionManager:
         linked_bot_chat_type = getattr(placeholder, 'linked_bot_chat_type', None)
         trust_level = getattr(placeholder, 'trust_level', None)
         metadata = getattr(placeholder, 'metadata', None)
+        final_workspace_id = workspace_id or getattr(placeholder, 'workspace_id', None)
 
         session = await self.db.create_session(
             SessionCreate(
@@ -241,6 +243,7 @@ class SessionManager:
                 linked_bot_platform=linked_bot_platform,
                 linked_bot_chat_id=linked_bot_chat_id,
                 linked_bot_chat_type=linked_bot_chat_type,
+                workspace_id=final_workspace_id,
                 metadata=metadata,
             )
         )
@@ -295,6 +298,7 @@ class SessionManager:
         archived: bool = False,
         agent_type: Optional[str] = None,
         search: Optional[str] = None,
+        workspace_id: Optional[str] = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[Session]:
@@ -304,6 +308,7 @@ class SessionManager:
             archived=archived,
             agent_type=agent_type,
             search=search,
+            workspace_id=workspace_id,
             limit=limit,
             offset=offset,
         )
