@@ -346,6 +346,32 @@ extension ChatSessionService on ChatService {
     }
   }
 
+  /// Fetch all available agents from the server.
+  Future<List<AgentInfo>> getAgents() async {
+    try {
+      final response = await client.get(
+        Uri.parse('$baseUrl/api/agents'),
+        headers: defaultHeaders,
+      ).timeout(ChatService.requestTimeout);
+
+      if (response.statusCode != 200) {
+        throw NetworkError(
+          'Failed to get agents',
+          statusCode: response.statusCode,
+        );
+      }
+
+      final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+      final list = decoded['agents'] as List<dynamic>? ?? [];
+      return list
+          .map((e) => AgentInfo.fromJson(e as Map<String, dynamic>))
+          .toList();
+    } catch (e) {
+      debugPrint('[ChatService] Error fetching agents: $e');
+      rethrow;
+    }
+  }
+
   /// Get all sessions with active streams on the server
   Future<List<String>> getActiveStreams() async {
     try {
