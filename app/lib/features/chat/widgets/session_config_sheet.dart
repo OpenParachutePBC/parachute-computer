@@ -6,13 +6,16 @@ import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/core/providers/app_state_provider.dart' show apiKeyProvider;
 import 'package:parachute/core/providers/feature_flags_provider.dart';
 import '../models/chat_session.dart';
+import '../models/workspace.dart';
+import '../providers/workspace_providers.dart';
 import '../../settings/models/trust_level.dart';
 
 /// Bottom sheet for editing per-session configuration.
 ///
 /// Shows platform info for bot sessions, trust level selector,
-/// response mode for bot sessions, and activation mode for pending sessions.
-/// Saves via PATCH /api/chat/{id}/config or POST /api/chat/{id}/activate.
+/// workspace picker, response mode for bot sessions, and activation mode
+/// for pending sessions. Saves via PATCH /api/chat/{id}/config or
+/// POST /api/chat/{id}/activate.
 class SessionConfigSheet extends ConsumerStatefulWidget {
   final ChatSession session;
 
@@ -37,6 +40,7 @@ class _SessionConfigSheetState extends ConsumerState<SessionConfigSheet> {
   late String _trustLevel;
   late String _responseMode;
   late TextEditingController _mentionPatternController;
+  String? _workspaceId;
   bool _isSaving = false;
   String? _error;
 
@@ -49,6 +53,7 @@ class _SessionConfigSheetState extends ConsumerState<SessionConfigSheet> {
   void initState() {
     super.initState();
     _trustLevel = TrustLevel.fromString(widget.session.trustLevel).name;
+    _workspaceId = widget.session.workspaceId;
     // Default response mode: DMs get all_messages, groups get mention_only
     final isDm = widget.session.linkedBotChatType == 'dm';
     _responseMode = widget.session.responseMode ?? (isDm ? 'all_messages' : 'mention_only');
@@ -81,6 +86,8 @@ class _SessionConfigSheetState extends ConsumerState<SessionConfigSheet> {
 
       final body = <String, dynamic>{
         'trustLevel': _trustLevel,
+        // Send empty string to clear, or the slug to set
+        'workspaceId': _workspaceId ?? '',
       };
 
       // Include response settings for bot sessions
@@ -133,6 +140,7 @@ class _SessionConfigSheetState extends ConsumerState<SessionConfigSheet> {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final session = widget.session;
+    final workspacesAsync = ref.watch(workspacesProvider);
 
     return Container(
       decoration: BoxDecoration(
@@ -283,6 +291,10 @@ class _SessionConfigSheetState extends ConsumerState<SessionConfigSheet> {
             ),
           ),
 
+          // Workspace picker
+          SizedBox(height: Spacing.md),
+          _buildWorkspacePicker(isDark, workspacesAsync),
+
           // Workspace info for untrusted sessions
           if (_trustLevel == 'untrusted') ...[
             SizedBox(height: Spacing.md),
@@ -402,6 +414,89 @@ class _SessionConfigSheetState extends ConsumerState<SessionConfigSheet> {
     );
   }
 
+  Widget _buildWorkspacePicker(bool isDark, AsyncValue<List<Workspace>> workspacesAsync) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Workspace',
+          style: TextStyle(
+            fontSize: TypographyTokens.bodySmall,
+            fontWeight: FontWeight.w500,
+            color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+          ),
+        ),
+        SizedBox(height: Spacing.xs),
+        workspacesAsync.when(
+          data: (workspaces) {
+            if (workspaces.isEmpty) {
+              return Text(
+                'No workspaces configured',
+                style: TextStyle(
+                  fontSize: TypographyTokens.labelSmall,
+                  color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+                ),
+              );
+            }
+            return Container(
+              padding: EdgeInsets.symmetric(horizontal: Spacing.sm),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(Spacing.xs),
+                border: Border.all(
+                  color: isDark ? BrandColors.nightTextSecondary : BrandColors.stone,
+                ),
+              ),
+              child: DropdownButton<String>(
+                value: _workspaceId,
+                isExpanded: true,
+                underline: const SizedBox.shrink(),
+                dropdownColor: isDark ? BrandColors.nightSurfaceElevated : Colors.white,
+                style: TextStyle(
+                  fontSize: TypographyTokens.bodySmall,
+                  color: isDark ? BrandColors.nightText : BrandColors.ink,
+                ),
+                items: [
+                  DropdownMenuItem<String>(
+                    value: null,
+                    child: Text(
+                      'None',
+                      style: TextStyle(
+                        fontSize: TypographyTokens.bodySmall,
+                        color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+                      ),
+                    ),
+                  ),
+                  ...workspaces.map((ws) => DropdownMenuItem<String>(
+                    value: ws.slug,
+                    child: Text(ws.name),
+                  )),
+                ],
+                onChanged: (value) {
+                  setState(() => _workspaceId = value);
+                },
+              ),
+            );
+          },
+          loading: () => SizedBox(
+            height: 20,
+            width: 20,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+            ),
+          ),
+          error: (_, _) => Text(
+            'Failed to load workspaces',
+            style: TextStyle(
+              fontSize: TypographyTokens.labelSmall,
+              color: BrandColors.error,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildWorkspaceInfo(bool isDark, ChatSession session) {
     return Container(
       padding: EdgeInsets.all(Spacing.sm),
@@ -416,7 +511,7 @@ class _SessionConfigSheetState extends ConsumerState<SessionConfigSheet> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Workspace',
+            'Sandbox Info',
             style: TextStyle(
               fontSize: TypographyTokens.bodySmall,
               fontWeight: FontWeight.w500,

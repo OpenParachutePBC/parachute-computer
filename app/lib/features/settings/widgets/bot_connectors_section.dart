@@ -31,7 +31,7 @@ class _BotConnectorsSectionState extends ConsumerState<BotConnectorsSection> {
 
   // Discord controllers
   final _dcTokenController = TextEditingController();
-  final _dcAllowedGuildsController = TextEditingController();
+  final _dcAllowedUsersController = TextEditingController();
   bool _dcEnabled = false;
   String _dcDmTrust = 'untrusted';
   String _dcGroupTrust = 'untrusted';
@@ -50,7 +50,7 @@ class _BotConnectorsSectionState extends ConsumerState<BotConnectorsSection> {
     _tgTokenController.dispose();
     _tgAllowedUsersController.dispose();
     _dcTokenController.dispose();
-    _dcAllowedGuildsController.dispose();
+    _dcAllowedUsersController.dispose();
     super.dispose();
   }
 
@@ -68,8 +68,8 @@ class _BotConnectorsSectionState extends ConsumerState<BotConnectorsSection> {
     _dcEnabled = dc['enabled'] == true;
     _dcDmTrust = (dc['dm_trust_level'] as String?) ?? 'untrusted';
     _dcGroupTrust = (dc['group_trust_level'] as String?) ?? 'untrusted';
-    final dcGuilds = dc['allowed_guilds'] as List<dynamic>? ?? [];
-    _dcAllowedGuildsController.text = dcGuilds.join(', ');
+    final dcUsers = dc['allowed_users'] as List<dynamic>? ?? [];
+    _dcAllowedUsersController.text = dcUsers.join(', ');
   }
 
   Future<void> _loadStatus() async {
@@ -140,11 +140,11 @@ class _BotConnectorsSectionState extends ConsumerState<BotConnectorsSection> {
               .whereType<int>()
               .toList();
 
-      // Parse allowed guilds as list of strings
-      final dcGuildsRaw = _dcAllowedGuildsController.text.trim();
-      final dcGuilds = dcGuildsRaw.isEmpty
+      // Parse allowed Discord user IDs as list of strings
+      final dcUsersRaw = _dcAllowedUsersController.text.trim();
+      final dcUsers = dcUsersRaw.isEmpty
           ? <String>[]
-          : dcGuildsRaw
+          : dcUsersRaw
               .split(RegExp(r'[,\s]+'))
               .where((s) => s.isNotEmpty)
               .map((s) => s.trim())
@@ -162,7 +162,7 @@ class _BotConnectorsSectionState extends ConsumerState<BotConnectorsSection> {
           'enabled': _dcEnabled,
           'dm_trust_level': _dcDmTrust,
           'group_trust_level': _dcGroupTrust,
-          'allowed_guilds': dcGuilds,
+          'allowed_users': dcUsers,
           if (_dcTokenController.text.isNotEmpty) 'bot_token': _dcTokenController.text,
         },
       };
@@ -396,9 +396,9 @@ class _BotConnectorsSectionState extends ConsumerState<BotConnectorsSection> {
             onDmTrustChanged: (v) => setState(() => _dcDmTrust = v),
             groupTrust: _dcGroupTrust,
             onGroupTrustChanged: (v) => setState(() => _dcGroupTrust = v),
-            allowedLabel: 'Allowed Guild IDs',
-            allowedHint: 'Comma-separated Discord guild IDs',
-            allowedController: _dcAllowedGuildsController,
+            allowedLabel: 'Allowed User IDs',
+            allowedHint: 'Comma-separated Discord user IDs',
+            allowedController: _dcAllowedUsersController,
             hasToken: _config?['discord']?['has_token'] == true,
           ),
 

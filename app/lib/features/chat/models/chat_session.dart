@@ -119,6 +119,9 @@ class ChatSession {
   /// Chat type on the platform (dm, group)
   final String? linkedBotChatType;
 
+  /// Workspace slug this session belongs to
+  final String? workspaceId;
+
   /// Additional metadata from the server (pending approval, pairing info, etc.)
   final Map<String, dynamic>? metadata;
 
@@ -159,6 +162,7 @@ class ChatSession {
     this.linkedBotPlatform,
     this.linkedBotChatId,
     this.linkedBotChatType,
+    this.workspaceId,
     this.metadata,
   });
 
@@ -197,6 +201,7 @@ class ChatSession {
       linkedBotPlatform: json['linkedBotPlatform'] as String? ?? json['linked_bot_platform'] as String?,
       linkedBotChatId: json['linkedBotChatId'] as String? ?? json['linked_bot_chat_id'] as String?,
       linkedBotChatType: json['linkedBotChatType'] as String? ?? json['linked_bot_chat_type'] as String?,
+      workspaceId: json['workspaceId'] as String? ?? json['workspace_id'] as String?,
       metadata: json['metadata'] as Map<String, dynamic>?,
     );
   }
@@ -220,6 +225,7 @@ class ChatSession {
       if (linkedBotPlatform != null) 'linkedBotPlatform': linkedBotPlatform,
       if (linkedBotChatId != null) 'linkedBotChatId': linkedBotChatId,
       if (linkedBotChatType != null) 'linkedBotChatType': linkedBotChatType,
+      if (workspaceId != null) 'workspaceId': workspaceId,
       if (metadata != null) 'metadata': metadata,
     };
   }
@@ -274,6 +280,7 @@ class ChatSession {
     String? linkedBotPlatform,
     String? linkedBotChatId,
     String? linkedBotChatType,
+    String? workspaceId,
     Map<String, dynamic>? metadata,
   }) {
     return ChatSession(
@@ -295,6 +302,7 @@ class ChatSession {
       linkedBotPlatform: linkedBotPlatform ?? this.linkedBotPlatform,
       linkedBotChatId: linkedBotChatId ?? this.linkedBotChatId,
       linkedBotChatType: linkedBotChatType ?? this.linkedBotChatType,
+      workspaceId: workspaceId ?? this.workspaceId,
       metadata: metadata ?? this.metadata,
     );
   }

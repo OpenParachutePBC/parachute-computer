@@ -4,6 +4,7 @@ import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/features/settings/screens/settings_screen.dart';
 import '../models/chat_session.dart';
 import '../providers/chat_providers.dart';
+import '../providers/workspace_providers.dart' show activeWorkspaceProvider;
 import '../widgets/session_list_item.dart';
 import '../widgets/new_chat_sheet.dart';
 import 'chat_screen.dart';
@@ -683,6 +684,11 @@ class _AgentHubScreenState extends ConsumerState<AgentHubScreen> {
           );
     }
 
+    // Set workspace if selected
+    if (config.workspaceId != null) {
+      ref.read(activeWorkspaceProvider.notifier).state = config.workspaceId;
+    }
+
     if (mounted) {
       Navigator.of(context).push(
         MaterialPageRoute(
@@ -717,6 +723,11 @@ class _AgentHubScreenState extends ConsumerState<AgentHubScreen> {
       ref.read(chatMessagesProvider.notifier).setWorkingDirectory(
             config.workingDirectory,
           );
+    }
+
+    // Set workspace if selected
+    if (config.workspaceId != null) {
+      ref.read(activeWorkspaceProvider.notifier).state = config.workspaceId;
     }
 
     if (mounted) {

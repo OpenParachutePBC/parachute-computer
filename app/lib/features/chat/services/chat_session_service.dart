@@ -7,9 +7,11 @@ extension ChatSessionService on ChatService {
   /// By default, only non-archived sessions are returned.
   /// Pass [includeArchived: true] to get archived sessions as well.
   /// Pass [search] to filter sessions by title (server-side LIKE query).
+  /// Pass [workspaceId] to filter by workspace.
   Future<List<ChatSession>> getSessions({
     bool includeArchived = false,
     String? search,
+    String? workspaceId,
   }) async {
     try {
       // Request up to 500 sessions to handle large imports
@@ -17,6 +19,7 @@ extension ChatSessionService on ChatService {
         'limit': '500',
         if (includeArchived) 'archived': 'true',
         if (search != null && search.isNotEmpty) 'search': search,
+        if (workspaceId != null) 'workspaceId': workspaceId,
       };
       final uri = Uri.parse('$baseUrl/api/chat').replace(queryParameters: params);
 

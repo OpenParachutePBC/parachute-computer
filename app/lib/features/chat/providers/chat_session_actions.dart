@@ -63,11 +63,19 @@ final unarchiveSessionProvider = Provider<Future<void> Function(String)>((ref) {
 // Session Navigation
 // ============================================================
 
+/// Whether the user is actively composing a new chat (vs idle "no selection").
+///
+/// This distinguishes two states when currentSessionIdProvider is null:
+/// - false: no session selected, show "Select a conversation" placeholder
+/// - true: user clicked "New Chat", show ChatScreen with input field
+final newChatModeProvider = StateProvider<bool>((ref) => false);
+
 /// Provider for creating a new chat
 final newChatProvider = Provider<void Function()>((ref) {
   return () {
     ref.read(currentSessionIdProvider.notifier).state = null;
     ref.read(chatMessagesProvider.notifier).clearSession();
+    ref.read(newChatModeProvider.notifier).state = true;
   };
 });
 
@@ -76,6 +84,8 @@ final newChatProvider = Provider<void Function()>((ref) {
 /// All sessions are loaded from the server API.
 final switchSessionProvider = Provider<Future<void> Function(String)>((ref) {
   return (String sessionId) async {
+    // Exit new chat mode if active
+    ref.read(newChatModeProvider.notifier).state = false;
     // Immediately clear old messages and show loading state to prevent
     // showing stale content from previous session during async load
     ref.read(chatMessagesProvider.notifier).prepareForSessionSwitch(sessionId);

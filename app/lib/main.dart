@@ -25,6 +25,7 @@ import 'core/widgets/model_download_banner.dart';
 import 'features/daily/home/screens/home_screen.dart';
 import 'features/daily/recorder/providers/omi_providers.dart';
 import 'features/chat/screens/chat_hub_screen.dart';
+import 'features/chat/screens/chat_shell.dart';
 import 'features/chat/screens/chat_screen.dart';
 import 'features/chat/providers/chat_providers.dart';
 import 'features/chat/widgets/message_bubble.dart' show currentlyRenderingMarkdown, markMarkdownAsFailed;
@@ -638,7 +639,7 @@ class _TabShellState extends ConsumerState<_TabShell> with WidgetsBindingObserve
                   key: _chatNavigatorKey,
                   onGenerateRoute: (settings) {
                     return MaterialPageRoute(
-                      builder: (context) => const ChatHubScreen(),
+                      builder: (context) => const ChatShell(),
                       settings: settings,
                     );
                   },

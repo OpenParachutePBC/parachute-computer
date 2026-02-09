@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/features/settings/models/trust_level.dart';
+import '../models/workspace.dart';
+import '../providers/workspace_providers.dart';
 import 'directory_picker.dart';
 
 /// Available agent types for new chats
@@ -40,6 +42,9 @@ const _availableAgents = [
 
 /// Result from the new chat sheet
 class NewChatConfig {
+  /// Workspace slug to associate with this chat
+  final String? workspaceId;
+
   /// Optional working directory for file operations
   final String? workingDirectory;
 
@@ -53,6 +58,7 @@ class NewChatConfig {
   final TrustLevel? trustLevel;
 
   const NewChatConfig({
+    this.workspaceId,
     this.workingDirectory,
     this.agentType,
     this.agentPath,
@@ -90,12 +96,63 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
   String? _workingDirectory;
   String? _selectedAgentId; // null = default
   TrustLevel? _selectedTrustLevel; // null = module default
+  Workspace? _selectedWorkspace; // null = no workspace
+  bool _initialized = false;
+
+  /// Trust floor from workspace — trust levels less restrictive are disabled.
+  TrustLevel? get _trustFloor {
+    if (_selectedWorkspace == null) return null;
+    return TrustLevel.fromString(_selectedWorkspace!.trustLevel);
+  }
+
+  /// Whether a trust level is at or above the workspace floor (more restrictive = higher index).
+  bool _isTrustAllowed(TrustLevel tl) {
+    final floor = _trustFloor;
+    if (floor == null) return true;
+    return tl.index >= floor.index;
+  }
+
+  void _selectWorkspace(Workspace? workspace) {
+    setState(() {
+      _selectedWorkspace = workspace;
+      if (workspace != null) {
+        // Auto-fill from workspace defaults
+        if (workspace.workingDirectory != null) {
+          _workingDirectory = workspace.workingDirectory;
+        }
+        // Set trust to workspace floor if current selection is less restrictive
+        final floor = TrustLevel.fromString(workspace.trustLevel);
+        if (_selectedTrustLevel == null || _selectedTrustLevel!.index < floor.index) {
+          _selectedTrustLevel = floor == TrustLevel.trusted ? null : floor;
+        }
+      }
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     final hasDirectory = _workingDirectory != null && _workingDirectory!.isNotEmpty;
+    final workspacesAsync = ref.watch(workspacesProvider);
+
+    // Pre-populate from active sidebar workspace on first build
+    if (!_initialized) {
+      _initialized = true;
+      final activeSlug = ref.read(activeWorkspaceProvider);
+      if (activeSlug != null) {
+        final workspaces = workspacesAsync.valueOrNull;
+        if (workspaces != null) {
+          final active = workspaces.where((w) => w.slug == activeSlug).firstOrNull;
+          if (active != null) {
+            // Use addPostFrameCallback to avoid setState during build
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) _selectWorkspace(active);
+            });
+          }
+        }
+      }
+    }
 
     return Container(
       decoration: BoxDecoration(
@@ -161,6 +218,11 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // ── Workspace (first section) ──
+                _buildWorkspaceSection(isDark, workspacesAsync),
+
+                const SizedBox(height: Spacing.lg),
+
                 // ── Project Folder (primary section) ──
                 Text(
                   'Project Folder',
@@ -329,6 +391,7 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
                     Navigator.pop(
                       context,
                       NewChatConfig(
+                        workspaceId: _selectedWorkspace?.slug,
                         workingDirectory: _workingDirectory,
                         agentType: selectedAgent.id,
                         agentPath: selectedAgent.path,
@@ -428,13 +491,99 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
 
   Widget _buildTrustChip(TrustLevel? level, String label, IconData icon, bool isDark) {
     final isSelected = _selectedTrustLevel == level;
+    // "Default" chip (level == null) is disabled when workspace has a floor
+    final isDisabled = level == null
+        ? _trustFloor != null
+        : !_isTrustAllowed(level);
     final color = level?.iconColor(isDark) ??
         (isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood);
 
     return GestureDetector(
-      onTap: () => setState(() {
+      onTap: isDisabled ? null : () => setState(() {
         _selectedTrustLevel = level;
       }),
+      child: Opacity(
+        opacity: isDisabled ? 0.4 : 1.0,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(
+            color: isSelected
+                ? color.withValues(alpha: 0.15)
+                : (isDark
+                    ? BrandColors.nightSurfaceElevated
+                    : BrandColors.stone.withValues(alpha: 0.2)),
+            borderRadius: BorderRadius.circular(Radii.sm),
+            border: Border.all(
+              color: isSelected ? color : Colors.transparent,
+              width: 1.5,
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 14, color: isSelected ? color : (isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood)),
+              const SizedBox(width: 4),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w500,
+                  color: isSelected ? color : (isDark ? BrandColors.nightText : BrandColors.charcoal),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildWorkspaceSection(bool isDark, AsyncValue<List<Workspace>> workspacesAsync) {
+    return workspacesAsync.when(
+      data: (workspaces) {
+        if (workspaces.isEmpty) return const SizedBox.shrink();
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Workspace',
+              style: TextStyle(
+                fontSize: TypographyTokens.labelMedium,
+                fontWeight: FontWeight.w600,
+                color: isDark ? BrandColors.nightText : BrandColors.charcoal,
+              ),
+            ),
+            const SizedBox(height: Spacing.xs),
+            Text(
+              'Pre-configured environment with tools and permissions',
+              style: TextStyle(
+                fontSize: TypographyTokens.bodySmall,
+                color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+              ),
+            ),
+            const SizedBox(height: Spacing.sm),
+            Wrap(
+              spacing: Spacing.sm,
+              runSpacing: Spacing.sm,
+              children: [
+                _buildWorkspaceChip(null, 'None', isDark),
+                ...workspaces.map((w) => _buildWorkspaceChip(w, w.name, isDark)),
+              ],
+            ),
+          ],
+        );
+      },
+      loading: () => const SizedBox.shrink(),
+      error: (_, __) => const SizedBox.shrink(),
+    );
+  }
+
+  Widget _buildWorkspaceChip(Workspace? workspace, String label, bool isDark) {
+    final isSelected = _selectedWorkspace?.slug == workspace?.slug;
+    final color = isDark ? BrandColors.nightForest : BrandColors.forest;
+
+    return GestureDetector(
+      onTap: () => _selectWorkspace(workspace),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         decoration: BoxDecoration(
@@ -452,7 +601,11 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 14, color: isSelected ? color : (isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood)),
+            Icon(
+              workspace == null ? Icons.do_not_disturb_alt : Icons.workspaces_outlined,
+              size: 14,
+              color: isSelected ? color : (isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood),
+            ),
             const SizedBox(width: 4),
             Text(
               label,

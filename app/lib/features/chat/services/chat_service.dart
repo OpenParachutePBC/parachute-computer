@@ -107,6 +107,7 @@ class ChatService {
     String? agentPath,  // Path to agent definition file (e.g., 'Daily/.agents/orchestrator.md')
     String? trustLevel,  // Trust level override (full, vault, sandboxed)
     String? model,  // Model override (e.g., 'claude-sonnet-4-5-20250929')
+    String? workspaceId,  // Workspace slug for capability filtering
   }) async* {
     // Validate message length
     if (message.length > maxMessageLength) {
@@ -149,6 +150,7 @@ class ChatService {
       if (agentPath != null) 'agentPath': agentPath,
       if (trustLevel != null) 'trustLevel': trustLevel,
       if (model != null) 'model': model,
+      if (workspaceId != null) 'workspaceId': workspaceId,
     };
     debugPrint('[ChatService] Request body keys: ${requestBody.keys.toList()}');
     debugPrint('[ChatService] agentType: $agentType, agentPath: $agentPath');
