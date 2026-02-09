@@ -10,7 +10,7 @@ import logging
 from abc import ABC, abstractmethod
 from collections import deque
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
@@ -34,13 +34,18 @@ class GroupHistoryBuffer:
     keeps the approach consistent.
     """
 
-    def __init__(self, max_messages: int = 50):
+    def __init__(self, max_messages: int = 50, max_chats: int = 500):
         self.max_messages = max_messages
+        self.max_chats = max_chats
         self._buffers: dict[str, deque[GroupMessage]] = {}
 
     def record(self, chat_id: str, msg: GroupMessage) -> None:
         """Record a message in the buffer."""
         if chat_id not in self._buffers:
+            # Evict oldest chat if at capacity
+            if len(self._buffers) >= self.max_chats:
+                oldest = next(iter(self._buffers))
+                del self._buffers[oldest]
             self._buffers[chat_id] = deque(maxlen=self.max_messages)
         self._buffers[chat_id].append(msg)
 
@@ -57,14 +62,27 @@ class GroupHistoryBuffer:
             messages = [m for m in messages if m.message_id != exclude_message_id]
         return messages[-limit:]
 
-    def format_for_prompt(self, messages: list[GroupMessage]) -> str:
-        """Format buffered messages as context block for the prompt."""
+    @staticmethod
+    def _sanitize_display_name(name: str) -> str:
+        """Strip characters that could break prompt framing."""
+        # Remove brackets, angle brackets, newlines
+        return name.replace("[", "").replace("]", "").replace("<", "").replace(">", "").replace("\n", " ").strip()[:50]
+
+    def format_for_prompt(self, messages: list[GroupMessage], max_msg_len: int = 500) -> str:
+        """Format buffered messages as context block for the prompt.
+
+        Uses XML-like tags to structurally separate group context from the
+        current message. Display names are sanitized to prevent prompt
+        injection via crafted usernames.
+        """
         if not messages:
             return ""
-        lines = ["[Recent group messages for context]"]
+        lines = []
         for msg in messages:
-            lines.append(f"[from: {msg.user_display}] {msg.text}")
-        return "\n".join(lines)
+            name = self._sanitize_display_name(msg.user_display)
+            text = msg.text[:max_msg_len] if msg.text else ""
+            lines.append(f"  {name}: {text}")
+        return "<group_context>\n" + "\n".join(lines) + "\n</group_context>"
 
 
 class BotConnector(ABC):
@@ -142,7 +160,6 @@ class BotConnector(ABC):
 
         # Create new pairing request
         import uuid
-        from datetime import datetime
 
         from parachute.models.session import SessionCreate
 
@@ -174,7 +191,7 @@ class BotConnector(ABC):
                     "chat_id": chat_id,
                     "chat_type": chat_type,
                     "user_display": user_display,
-                    "linked_at": datetime.utcnow().isoformat() + "Z",
+                    "linked_at": datetime.now(timezone.utc).isoformat(),
                 },
                 "pending_approval": True,
                 "pairing_request_id": request_id,
@@ -243,7 +260,6 @@ class BotConnector(ABC):
 
         # Create new session
         import uuid
-        from datetime import datetime
 
         trust_level = await self.get_trust_level(chat_type, user_id=user_id)
         session_id = str(uuid.uuid4())
@@ -265,7 +281,7 @@ class BotConnector(ABC):
                     "chat_id": chat_id,
                     "chat_type": chat_type,
                     "user_display": user_display,
-                    "linked_at": datetime.utcnow().isoformat() + "Z",
+                    "linked_at": datetime.now(timezone.utc).isoformat(),
                 },
                 "pending_initialization": True,
             },

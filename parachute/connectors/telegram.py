@@ -243,8 +243,6 @@ class TelegramConnector(BotConnector):
 
         # Create fresh session with pending_initialization
         import uuid
-        from datetime import datetime
-
         from parachute.models.session import SessionCreate
 
         session_id = str(uuid.uuid4())
@@ -264,7 +262,7 @@ class TelegramConnector(BotConnector):
                     "chat_id": chat_id,
                     "chat_type": chat_type,
                     "user_display": update.effective_user.full_name,
-                    "linked_at": datetime.utcnow().isoformat() + "Z",
+                    "linked_at": datetime.now(timezone.utc).isoformat(),
                 },
                 "pending_initialization": True,
             },
@@ -399,7 +397,7 @@ class TelegramConnector(BotConnector):
             except Exception as e:
                 logger.debug(f"Ack reaction failed (non-critical): {e}")
 
-        # Inject group history for context
+        # Inject group history for context (wrapped in XML tags to resist prompt injection)
         effective_message = message_text
         if chat_type == "group":
             recent = self.group_history.get_recent(
@@ -411,7 +409,7 @@ class TelegramConnector(BotConnector):
                 history_block = self.group_history.format_for_prompt(recent)
                 effective_message = (
                     f"{history_block}\n\n"
-                    f"[Current message - respond to this]\n{message_text}"
+                    f"{message_text}"
                 )
 
         # Route through Chat orchestrator with streaming (per-chat lock)
@@ -499,36 +497,6 @@ class TelegramConnector(BotConnector):
                 except Exception:
                     pass
 
-    async def _route_to_chat(self, session_id: str, message: str) -> str:
-        """Route a message through the Chat orchestrator and collect response."""
-        response_text = ""
-        orchestrate = getattr(self.server, "orchestrate", None)
-        if not orchestrate:
-            logger.error("Server has no orchestrate method")
-            return "Chat orchestrator not available."
-
-        try:
-            event_count = 0
-            async for event in orchestrate(
-                session_id=session_id,
-                message=message,
-                source="telegram",
-            ):
-                event_count += 1
-                event_type = event.get("type", "") if isinstance(event, dict) else getattr(event, "type", "")
-                if event_type == "text":
-                    delta = event.get("delta", "") if isinstance(event, dict) else getattr(event, "delta", "")
-                    response_text += delta
-                elif event_type == "error":
-                    error_msg = event.get("error", "") if isinstance(event, dict) else getattr(event, "error", "")
-                    logger.error(f"Orchestrator error event: {error_msg}")
-            logger.info(f"Telegram orchestration: {event_count} events, {len(response_text)} chars response")
-        except Exception as e:
-            logger.error(f"Chat orchestration failed: {e}", exc_info=True)
-            return "Something went wrong. Please try again later."
-
-        return response_text
-
     async def _stream_to_chat(
         self,
         session_id: str,
@@ -601,40 +569,21 @@ class TelegramConnector(BotConnector):
                 formatted = claude_to_telegram(buffer)
                 chunks = self.split_response(formatted, TELEGRAM_MAX_MESSAGE_LENGTH)
 
-                if len(chunks) == 1 and draft_msg:
-                    # Single chunk — final edit with MarkdownV2
-                    try:
-                        await draft_msg.edit_text(chunks[0], parse_mode="MarkdownV2")
-                    except Exception:
-                        try:
-                            await draft_msg.edit_text(chunks[0])
-                        except Exception:
-                            pass
-                elif len(chunks) >= 1:
-                    # Multi-chunk — edit first into draft, send rest as replies
-                    if draft_msg:
-                        try:
-                            await draft_msg.edit_text(chunks[0], parse_mode="MarkdownV2")
-                        except Exception:
-                            try:
-                                await draft_msg.edit_text(chunks[0])
-                            except Exception:
-                                pass
-                    else:
-                        try:
-                            await update.message.reply_text(
-                                chunks[0], parse_mode="MarkdownV2"
-                            )
-                        except Exception:
-                            await update.message.reply_text(chunks[0])
+                # Edit first chunk into draft, or send as reply
+                if draft_msg:
+                    await self._send_formatted(
+                        chunks[0], edit_msg=draft_msg, fallback_reply=update.message
+                    )
+                else:
+                    await self._send_formatted(
+                        chunks[0], reply_to=update.message
+                    )
 
-                    for chunk in chunks[1:]:
-                        try:
-                            await update.message.reply_text(
-                                chunk, parse_mode="MarkdownV2"
-                            )
-                        except Exception:
-                            await update.message.reply_text(chunk)
+                # Send remaining chunks as replies
+                for chunk in chunks[1:]:
+                    await self._send_formatted(
+                        chunk, reply_to=update.message
+                    )
             elif not error_occurred:
                 no_response = "No response from agent."
                 if draft_msg:
@@ -690,6 +639,42 @@ class TelegramConnector(BotConnector):
                 if "not modified" not in str(e).lower():
                     logger.debug(f"Draft edit failed: {e}")
             return draft_msg
+
+    async def _send_formatted(
+        self,
+        text: str,
+        *,
+        edit_msg: Any | None = None,
+        reply_to: Any | None = None,
+        fallback_reply: Any | None = None,
+    ) -> None:
+        """Send or edit a message with MarkdownV2, falling back to plain text.
+
+        Either edit_msg (edit existing) or reply_to (send new) must be provided.
+        fallback_reply is used when edit fails entirely (e.g. message was deleted).
+        """
+        if edit_msg:
+            try:
+                await edit_msg.edit_text(text, parse_mode="MarkdownV2")
+                return
+            except Exception:
+                pass
+            try:
+                await edit_msg.edit_text(text)
+                return
+            except Exception as e:
+                logger.warning(f"Final edit failed (message may be deleted): {e}")
+                # Fall through to reply as last resort
+                if fallback_reply:
+                    reply_to = fallback_reply
+                else:
+                    return
+
+        if reply_to:
+            try:
+                await reply_to.reply_text(text, parse_mode="MarkdownV2")
+            except Exception:
+                await reply_to.reply_text(text)
 
     async def _route_to_daily(self, text: str, update: Any) -> str:
         """Route to Daily module for journal entry creation."""
