@@ -38,7 +38,6 @@ class DiscordConnector(BotConnector):
         bot_token: str,
         server: Any,
         allowed_users: list[int | str],
-        allowed_guilds: list[str] | None = None,
         default_trust_level: str = "vault",
         dm_trust_level: str = "vault",
         group_trust_level: str = "sandboxed",
@@ -53,7 +52,6 @@ class DiscordConnector(BotConnector):
             group_trust_level=group_trust_level,
             group_mention_mode=group_mention_mode,
         )
-        self.allowed_guilds = allowed_guilds or []
         self._client: Optional[Any] = None
         self._tree: Optional[Any] = None
 
@@ -87,28 +85,23 @@ class DiscordConnector(BotConnector):
         @self._client.event
         async def on_ready():
             logger.info(f"Discord bot logged in as {self._client.user}")
-            # Sync commands to guilds
-            for guild_id in self.allowed_guilds:
-                try:
-                    guild = discord.Object(id=int(guild_id))
-                    self._tree.copy_global_to(guild=guild)
-                    await self._tree.sync(guild=guild)
-                    logger.info(f"Synced commands to guild {guild_id}")
-                except Exception as e:
-                    logger.error(f"Failed to sync commands to guild {guild_id}: {e}")
-            self._running = True
+            # Sync slash commands globally
+            try:
+                await self._tree.sync()
+                logger.info("Synced slash commands globally")
+            except Exception as e:
+                logger.error(f"Failed to sync global commands: {e}")
 
         @self._client.event
         async def on_message(message: discord.Message):
             if message.author == self._client.user:
                 return
-            # Only handle DMs or allowed guilds
-            if message.guild and str(message.guild.id) not in self.allowed_guilds:
-                return
             await self.on_text_message(message, None)
 
         # Start bot (this blocks, so run in background)
         asyncio.create_task(self._run_client())
+        self._running = True
+        logger.info("Discord connector started")
 
     async def _run_client(self) -> None:
         """Run the Discord client."""
@@ -148,14 +141,25 @@ class DiscordConnector(BotConnector):
         chat_id = str(message.channel.id)
         message_text = message.content
 
-        # Group mention gating: only respond to @mentions in guild channels
-        if message.guild and self.group_mention_mode == "mention_only":
-            if self._client.user not in message.mentions:
-                return  # Silently ignore non-mentions in groups
+        # Session-aware response mode gating
+        db = getattr(self.server, "database", None)
+        session = await db.get_session_by_bot_link("discord", chat_id) if db else None
+
+        default_mode = "all_messages" if chat_type == "dm" else self.group_mention_mode
+        if session and session.metadata:
+            bs = session.metadata.get("bot_settings", {})
+            response_mode = bs.get("response_mode", default_mode)
+        else:
+            response_mode = default_mode
+
+        if response_mode == "mention_only":
+            # Discord provides parsed mentions - use that for reliable detection
+            if message.guild and self._client.user not in message.mentions:
+                return  # Silently ignore non-mentions
             # Strip the bot mention from the message
             message_text = message_text.replace(f"<@{self._client.user.id}>", "").strip()
             if not message_text:
-                return  # Nothing left after stripping mention
+                return
 
         # Find or create linked session
         session = await self.get_or_create_session(
@@ -168,6 +172,21 @@ class DiscordConnector(BotConnector):
 
         if not session:
             await message.reply("Internal error: could not create session.")
+            return
+
+        # Check initialization status
+        if not await self.is_session_initialized(session):
+            count = self._init_nudge_sent.get(chat_id, 0)
+            if count == 0:
+                await message.reply(
+                    "Session created! Configure it in the Parachute app "
+                    "(set workspace and trust level), then activate it."
+                )
+            elif count == 1:
+                await message.reply(
+                    "Still being configured. Please activate in the Parachute app."
+                )
+            self._init_nudge_sent[chat_id] = count + 1
             return
 
         # Show typing indicator with per-chat lock
@@ -241,6 +260,21 @@ class DiscordConnector(BotConnector):
 
         if not session:
             await interaction.followup.send("Internal error: could not create session.")
+            return
+
+        # Check initialization status
+        if not await self.is_session_initialized(session):
+            count = self._init_nudge_sent.get(chat_id, 0)
+            if count == 0:
+                await interaction.followup.send(
+                    "Session created! Configure it in the Parachute app "
+                    "(set workspace and trust level), then activate it."
+                )
+            else:
+                await interaction.followup.send(
+                    "Still being configured. Please activate in the Parachute app."
+                )
+            self._init_nudge_sent[chat_id] = count + 1
             return
 
         response_text = await self._route_to_chat(
@@ -321,6 +355,13 @@ class DiscordConnector(BotConnector):
             return "Something went wrong. Please try again later."
 
         return response_text
+
+    async def send_message(self, chat_id: str, text: str) -> None:
+        """Send a message to a Discord channel."""
+        if self._client:
+            channel = self._client.get_channel(int(chat_id))
+            if channel:
+                await channel.send(text)
 
     async def send_approval_message(self, chat_id: str) -> None:
         """Send approval confirmation to user via Discord."""

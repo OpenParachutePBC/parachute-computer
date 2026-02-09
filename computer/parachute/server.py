@@ -8,6 +8,14 @@ Discovers and loads modules from vault/.modules/ directory.
 import logging
 import os
 from contextlib import asynccontextmanager
+
+# Ensure SSL certificates are available on macOS (Python.org builds lack system certs)
+if not os.environ.get("SSL_CERT_FILE"):
+    try:
+        import certifi
+        os.environ["SSL_CERT_FILE"] = certifi.where()
+    except ImportError:
+        pass
 from pathlib import Path
 from typing import Optional
 

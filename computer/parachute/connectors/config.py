@@ -34,7 +34,6 @@ class DiscordConfig(BaseModel):
     enabled: bool = False
     bot_token: str = ""
     allowed_users: list[str] = Field(default_factory=list)
-    allowed_guilds: list[str] = Field(default_factory=list)
     default_trust_level: TrustLevelStr = "vault"
     dm_trust_level: TrustLevelStr = "vault"
     group_trust_level: TrustLevelStr = "sandboxed"
