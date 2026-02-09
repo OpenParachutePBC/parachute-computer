@@ -61,6 +61,7 @@ async def list_sessions(
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
     archived: Optional[bool] = Query(None, description="Filter by archived status"),
+    workspace_id: Optional[str] = Query(None, alias="workspaceId", description="Filter by workspace slug"),
 ) -> dict[str, Any]:
     """
     List all sessions.
@@ -71,6 +72,7 @@ async def list_sessions(
     - limit: Maximum number of sessions to return
     - offset: Number of sessions to skip
     - archived: Filter by archived status
+    - workspaceId: Filter by workspace slug
     """
     orchestrator = get_orchestrator(request)
 
@@ -83,6 +85,7 @@ async def list_sessions(
             archived=show_archived,
             search=search,
             limit=limit,
+            workspace_id=workspace_id,
         )
     except Exception as e:
         logger.error(f"Failed to list sessions: {e}", exc_info=True)

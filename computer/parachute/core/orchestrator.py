@@ -210,6 +210,7 @@ class Orchestrator:
         agent_type: Optional[str] = None,
         trust_level: Optional[str] = None,
         model: Optional[str] = None,
+        workspace_id: Optional[str] = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         """
         Run an agent with streaming response.
@@ -234,6 +235,21 @@ class Orchestrator:
         else:
             logger.info("Using default vault agent")
             agent = create_vault_agent()
+
+        # Load workspace config if specified
+        workspace_config = None
+        if workspace_id:
+            from parachute.core.workspaces import get_workspace
+            workspace_config = get_workspace(self.vault_path, workspace_id)
+            if workspace_config:
+                logger.info(f"Loaded workspace: {workspace_id} ({workspace_config.name})")
+                # Apply workspace defaults (explicit params take priority)
+                if not working_directory and workspace_config.working_directory:
+                    working_directory = workspace_config.working_directory
+                if not model and workspace_config.model:
+                    model = workspace_config.model
+            else:
+                logger.warning(f"Workspace not found: {workspace_id}")
 
         # Get or create session (before building prompt so we can load prior conversation)
         session, resume_info, is_new = await self.session_manager.get_or_create_session(
@@ -505,6 +521,27 @@ class Orchestrator:
             if agents_dict:
                 logger.info(f"Loaded {len(agents_dict)} custom agents")
 
+            # Apply workspace capability filtering
+            if workspace_config and workspace_config.capabilities:
+                from parachute.core.capability_filter import filter_capabilities
+                agent_names = list(agents_dict.keys()) if agents_dict else []
+                filtered = filter_capabilities(
+                    capabilities=workspace_config.capabilities,
+                    all_mcps=resolved_mcps,
+                    all_agents=agent_names,
+                    plugin_dirs=plugin_dirs,
+                )
+                resolved_mcps = filtered.mcp_servers or None
+                plugin_dirs = filtered.plugin_dirs
+                if agents_dict and filtered.agents is not None:
+                    agents_dict = {k: v for k, v in agents_dict.items() if k in filtered.agents}
+                logger.info(
+                    f"Workspace {workspace_id} filtered: "
+                    f"mcps={len(resolved_mcps) if resolved_mcps else 0}, "
+                    f"plugins={len(plugin_dirs)}, "
+                    f"agents={len(agents_dict) if agents_dict else 0}"
+                )
+
             # Set up permission handler with event callbacks
             def on_permission_denial(denial: dict) -> None:
                 """Track permission denials for reporting in done event."""
@@ -571,8 +608,19 @@ class Orchestrator:
             # This enables interactive tools like AskUserQuestion to pause and wait for user input
             sdk_can_use_tool = permission_handler.create_sdk_callback()
 
-            # Trust level routing: determine effective trust from session + client override
+            # Trust level routing: determine effective trust from session + workspace + client override
             session_trust = session.get_trust_level()
+
+            # Apply workspace trust floor (can only restrict, never escalate)
+            if workspace_config and workspace_config.trust_level:
+                try:
+                    workspace_trust = TrustLevel(workspace_config.trust_level)
+                    _trust_order = {TrustLevel.FULL: 0, TrustLevel.VAULT: 1, TrustLevel.SANDBOXED: 2}
+                    if _trust_order.get(workspace_trust, 0) > _trust_order.get(session_trust, 0):
+                        logger.info(f"Workspace trust floor restricts session from {session_trust.value} to {workspace_trust.value}")
+                        session_trust = workspace_trust
+                except ValueError:
+                    logger.warning(f"Invalid workspace trust_level: {workspace_config.trust_level}")
 
             # Apply client trust_level override (can only restrict, never escalate)
             if trust_level:
@@ -629,6 +677,7 @@ class Orchestrator:
                         session = await self.session_manager.finalize_session(
                             session, sandbox_sid, captured_model, title=title,
                             agent_type=agent_type,
+                            workspace_id=workspace_id,
                         )
                         session_finalized = True
                         logger.info(f"Finalized sandbox session: {sandbox_sid[:8]} trust={effective_trust}")
@@ -688,6 +737,7 @@ class Orchestrator:
                         session = await self.session_manager.finalize_session(
                             session, captured_session_id, captured_model, title=title,
                             agent_type=agent_type,
+                            workspace_id=workspace_id,
                         )
                         session_finalized = True
                         logger.info(f"Early finalized session: {captured_session_id[:8]}...")
@@ -837,6 +887,7 @@ class Orchestrator:
                 session = await self.session_manager.finalize_session(
                     session, captured_session_id, captured_model, title=title,
                     agent_type=agent_type,
+                    workspace_id=workspace_id,
                 )
                 session_finalized = True
                 logger.info(f"Finalized session: {captured_session_id[:8]}...")
@@ -1140,6 +1191,7 @@ The user is now continuing this conversation with you. Respond naturally as if y
         archived: bool = False,
         search: Optional[str] = None,
         limit: int = 100,
+        workspace_id: Optional[str] = None,
     ) -> list[dict[str, Any]]:
         """List all chat sessions."""
         sessions = await self.session_manager.list_sessions(
@@ -1147,6 +1199,7 @@ The user is now continuing this conversation with you. Respond naturally as if y
             archived=archived,
             search=search,
             limit=limit,
+            workspace_id=workspace_id,
         )
         return [s.model_dump(by_alias=True) for s in sessions]
 

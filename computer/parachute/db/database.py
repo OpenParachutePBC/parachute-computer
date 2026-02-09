@@ -295,6 +295,22 @@ class Database:
             await self._connection.commit()
             logger.info("Added pairing_requests table (v12)")
 
+        # Migration: Add workspace_id column to sessions (v13)
+        try:
+            async with self._connection.execute(
+                "SELECT workspace_id FROM sessions LIMIT 1"
+            ):
+                pass  # Column exists
+        except Exception:
+            await self._connection.execute(
+                "ALTER TABLE sessions ADD COLUMN workspace_id TEXT"
+            )
+            await self._connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_sessions_workspace_id ON sessions(workspace_id)"
+            )
+            await self._connection.commit()
+            logger.info("Added workspace_id column to sessions (v13)")
+
     async def close(self) -> None:
         """Close database connection."""
         if self._connection:
@@ -341,6 +357,7 @@ class Database:
         linked_bot_platform = getattr(session, 'linked_bot_platform', None)
         linked_bot_chat_id = getattr(session, 'linked_bot_chat_id', None)
         linked_bot_chat_type = getattr(session, 'linked_bot_chat_type', None)
+        workspace_id = getattr(session, 'workspace_id', None)
 
         await self.connection.execute(
             """
@@ -349,8 +366,8 @@ class Database:
                 message_count, archived, created_at, last_accessed,
                 continued_from, agent_type, trust_level,
                 linked_bot_platform, linked_bot_chat_id, linked_bot_chat_type,
-                metadata
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                workspace_id, metadata
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 session.id,
@@ -370,6 +387,7 @@ class Database:
                 linked_bot_platform,
                 linked_bot_chat_id,
                 linked_bot_chat_type,
+                workspace_id,
                 metadata_json,
             ),
         )
@@ -452,6 +470,7 @@ class Database:
         archived: Optional[bool] = None,
         agent_type: Optional[str] = None,
         search: Optional[str] = None,
+        workspace_id: Optional[str] = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[Session]:
@@ -474,6 +493,10 @@ class Database:
         if search:
             query += " AND title LIKE ?"
             params.append(f"%{search}%")
+
+        if workspace_id is not None:
+            query += " AND workspace_id = ?"
+            params.append(workspace_id)
 
         query += " ORDER BY last_accessed DESC LIMIT ? OFFSET ?"
         params.extend([limit, offset])
@@ -1043,6 +1066,7 @@ class Database:
             linked_bot_platform=row["linked_bot_platform"] if "linked_bot_platform" in keys else None,
             linked_bot_chat_id=row["linked_bot_chat_id"] if "linked_bot_chat_id" in keys else None,
             linked_bot_chat_type=row["linked_bot_chat_type"] if "linked_bot_chat_type" in keys else None,
+            workspace_id=row["workspace_id"] if "workspace_id" in keys else None,
             metadata=metadata,
         )
 
