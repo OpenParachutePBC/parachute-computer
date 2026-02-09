@@ -1,8 +1,10 @@
 """
-Capability filtering for workspaces.
+Capability filtering for workspaces and trust levels.
 
-Applies workspace capability sets to discovered MCPs, skills, agents, and plugins.
-Each capability can be "all" (pass everything), "none" (empty), or a list of names.
+Two-stage filtering:
+1. Trust-level filter: MCPs annotated with trust_level are only available at
+   that trust level or above (sandboxed < vault < full).
+2. Workspace filter: applies workspace capability sets ("all"/"none"/[list]).
 """
 
 import logging
@@ -14,6 +16,9 @@ from parachute.models.workspace import WorkspaceCapabilities
 
 logger = logging.getLogger(__name__)
 
+# Trust level restrictiveness order: higher number = more restricted
+_TRUST_ORDER = {"full": 0, "vault": 1, "sandboxed": 2}
+
 
 @dataclass
 class FilteredCapabilities:
@@ -23,6 +28,50 @@ class FilteredCapabilities:
     plugin_dirs: list[Path] = field(default_factory=list)
     agents: list[str] = field(default_factory=list)
     skills: list[str] = field(default_factory=list)
+
+
+def filter_by_trust_level(
+    mcps: dict[str, Any],
+    session_trust: str,
+) -> dict[str, Any]:
+    """Filter MCPs by trust level compatibility.
+
+    An MCP is available if its declared trust_level is at least as restrictive
+    as the session's trust level. For example:
+    - MCP with trust_level="sandboxed" is available in all sessions
+    - MCP with trust_level="vault" is available in vault and full sessions
+    - MCP with trust_level="full" (or no annotation) is only available in full sessions
+
+    Args:
+        mcps: MCP server configs (may include a "trust_level" key)
+        session_trust: The effective session trust level ("full", "vault", "sandboxed")
+
+    Returns:
+        Filtered MCP dict with only trust-compatible servers
+    """
+    if not mcps:
+        return {}
+
+    session_order = _TRUST_ORDER.get(session_trust, 0)
+    filtered = {}
+
+    for name, config in mcps.items():
+        # MCPs without trust_level default to "full" (most restrictive access)
+        mcp_trust = config.get("trust_level", "full")
+        mcp_order = _TRUST_ORDER.get(mcp_trust, 0)
+
+        # MCP is available if its trust_level is >= session trust (more or equally restrictive)
+        # i.e., an MCP declared "sandboxed" (order=2) is available everywhere
+        # because 2 >= any session order
+        if mcp_order >= session_order:
+            filtered[name] = config
+        else:
+            logger.debug(
+                f"Trust filter: {name} requires {mcp_trust} trust, "
+                f"session has {session_trust} — excluded"
+            )
+
+    return filtered
 
 
 def _filter_by_set(

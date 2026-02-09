@@ -1,8 +1,12 @@
-"""Tests for workspace capability filtering."""
+"""Tests for workspace capability filtering and trust-level filtering."""
 
 from pathlib import Path
 
-from parachute.core.capability_filter import FilteredCapabilities, filter_capabilities
+from parachute.core.capability_filter import (
+    FilteredCapabilities,
+    filter_by_trust_level,
+    filter_capabilities,
+)
 from parachute.models.workspace import PluginConfig, WorkspaceCapabilities
 
 
@@ -110,3 +114,84 @@ class TestFilterCapabilities:
         assert "parachute" in result.mcp_servers
         assert result.skills == ["a", "b", "c"]
         assert result.agents == []
+
+
+class TestFilterByTrustLevel:
+    """Tests for trust-level MCP filtering."""
+
+    def test_full_trust_sees_all(self):
+        """Full trust sessions see all MCPs regardless of annotation."""
+        mcps = {
+            "parachute": {"command": "x", "trust_level": "sandboxed"},
+            "context7": {"url": "y", "trust_level": "vault"},
+            "custom": {"command": "z"},  # No annotation → defaults to full
+        }
+        result = filter_by_trust_level(mcps, "full")
+        assert set(result.keys()) == {"parachute", "context7", "custom"}
+
+    def test_vault_trust_excludes_full_only(self):
+        """Vault trust sees sandboxed and vault MCPs, not full-only."""
+        mcps = {
+            "parachute": {"command": "x", "trust_level": "sandboxed"},
+            "context7": {"url": "y", "trust_level": "vault"},
+            "custom": {"command": "z"},  # No annotation → full only
+        }
+        result = filter_by_trust_level(mcps, "vault")
+        assert set(result.keys()) == {"parachute", "context7"}
+        assert "custom" not in result
+
+    def test_sandboxed_trust_only_sees_sandboxed(self):
+        """Sandboxed trust only sees MCPs annotated as sandboxed."""
+        mcps = {
+            "parachute": {"command": "x", "trust_level": "sandboxed"},
+            "context7": {"url": "y", "trust_level": "vault"},
+            "custom": {"command": "z"},  # No annotation → full only
+        }
+        result = filter_by_trust_level(mcps, "sandboxed")
+        assert set(result.keys()) == {"parachute"}
+
+    def test_builtin_parachute_always_available(self):
+        """Built-in Parachute MCP has trust_level=sandboxed so it's always available."""
+        mcps = {
+            "parachute": {
+                "command": "python",
+                "trust_level": "sandboxed",
+                "_builtin": True,
+            },
+        }
+        for trust in ("full", "vault", "sandboxed"):
+            result = filter_by_trust_level(mcps, trust)
+            assert "parachute" in result
+
+    def test_no_annotation_defaults_to_full(self):
+        """MCPs without trust_level annotation default to full (most restrictive access)."""
+        mcps = {"custom": {"command": "my-tool"}}
+
+        assert "custom" in filter_by_trust_level(mcps, "full")
+        assert "custom" not in filter_by_trust_level(mcps, "vault")
+        assert "custom" not in filter_by_trust_level(mcps, "sandboxed")
+
+    def test_empty_dict_returns_empty(self):
+        result = filter_by_trust_level({}, "full")
+        assert result == {}
+
+    def test_unknown_trust_level_treated_as_full(self):
+        """Unknown trust levels in MCP configs are treated as full (most restrictive)."""
+        mcps = {"weird": {"command": "x", "trust_level": "unknown"}}
+        # Unknown MCP trust_level gets order 0 (same as full)
+        assert "weird" in filter_by_trust_level(mcps, "full")
+        assert "weird" not in filter_by_trust_level(mcps, "vault")
+
+    def test_trust_filter_preserves_config(self):
+        """Filtered MCPs retain their full config dicts."""
+        mcps = {
+            "parachute": {
+                "command": "python",
+                "args": ["-m", "server"],
+                "trust_level": "sandboxed",
+                "_builtin": True,
+            }
+        }
+        result = filter_by_trust_level(mcps, "sandboxed")
+        assert result["parachute"]["command"] == "python"
+        assert result["parachute"]["_builtin"] is True

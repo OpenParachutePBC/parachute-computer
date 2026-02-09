@@ -521,7 +521,48 @@ class Orchestrator:
             if agents_dict:
                 logger.info(f"Loaded {len(agents_dict)} custom agents")
 
-            # Apply workspace capability filtering
+            # Determine effective trust level early (needed for capability filtering)
+            # Trust level routing: session → workspace floor → client override
+            session_trust = session.get_trust_level()
+
+            if workspace_config and workspace_config.trust_level:
+                try:
+                    workspace_trust = TrustLevel(workspace_config.trust_level)
+                    _trust_order = {TrustLevel.FULL: 0, TrustLevel.VAULT: 1, TrustLevel.SANDBOXED: 2}
+                    if _trust_order.get(workspace_trust, 0) > _trust_order.get(session_trust, 0):
+                        logger.info(f"Workspace trust floor restricts session from {session_trust.value} to {workspace_trust.value}")
+                        session_trust = workspace_trust
+                except ValueError:
+                    logger.warning(f"Invalid workspace trust_level: {workspace_config.trust_level}")
+
+            if trust_level:
+                try:
+                    requested = TrustLevel(trust_level)
+                    _trust_order = {TrustLevel.FULL: 0, TrustLevel.VAULT: 1, TrustLevel.SANDBOXED: 2}
+                    if _trust_order.get(requested, 0) >= _trust_order.get(session_trust, 0):
+                        session_trust = requested
+                    else:
+                        logger.warning(
+                            f"Client tried to escalate trust from {session_trust.value} to {requested.value}, ignoring"
+                        )
+                except ValueError:
+                    logger.warning(f"Invalid trust_level from client: {trust_level}")
+
+            effective_trust = session_trust.value
+
+            # Stage 1: Trust-level capability filtering
+            # MCPs with trust_level annotation are only available at that trust or above
+            if resolved_mcps:
+                from parachute.core.capability_filter import filter_by_trust_level
+                pre_count = len(resolved_mcps)
+                resolved_mcps = filter_by_trust_level(resolved_mcps, effective_trust)
+                if len(resolved_mcps) < pre_count:
+                    logger.info(
+                        f"Trust filter ({effective_trust}): "
+                        f"{pre_count} → {len(resolved_mcps)} MCPs"
+                    )
+
+            # Stage 2: Workspace capability filtering
             if workspace_config and workspace_config.capabilities:
                 from parachute.core.capability_filter import filter_capabilities
                 agent_names = list(agents_dict.keys()) if agents_dict else []
@@ -608,36 +649,7 @@ class Orchestrator:
             # This enables interactive tools like AskUserQuestion to pause and wait for user input
             sdk_can_use_tool = permission_handler.create_sdk_callback()
 
-            # Trust level routing: determine effective trust from session + workspace + client override
-            session_trust = session.get_trust_level()
-
-            # Apply workspace trust floor (can only restrict, never escalate)
-            if workspace_config and workspace_config.trust_level:
-                try:
-                    workspace_trust = TrustLevel(workspace_config.trust_level)
-                    _trust_order = {TrustLevel.FULL: 0, TrustLevel.VAULT: 1, TrustLevel.SANDBOXED: 2}
-                    if _trust_order.get(workspace_trust, 0) > _trust_order.get(session_trust, 0):
-                        logger.info(f"Workspace trust floor restricts session from {session_trust.value} to {workspace_trust.value}")
-                        session_trust = workspace_trust
-                except ValueError:
-                    logger.warning(f"Invalid workspace trust_level: {workspace_config.trust_level}")
-
-            # Apply client trust_level override (can only restrict, never escalate)
-            if trust_level:
-                try:
-                    requested = TrustLevel(trust_level)
-                    # Trust restrictiveness order: FULL < VAULT < SANDBOXED
-                    _trust_order = {TrustLevel.FULL: 0, TrustLevel.VAULT: 1, TrustLevel.SANDBOXED: 2}
-                    if _trust_order.get(requested, 0) >= _trust_order.get(session_trust, 0):
-                        session_trust = requested
-                    else:
-                        logger.warning(
-                            f"Client tried to escalate trust from {session_trust.value} to {requested.value}, ignoring"
-                        )
-                except ValueError:
-                    logger.warning(f"Invalid trust_level from client: {trust_level}")
-
-            effective_trust = session_trust.value
+            # effective_trust was determined earlier (before capability filtering)
 
             if effective_trust == "sandboxed":
                 if await self._sandbox.is_available():
@@ -650,6 +662,7 @@ class Orchestrator:
                         agent_type=agent.type.value if agent.type else "chat",
                         allowed_paths=session.permissions.allowed_paths,
                         network_enabled=True,  # SDK needs network for Anthropic API
+                        mcp_servers=resolved_mcps,  # Pass filtered MCPs to container
                     )
                     had_text = False
                     async for event in self._sandbox.run_agent(sandbox_config, actual_message):
