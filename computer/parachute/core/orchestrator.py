@@ -676,9 +676,29 @@ class Orchestrator:
                         mcp_servers=resolved_mcps,  # Pass filtered MCPs to container
                         working_directory=sandbox_wd,
                     )
+                    # For continuing sandbox sessions, inject prior conversation
+                    # as context. Each container is fresh and can't resume from transcripts.
+                    sandbox_message = actual_message
+                    if not is_new:
+                        prior_messages = await self.session_manager._load_sdk_messages(session)
+                        if prior_messages:
+                            history_lines = []
+                            for msg in prior_messages:
+                                role = msg["role"].upper()
+                                history_lines.append(f"[{role}]: {msg['content']}")
+                            history_block = "\n".join(history_lines)
+                            sandbox_message = (
+                                f"<conversation_history>\n{history_block}\n"
+                                f"</conversation_history>\n\n{actual_message}"
+                            )
+                            logger.info(
+                                f"Injected {len(prior_messages)} prior messages "
+                                f"into sandbox prompt for session {sandbox_sid[:8]}"
+                            )
+
                     had_text = False
                     sandbox_response_text = ""
-                    async for event in self._sandbox.run_agent(sandbox_config, actual_message):
+                    async for event in self._sandbox.run_agent(sandbox_config, sandbox_message):
                         event_type = event.get("type", "")
                         if event_type == "error":
                             sandbox_err = event.get("error") or event.get("message") or "Unknown sandbox error"
@@ -702,14 +722,17 @@ class Orchestrator:
                             # hasn't written the transcript yet
                             if event_type == "done":
                                 if is_new and not session_finalized:
-                                    title = generate_title_from_message(message) if message.strip() else None
-                                    session = await self.session_manager.finalize_session(
-                                        session, sandbox_sid, captured_model, title=title,
-                                        agent_type=agent_type,
-                                        workspace_id=workspace_id,
-                                    )
-                                    session_finalized = True
-                                    logger.info(f"Finalized sandbox session: {sandbox_sid[:8]} trust={effective_trust}")
+                                    try:
+                                        title = generate_title_from_message(message) if message.strip() else None
+                                        session = await self.session_manager.finalize_session(
+                                            session, sandbox_sid, captured_model, title=title,
+                                            agent_type=agent_type,
+                                            workspace_id=workspace_id,
+                                        )
+                                        session_finalized = True
+                                        logger.info(f"Finalized sandbox session: {sandbox_sid[:8]} trust={effective_trust}")
+                                    except Exception as e:
+                                        logger.error(f"Failed to finalize sandbox session {sandbox_sid[:8]}: {e}")
 
                                 # Write synthetic transcript to host so messages persist
                                 # Docker container transcripts are lost when container exits
@@ -723,6 +746,13 @@ class Orchestrator:
 
                     if not had_text:
                         logger.warning("Sandbox produced no text output")
+
+                    # Increment message count for sandbox sessions
+                    if had_text and sandbox_sid:
+                        try:
+                            await self.session_manager.increment_message_count(sandbox_sid, 2)
+                        except Exception as e:
+                            logger.warning(f"Failed to increment message count for {sandbox_sid[:8]}: {e}")
                     return
                 else:
                     # Fallback: degrade to vault trust, warn user via typed event

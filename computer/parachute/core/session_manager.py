@@ -242,34 +242,47 @@ class SessionManager:
         metadata = getattr(placeholder, 'metadata', None)
         final_workspace_id = workspace_id or getattr(placeholder, 'workspace_id', None)
 
-        session = await self.db.create_session(
-            SessionCreate(
-                id=sdk_session_id,
+        if sdk_session_id == placeholder.id:
+            # Session ID unchanged (e.g., sandbox reused a connector-created session ID).
+            # The row already exists in DB — update it with finalization fields.
+            update = SessionUpdate(
                 title=title or placeholder.title,
-                module=placeholder.module,
-                source=placeholder.source,
-                working_directory=relative_wd,
                 model=model,
-                continued_from=placeholder.continued_from,
                 agent_type=final_agent_type,
-                trust_level=trust_level,
-                linked_bot_platform=linked_bot_platform,
-                linked_bot_chat_id=linked_bot_chat_id,
-                linked_bot_chat_type=linked_bot_chat_type,
+                working_directory=relative_wd,
                 workspace_id=final_workspace_id,
-                metadata=metadata,
             )
-        )
+            session = await self.db.update_session(sdk_session_id, update)
+            logger.debug(f"Updated existing session {sdk_session_id[:8]} with finalization fields")
+        else:
+            session = await self.db.create_session(
+                SessionCreate(
+                    id=sdk_session_id,
+                    title=title or placeholder.title,
+                    module=placeholder.module,
+                    source=placeholder.source,
+                    working_directory=relative_wd,
+                    model=model,
+                    continued_from=placeholder.continued_from,
+                    agent_type=final_agent_type,
+                    trust_level=trust_level,
+                    linked_bot_platform=linked_bot_platform,
+                    linked_bot_chat_id=linked_bot_chat_id,
+                    linked_bot_chat_type=linked_bot_chat_type,
+                    workspace_id=final_workspace_id,
+                    metadata=metadata,
+                )
+            )
 
-        # Remove the placeholder session so get_session_by_bot_link finds the
-        # finalized session (with the SDK session ID) on the next message
-        placeholder_id = placeholder.id
-        if placeholder_id and placeholder_id != sdk_session_id:
-            try:
-                await self.db.delete_session(placeholder_id)
-                logger.debug(f"Removed placeholder session {placeholder_id[:8]} after finalization")
-            except Exception as e:
-                logger.warning(f"Could not remove placeholder session {placeholder_id[:8]}: {e}")
+            # Remove the placeholder session so get_session_by_bot_link finds the
+            # finalized session (with the SDK session ID) on the next message
+            placeholder_id = placeholder.id
+            if placeholder_id and placeholder_id != sdk_session_id:
+                try:
+                    await self.db.delete_session(placeholder_id)
+                    logger.debug(f"Removed placeholder session {placeholder_id[:8]} after finalization")
+                except Exception as e:
+                    logger.warning(f"Could not remove placeholder session {placeholder_id[:8]}: {e}")
 
         logger.info(f"Finalized session: {sdk_session_id[:8]}... title='{title or 'none'}' agent_type='{final_agent_type or 'none'}'")
         return session
