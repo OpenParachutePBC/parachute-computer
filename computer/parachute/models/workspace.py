@@ -10,6 +10,8 @@ from typing import Any, Literal, Optional, Union
 
 from pydantic import BaseModel, Field
 
+TrustLevelStr = Literal["full", "vault", "sandboxed"]
+
 
 class PluginConfig(BaseModel):
     """Plugin configuration for a workspace."""
@@ -68,14 +70,12 @@ class WorkspaceConfig(BaseModel):
     name: str = Field(description="Display name")
     slug: str = Field(description="URL-safe identifier (kebab-case)")
     description: str = Field(default="", description="Description")
-    trust_level: str = Field(
+    trust_level: TrustLevelStr = Field(
         default="full",
-        alias="trust_level",
         description="Trust floor: full, vault, sandboxed",
     )
     working_directory: Optional[str] = Field(
         default=None,
-        alias="working_directory",
         description="Default working directory",
     )
     model: Optional[str] = Field(
@@ -90,8 +90,6 @@ class WorkspaceConfig(BaseModel):
         default=None,
         description="Docker sandbox config (only for sandboxed trust)",
     )
-
-    model_config = {"populate_by_name": True}
 
     def to_api_dict(self) -> dict[str, Any]:
         """Serialize for API response."""
@@ -109,13 +107,11 @@ class WorkspaceCreate(BaseModel):
 
     name: str = Field(description="Display name")
     description: str = Field(default="", description="Description")
-    trust_level: str = Field(default="full", description="Trust floor")
+    trust_level: TrustLevelStr = Field(default="full", description="Trust floor")
     working_directory: Optional[str] = Field(default=None)
     model: Optional[str] = Field(default=None)
     capabilities: Optional[WorkspaceCapabilities] = Field(default=None)
     sandbox: Optional[SandboxConfig] = Field(default=None)
-
-    model_config = {"populate_by_name": True}
 
 
 class WorkspaceUpdate(BaseModel):
@@ -123,10 +119,8 @@ class WorkspaceUpdate(BaseModel):
 
     name: Optional[str] = Field(default=None)
     description: Optional[str] = Field(default=None)
-    trust_level: Optional[str] = Field(default=None)
+    trust_level: Optional[TrustLevelStr] = Field(default=None)
     working_directory: Optional[str] = Field(default=None)
     model: Optional[str] = Field(default=None)
     capabilities: Optional[WorkspaceCapabilities] = Field(default=None)
     sandbox: Optional[SandboxConfig] = Field(default=None)
-
-    model_config = {"populate_by_name": True}
