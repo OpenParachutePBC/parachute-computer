@@ -44,8 +44,11 @@ async def run():
 
     # Set working directory if provided
     cwd = os.environ.get("PARACHUTE_CWD")
-    if cwd and os.path.isdir(cwd):
-        os.chdir(cwd)
+    if cwd:
+        if os.path.isdir(cwd):
+            os.chdir(cwd)
+        else:
+            emit({"type": "warning", "message": f"PARACHUTE_CWD={cwd} does not exist in container, staying at {os.getcwd()}"})
 
     if not oauth_token:
         emit({"type": "error", "error": "CLAUDE_CODE_OAUTH_TOKEN not set"})

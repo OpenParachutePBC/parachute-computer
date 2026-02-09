@@ -260,6 +260,19 @@ class Orchestrator:
             trust_level=trust_level,
         )
 
+        # Fall back to session's stored workspace for workspace defaults
+        # (e.g., when user resumes a session without the workspace filter active)
+        if not workspace_config and hasattr(session, 'workspace_id') and session.workspace_id:
+            from parachute.core.workspaces import get_workspace
+            workspace_config = get_workspace(self.vault_path, session.workspace_id)
+            if workspace_config:
+                workspace_id = session.workspace_id
+                logger.info(f"Using session's stored workspace: {workspace_id} ({workspace_config.name})")
+                if not working_directory and workspace_config.working_directory:
+                    working_directory = workspace_config.working_directory
+                if not model and workspace_config.model:
+                    model = workspace_config.model
+
         # For imported sessions, handle context continuity
         # - Claude Code sessions with existing JSONL: use SDK resume directly
         # - Other imports (Claude Web, ChatGPT): inject history as context
