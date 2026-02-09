@@ -9,6 +9,7 @@ Install: pip install 'python-telegram-bot>=21.0'
 
 import asyncio
 import logging
+import re
 from typing import Any, Optional
 
 from parachute.connectors.base import BotConnector
@@ -78,6 +79,7 @@ class TelegramConnector(BotConnector):
         self._app.add_handler(CommandHandler("ask", self._cmd_ask))
         self._app.add_handler(CommandHandler("journal", self._cmd_journal))
         self._app.add_handler(CommandHandler("j", self._cmd_journal))
+        self._app.add_handler(CommandHandler("init", self._cmd_init))
         self._app.add_handler(
             MessageHandler(filters.TEXT & ~filters.COMMAND, self.on_text_message)
         )
@@ -182,6 +184,7 @@ class TelegramConnector(BotConnector):
             "Parachute Bot Commands:\n\n"
             "/start - Connect to Parachute\n"
             "/new - Start a new conversation\n"
+            "/init - Re-initialize session (requires app configuration)\n"
             "/ask <text> - Ask a question (works in groups)\n"
             "/journal <text> - Create a journal entry\n"
             "/j <text> - Shorthand for /journal\n"
@@ -219,6 +222,75 @@ class TelegramConnector(BotConnector):
             logger.error(f"Journal entry failed: {e}")
             await update.message.reply_text("Failed to save journal entry.")
 
+    async def _cmd_init(self, update: Any, context: Any) -> None:
+        """Handle /init command - archive current session and create fresh pending one."""
+        user_id = update.effective_user.id
+        if not self.is_user_allowed(user_id):
+            return
+
+        chat_id = str(update.effective_chat.id)
+        chat_type = "dm" if update.effective_chat.type == "private" else "group"
+        db = getattr(self.server, "database", None)
+
+        if db:
+            session = await db.get_session_by_bot_link("telegram", chat_id)
+            if session:
+                await db.archive_session(session.id)
+                logger.info(f"Archived Telegram session {session.id[:8]} via /init for chat {chat_id}")
+
+        # Create fresh session with pending_initialization
+        import uuid
+        from datetime import datetime
+
+        from parachute.models.session import SessionCreate
+
+        session_id = str(uuid.uuid4())
+        trust_level = await self.get_trust_level(chat_type, user_id=str(user_id))
+        create_data = SessionCreate(
+            id=session_id,
+            title=f"Telegram - {update.effective_user.full_name}",
+            module="chat",
+            source="telegram",
+            trust_level=trust_level,
+            linked_bot_platform="telegram",
+            linked_bot_chat_id=chat_id,
+            linked_bot_chat_type=chat_type,
+            metadata={
+                "linked_bot": {
+                    "platform": "telegram",
+                    "chat_id": chat_id,
+                    "chat_type": chat_type,
+                    "user_display": update.effective_user.full_name,
+                    "linked_at": datetime.utcnow().isoformat() + "Z",
+                },
+                "pending_initialization": True,
+            },
+        )
+        if db:
+            await db.create_session(create_data)
+
+        # Clear any nudge state
+        self.clear_init_nudge(chat_id)
+
+        await update.message.reply_text(
+            "Session re-initialized! Configure it in the Parachute app, then activate it."
+        )
+
+    async def _handle_uninitialized(self, update: Any, chat_id: str) -> None:
+        """Handle message to uninitialized session with nudge behavior."""
+        count = self._init_nudge_sent.get(chat_id, 0)
+        if count == 0:
+            await update.message.reply_text(
+                "Session created! Configure it in the Parachute app "
+                "(set workspace and trust level), then activate it."
+            )
+        elif count == 1:
+            await update.message.reply_text(
+                "Still being configured. Please activate in the Parachute app."
+            )
+        # else: silent ignore
+        self._init_nudge_sent[chat_id] = count + 1
+
     async def on_text_message(self, update: Any, context: Any) -> None:
         """Handle incoming text message."""
         user_id = update.effective_user.id
@@ -238,17 +310,41 @@ class TelegramConnector(BotConnector):
         chat_type = "dm" if update.effective_chat.type == "private" else "group"
         message_text = update.message.text
 
-        # Group mention gating: only respond to @mentions in group chats
-        if chat_type == "group" and self.group_mention_mode == "mention_only":
-            bot_me = await self._app.bot.get_me()
-            bot_username = bot_me.username
-            if bot_username and f"@{bot_username}" not in message_text:
-                return  # Silently ignore non-mentions in groups
-            # Strip the mention from the message
-            if bot_username:
-                message_text = message_text.replace(f"@{bot_username}", "").strip()
+        # Session-aware response mode gating
+        chat_id = str(update.effective_chat.id)
+        db = getattr(self.server, "database", None)
+        session = await db.get_session_by_bot_link("telegram", chat_id) if db else None
+
+        # Determine response mode: per-session overrides connector default
+        default_mode = "all_messages" if chat_type == "dm" else self.group_mention_mode
+        if session and session.metadata:
+            bs = session.metadata.get("bot_settings", {})
+            response_mode = bs.get("response_mode", default_mode)
+        else:
+            response_mode = default_mode
+        logger.debug(f"Response mode for chat {chat_id}: {response_mode} (default={default_mode}, session={session.id if session else None})")
+
+        if response_mode == "mention_only":
+            # Check custom mention pattern, fall back to @botusername
+            custom_pattern = ""
+            if session and session.metadata:
+                bs = session.metadata.get("bot_settings", {})
+                custom_pattern = bs.get("mention_pattern", "")
+
+            if custom_pattern:
+                trigger = custom_pattern
+            else:
+                bot_me = await self._app.bot.get_me()
+                trigger = f"@{bot_me.username}" if bot_me.username else ""
+
+            if trigger and trigger.lower() not in message_text.lower():
+                logger.debug(f"Mention gating: trigger={trigger!r} not found in message={message_text!r}")
+                return  # Silently ignore non-mentions
+            if trigger:
+                # Case-insensitive replacement
+                message_text = re.sub(re.escape(trigger), "", message_text, flags=re.IGNORECASE).strip()
             if not message_text:
-                return  # Nothing left after stripping mention
+                return
 
         await self._process_text_message(update, message_text)
 
@@ -268,6 +364,11 @@ class TelegramConnector(BotConnector):
 
         if not session:
             await update.message.reply_text("Internal error: could not create session.")
+            return
+
+        # Check initialization status
+        if not await self.is_session_initialized(session):
+            await self._handle_uninitialized(update, chat_id)
             return
 
         # Send "typing" indicator
@@ -378,6 +479,11 @@ class TelegramConnector(BotConnector):
         except Exception as e:
             logger.error(f"Daily entry creation failed: {e}")
             raise
+
+    async def send_message(self, chat_id: str, text: str) -> None:
+        """Send a message to a Telegram chat."""
+        if self._app and self._app.bot:
+            await self._app.bot.send_message(chat_id=int(chat_id), text=text)
 
     async def send_approval_message(self, chat_id: str) -> None:
         """Send approval confirmation to user via Telegram."""

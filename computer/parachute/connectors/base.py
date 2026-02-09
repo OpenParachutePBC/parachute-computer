@@ -38,6 +38,7 @@ class BotConnector(ABC):
         self._running = False
         self._chat_locks: dict[str, asyncio.Lock] = {}
         self._trust_overrides: dict[str, str] = {}  # user_id -> trust_level cache
+        self._init_nudge_sent: dict[str, int] = {}
 
     @abstractmethod
     async def start(self) -> None:
@@ -209,12 +210,27 @@ class BotConnector(ABC):
                     "user_display": user_display,
                     "linked_at": datetime.utcnow().isoformat() + "Z",
                 },
+                "pending_initialization": True,
             },
         )
 
         session = await db.create_session(create_data)
         logger.info(f"Created {platform} session: {session_id} for chat {chat_id}")
         return session
+
+    async def is_session_initialized(self, session) -> bool:
+        """Check if a bot session has been initialized (configured in app)."""
+        if not session or not session.metadata:
+            return True
+        return not session.metadata.get("pending_initialization", False)
+
+    async def send_message(self, chat_id: str, text: str) -> None:
+        """Send a message to a chat. Override in subclasses."""
+        logger.info(f"{self.platform}: send_message not implemented for chat {chat_id}")
+
+    def clear_init_nudge(self, chat_id: str) -> None:
+        """Clear initialization nudge counter for a chat."""
+        self._init_nudge_sent.pop(chat_id, None)
 
     @staticmethod
     def split_response(text: str, max_len: int) -> list[str]:
