@@ -229,7 +229,7 @@ class _WorkspaceSidebar extends ConsumerWidget {
                       icon: _workspaceIcon(ws),
                       isActive: activeSlug == ws.slug,
                       isDark: isDark,
-                      subtitle: ws.model ?? ws.trustLevel,
+                      subtitle: ws.model ?? ws.defaultTrustLevel,
                       onTap: () => ref.read(activeWorkspaceProvider.notifier).state = ws.slug,
                       onEdit: () async {
                         final saved = await EditWorkspaceDialog.show(context, ws);
@@ -312,7 +312,7 @@ class _WorkspaceSidebar extends ConsumerWidget {
   }
 
   IconData _workspaceIcon(Workspace ws) {
-    final tl = TrustLevel.fromString(ws.trustLevel);
+    final tl = TrustLevel.fromString(ws.defaultTrustLevel);
     return tl == TrustLevel.untrusted ? Icons.shield_outlined : Icons.workspaces_outline;
   }
 

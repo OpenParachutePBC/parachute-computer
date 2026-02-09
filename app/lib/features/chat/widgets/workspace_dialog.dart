@@ -75,7 +75,7 @@ class _WorkspaceForm extends StatelessWidget {
           SizedBox(height: Spacing.md),
           DropdownButtonFormField<String>(
             value: trustLevel,
-            decoration: const InputDecoration(labelText: 'Trust level'),
+            decoration: const InputDecoration(labelText: 'Default trust level'),
             items: TrustLevel.values
                 .map((tl) => DropdownMenuItem(
                       value: tl.name,
@@ -199,7 +199,7 @@ class _CreateWorkspaceDialogState extends ConsumerState<CreateWorkspaceDialog> {
       final ws = await service.createWorkspace(
         name: name,
         description: _descController.text.trim(),
-        trustLevel: _trustLevel,
+        defaultTrustLevel: _trustLevel,
         workingDirectory: _dirController.text.trim().isEmpty ? null : _dirController.text.trim(),
         model: _model,
       );
@@ -251,7 +251,7 @@ class _EditWorkspaceDialogState extends ConsumerState<EditWorkspaceDialog> {
     _nameController = TextEditingController(text: widget.workspace.name);
     _descController = TextEditingController(text: widget.workspace.description);
     _dirController = TextEditingController(text: widget.workspace.workingDirectory ?? '');
-    _trustLevel = widget.workspace.trustLevel;
+    _trustLevel = widget.workspace.defaultTrustLevel;
     _model = widget.workspace.model;
   }
 
@@ -313,7 +313,7 @@ class _EditWorkspaceDialogState extends ConsumerState<EditWorkspaceDialog> {
       final updates = <String, dynamic>{
         'name': _nameController.text.trim(),
         'description': _descController.text.trim(),
-        'trust_level': _trustLevel,
+        'default_trust_level': _trustLevel,
         'working_directory': _dirController.text.trim().isEmpty ? null : _dirController.text.trim(),
         'model': _model,
       };

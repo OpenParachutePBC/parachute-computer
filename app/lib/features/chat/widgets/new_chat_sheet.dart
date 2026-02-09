@@ -99,19 +99,6 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
   Workspace? _selectedWorkspace; // null = no workspace
   bool _initialized = false;
 
-  /// Trust floor from workspace — trust levels less restrictive are disabled.
-  TrustLevel? get _trustFloor {
-    if (_selectedWorkspace == null) return null;
-    return TrustLevel.fromString(_selectedWorkspace!.trustLevel);
-  }
-
-  /// Whether a trust level is at or above the workspace floor (more restrictive = higher index).
-  bool _isTrustAllowed(TrustLevel tl) {
-    final floor = _trustFloor;
-    if (floor == null) return true;
-    return tl.index >= floor.index;
-  }
-
   void _selectWorkspace(Workspace? workspace) {
     setState(() {
       _selectedWorkspace = workspace;
@@ -120,10 +107,10 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
         if (workspace.workingDirectory != null) {
           _workingDirectory = workspace.workingDirectory;
         }
-        // Set trust to workspace floor if current selection is less restrictive
-        final floor = TrustLevel.fromString(workspace.trustLevel);
-        if (_selectedTrustLevel == null || _selectedTrustLevel!.index < floor.index) {
-          _selectedTrustLevel = floor == TrustLevel.trusted ? null : floor;
+        // Set default trust from workspace (user can still change freely)
+        if (_selectedTrustLevel == null) {
+          final wsTrust = TrustLevel.fromString(workspace.defaultTrustLevel);
+          _selectedTrustLevel = wsTrust == TrustLevel.trusted ? null : wsTrust;
         }
       }
     });
@@ -498,48 +485,41 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
 
   Widget _buildTrustChip(TrustLevel? level, String label, IconData icon, bool isDark) {
     final isSelected = _selectedTrustLevel == level;
-    // "Default" chip (level == null) is disabled when workspace has a floor
-    final isDisabled = level == null
-        ? _trustFloor != null
-        : !_isTrustAllowed(level);
     final color = level?.iconColor(isDark) ??
         (isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood);
 
     return GestureDetector(
-      onTap: isDisabled ? null : () => setState(() {
+      onTap: () => setState(() {
         _selectedTrustLevel = level;
       }),
-      child: Opacity(
-        opacity: isDisabled ? 0.4 : 1.0,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-          decoration: BoxDecoration(
-            color: isSelected
-                ? color.withValues(alpha: 0.15)
-                : (isDark
-                    ? BrandColors.nightSurfaceElevated
-                    : BrandColors.stone.withValues(alpha: 0.2)),
-            borderRadius: BorderRadius.circular(Radii.sm),
-            border: Border.all(
-              color: isSelected ? color : Colors.transparent,
-              width: 1.5,
-            ),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: isSelected
+              ? color.withValues(alpha: 0.15)
+              : (isDark
+                  ? BrandColors.nightSurfaceElevated
+                  : BrandColors.stone.withValues(alpha: 0.2)),
+          borderRadius: BorderRadius.circular(Radii.sm),
+          border: Border.all(
+            color: isSelected ? color : Colors.transparent,
+            width: 1.5,
           ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: 14, color: isSelected ? color : (isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood)),
-              const SizedBox(width: 4),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w500,
-                  color: isSelected ? color : (isDark ? BrandColors.nightText : BrandColors.charcoal),
-                ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 14, color: isSelected ? color : (isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood)),
+            const SizedBox(width: 4),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w500,
+                color: isSelected ? color : (isDark ? BrandColors.nightText : BrandColors.charcoal),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );

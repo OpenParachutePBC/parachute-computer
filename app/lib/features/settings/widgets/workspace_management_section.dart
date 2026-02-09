@@ -151,9 +151,9 @@ class _WorkspaceTile extends ConsumerWidget {
         children: [
           // Trust level icon
           Icon(
-            _trustIcon(workspace.trustLevel),
+            _trustIcon(workspace.defaultTrustLevel),
             size: 20,
-            color: _trustColor(workspace.trustLevel),
+            color: _trustColor(workspace.defaultTrustLevel),
           ),
           SizedBox(width: Spacing.md),
           // Workspace info
@@ -172,8 +172,8 @@ class _WorkspaceTile extends ConsumerWidget {
                 Row(
                   children: [
                     _Badge(
-                      label: workspace.trustLevel,
-                      color: _trustColor(workspace.trustLevel),
+                      label: workspace.defaultTrustLevel,
+                      color: _trustColor(workspace.defaultTrustLevel),
                       isDark: isDark,
                     ),
                     if (workspace.model != null) ...[
