@@ -1119,12 +1119,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         onTap: () {
           ref.read(activeWorkspaceProvider.notifier).state = workspace?.slug;
           if (workspace != null) {
-            // Auto-fill trust from workspace
-            final floor = TrustLevel.fromString(workspace.trustLevel);
-            if (_pendingTrustLevel == null ||
-                TrustLevel.fromString(_pendingTrustLevel).index < floor.index) {
+            // Set default trust from workspace (user can still change freely)
+            if (_pendingTrustLevel == null) {
+              final wsTrust = TrustLevel.fromString(workspace.defaultTrustLevel);
               setState(() {
-                _pendingTrustLevel = floor == TrustLevel.full ? null : floor.name;
+                _pendingTrustLevel = wsTrust == TrustLevel.trusted ? null : wsTrust.name;
               });
             }
             // Auto-fill working directory
@@ -1176,17 +1175,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         ? TrustLevel.fromString(_pendingTrustLevel)
         : TrustLevel.trusted;
 
-    // Compute trust floor from active workspace
-    final activeSlug = ref.watch(activeWorkspaceProvider);
-    TrustLevel? trustFloor;
-    if (activeSlug != null) {
-      final workspaces = ref.watch(workspacesProvider).valueOrNull;
-      if (workspaces != null) {
-        final ws = workspaces.where((w) => w.slug == activeSlug).firstOrNull;
-        if (ws != null) trustFloor = TrustLevel.fromString(ws.trustLevel);
-      }
-    }
-
     return Column(
       children: [
         Text(
@@ -1203,49 +1191,43 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           runSpacing: Spacing.xs,
           children: TrustLevel.values.map((tl) {
             final isSelected = currentLevel == tl;
-            final isDisabled = trustFloor != null && tl.index < trustFloor.index;
             final color = tl.iconColor(isDark);
             return Padding(
               padding: const EdgeInsets.symmetric(horizontal: 3),
               child: Tooltip(
-                message: isDisabled && trustFloor != null
-                    ? 'Workspace requires ${trustFloor.displayName} or more restrictive'
-                    : tl.description,
+                message: tl.description,
                 child: GestureDetector(
-                  onTap: isDisabled ? null : () => setState(() {
+                  onTap: () => setState(() {
                     _pendingTrustLevel = tl == TrustLevel.trusted ? null : tl.name;
                   }),
-                  child: Opacity(
-                    opacity: isDisabled ? 0.4 : 1.0,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                      decoration: BoxDecoration(
-                        color: isSelected
-                            ? color.withValues(alpha: 0.15)
-                            : (isDark
-                                ? BrandColors.nightSurfaceElevated
-                                : BrandColors.stone.withValues(alpha: 0.2)),
-                        borderRadius: BorderRadius.circular(Radii.sm),
-                        border: Border.all(
-                          color: isSelected ? color : Colors.transparent,
-                          width: 1.5,
-                        ),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: isSelected
+                          ? color.withValues(alpha: 0.15)
+                          : (isDark
+                              ? BrandColors.nightSurfaceElevated
+                              : BrandColors.stone.withValues(alpha: 0.2)),
+                      borderRadius: BorderRadius.circular(Radii.sm),
+                      border: Border.all(
+                        color: isSelected ? color : Colors.transparent,
+                        width: 1.5,
                       ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(tl.icon, size: 13, color: isSelected ? color : (isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood)),
-                          const SizedBox(width: 4),
-                          Text(
-                            tl.displayName,
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w500,
-                              color: isSelected ? color : (isDark ? BrandColors.nightText : BrandColors.charcoal),
-                            ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(tl.icon, size: 13, color: isSelected ? color : (isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood)),
+                        const SizedBox(width: 4),
+                        Text(
+                          tl.displayName,
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w500,
+                            color: isSelected ? color : (isDark ? BrandColors.nightText : BrandColors.charcoal),
                           ),
-                        ],
-                      ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
