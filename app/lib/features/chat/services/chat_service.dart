@@ -16,6 +16,8 @@ import '../models/session_transcript.dart';
 import '../models/system_prompt_info.dart';
 import '../models/prompt_metadata.dart';
 import '../models/agent_info.dart';
+import '../models/skill_info.dart';
+import '../models/mcp_server_info.dart';
 import '../../../core/errors/app_error.dart';
 
 // Import all the extension files as parts

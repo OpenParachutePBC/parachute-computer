@@ -372,6 +372,58 @@ extension ChatSessionService on ChatService {
     }
   }
 
+  /// Get all available skills from the server.
+  Future<List<SkillInfo>> getSkills() async {
+    try {
+      final response = await client.get(
+        Uri.parse('$baseUrl/api/skills'),
+        headers: defaultHeaders,
+      ).timeout(ChatService.requestTimeout);
+
+      if (response.statusCode != 200) {
+        throw NetworkError(
+          'Failed to get skills',
+          statusCode: response.statusCode,
+        );
+      }
+
+      final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+      final list = decoded['skills'] as List<dynamic>? ?? [];
+      return list
+          .map((e) => SkillInfo.fromJson(e as Map<String, dynamic>))
+          .toList();
+    } catch (e) {
+      debugPrint('[ChatService] Error fetching skills: $e');
+      rethrow;
+    }
+  }
+
+  /// Get all configured MCP servers from the server.
+  Future<List<McpServerInfo>> getMcpServers() async {
+    try {
+      final response = await client.get(
+        Uri.parse('$baseUrl/api/mcps'),
+        headers: defaultHeaders,
+      ).timeout(ChatService.requestTimeout);
+
+      if (response.statusCode != 200) {
+        throw NetworkError(
+          'Failed to get MCP servers',
+          statusCode: response.statusCode,
+        );
+      }
+
+      final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+      final list = decoded['servers'] as List<dynamic>? ?? [];
+      return list
+          .map((e) => McpServerInfo.fromJson(e as Map<String, dynamic>))
+          .toList();
+    } catch (e) {
+      debugPrint('[ChatService] Error fetching MCP servers: $e');
+      rethrow;
+    }
+  }
+
   /// Get all sessions with active streams on the server
   Future<List<String>> getActiveStreams() async {
     try {
