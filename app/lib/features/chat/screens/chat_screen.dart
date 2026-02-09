@@ -15,11 +15,7 @@ import '../widgets/connection_status_banner.dart';
 import '../widgets/resume_marker.dart';
 import '../widgets/session_resume_banner.dart';
 import '../widgets/directory_picker.dart';
-import '../widgets/session_info_sheet.dart';
-import '../widgets/session_config_sheet.dart';
-import '../widgets/context_settings_sheet.dart';
-import '../widgets/curator_session_viewer_sheet.dart';
-import 'package:parachute/core/providers/base_server_provider.dart' show showCuratorFeatures;
+import '../widgets/unified_session_settings.dart';
 import '../widgets/user_question_card.dart';
 import '../../settings/models/trust_level.dart';
 import '../../settings/screens/settings_screen.dart';
@@ -381,148 +377,27 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         appBar: AppBar(
           backgroundColor: isDark ? BrandColors.nightSurface : BrandColors.softWhite,
           surfaceTintColor: Colors.transparent,
-          title: _buildTitle(context, isDark, currentSessionId),
+          title: _buildTitle(context, isDark, currentSessionId, chatState),
           actions: [
-            // Refresh button (for when streaming reconnection isn't working)
-            if (chatState.sessionId != null && !chatState.isStreaming)
-              IconButton(
-                onPressed: () {
-                  ref.read(chatMessagesProvider.notifier).refreshSession();
-                },
-                icon: const Icon(Icons.refresh, size: 20),
-                tooltip: 'Refresh session',
-              ),
-            // Working directory indicator/picker
-            if (chatState.workingDirectory != null)
-              Tooltip(
-                message: chatState.workingDirectory!,
-                child: TextButton.icon(
-                  // Only allow changing before first message
-                  onPressed: chatState.messages.isEmpty ? _showDirectoryPicker : null,
-                  icon: Icon(
-                    Icons.folder_outlined,
-                    size: 18,
-                    color: isDark ? BrandColors.nightForest : BrandColors.forest,
-                  ),
-                  label: Text(
-                    chatState.workingDirectory!.split('/').last,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: isDark ? BrandColors.nightForest : BrandColors.forest,
-                    ),
-                  ),
-                ),
-              )
-            else if (chatState.messages.isEmpty)
-              // Only show picker button for new chats without a directory set
+            // Working directory picker (only for new chats)
+            if (chatState.workingDirectory == null && chatState.messages.isEmpty)
               IconButton(
                 onPressed: _showDirectoryPicker,
-                icon: const Icon(Icons.folder_outlined),
+                icon: const Icon(Icons.folder_outlined, size: 20),
                 tooltip: 'Set working directory',
               ),
-            // Agent indicator (shows which agent is being used)
-            if (chatState.promptMetadata?.agentName != null &&
-                chatState.promptMetadata!.agentName != 'Vault Agent')
-              Tooltip(
-                message: 'Agent: ${chatState.promptMetadata!.agentName}',
-                child: Container(
-                  margin: const EdgeInsets.only(right: Spacing.xs),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: Spacing.sm,
-                    vertical: Spacing.xxs,
-                  ),
-                  decoration: BoxDecoration(
-                    color: BrandColors.turquoise.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.smart_toy,
-                        size: 12,
-                        color: BrandColors.turquoise,
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        _getAgentBadge(chatState.promptMetadata!.agentName!),
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.bold,
-                          color: BrandColors.turquoise,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            // Model indicator (shows which model is being used)
-            if (chatState.model != null)
-              Tooltip(
-                message: chatState.model!,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: Spacing.sm,
-                    vertical: Spacing.xxs,
-                  ),
-                  decoration: BoxDecoration(
-                    color: _getModelColor(chatState.model!).withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Text(
-                    _getModelBadge(chatState.model!),
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.bold,
-                      color: _getModelColor(chatState.model!),
-                    ),
-                  ),
-                ),
-              ),
-            // Context settings button (toggle context files, reload CLAUDE.md)
-            IconButton(
-              onPressed: () => _showContextSettingsSheet(context),
-              icon: Icon(
-                Icons.tune,
-                size: 20,
-                color: isDark ? BrandColors.nightTextSecondary : BrandColors.charcoal,
-              ),
-              tooltip: 'Context settings',
-            ),
-            // Session info button (shows prompt metadata and session details)
-            if (chatState.sessionId != null || chatState.promptMetadata != null)
-              IconButton(
-                onPressed: () => _showSessionInfoSheet(context),
-                icon: Icon(
-                  Icons.info_outline,
-                  size: 20,
-                  color: isDark ? BrandColors.nightTextSecondary : BrandColors.charcoal,
-                ),
-                tooltip: 'Session info',
-              ),
-            // Curator activity button (shows background curator status)
-            if (showCuratorFeatures && chatState.sessionId != null)
-              IconButton(
-                onPressed: () => _showCuratorSheet(context),
-                icon: Icon(
-                  Icons.auto_fix_high,
-                  size: 20,
-                  color: isDark ? BrandColors.nightTextSecondary : BrandColors.charcoal,
-                ),
-                tooltip: 'Curator activity',
-              ),
-            // Session config (trust level, per-chat settings)
+            // Unified session settings (replaces config, context, info, curator)
             if (chatState.sessionId != null)
               IconButton(
-                onPressed: () => _showSessionConfigSheet(context),
+                onPressed: () => _showUnifiedSettings(context),
                 icon: Icon(
                   Icons.settings_outlined,
                   size: 20,
                   color: isDark ? BrandColors.nightTextSecondary : BrandColors.charcoal,
                 ),
-                tooltip: 'Session config',
+                tooltip: 'Session settings',
               ),
-            // More actions menu (archive, delete)
+            // More actions menu (archive, delete, refresh)
             if (chatState.sessionId != null)
               PopupMenuButton<String>(
                 icon: Icon(
@@ -533,6 +408,17 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                 tooltip: 'More actions',
                 onSelected: (value) => _handleMenuAction(value, chatState.sessionId!),
                 itemBuilder: (context) => [
+                  if (!chatState.isStreaming)
+                    const PopupMenuItem(
+                      value: 'refresh',
+                      child: Row(
+                        children: [
+                          Icon(Icons.refresh, size: 20),
+                          SizedBox(width: Spacing.sm),
+                          Text('Refresh'),
+                        ],
+                      ),
+                    ),
                   PopupMenuItem(
                     value: 'archive',
                     child: Row(
@@ -669,8 +555,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     );
   }
 
-  Widget _buildTitle(BuildContext context, bool isDark, String? sessionId) {
-    final chatState = ref.watch(chatMessagesProvider);
+  Widget _buildTitle(BuildContext context, bool isDark, String? sessionId, ChatMessagesState chatState) {
     final sessionTitle = chatState.sessionTitle;
 
     // Determine title text
@@ -683,35 +568,93 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       titleText = 'Parachute Chat';
     }
 
+    // Build subtitle badges
+    final hasBadges = chatState.model != null ||
+        (chatState.promptMetadata?.agentName != null &&
+            chatState.promptMetadata!.agentName != 'Vault Agent') ||
+        chatState.workingDirectory != null;
+
     return GestureDetector(
       onTap: () => SessionSelector.show(context),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(
-            Icons.chat_bubble_outline,
-            size: 20,
-            color: isDark ? BrandColors.nightForest : BrandColors.forest,
-          ),
-          const SizedBox(width: Spacing.sm),
-          Flexible(
-            child: Text(
-              titleText,
-              style: TextStyle(
-                fontSize: TypographyTokens.titleMedium,
-                fontWeight: FontWeight.w600,
-                color: isDark ? BrandColors.nightText : BrandColors.charcoal,
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.chat_bubble_outline,
+                size: 20,
+                color: isDark ? BrandColors.nightForest : BrandColors.forest,
               ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+              const SizedBox(width: Spacing.sm),
+              Flexible(
+                child: Text(
+                  titleText,
+                  style: TextStyle(
+                    fontSize: TypographyTokens.titleMedium,
+                    fontWeight: FontWeight.w600,
+                    color: isDark ? BrandColors.nightText : BrandColors.charcoal,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              Icon(
+                Icons.arrow_drop_down,
+                size: 20,
+                color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+              ),
+            ],
+          ),
+          if (hasBadges) ...[
+            const SizedBox(height: Spacing.xxs),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (chatState.model != null) ...[
+                  _appBarBadge(
+                    _getModelBadge(chatState.model!),
+                    _getModelColor(chatState.model!),
+                  ),
+                  const SizedBox(width: Spacing.xs),
+                ],
+                if (chatState.promptMetadata?.agentName != null &&
+                    chatState.promptMetadata!.agentName != 'Vault Agent') ...[
+                  _appBarBadge(
+                    _getAgentBadge(chatState.promptMetadata!.agentName!),
+                    BrandColors.turquoise,
+                  ),
+                  const SizedBox(width: Spacing.xs),
+                ],
+                if (chatState.workingDirectory != null)
+                  _appBarBadge(
+                    chatState.workingDirectory!.split('/').last,
+                    isDark ? BrandColors.nightForest : BrandColors.forest,
+                  ),
+              ],
             ),
-          ),
-          Icon(
-            Icons.arrow_drop_down,
-            size: 20,
-            color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
-          ),
+          ],
         ],
+      ),
+    );
+  }
+
+  Widget _appBarBadge(String label, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 10,
+          fontWeight: FontWeight.w600,
+          color: color,
+        ),
       ),
     );
   }
@@ -1307,46 +1250,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         : agentName;
   }
 
-  /// Show the session info sheet with prompt metadata
-  void _showSessionInfoSheet(BuildContext context) {
-    final chatState = ref.read(chatMessagesProvider);
-    SessionInfoSheet.show(
-      context,
-      sessionId: chatState.sessionId,
-      model: chatState.model,
-      workingDirectory: chatState.workingDirectory,
-      promptMetadata: chatState.promptMetadata,
-      selectedContexts: chatState.selectedContexts,
-    );
-  }
-
-  /// Show context settings sheet for mid-session context management
-  void _showContextSettingsSheet(BuildContext context) {
-    final chatState = ref.read(chatMessagesProvider);
-    ContextSettingsSheet.show(
-      context,
-      workingDirectory: chatState.workingDirectory,
-      promptMetadata: chatState.promptMetadata,
-      selectedContexts: chatState.selectedContexts,
-      onContextsChanged: (contexts) {
-        ref.read(chatMessagesProvider.notifier).setSelectedContexts(contexts);
-      },
-      onReloadClaudeMd: () {
-        ref.read(chatMessagesProvider.notifier).markClaudeMdForReload();
-      },
-    );
-  }
-
-  /// Show curator session viewer sheet
-  void _showCuratorSheet(BuildContext context) {
-    final chatState = ref.read(chatMessagesProvider);
-    if (chatState.sessionId != null) {
-      CuratorSessionViewerSheet.show(context, chatState.sessionId!);
-    }
-  }
-
-  /// Show session config sheet for trust level and per-chat settings
-  void _showSessionConfigSheet(BuildContext context) {
+  /// Show the unified session settings sheet
+  void _showUnifiedSettings(BuildContext context) {
     final chatState = ref.read(chatMessagesProvider);
     if (chatState.sessionId == null) return;
 
@@ -1354,30 +1259,41 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final sessionsAsync = ref.read(chatSessionsProvider);
     ChatSession? currentSession;
     sessionsAsync.whenData((sessions) {
-      currentSession = sessions.where((s) => s.id == chatState.sessionId).firstOrNull;
+      currentSession =
+          sessions.where((s) => s.id == chatState.sessionId).firstOrNull;
     });
 
-    // Fall back to a minimal session if not found in the list
-    // Include trustLevel from chat state so config sheet shows correct value
-    final session = currentSession ?? ChatSession(
-      id: chatState.sessionId!,
-      createdAt: DateTime.now(),
-      title: chatState.sessionTitle,
-      trustLevel: chatState.trustLevel,
-    );
+    final session = currentSession ??
+        ChatSession(
+          id: chatState.sessionId!,
+          createdAt: DateTime.now(),
+          title: chatState.sessionTitle,
+          trustLevel: chatState.trustLevel,
+        );
 
-    SessionConfigSheet.show(context, session).then((result) {
-      if (result == true) {
-        // Refresh session after config update
+    UnifiedSessionSettings.show(
+      context,
+      session: session,
+      model: chatState.model,
+      workingDirectory: chatState.workingDirectory,
+      promptMetadata: chatState.promptMetadata,
+      selectedContexts: chatState.selectedContexts,
+      onReloadClaudeMd: () {
+        ref.read(chatMessagesProvider.notifier).markClaudeMdForReload();
+      },
+      onConfigSaved: () {
         ref.read(chatMessagesProvider.notifier).refreshSession();
         ref.invalidate(chatSessionsProvider);
-      }
-    });
+      },
+    );
   }
 
-  /// Handle menu actions (archive, delete)
+  /// Handle menu actions (archive, delete, refresh)
   Future<void> _handleMenuAction(String action, String sessionId) async {
     switch (action) {
+      case 'refresh':
+        ref.read(chatMessagesProvider.notifier).refreshSession();
+        break;
       case 'archive':
         // Capture the provider function before navigating to avoid accessing
         // ref after the widget is disposed
