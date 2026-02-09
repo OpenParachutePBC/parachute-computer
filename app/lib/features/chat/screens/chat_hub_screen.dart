@@ -10,7 +10,7 @@ import 'package:parachute/features/settings/models/trust_level.dart';
 import 'package:parachute/features/settings/screens/settings_screen.dart';
 import '../providers/chat_providers.dart';
 import '../models/chat_session.dart';
-import '../widgets/session_list_item.dart';
+import '../widgets/date_grouped_session_list.dart';
 import '../widgets/usage_bar.dart';
 import 'chat_screen.dart';
 
@@ -51,6 +51,16 @@ class _ChatHubScreenState extends ConsumerState<ChatHubScreen> {
         backgroundColor: isDark ? BrandColors.nightSurface : BrandColors.softWhite,
         elevation: 0,
         actions: [
+          // New chat button (moved from FAB)
+          if (!_showArchived && serverUrlAsync.valueOrNull?.isNotEmpty == true)
+            IconButton(
+              icon: Icon(
+                Icons.add_comment_outlined,
+                color: isDark ? BrandColors.nightTurquoise : BrandColors.turquoise,
+              ),
+              tooltip: 'New chat',
+              onPressed: () => _startNewChat(context),
+            ),
           // Archive toggle
           IconButton(
             icon: Icon(_showArchived ? Icons.inbox : Icons.archive_outlined),
@@ -105,13 +115,7 @@ class _ChatHubScreenState extends ConsumerState<ChatHubScreen> {
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (e, _) => _buildErrorState(context, isDark, e),
       ),
-      floatingActionButton: serverUrlAsync.valueOrNull?.isNotEmpty == true && !_showArchived
-          ? FloatingActionButton(
-              onPressed: () => _startNewChat(context),
-              backgroundColor: isDark ? BrandColors.nightTurquoise : BrandColors.turquoise,
-              child: const Icon(Icons.add),
-            )
-          : null,
+      floatingActionButton: null,
     );
   }
 
@@ -460,17 +464,10 @@ class _ChatHubScreenState extends ConsumerState<ChatHubScreen> {
               await ref.read(chatSessionsProvider.future);
             }
           },
-          child: ListView.builder(
-            padding: EdgeInsets.symmetric(vertical: Spacing.sm),
-            itemCount: sessions.length,
-            itemBuilder: (context, index) {
-              final session = sessions[index];
-              return SessionListItem(
-                session: session,
-                onTap: () => _openSession(context, session),
-                isDark: isDark,
-              );
-            },
+          child: DateGroupedSessionList(
+            sessions: sessions,
+            onTap: (session) => _openSession(context, session),
+            isDark: isDark,
           ),
         );
       },
