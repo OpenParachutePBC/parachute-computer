@@ -157,7 +157,7 @@ class _TrustLevelsSectionState extends ConsumerState<TrustLevelsSection> {
           // Footer
           SizedBox(height: Spacing.md),
           Text(
-            'Docker required for Sandboxed trust level',
+            'Docker required for Untrusted sessions',
             style: TextStyle(
               fontSize: TypographyTokens.labelSmall,
               color: isDark ? BrandColors.nightTextSecondary : BrandColors.stone,
@@ -326,7 +326,7 @@ class _TrustLevelsSectionState extends ConsumerState<TrustLevelsSection> {
 
   Widget _buildModuleRow(Map<String, dynamic> module, bool isDark) {
     final name = module['name'] as String? ?? 'unknown';
-    final trustLevelStr = module['trust_level'] as String? ?? 'full';
+    final trustLevelStr = module['trust_level'] as String? ?? 'trusted';
     final trustLevel = TrustLevel.fromString(trustLevelStr);
 
     return Padding(

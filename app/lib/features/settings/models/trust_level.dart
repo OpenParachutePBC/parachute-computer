@@ -2,40 +2,44 @@ import 'package:flutter/material.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
 
 /// Trust level for agent execution, matching server TrustLevel enum.
+///
+/// Binary model: trusted (bare metal) or untrusted (Docker sandbox).
 enum TrustLevel {
-  full,
-  vault,
-  sandboxed;
+  trusted,
+  untrusted;
 
   String get displayName => switch (this) {
-        full => 'Full Access',
-        vault => 'Vault Only',
-        sandboxed => 'Isolated',
+        trusted => 'Trusted',
+        untrusted => 'Untrusted',
       };
 
   String get description => switch (this) {
-        full => 'Unrestricted access to all tools and files',
-        vault => 'Read vault files only, no commands',
-        sandboxed => 'Runs in separate workspace with chosen access',
+        trusted => 'Full access to tools and vault files',
+        untrusted => 'Runs in isolated Docker container',
       };
 
   IconData get icon => switch (this) {
-        full => Icons.shield_outlined,
-        vault => Icons.lock_outlined,
-        sandboxed => Icons.security_outlined,
+        trusted => Icons.shield_outlined,
+        untrusted => Icons.security_outlined,
       };
 
   Color iconColor(bool isDark) => switch (this) {
-        full => isDark ? BrandColors.nightForest : BrandColors.forest,
-        vault => Colors.amber,
-        sandboxed => Colors.blue,
+        trusted => isDark ? BrandColors.nightForest : BrandColors.forest,
+        untrusted => Colors.blue,
       };
 
   static TrustLevel fromString(String? value) {
-    if (value == null) return TrustLevel.full;
+    if (value == null) return TrustLevel.trusted;
+    // Legacy mapping: full/vault → trusted, sandboxed → untrusted
+    const legacy = {
+      'full': 'trusted',
+      'vault': 'trusted',
+      'sandboxed': 'untrusted',
+    };
+    final mapped = legacy[value] ?? value;
     return TrustLevel.values.firstWhere(
-      (e) => e.name == value,
-      orElse: () => TrustLevel.full,
+      (e) => e.name == mapped,
+      orElse: () => TrustLevel.trusted,
     );
   }
 }

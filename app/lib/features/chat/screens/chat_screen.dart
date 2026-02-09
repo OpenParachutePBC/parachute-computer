@@ -893,7 +893,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   Widget _buildTrustLevelSelector(bool isDark) {
     final currentLevel = _pendingTrustLevel != null
         ? TrustLevel.fromString(_pendingTrustLevel)
-        : TrustLevel.full;
+        : TrustLevel.trusted;
 
     return Column(
       children: [
@@ -917,7 +917,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                 message: tl.description,
                 child: GestureDetector(
                   onTap: () => setState(() {
-                    _pendingTrustLevel = tl == TrustLevel.full ? null : tl.name;
+                    _pendingTrustLevel = tl == TrustLevel.trusted ? null : tl.name;
                   }),
                   child: Container(
                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
@@ -963,8 +963,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
           ),
         ),
-        // Sandbox config panel (shown when Isolated is selected)
-        if (currentLevel == TrustLevel.sandboxed)
+        // Sandbox config panel (shown when Untrusted is selected)
+        if (currentLevel == TrustLevel.untrusted)
           _buildSandboxConfigPanel(isDark),
       ],
     );

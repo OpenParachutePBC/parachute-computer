@@ -25,19 +25,19 @@ class _BotConnectorsSectionState extends ConsumerState<BotConnectorsSection> {
   final _tgTokenController = TextEditingController();
   final _tgAllowedUsersController = TextEditingController();
   bool _tgEnabled = false;
-  String _tgDmTrust = 'vault';
-  String _tgGroupTrust = 'sandboxed';
+  String _tgDmTrust = 'untrusted';
+  String _tgGroupTrust = 'untrusted';
   bool _tgTokenVisible = false;
 
   // Discord controllers
   final _dcTokenController = TextEditingController();
   final _dcAllowedGuildsController = TextEditingController();
   bool _dcEnabled = false;
-  String _dcDmTrust = 'vault';
-  String _dcGroupTrust = 'sandboxed';
+  String _dcDmTrust = 'untrusted';
+  String _dcGroupTrust = 'untrusted';
   bool _dcTokenVisible = false;
 
-  static const _trustLevels = ['full', 'vault', 'sandboxed'];
+  static const _trustLevels = ['trusted', 'untrusted'];
 
   @override
   void initState() {
@@ -59,15 +59,15 @@ class _BotConnectorsSectionState extends ConsumerState<BotConnectorsSection> {
     final dc = config['discord'] as Map<String, dynamic>? ?? {};
 
     _tgEnabled = tg['enabled'] == true;
-    _tgDmTrust = (tg['dm_trust_level'] as String?) ?? 'vault';
-    _tgGroupTrust = (tg['group_trust_level'] as String?) ?? 'sandboxed';
+    _tgDmTrust = (tg['dm_trust_level'] as String?) ?? 'untrusted';
+    _tgGroupTrust = (tg['group_trust_level'] as String?) ?? 'untrusted';
     final tgUsers = tg['allowed_users'] as List<dynamic>? ?? [];
     _tgAllowedUsersController.text = tgUsers.join(', ');
     // Don't populate token - server doesn't return it for security
 
     _dcEnabled = dc['enabled'] == true;
-    _dcDmTrust = (dc['dm_trust_level'] as String?) ?? 'vault';
-    _dcGroupTrust = (dc['group_trust_level'] as String?) ?? 'sandboxed';
+    _dcDmTrust = (dc['dm_trust_level'] as String?) ?? 'untrusted';
+    _dcGroupTrust = (dc['group_trust_level'] as String?) ?? 'untrusted';
     final dcGuilds = dc['allowed_guilds'] as List<dynamic>? ?? [];
     _dcAllowedGuildsController.text = dcGuilds.join(', ');
   }
@@ -626,7 +626,7 @@ class _BotConnectorsSectionState extends ConsumerState<BotConnectorsSection> {
             borderRadius: BorderRadius.circular(Spacing.xs),
           ),
           child: DropdownButton<String>(
-            value: _trustLevels.contains(value) ? value : 'vault',
+            value: _trustLevels.contains(value) ? value : 'untrusted',
             isDense: true,
             isExpanded: true,
             underline: const SizedBox.shrink(),

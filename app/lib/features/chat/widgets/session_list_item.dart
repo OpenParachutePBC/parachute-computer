@@ -184,8 +184,8 @@ class SessionListItem extends StatelessWidget {
                               ),
                             ),
                           ),
-                        // Trust level badge (shown when not default 'full')
-                        if (session.trustLevel != null && session.trustLevel != 'full')
+                        // Trust level badge (shown when not default 'trusted')
+                        if (session.trustLevel != null && session.trustLevel != 'trusted')
                           _buildTrustBadge(session.trustLevel!, themeDark),
                       ],
                     ),

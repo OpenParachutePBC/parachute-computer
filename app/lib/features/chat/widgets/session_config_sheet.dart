@@ -40,7 +40,7 @@ class _SessionConfigSheetState extends ConsumerState<SessionConfigSheet> {
   bool _isSaving = false;
   String? _error;
 
-  static const _trustLevels = ['full', 'vault', 'sandboxed'];
+  static const _trustLevels = ['trusted', 'untrusted'];
 
   bool get _isActivation => widget.session.isPendingInitialization;
   bool get _isBotSession => widget.session.source.isBotSession;
@@ -48,7 +48,7 @@ class _SessionConfigSheetState extends ConsumerState<SessionConfigSheet> {
   @override
   void initState() {
     super.initState();
-    _trustLevel = widget.session.trustLevel ?? 'full';
+    _trustLevel = TrustLevel.fromString(widget.session.trustLevel).name;
     // Default response mode: DMs get all_messages, groups get mention_only
     final isDm = widget.session.linkedBotChatType == 'dm';
     _responseMode = widget.session.responseMode ?? (isDm ? 'all_messages' : 'mention_only');
@@ -124,16 +124,9 @@ class _SessionConfigSheetState extends ConsumerState<SessionConfigSheet> {
   }
 
   Color _trustColor(String level) {
-    switch (level) {
-      case 'full':
-        return BrandColors.forest;
-      case 'vault':
-        return BrandColors.turquoise;
-      case 'sandboxed':
-        return BrandColors.driftwood;
-      default:
-        return BrandColors.forest;
-    }
+    return TrustLevel.fromString(level).iconColor(
+      Theme.of(context).brightness == Brightness.dark,
+    );
   }
 
   @override
@@ -290,8 +283,8 @@ class _SessionConfigSheetState extends ConsumerState<SessionConfigSheet> {
             ),
           ),
 
-          // Workspace info for sandboxed sessions
-          if (_trustLevel == 'sandboxed') ...[
+          // Workspace info for untrusted sessions
+          if (_trustLevel == 'untrusted') ...[
             SizedBox(height: Spacing.md),
             _buildWorkspaceInfo(isDark, session),
           ],

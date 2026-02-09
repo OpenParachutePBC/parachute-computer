@@ -79,11 +79,11 @@ class _UnifiedSessionSettingsState
   @override
   void initState() {
     super.initState();
-    _trustLevel = widget.session.trustLevel ?? 'full';
+    _trustLevel = TrustLevel.fromString(widget.session.trustLevel).name;
   }
 
   Future<void> _saveTrustLevel() async {
-    if (_trustLevel == (widget.session.trustLevel ?? 'full')) return;
+    if (_trustLevel == TrustLevel.fromString(widget.session.trustLevel).name) return;
     setState(() {
       _isSaving = true;
       _saveError = null;
@@ -330,7 +330,7 @@ class _UnifiedSessionSettingsState
   // ---- Trust Level Section ----
 
   Widget _buildTrustSection(bool isDark) {
-    const levels = ['full', 'vault', 'sandboxed'];
+    const levels = ['trusted', 'untrusted'];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -729,16 +729,8 @@ class _UnifiedSessionSettingsState
   }
 
   Color _trustColor(String level) {
-    switch (level) {
-      case 'full':
-        return BrandColors.forest;
-      case 'vault':
-        return BrandColors.turquoise;
-      case 'sandboxed':
-        return BrandColors.driftwood;
-      default:
-        return BrandColors.forest;
-    }
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return TrustLevel.fromString(level).iconColor(isDark);
   }
 
   String _formatTokens(int tokens) {
