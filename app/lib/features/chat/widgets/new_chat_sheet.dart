@@ -141,70 +141,75 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
       }
     }
 
-    return Container(
-      decoration: BoxDecoration(
-        color: isDark ? BrandColors.nightSurface : BrandColors.softWhite,
-        borderRadius: const BorderRadius.vertical(
-          top: Radius.circular(Radii.xl),
-        ),
+    return ConstrainedBox(
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.of(context).size.height * 0.85,
       ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // Handle bar
-          Container(
-            margin: const EdgeInsets.only(top: Spacing.sm),
-            width: 40,
-            height: 4,
-            decoration: BoxDecoration(
-              color: isDark
-                  ? BrandColors.nightTextSecondary
-                  : BrandColors.driftwood,
-              borderRadius: Radii.pill,
-            ),
+      child: Container(
+        decoration: BoxDecoration(
+          color: isDark ? BrandColors.nightSurface : BrandColors.softWhite,
+          borderRadius: const BorderRadius.vertical(
+            top: Radius.circular(Radii.xl),
           ),
-
-          // Header
-          Padding(
-            padding: const EdgeInsets.all(Spacing.lg),
-            child: Row(
-              children: [
-                Icon(
-                  Icons.chat_outlined,
-                  size: 24,
-                  color: isDark ? BrandColors.nightForest : BrandColors.forest,
-                ),
-                const SizedBox(width: Spacing.sm),
-                Text(
-                  'New Chat',
-                  style: TextStyle(
-                    fontSize: TypographyTokens.titleLarge,
-                    fontWeight: FontWeight.w600,
-                    color: isDark ? BrandColors.nightText : BrandColors.charcoal,
-                  ),
-                ),
-                const Spacer(),
-                IconButton(
-                  onPressed: () => Navigator.pop(context),
-                  icon: Icon(
-                    Icons.close,
-                    color: isDark
-                        ? BrandColors.nightTextSecondary
-                        : BrandColors.driftwood,
-                  ),
-                ),
-              ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Handle bar
+            Container(
+              margin: const EdgeInsets.only(top: Spacing.sm),
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: isDark
+                    ? BrandColors.nightTextSecondary
+                    : BrandColors.driftwood,
+                borderRadius: Radii.pill,
+              ),
             ),
-          ),
 
-          const Divider(height: 1),
+            // Header
+            Padding(
+              padding: const EdgeInsets.all(Spacing.lg),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.chat_outlined,
+                    size: 24,
+                    color: isDark ? BrandColors.nightForest : BrandColors.forest,
+                  ),
+                  const SizedBox(width: Spacing.sm),
+                  Text(
+                    'New Chat',
+                    style: TextStyle(
+                      fontSize: TypographyTokens.titleLarge,
+                      fontWeight: FontWeight.w600,
+                      color: isDark ? BrandColors.nightText : BrandColors.charcoal,
+                    ),
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    onPressed: () => Navigator.pop(context),
+                    icon: Icon(
+                      Icons.close,
+                      color: isDark
+                          ? BrandColors.nightTextSecondary
+                          : BrandColors.driftwood,
+                    ),
+                  ),
+                ],
+              ),
+            ),
 
-          // Content
-          Padding(
-            padding: const EdgeInsets.all(Spacing.lg),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
+            const Divider(height: 1),
+
+            // Content (scrollable)
+            Flexible(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(Spacing.lg),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
                 // ── Workspace (first section) ──
                 _buildWorkspaceSection(isDark, workspacesAsync),
 
@@ -359,10 +364,11 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
               ],
             ),
           ),
+            ),
 
-          const Divider(height: 1),
+            const Divider(height: 1),
 
-          // Start Chat button
+            // Start Chat button
           Padding(
             padding: const EdgeInsets.all(Spacing.lg),
             child: SafeArea(
@@ -398,8 +404,9 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
                 ),
               ),
             ),
-          ),
-        ],
+            ),
+          ],
+        ),
       ),
     );
   }

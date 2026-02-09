@@ -60,11 +60,19 @@ class _TabletLayout extends StatelessWidget {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    return Row(
-      children: [
-        SizedBox(
-          width: 300,
-          child: DecoratedBox(
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // At 600px, 300px session list leaves only 300px for chat.
+        // Cap at 40% of width (max 300px) to ensure chat gets enough space.
+        final listWidth = constraints.maxWidth * 0.4 < 300
+            ? constraints.maxWidth * 0.4
+            : 300.0;
+
+        return Row(
+          children: [
+            SizedBox(
+              width: listWidth,
+              child: DecoratedBox(
             decoration: BoxDecoration(
               border: Border(
                 right: BorderSide(
@@ -79,6 +87,8 @@ class _TabletLayout extends StatelessWidget {
         ),
         const Expanded(child: ChatContentPanel()),
       ],
+    );
+      },
     );
   }
 }
@@ -386,6 +396,7 @@ class _WorkspaceItem extends StatelessWidget {
                             ? BrandColors.nightTextSecondary.withValues(alpha: 0.7)
                             : BrandColors.stone.withValues(alpha: 0.7),
                       ),
+                      overflow: TextOverflow.ellipsis,
                     ),
                 ],
               ),

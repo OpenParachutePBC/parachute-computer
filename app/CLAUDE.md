@@ -11,7 +11,7 @@ Unified Flutter app - voice journaling, AI chat, knowledge vault, and brain sear
 ## Architecture
 
 ```
-User → Parachute App → Base Server → Claude Agent SDK → AI
+User → Parachute App → Parachute Computer → Claude Agent SDK → AI
               ↓
        ~/Parachute/Daily (local, offline-capable)
        ~/Parachute/Chat (server-managed)
@@ -118,6 +118,17 @@ Audio processing services have a SINGLE canonical location:
 - `StreamEventType` has 14 values including `typedError`, `userQuestion`, `promptMetadata`
 - `ChatSource` enum includes `telegram`, `discord` for bot-originated sessions
 
+### Layout & Overflow Prevention
+
+- **Bottom sheets**: Always wrap content between the drag handle and action buttons in `Flexible` + `SingleChildScrollView`. Pin the handle and buttons outside the scroll region. Constrain max height to `MediaQuery.of(context).size.height * 0.85`.
+- **Rows with optional badges**: Use `Flexible(flex: 0)` on badge containers so they shrink when space is tight. Never assume a fixed number of badges will fit.
+- **Dialog dimensions**: Never hardcode `width: 400`. Use `ConstrainedBox(constraints: BoxConstraints(maxWidth: 400))` so dialogs shrink on narrow screens.
+- **Chip/tag lists**: Always use `Wrap` (not `Row`) for lists of chips that may grow.
+- **SegmentedButton labels**: Keep labels short (<12 chars) or add `overflow: TextOverflow.ellipsis` inside a `Flexible`.
+- **Breakpoint-adjacent widths**: Test at 600px, 601px, 1199px, and 1200px. The chat layout transitions are abrupt — verify no content overflows at the exact boundary values.
+- **Embedded toolbar**: The embedded toolbar Row should accommodate title + up to 3 badges + 2 icon buttons. Badges should be wrapped in a `Flexible(flex: 0)` Row so they shrink gracefully.
+- **Metadata rows**: Wrap source/agent name text in `Flexible` with `TextOverflow.ellipsis` — names can be arbitrarily long.
+
 ---
 
 ## Running
@@ -149,3 +160,6 @@ flutter test integration_test/chat_test.dart
 - First build takes ~90s (pod install + compile), subsequent builds ~15-20s
 - `VAULT_PATH` on server defaults to `./sample-vault` — set to `~/Parachute` in prod
 - Server runs on port 3333 by default
+- `Wrap` not `Row` for chip lists that may overflow (workspace chips, trust level chips, badge rows)
+- Bottom sheets without `SingleChildScrollView` will overflow when keyboard opens or content grows
+- `DirectoryPickerDialog` uses responsive `ConstrainedBox` — don't revert to hardcoded dimensions

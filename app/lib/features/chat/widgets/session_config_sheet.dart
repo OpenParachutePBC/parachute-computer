@@ -142,47 +142,58 @@ class _SessionConfigSheetState extends ConsumerState<SessionConfigSheet> {
     final session = widget.session;
     final workspacesAsync = ref.watch(workspacesProvider);
 
-    return Container(
-      decoration: BoxDecoration(
-        color: isDark ? BrandColors.nightSurface : Colors.white,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+    return ConstrainedBox(
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.of(context).size.height * 0.85,
       ),
-      padding: EdgeInsets.only(
-        left: Spacing.lg,
-        right: Spacing.lg,
-        top: Spacing.md,
-        bottom: MediaQuery.of(context).viewInsets.bottom + Spacing.lg,
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Drag handle
-          Center(
-            child: Container(
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: isDark ? BrandColors.nightTextSecondary : BrandColors.stone,
-                borderRadius: BorderRadius.circular(2),
+      child: Container(
+        decoration: BoxDecoration(
+          color: isDark ? BrandColors.nightSurface : Colors.white,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+        ),
+        padding: EdgeInsets.only(
+          left: Spacing.lg,
+          right: Spacing.lg,
+          top: Spacing.md,
+          bottom: MediaQuery.of(context).viewInsets.bottom + Spacing.lg,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Drag handle
+            Center(
+              child: Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: isDark ? BrandColors.nightTextSecondary : BrandColors.stone,
+                  borderRadius: BorderRadius.circular(2),
+                ),
               ),
             ),
-          ),
-          SizedBox(height: Spacing.md),
+            SizedBox(height: Spacing.md),
 
-          // Title
-          Text(
-            _isActivation ? 'Activate Session' : 'Session Settings',
-            style: TextStyle(
-              fontSize: TypographyTokens.titleMedium,
-              fontWeight: FontWeight.w600,
-              color: isDark ? BrandColors.nightText : BrandColors.ink,
+            // Title
+            Text(
+              _isActivation ? 'Activate Session' : 'Session Settings',
+              style: TextStyle(
+                fontSize: TypographyTokens.titleMedium,
+                fontWeight: FontWeight.w600,
+                color: isDark ? BrandColors.nightText : BrandColors.ink,
+              ),
             ),
-          ),
-          SizedBox(height: Spacing.md),
+            SizedBox(height: Spacing.md),
 
-          // Initialization banner
-          if (_isActivation) ...[
+            // Scrollable content area
+            Flexible(
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+
+            // Initialization banner
+            if (_isActivation) ...[
             Container(
               padding: EdgeInsets.all(Spacing.sm),
               decoration: BoxDecoration(
@@ -386,30 +397,36 @@ class _SessionConfigSheetState extends ConsumerState<SessionConfigSheet> {
             ),
           ],
 
-          // Save / Activate button
-          SizedBox(height: Spacing.lg),
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton(
-              onPressed: _isSaving ? null : _save,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: isDark ? BrandColors.nightForest : BrandColors.forest,
-                foregroundColor: Colors.white,
-                padding: EdgeInsets.symmetric(vertical: Spacing.sm),
+                  ],
+                ),
               ),
-              child: _isSaving
-                  ? const SizedBox(
-                      height: 18,
-                      width: 18,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white,
-                      ),
-                    )
-                  : Text(_isActivation ? 'Activate' : 'Save'),
             ),
-          ),
-        ],
+
+            // Save / Activate button
+            SizedBox(height: Spacing.lg),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: _isSaving ? null : _save,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: isDark ? BrandColors.nightForest : BrandColors.forest,
+                  foregroundColor: Colors.white,
+                  padding: EdgeInsets.symmetric(vertical: Spacing.sm),
+                ),
+                child: _isSaving
+                    ? const SizedBox(
+                        height: 18,
+                        width: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : Text(_isActivation ? 'Activate' : 'Save'),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
