@@ -26,6 +26,7 @@ class TelegramConfig(BaseModel):
     dm_trust_level: TrustLevelStr = "vault"
     group_trust_level: TrustLevelStr = "sandboxed"
     group_mention_mode: Literal["mention_only", "all_messages"] = "mention_only"
+    ack_emoji: Optional[str] = "👀"
 
 
 class DiscordConfig(BaseModel):
@@ -38,6 +39,7 @@ class DiscordConfig(BaseModel):
     dm_trust_level: TrustLevelStr = "vault"
     group_trust_level: TrustLevelStr = "sandboxed"
     group_mention_mode: Literal["mention_only", "all_messages"] = "mention_only"
+    ack_emoji: Optional[str] = "👀"
 
 
 class BotsConfig(BaseModel):

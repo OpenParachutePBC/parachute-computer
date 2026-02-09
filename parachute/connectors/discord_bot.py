@@ -42,6 +42,7 @@ class DiscordConnector(BotConnector):
         dm_trust_level: str = "vault",
         group_trust_level: str = "sandboxed",
         group_mention_mode: str = "mention_only",
+        ack_emoji: str | None = "👀",
     ):
         super().__init__(
             bot_token=bot_token,
@@ -51,6 +52,7 @@ class DiscordConnector(BotConnector):
             dm_trust_level=dm_trust_level,
             group_trust_level=group_trust_level,
             group_mention_mode=group_mention_mode,
+            ack_emoji=ack_emoji,
         )
         self._client: Optional[Any] = None
         self._tree: Optional[Any] = None
@@ -189,13 +191,34 @@ class DiscordConnector(BotConnector):
             self._init_nudge_sent[chat_id] = count + 1
             return
 
+        # Ack reaction — instant feedback before acquiring lock
+        ack_sent = False
+        if self.ack_emoji and message:
+            try:
+                await message.add_reaction(self.ack_emoji)
+                ack_sent = True
+            except Exception as e:
+                logger.debug(f"Ack reaction failed (non-critical): {e}")
+
+        # Inject group history for context
+        effective_message = message_text
+        if chat_type == "group":
+            history = await self._get_group_history(
+                message.channel, exclude_id=message.id
+            )
+            if history:
+                effective_message = (
+                    f"{history}\n\n"
+                    f"[Current message - respond to this]\n{message_text}"
+                )
+
         # Show typing indicator with per-chat lock
         lock = self._get_chat_lock(chat_id)
         async with lock:
             async with message.channel.typing():
                 response_text = await self._route_to_chat(
                     session_id=session.id,
-                    message=message_text,
+                    message=effective_message,
                 )
 
         if not response_text:
@@ -205,6 +228,13 @@ class DiscordConnector(BotConnector):
         formatted = claude_to_discord(response_text)
         for chunk in self.split_response(formatted, DISCORD_MAX_MESSAGE_LENGTH):
             await message.reply(chunk)
+
+        # Remove ack reaction after response
+        if ack_sent:
+            try:
+                await message.remove_reaction(self.ack_emoji, self._client.user)
+            except Exception:
+                pass
 
     async def _handle_new(self, interaction: Any) -> None:
         """Handle /new slash command - archive current session and start fresh."""
@@ -325,6 +355,33 @@ class DiscordConnector(BotConnector):
         except Exception as e:
             logger.error(f"Journal entry failed: {e}")
             await interaction.followup.send("Failed to save journal entry.")
+
+    async def _get_group_history(
+        self, channel: Any, exclude_id: int, limit: int = 20
+    ) -> str:
+        """Fetch recent channel messages for group context injection."""
+        if isinstance(channel, discord.DMChannel):
+            return ""
+        try:
+            messages = []
+            async for msg in channel.history(limit=limit + 5):
+                if msg.id == exclude_id or msg.author == self._client.user:
+                    continue
+                if not msg.content:
+                    continue
+                messages.append(msg)
+                if len(messages) >= limit:
+                    break
+            if not messages:
+                return ""
+            messages.reverse()  # Chronological order
+            lines = ["[Recent group messages for context]"]
+            for msg in messages:
+                lines.append(f"[from: {msg.author.display_name}] {msg.content}")
+            return "\n".join(lines)
+        except Exception as e:
+            logger.debug(f"Failed to fetch channel history: {e}")
+            return ""
 
     async def _route_to_chat(self, session_id: str, message: str) -> str:
         """Route a message through the Chat orchestrator and collect response."""
