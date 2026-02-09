@@ -489,88 +489,99 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             child: _buildTitle(context, isDark, currentSessionId, chatState),
           ),
 
-          // Agent badge
-          if (chatState.promptMetadata?.agentName != null &&
-              chatState.promptMetadata!.agentName != 'Vault Agent')
-            Container(
-              margin: const EdgeInsets.only(right: Spacing.xs),
-              padding: const EdgeInsets.symmetric(
-                horizontal: Spacing.sm,
-                vertical: Spacing.xxs,
-              ),
-              decoration: BoxDecoration(
-                color: BrandColors.turquoise.withValues(alpha: 0.15),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.smart_toy, size: 12, color: BrandColors.turquoise),
-                  const SizedBox(width: 4),
-                  Text(
-                    _getAgentBadge(chatState.promptMetadata!.agentName!),
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.bold,
-                      color: BrandColors.turquoise,
+          // Badges (constrained to avoid overflow)
+          Flexible(
+            flex: 0,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Agent badge
+                if (chatState.promptMetadata?.agentName != null &&
+                    chatState.promptMetadata!.agentName != 'Vault Agent')
+                  Container(
+                    margin: const EdgeInsets.only(right: Spacing.xs),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: Spacing.sm,
+                      vertical: Spacing.xxs,
+                    ),
+                    decoration: BoxDecoration(
+                      color: BrandColors.turquoise.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.smart_toy, size: 12, color: BrandColors.turquoise),
+                        const SizedBox(width: 4),
+                        Text(
+                          _getAgentBadge(chatState.promptMetadata!.agentName!),
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            color: BrandColors.turquoise,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
                     ),
                   ),
-                ],
-              ),
-            ),
 
-          // Model badge
-          if (chatState.model != null)
-            Container(
-              margin: const EdgeInsets.only(right: Spacing.xs),
-              padding: const EdgeInsets.symmetric(
-                horizontal: Spacing.sm,
-                vertical: Spacing.xxs,
-              ),
-              decoration: BoxDecoration(
-                color: _getModelColor(chatState.model!).withValues(alpha: 0.15),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Text(
-                _getModelBadge(chatState.model!),
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.bold,
-                  color: _getModelColor(chatState.model!),
-                ),
-              ),
-            ),
-
-          // Working directory indicator
-          if (chatState.workingDirectory != null)
-            Tooltip(
-              message: chatState.workingDirectory!,
-              child: InkWell(
-                onTap: chatState.messages.isEmpty ? _showDirectoryPicker : null,
-                borderRadius: BorderRadius.circular(4),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.folder_outlined,
-                        size: 16,
-                        color: isDark ? BrandColors.nightForest : BrandColors.forest,
+                // Model badge
+                if (chatState.model != null)
+                  Container(
+                    margin: const EdgeInsets.only(right: Spacing.xs),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: Spacing.sm,
+                      vertical: Spacing.xxs,
+                    ),
+                    decoration: BoxDecoration(
+                      color: _getModelColor(chatState.model!).withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      _getModelBadge(chatState.model!),
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                        color: _getModelColor(chatState.model!),
                       ),
-                      const SizedBox(width: 2),
-                      Text(
-                        chatState.workingDirectory!.split('/').last,
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: isDark ? BrandColors.nightForest : BrandColors.forest,
+                    ),
+                  ),
+
+                // Working directory indicator
+                if (chatState.workingDirectory != null)
+                  Tooltip(
+                    message: chatState.workingDirectory!,
+                    child: InkWell(
+                      onTap: chatState.messages.isEmpty ? _showDirectoryPicker : null,
+                      borderRadius: BorderRadius.circular(4),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.folder_outlined,
+                              size: 16,
+                              color: isDark ? BrandColors.nightForest : BrandColors.forest,
+                            ),
+                            const SizedBox(width: 2),
+                            Text(
+                              chatState.workingDirectory!.split('/').last,
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: isDark ? BrandColors.nightForest : BrandColors.forest,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ],
                         ),
                       ),
-                    ],
+                    ),
                   ),
-                ),
-              ),
+              ],
             ),
+          ),
 
           // Unified session settings (trust, workspace, context, info)
           if (chatState.sessionId != null)
@@ -788,30 +799,33 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           ),
           if (hasBadges) ...[
             const SizedBox(height: Spacing.xxs),
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (chatState.model != null) ...[
-                  _appBarBadge(
-                    _getModelBadge(chatState.model!),
-                    _getModelColor(chatState.model!),
-                  ),
-                  const SizedBox(width: Spacing.xs),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (chatState.model != null) ...[
+                    _appBarBadge(
+                      _getModelBadge(chatState.model!),
+                      _getModelColor(chatState.model!),
+                    ),
+                    const SizedBox(width: Spacing.xs),
+                  ],
+                  if (chatState.promptMetadata?.agentName != null &&
+                      chatState.promptMetadata!.agentName != 'Vault Agent') ...[
+                    _appBarBadge(
+                      _getAgentBadge(chatState.promptMetadata!.agentName!),
+                      BrandColors.turquoise,
+                    ),
+                    const SizedBox(width: Spacing.xs),
+                  ],
+                  if (chatState.workingDirectory != null)
+                    _appBarBadge(
+                      chatState.workingDirectory!.split('/').last,
+                      isDark ? BrandColors.nightForest : BrandColors.forest,
+                    ),
                 ],
-                if (chatState.promptMetadata?.agentName != null &&
-                    chatState.promptMetadata!.agentName != 'Vault Agent') ...[
-                  _appBarBadge(
-                    _getAgentBadge(chatState.promptMetadata!.agentName!),
-                    BrandColors.turquoise,
-                  ),
-                  const SizedBox(width: Spacing.xs),
-                ],
-                if (chatState.workingDirectory != null)
-                  _appBarBadge(
-                    chatState.workingDirectory!.split('/').last,
-                    isDark ? BrandColors.nightForest : BrandColors.forest,
-                  ),
-              ],
+              ),
             ),
           ],
         ],
@@ -1124,7 +1138,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             if (_pendingTrustLevel == null ||
                 TrustLevel.fromString(_pendingTrustLevel).index < floor.index) {
               setState(() {
-                _pendingTrustLevel = floor == TrustLevel.full ? null : floor.name;
+                _pendingTrustLevel = floor == TrustLevel.trusted ? null : floor.name;
               });
             }
             // Auto-fill working directory

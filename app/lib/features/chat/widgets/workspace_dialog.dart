@@ -4,6 +4,7 @@ import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/features/settings/models/trust_level.dart';
 import '../models/workspace.dart';
 import '../providers/workspace_providers.dart';
+import 'directory_picker.dart';
 
 /// Shared workspace form fields used by both create and edit dialogs.
 ///
@@ -16,6 +17,7 @@ class _WorkspaceForm extends StatelessWidget {
   final String? model;
   final ValueChanged<String> onTrustChanged;
   final ValueChanged<String?> onModelChanged;
+  final VoidCallback? onBrowseDirectory;
   final bool autofocusName;
 
   const _WorkspaceForm({
@@ -26,6 +28,7 @@ class _WorkspaceForm extends StatelessWidget {
     required this.model,
     required this.onTrustChanged,
     required this.onModelChanged,
+    this.onBrowseDirectory,
     this.autofocusName = false,
   });
 
@@ -46,12 +49,28 @@ class _WorkspaceForm extends StatelessWidget {
             decoration: const InputDecoration(labelText: 'Description (optional)'),
           ),
           SizedBox(height: Spacing.md),
-          TextField(
-            controller: dirController,
-            decoration: const InputDecoration(
-              labelText: 'Working directory (optional)',
-              hintText: 'e.g., Projects/my-app',
-            ),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: dirController,
+                  decoration: const InputDecoration(
+                    labelText: 'Working directory (optional)',
+                    hintText: 'e.g., Projects/my-app',
+                  ),
+                ),
+              ),
+              if (onBrowseDirectory != null)
+                Padding(
+                  padding: const EdgeInsets.only(left: Spacing.xs),
+                  child: IconButton(
+                    icon: const Icon(Icons.folder_open),
+                    tooltip: 'Browse vault directories',
+                    onPressed: onBrowseDirectory,
+                  ),
+                ),
+            ],
           ),
           SizedBox(height: Spacing.md),
           DropdownButtonFormField<String>(
@@ -138,6 +157,7 @@ class _CreateWorkspaceDialogState extends ConsumerState<CreateWorkspaceDialog> {
         model: _model,
         onTrustChanged: (val) => setState(() => _trustLevel = val),
         onModelChanged: (val) => setState(() => _model = val),
+        onBrowseDirectory: _browseDirectory,
         autofocusName: true,
       ),
       actions: [
@@ -157,6 +177,16 @@ class _CreateWorkspaceDialogState extends ConsumerState<CreateWorkspaceDialog> {
         ),
       ],
     );
+  }
+
+  Future<void> _browseDirectory() async {
+    final selected = await showDirectoryPicker(
+      context,
+      initialPath: _dirController.text.isEmpty ? null : _dirController.text,
+    );
+    if (selected != null && mounted) {
+      _dirController.text = selected;
+    }
   }
 
   Future<void> _submit() async {
@@ -245,6 +275,7 @@ class _EditWorkspaceDialogState extends ConsumerState<EditWorkspaceDialog> {
         model: _model,
         onTrustChanged: (val) => setState(() => _trustLevel = val),
         onModelChanged: (val) => setState(() => _model = val),
+        onBrowseDirectory: _browseDirectory,
       ),
       actions: [
         TextButton(
@@ -263,6 +294,16 @@ class _EditWorkspaceDialogState extends ConsumerState<EditWorkspaceDialog> {
         ),
       ],
     );
+  }
+
+  Future<void> _browseDirectory() async {
+    final selected = await showDirectoryPicker(
+      context,
+      initialPath: _dirController.text.isEmpty ? null : _dirController.text,
+    );
+    if (selected != null && mounted) {
+      _dirController.text = selected;
+    }
   }
 
   Future<void> _submit() async {

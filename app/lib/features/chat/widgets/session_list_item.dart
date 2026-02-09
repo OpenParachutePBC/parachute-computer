@@ -112,81 +112,33 @@ class SessionListItem extends StatelessWidget {
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
-                        // Pending approval badge
-                        if (session.isPendingApproval)
-                          Container(
-                            margin: const EdgeInsets.only(left: Spacing.xs),
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: Spacing.xs,
-                              vertical: 2,
-                            ),
-                            decoration: BoxDecoration(
-                              color: Colors.amber.withValues(alpha: 0.2),
-                              borderRadius: Radii.badge,
-                            ),
-                            child: Text(
-                              'Pending',
-                              style: TextStyle(
-                                fontSize: 10,
-                                fontWeight: FontWeight.w600,
-                                color: themeDark
-                                    ? Colors.amber.shade300
-                                    : Colors.amber.shade800,
-                              ),
-                            ),
-                          ),
-                        // Pending initialization badge
-                        if (session.isPendingInitialization)
-                          Container(
-                            margin: const EdgeInsets.only(left: Spacing.xs),
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: Spacing.xs,
-                              vertical: 2,
-                            ),
-                            decoration: BoxDecoration(
-                              color: Colors.orange.withValues(alpha: 0.2),
-                              borderRadius: Radii.badge,
-                            ),
-                            child: Text(
-                              'Setup',
-                              style: TextStyle(
-                                fontSize: 10,
-                                fontWeight: FontWeight.w600,
-                                color: themeDark
-                                    ? Colors.orange.shade300
-                                    : Colors.orange.shade800,
-                              ),
-                            ),
-                          ),
-                        // Archived badge
-                        if (session.archived)
-                          Container(
-                            margin: const EdgeInsets.only(left: Spacing.xs),
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: Spacing.xs,
-                              vertical: 2,
-                            ),
-                            decoration: BoxDecoration(
-                              color: (themeDark
+                        // Badges (shrink when space is tight)
+                        Flexible(
+                          flex: 0,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              // Pending approval badge
+                              if (session.isPendingApproval)
+                                _badge('Pending', Colors.amber, themeDark),
+                              // Pending initialization badge
+                              if (session.isPendingInitialization)
+                                _badge('Setup', Colors.orange, themeDark),
+                              // Archived badge
+                              if (session.archived)
+                                _badge(
+                                  'Archived',
+                                  themeDark
                                       ? BrandColors.nightTextSecondary
-                                      : BrandColors.driftwood)
-                                  .withValues(alpha: 0.2),
-                              borderRadius: Radii.badge,
-                            ),
-                            child: Text(
-                              'Archived',
-                              style: TextStyle(
-                                fontSize: 10,
-                                fontWeight: FontWeight.w500,
-                                color: themeDark
-                                    ? BrandColors.nightTextSecondary
-                                    : BrandColors.driftwood,
-                              ),
-                            ),
+                                      : BrandColors.driftwood,
+                                  themeDark,
+                                ),
+                              // Trust level badge (shown when not default 'trusted')
+                              if (session.trustLevel != null && session.trustLevel != 'trusted')
+                                _buildTrustBadge(session.trustLevel!, themeDark),
+                            ],
                           ),
-                        // Trust level badge (shown when not default 'trusted')
-                        if (session.trustLevel != null && session.trustLevel != 'trusted')
-                          _buildTrustBadge(session.trustLevel!, themeDark),
+                        ),
                       ],
                     ),
                     // First message preview for pending approval sessions
@@ -210,13 +162,16 @@ class SessionListItem extends StatelessWidget {
                       children: [
                         // Show source for bot or imported sessions
                         if (session.source.isBotSession) ...[
-                          Text(
-                            'via ${session.source.displayName}',
-                            style: TextStyle(
-                              fontSize: TypographyTokens.labelSmall,
-                              color: themeDark
-                                  ? BrandColors.nightForest
-                                  : BrandColors.forest,
+                          Flexible(
+                            child: Text(
+                              'via ${session.source.displayName}',
+                              style: TextStyle(
+                                fontSize: TypographyTokens.labelSmall,
+                                color: themeDark
+                                    ? BrandColors.nightForest
+                                    : BrandColors.forest,
+                              ),
+                              overflow: TextOverflow.ellipsis,
                             ),
                           ),
                           Text(
@@ -229,13 +184,16 @@ class SessionListItem extends StatelessWidget {
                             ),
                           ),
                         ] else if (session.isImported) ...[
-                          Text(
-                            session.source.displayName,
-                            style: TextStyle(
-                              fontSize: TypographyTokens.labelSmall,
-                              color: themeDark
-                                  ? BrandColors.nightForest
-                                  : BrandColors.forest,
+                          Flexible(
+                            child: Text(
+                              session.source.displayName,
+                              style: TextStyle(
+                                fontSize: TypographyTokens.labelSmall,
+                                color: themeDark
+                                    ? BrandColors.nightForest
+                                    : BrandColors.forest,
+                              ),
+                              overflow: TextOverflow.ellipsis,
                             ),
                           ),
                           Text(
@@ -248,13 +206,16 @@ class SessionListItem extends StatelessWidget {
                             ),
                           ),
                         ] else if (session.agentName != null) ...[
-                          Text(
-                            session.agentName!,
-                            style: TextStyle(
-                              fontSize: TypographyTokens.labelSmall,
-                              color: themeDark
-                                  ? BrandColors.nightTurquoise
-                                  : BrandColors.turquoise,
+                          Flexible(
+                            child: Text(
+                              session.agentName!,
+                              style: TextStyle(
+                                fontSize: TypographyTokens.labelSmall,
+                                color: themeDark
+                                    ? BrandColors.nightTurquoise
+                                    : BrandColors.turquoise,
+                              ),
+                              overflow: TextOverflow.ellipsis,
                             ),
                           ),
                           Text(
@@ -460,6 +421,28 @@ class SessionListItem extends StatelessWidget {
     } else {
       return '${timestamp.month}/${timestamp.day}';
     }
+  }
+
+  Widget _badge(String text, Color color, bool isDark) {
+    return Container(
+      margin: const EdgeInsets.only(left: Spacing.xs),
+      padding: const EdgeInsets.symmetric(
+        horizontal: Spacing.xs,
+        vertical: 2,
+      ),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.2),
+        borderRadius: Radii.badge,
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          fontSize: 10,
+          fontWeight: FontWeight.w600,
+          color: isDark ? color.withValues(alpha: 0.8) : color,
+        ),
+      ),
+    );
   }
 
   Widget _buildTrustBadge(String trustLevelStr, bool isDark) {
