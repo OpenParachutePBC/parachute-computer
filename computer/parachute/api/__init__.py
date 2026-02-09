@@ -6,8 +6,8 @@ from fastapi import APIRouter
 
 # CURATOR REMOVED - curator module excluded from modular architecture
 from parachute.api import (
-    auth, bots, chat, claude_code, context_folders, filesystem,
-    health, hooks, imports, mcp, modules, prompts,
+    agents, auth, bots, capabilities, chat, claude_code, context_folders,
+    filesystem, health, hooks, imports, mcp, modules, prompts,
     sandbox, scheduler, sessions, skills, sync, usage,
     workspaces,
 )
@@ -36,3 +36,5 @@ api_router.include_router(hooks.router, tags=["hooks"])
 api_router.include_router(bots.router, tags=["bots"])
 api_router.include_router(sandbox.router, tags=["sandbox"])
 api_router.include_router(workspaces.router, tags=["workspaces"])
+api_router.include_router(agents.router, tags=["agents"])
+api_router.include_router(capabilities.router, tags=["capabilities"])
