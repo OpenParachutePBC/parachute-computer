@@ -42,6 +42,7 @@ class AgentSandboxConfig:
     plugin_dirs: list[Path] = field(default_factory=list)
     mcp_servers: Optional[dict] = None  # Filtered MCP configs to pass to container
     agents: Optional[dict] = None
+    working_directory: Optional[str] = None  # Vault-relative path for container CWD
 
 
 class DockerSandbox:
@@ -193,6 +194,10 @@ class DockerSandbox:
             env_lines.append(f"CLAUDE_CODE_OAUTH_TOKEN={self.claude_token}")
         else:
             logger.warning("No claude_token configured for sandbox — container will fail auth")
+
+        # Set container working directory
+        if config.working_directory:
+            env_lines.append(f"PARACHUTE_CWD=/vault/{config.working_directory}")
 
         # Pass filtered MCP server names so the container knows what's allowed
         if config.mcp_servers is not None:
