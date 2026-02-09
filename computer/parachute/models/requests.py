@@ -131,6 +131,11 @@ class ChatRequest(BaseModel):
         description="Trust level override: full, vault, sandboxed. "
                     "Can only restrict below module default, never escalate.",
     )
+    model: Optional[str] = Field(
+        default=None,
+        description="Model to use (e.g., 'claude-sonnet-4-5-20250929'). "
+                    "Overrides server DEFAULT_MODEL env var.",
+    )
 
     # Legacy fields for compatibility
     agent_path: Optional[str] = Field(alias="agentPath", default=None)
