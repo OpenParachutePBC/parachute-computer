@@ -77,6 +77,41 @@ class SessionManager:
 
         return resolved
 
+    def normalize_working_directory(self, working_directory: Optional[str]) -> Optional[str]:
+        """
+        Convert a working_directory to /vault/... format for storage.
+
+        Args:
+            working_directory: Absolute host path, relative path, or /vault/... path.
+
+        Returns:
+            /vault/... path string, or None if it's the vault root.
+        """
+        if not working_directory:
+            return None
+
+        wd_path = Path(working_directory)
+
+        if not wd_path.is_absolute():
+            # Relative path (e.g., "Projects/foo") → /vault/Projects/foo
+            result = str(Path("/vault") / wd_path)
+            return result if result != "/vault" else None
+
+        # Already /vault/... — keep as-is
+        if working_directory.startswith("/vault"):
+            return working_directory if working_directory != "/vault" else None
+
+        # Absolute host path (e.g., /Users/user/Parachute/Projects/foo) → /vault/...
+        try:
+            rel_path = wd_path.relative_to(self.vault_path)
+            if str(rel_path) == ".":
+                return None
+            return str(Path("/vault") / rel_path)
+        except ValueError:
+            # Path is not under vault_path — keep as-is (external project)
+            logger.warning(f"working_directory {working_directory} is not under vault_path {self.vault_path}")
+            return working_directory
+
     async def get_or_create_session(
         self,
         session_id: Optional[str],
@@ -122,7 +157,7 @@ class SessionManager:
             if sdk_location:
                 # SDK has the session, we just don't have metadata
                 # Create a placeholder session with relative working_directory
-                relative_wd = self.make_working_directory_relative(working_directory)
+                relative_wd = self.normalize_working_directory(working_directory)
                 session = await self.db.create_session(
                     SessionCreate(
                         id=session_id,
@@ -199,7 +234,7 @@ class SessionManager:
         from the placeholder, then removes the placeholder to avoid duplicate lookups.
         """
         # Convert working_directory to relative for storage
-        relative_wd = self.make_working_directory_relative(placeholder.working_directory)
+        relative_wd = self.normalize_working_directory(placeholder.working_directory)
         # Use provided agent_type, or fall back to placeholder's agent_type
         final_agent_type = agent_type or placeholder.get_agent_type()
 

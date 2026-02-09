@@ -242,18 +242,18 @@ class PermissionHandler:
         """
         logger.debug(f"Permission check: {tool_name}")
 
-        # Resolve effective trust level (handles backward compat with trust_mode)
-        trust_level = self._permissions.effective_trust_level
-        trust_mode = trust_level == TrustLevel.FULL
+        # Resolve trust level
+        trust_level = self._permissions.trust_level
+        trust_mode = trust_level == TrustLevel.TRUSTED
 
-        # Sandboxed agents: deny all host tools - they run in containers
-        if trust_level == TrustLevel.SANDBOXED:
+        # Untrusted agents: deny all host tools - they run in Docker containers
+        if trust_level == TrustLevel.UNTRUSTED:
             # Only allow MCP tools and web tools in sandboxed mode
             if tool_name.startswith("mcp__") or tool_name in ALWAYS_ALLOWED_TOOLS:
                 return PermissionDecision(behavior="allow", updated_input=input_data)
             return PermissionDecision(
                 behavior="deny",
-                message=f"Sandboxed agents cannot use host tool: {tool_name}",
+                message=f"Untrusted agents cannot use host tool: {tool_name}",
             )
 
         # Always allow MCP tools (they provide structured access)
@@ -545,7 +545,7 @@ class PermissionHandler:
                     read=new_read,
                     write=self._permissions.write,
                     bash=self._permissions.bash,
-                    trust_mode=self._permissions.trust_mode,
+                    trustLevel=self._permissions.trust_level,
                 )
         elif permission_type == "write":
             if pattern not in self._permissions.write:
@@ -554,7 +554,7 @@ class PermissionHandler:
                     read=self._permissions.read,
                     write=new_write,
                     bash=self._permissions.bash,
-                    trust_mode=self._permissions.trust_mode,
+                    trustLevel=self._permissions.trust_level,
                 )
         elif permission_type == "bash":
             if isinstance(self._permissions.bash, list) and pattern not in self._permissions.bash:
@@ -563,7 +563,7 @@ class PermissionHandler:
                     read=self._permissions.read,
                     write=self._permissions.write,
                     bash=new_bash,
-                    trust_mode=self._permissions.trust_mode,
+                    trustLevel=self._permissions.trust_level,
                 )
 
         # Notify about permission update

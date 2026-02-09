@@ -373,7 +373,7 @@ class Orchestrator:
             available_agents=prompt_metadata["available_agents"],
             base_prompt_tokens=prompt_metadata["base_prompt_tokens"],
             total_prompt_tokens=prompt_metadata["total_prompt_tokens"],
-            trust_mode=session.permissions.trust_mode,
+            trust_mode=(session.permissions.trust_level == TrustLevel.TRUSTED),
             working_directory_claude_md=prompt_metadata.get("working_directory_claude_md"),
         ).model_dump(by_alias=True)
 
@@ -658,7 +658,7 @@ class Orchestrator:
             # Use session-based permission handler for tool access control
             # Trust mode (default): Use bypassPermissions for backwards compatibility
             # Restricted mode: Uses can_use_tool callback for interactive permission checks
-            trust_mode = session.permissions.trust_mode
+            trust_mode = session.permissions.trust_level == TrustLevel.TRUSTED
             logger.debug(f"Session trust_mode={trust_mode}: {session.id}")
 
             # Create SDK callback for tool permission checks
