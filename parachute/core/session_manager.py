@@ -52,6 +52,7 @@ class SessionManager:
 
         Returns:
             Absolute Path for use with SDK (which requires absolute paths).
+            Falls back to vault root if the resolved path escapes the vault.
         """
         if not working_directory:
             return self.vault_path
@@ -59,10 +60,22 @@ class SessionManager:
         wd_path = Path(working_directory)
         if wd_path.is_absolute():
             # Legacy absolute path - use as-is (will be migrated eventually)
-            return wd_path
+            resolved = wd_path
         else:
             # Relative path - combine with vault_path
-            return self.vault_path / wd_path
+            resolved = self.vault_path / wd_path
+
+        # Validate resolved path doesn't escape vault (e.g., via ../../../)
+        try:
+            resolved_real = resolved.resolve()
+            vault_real = self.vault_path.resolve()
+            if not str(resolved_real).startswith(str(vault_real)):
+                logger.warning(f"Working directory escapes vault: {working_directory}")
+                return self.vault_path
+        except Exception:
+            pass  # If resolution fails, use the original path
+
+        return resolved
 
     def make_working_directory_relative(self, working_directory: Optional[str]) -> Optional[str]:
         """

@@ -42,6 +42,11 @@ async def run():
     session_id = os.environ.get("PARACHUTE_SESSION_ID", "")
     oauth_token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
 
+    # Set working directory if provided
+    cwd = os.environ.get("PARACHUTE_CWD")
+    if cwd and os.path.isdir(cwd):
+        os.chdir(cwd)
+
     if not oauth_token:
         emit({"type": "error", "error": "CLAUDE_CODE_OAUTH_TOKEN not set"})
         sys.exit(1)

@@ -654,12 +654,23 @@ class Orchestrator:
                     # inside the container to try resuming a nonexistent session
                     sandbox_sid = session.id if session.id != "pending" else str(uuid.uuid4())
                     logger.info(f"Running sandboxed execution for session {sandbox_sid[:8]}")
+                    # Compute vault-relative working directory for sandbox
+                    sandbox_wd = self.session_manager.make_working_directory_relative(
+                        effective_working_dir
+                    ) if effective_working_dir else None
+
+                    sandbox_paths = list(session.permissions.allowed_paths)
+                    # Auto-add working directory to allowed_paths so it gets mounted
+                    if sandbox_wd and sandbox_wd not in sandbox_paths:
+                        sandbox_paths.append(sandbox_wd)
+
                     sandbox_config = AgentSandboxConfig(
                         session_id=sandbox_sid,
                         agent_type=agent.type.value if agent.type else "chat",
-                        allowed_paths=session.permissions.allowed_paths,
+                        allowed_paths=sandbox_paths,
                         network_enabled=True,  # SDK needs network for Anthropic API
                         mcp_servers=resolved_mcps,  # Pass filtered MCPs to container
+                        working_directory=sandbox_wd,
                     )
                     had_text = False
                     async for event in self._sandbox.run_agent(sandbox_config, actual_message):
