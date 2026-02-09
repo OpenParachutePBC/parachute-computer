@@ -21,10 +21,6 @@ class _BotConnectorsSectionState extends ConsumerState<BotConnectorsSection> {
   bool _isSaving = false;
   String? _error;
 
-  // Pairing requests
-  List<Map<String, dynamic>> _pendingRequests = [];
-  int _pendingCount = 0;
-
   // Telegram controllers
   final _tgTokenController = TextEditingController();
   final _tgAllowedUsersController = TextEditingController();
@@ -100,12 +96,6 @@ class _BotConnectorsSectionState extends ConsumerState<BotConnectorsSection> {
         headers: headers,
       );
 
-      // Fetch pairing requests
-      final pairingResponse = await http.get(
-        Uri.parse('$serverUrl/api/bots/pairing'),
-        headers: headers,
-      );
-
       if (mounted) {
         if (statusResponse.statusCode == 200) {
           setState(() {
@@ -118,15 +108,6 @@ class _BotConnectorsSectionState extends ConsumerState<BotConnectorsSection> {
             _config = config;
           });
           _populateFromConfig(config);
-        }
-        if (pairingResponse.statusCode == 200) {
-          final pairingData = json.decode(pairingResponse.body) as Map<String, dynamic>;
-          final requests = (pairingData['requests'] as List<dynamic>?)
-              ?.cast<Map<String, dynamic>>() ?? [];
-          setState(() {
-            _pendingRequests = requests;
-            _pendingCount = requests.length;
-          });
         }
         setState(() => _isLoading = false);
       }
@@ -310,86 +291,6 @@ class _BotConnectorsSectionState extends ConsumerState<BotConnectorsSection> {
     }
   }
 
-  Future<void> _approvePairing(String requestId, String trustLevel) async {
-    try {
-      final featureFlags = ref.read(featureFlagsServiceProvider);
-      final serverUrl = await featureFlags.getAiServerUrl();
-      final apiKey = await ref.read(apiKeyProvider.future);
-
-      final response = await http.post(
-        Uri.parse('$serverUrl/api/bots/pairing/$requestId/approve'),
-        headers: {
-          'Content-Type': 'application/json',
-          if (apiKey != null && apiKey.isNotEmpty) 'Authorization': 'Bearer $apiKey',
-        },
-        body: json.encode({'trust_level': trustLevel}),
-      );
-
-      if (mounted) {
-        final data = json.decode(response.body) as Map<String, dynamic>;
-        if (data['success'] == true) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: const Text('User approved'),
-              backgroundColor: BrandColors.forest,
-            ),
-          );
-          _loadStatus(); // Refresh
-        } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Approval failed: ${response.statusCode}'),
-              backgroundColor: BrandColors.error,
-            ),
-          );
-        }
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Approval failed: $e'),
-            backgroundColor: BrandColors.error,
-          ),
-        );
-      }
-    }
-  }
-
-  Future<void> _denyPairing(String requestId) async {
-    try {
-      final featureFlags = ref.read(featureFlagsServiceProvider);
-      final serverUrl = await featureFlags.getAiServerUrl();
-      final apiKey = await ref.read(apiKeyProvider.future);
-
-      await http.post(
-        Uri.parse('$serverUrl/api/bots/pairing/$requestId/deny'),
-        headers: {
-          if (apiKey != null && apiKey.isNotEmpty) 'Authorization': 'Bearer $apiKey',
-        },
-      );
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('Request denied'),
-            backgroundColor: BrandColors.driftwood,
-          ),
-        );
-        _loadStatus(); // Refresh
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Deny failed: $e'),
-            backgroundColor: BrandColors.error,
-          ),
-        );
-      }
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -414,24 +315,6 @@ class _BotConnectorsSectionState extends ConsumerState<BotConnectorsSection> {
                 color: isDark ? BrandColors.nightText : BrandColors.charcoal,
               ),
             ),
-            if (_pendingCount > 0) ...[
-              SizedBox(width: Spacing.sm),
-              Container(
-                padding: EdgeInsets.symmetric(horizontal: Spacing.xs, vertical: 2),
-                decoration: BoxDecoration(
-                  color: BrandColors.error.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Text(
-                  '$_pendingCount',
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                    color: BrandColors.error,
-                  ),
-                ),
-              ),
-            ],
           ],
         ),
         SizedBox(height: Spacing.md),
@@ -447,11 +330,33 @@ class _BotConnectorsSectionState extends ConsumerState<BotConnectorsSection> {
             ),
           )
         else ...[
-          // Pending pairing requests
-          if (_pendingRequests.isNotEmpty) ...[
-            _buildPairingRequestsSection(isDark),
-            SizedBox(height: Spacing.lg),
-          ],
+          // Note about pending requests
+          Container(
+            padding: EdgeInsets.all(Spacing.sm),
+            decoration: BoxDecoration(
+              color: isDark
+                  ? BrandColors.nightSurface
+                  : BrandColors.cream,
+              borderRadius: BorderRadius.circular(Spacing.xs),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.info_outline, size: 16,
+                  color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood),
+                SizedBox(width: Spacing.xs),
+                Expanded(
+                  child: Text(
+                    'Pending approval requests appear in the Chat list.',
+                    style: TextStyle(
+                      fontSize: TypographyTokens.labelSmall,
+                      color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          SizedBox(height: Spacing.md),
 
           // Telegram section
           _buildPlatformSection(
@@ -692,101 +597,6 @@ class _BotConnectorsSectionState extends ConsumerState<BotConnectorsSection> {
               ],
             ),
           ],
-        ],
-      ),
-    );
-  }
-
-  Widget _buildPairingRequestsSection(bool isDark) {
-    return Container(
-      padding: EdgeInsets.all(Spacing.md),
-      decoration: BoxDecoration(
-        color: BrandColors.error.withValues(alpha: 0.05),
-        borderRadius: BorderRadius.circular(Spacing.sm),
-        border: Border.all(
-          color: BrandColors.error.withValues(alpha: 0.3),
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(Icons.person_add_outlined, size: 18, color: BrandColors.error),
-              SizedBox(width: Spacing.xs),
-              Text(
-                'Pending Approval Requests',
-                style: TextStyle(
-                  fontSize: TypographyTokens.bodyMedium,
-                  fontWeight: FontWeight.w600,
-                  color: isDark ? BrandColors.nightText : BrandColors.ink,
-                ),
-              ),
-            ],
-          ),
-          SizedBox(height: Spacing.sm),
-          ..._pendingRequests.map((request) {
-            final platform = request['platform'] as String? ?? '';
-            final userDisplay = request['platformUserDisplay'] as String? ?? 'Unknown';
-            final userId = request['platformUserId'] as String? ?? '';
-            final requestId = request['id'] as String? ?? '';
-
-            return Padding(
-              padding: EdgeInsets.only(bottom: Spacing.sm),
-              child: Row(
-                children: [
-                  Icon(
-                    platform == 'telegram' ? Icons.send : Icons.gamepad,
-                    size: 16,
-                    color: platform == 'telegram'
-                        ? const Color(0xFF0088CC)
-                        : const Color(0xFF5865F2),
-                  ),
-                  SizedBox(width: Spacing.xs),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          userDisplay,
-                          style: TextStyle(
-                            fontSize: TypographyTokens.bodySmall,
-                            fontWeight: FontWeight.w500,
-                            color: isDark ? BrandColors.nightText : BrandColors.ink,
-                          ),
-                        ),
-                        Text(
-                          '${platform.isNotEmpty ? platform[0].toUpperCase() + platform.substring(1) : ''} (ID: $userId)',
-                          style: TextStyle(
-                            fontSize: TypographyTokens.labelSmall,
-                            color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  TextButton(
-                    onPressed: () => _approvePairing(requestId, 'vault'),
-                    style: TextButton.styleFrom(
-                      foregroundColor: BrandColors.forest,
-                      padding: EdgeInsets.symmetric(horizontal: Spacing.sm),
-                      minimumSize: Size.zero,
-                    ),
-                    child: const Text('Approve'),
-                  ),
-                  TextButton(
-                    onPressed: () => _denyPairing(requestId),
-                    style: TextButton.styleFrom(
-                      foregroundColor: BrandColors.error,
-                      padding: EdgeInsets.symmetric(horizontal: Spacing.xs),
-                      minimumSize: Size.zero,
-                    ),
-                    child: const Text('Deny'),
-                  ),
-                ],
-              ),
-            );
-          }),
         ],
       ),
     );
