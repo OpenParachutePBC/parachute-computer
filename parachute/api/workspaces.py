@@ -40,7 +40,10 @@ async def create_workspace(request: Request, body: WorkspaceCreate):
 async def get_workspace(request: Request, slug: str):
     """Get a workspace by slug."""
     vault_path = _get_vault_path(request)
-    workspace = workspaces.get_workspace(vault_path, slug)
+    try:
+        workspace = workspaces.get_workspace(vault_path, slug)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     if workspace is None:
         raise HTTPException(status_code=404, detail=f"Workspace not found: {slug}")
     return {"workspace": workspace.to_api_dict()}
@@ -50,7 +53,10 @@ async def get_workspace(request: Request, slug: str):
 async def update_workspace(request: Request, slug: str, body: WorkspaceUpdate):
     """Update a workspace."""
     vault_path = _get_vault_path(request)
-    workspace = workspaces.update_workspace(vault_path, slug, body)
+    try:
+        workspace = workspaces.update_workspace(vault_path, slug, body)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     if workspace is None:
         raise HTTPException(status_code=404, detail=f"Workspace not found: {slug}")
     return {"workspace": workspace.to_api_dict()}
@@ -65,7 +71,10 @@ async def delete_workspace(request: Request, slug: str):
     vault_path = _get_vault_path(request)
 
     # Check workspace exists
-    workspace = workspaces.get_workspace(vault_path, slug)
+    try:
+        workspace = workspaces.get_workspace(vault_path, slug)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     if workspace is None:
         raise HTTPException(status_code=404, detail=f"Workspace not found: {slug}")
 
@@ -95,7 +104,10 @@ async def list_workspace_sessions(
     vault_path = _get_vault_path(request)
 
     # Verify workspace exists
-    workspace = workspaces.get_workspace(vault_path, slug)
+    try:
+        workspace = workspaces.get_workspace(vault_path, slug)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     if workspace is None:
         raise HTTPException(status_code=404, detail=f"Workspace not found: {slug}")
 

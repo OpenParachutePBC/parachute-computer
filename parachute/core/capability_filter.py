@@ -17,7 +17,13 @@ from parachute.models.workspace import WorkspaceCapabilities
 logger = logging.getLogger(__name__)
 
 # Trust level restrictiveness order: higher number = more restricted
-_TRUST_ORDER = {"full": 0, "vault": 1, "sandboxed": 2}
+TRUST_ORDER: dict[str, int] = {"full": 0, "vault": 1, "sandboxed": 2}
+
+
+def trust_rank(level: Any) -> int:
+    """Get the numeric rank for a trust level (str or enum with .value)."""
+    key = level.value if hasattr(level, "value") else str(level)
+    return TRUST_ORDER.get(key, 0)
 
 
 @dataclass
@@ -52,13 +58,13 @@ def filter_by_trust_level(
     if not mcps:
         return {}
 
-    session_order = _TRUST_ORDER.get(session_trust, 0)
+    session_order = TRUST_ORDER.get(session_trust, 0)
     filtered = {}
 
     for name, config in mcps.items():
         # MCPs without trust_level default to "full" (most restrictive access)
         mcp_trust = config.get("trust_level", "full")
-        mcp_order = _TRUST_ORDER.get(mcp_trust, 0)
+        mcp_order = TRUST_ORDER.get(mcp_trust, 0)
 
         # MCP is available if its trust_level is >= session trust (more or equally restrictive)
         # i.e., an MCP declared "sandboxed" (order=2) is available everywhere

@@ -27,6 +27,7 @@ from parachute.db.database import Database
 from parachute.lib.agent_loader import build_system_prompt, load_agent
 from parachute.lib.context_loader import format_context_for_prompt, load_agent_context
 from parachute.core.context_folders import ContextFolderService
+from parachute.core.capability_filter import filter_by_trust_level, filter_capabilities, trust_rank
 from parachute.lib.mcp_loader import load_mcp_servers, resolve_mcp_servers, validate_and_filter_servers
 from parachute.models.agent import AgentDefinition, AgentType, create_vault_agent
 from parachute.models.events import (
@@ -528,8 +529,7 @@ class Orchestrator:
             if workspace_config and workspace_config.trust_level:
                 try:
                     workspace_trust = TrustLevel(workspace_config.trust_level)
-                    _trust_order = {TrustLevel.FULL: 0, TrustLevel.VAULT: 1, TrustLevel.SANDBOXED: 2}
-                    if _trust_order.get(workspace_trust, 0) > _trust_order.get(session_trust, 0):
+                    if trust_rank(workspace_trust) > trust_rank(session_trust):
                         logger.info(f"Workspace trust floor restricts session from {session_trust.value} to {workspace_trust.value}")
                         session_trust = workspace_trust
                 except ValueError:
@@ -538,8 +538,7 @@ class Orchestrator:
             if trust_level:
                 try:
                     requested = TrustLevel(trust_level)
-                    _trust_order = {TrustLevel.FULL: 0, TrustLevel.VAULT: 1, TrustLevel.SANDBOXED: 2}
-                    if _trust_order.get(requested, 0) >= _trust_order.get(session_trust, 0):
+                    if trust_rank(requested) >= trust_rank(session_trust):
                         session_trust = requested
                     else:
                         logger.warning(
@@ -553,7 +552,6 @@ class Orchestrator:
             # Stage 1: Trust-level capability filtering
             # MCPs with trust_level annotation are only available at that trust or above
             if resolved_mcps:
-                from parachute.core.capability_filter import filter_by_trust_level
                 pre_count = len(resolved_mcps)
                 resolved_mcps = filter_by_trust_level(resolved_mcps, effective_trust)
                 if len(resolved_mcps) < pre_count:
@@ -564,7 +562,6 @@ class Orchestrator:
 
             # Stage 2: Workspace capability filtering
             if workspace_config and workspace_config.capabilities:
-                from parachute.core.capability_filter import filter_capabilities
                 agent_names = list(agents_dict.keys()) if agents_dict else []
                 filtered = filter_capabilities(
                     capabilities=workspace_config.capabilities,
@@ -626,8 +623,8 @@ class Orchestrator:
                     resume_id = session.id
                 else:
                     logger.info(
-                        f"Session {session.id[:8]} exists in DB but has no SDK transcript, "
-                        f"treating as new"
+                        f"Session {session.id[:8]} exists in DB but has no SDK transcript "
+                        f"(working_dir={session.working_directory!r}), treating as new"
                     )
                     is_new = True
 
