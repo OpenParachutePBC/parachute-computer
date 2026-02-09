@@ -112,6 +112,29 @@ class SessionListItem extends StatelessWidget {
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
+                        // Pending approval badge
+                        if (session.isPendingApproval)
+                          Container(
+                            margin: const EdgeInsets.only(left: Spacing.xs),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: Spacing.xs,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.amber.withValues(alpha: 0.2),
+                              borderRadius: Radii.badge,
+                            ),
+                            child: Text(
+                              'Pending',
+                              style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.w600,
+                                color: themeDark
+                                    ? Colors.amber.shade300
+                                    : Colors.amber.shade800,
+                              ),
+                            ),
+                          ),
                         // Archived badge
                         if (session.archived)
                           Container(
@@ -143,6 +166,22 @@ class SessionListItem extends StatelessWidget {
                           _buildTrustBadge(session.trustLevel!, themeDark),
                       ],
                     ),
+                    // First message preview for pending approval sessions
+                    if (session.isPendingApproval && session.firstMessage != null) ...[
+                      const SizedBox(height: Spacing.xxs),
+                      Text(
+                        session.firstMessage!,
+                        style: TextStyle(
+                          fontSize: TypographyTokens.labelSmall,
+                          fontStyle: FontStyle.italic,
+                          color: themeDark
+                              ? BrandColors.nightTextSecondary
+                              : BrandColors.driftwood,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
                     const SizedBox(height: Spacing.xxs),
                     Row(
                       children: [

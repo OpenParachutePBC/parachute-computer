@@ -119,6 +119,18 @@ class ChatSession {
   /// Chat type on the platform (dm, group)
   final String? linkedBotChatType;
 
+  /// Additional metadata from the server (pending approval, pairing info, etc.)
+  final Map<String, dynamic>? metadata;
+
+  /// Whether this session is pending approval from the owner
+  bool get isPendingApproval => metadata?['pending_approval'] == true;
+
+  /// The pairing request ID linked to this pending session
+  String? get pairingRequestId => metadata?['pairing_request_id'] as String?;
+
+  /// The first message sent by the unknown user
+  String? get firstMessage => metadata?['first_message'] as String?;
+
   const ChatSession({
     required this.id,
     this.agentPath,
@@ -138,6 +150,7 @@ class ChatSession {
     this.linkedBotPlatform,
     this.linkedBotChatId,
     this.linkedBotChatType,
+    this.metadata,
   });
 
   /// Alias for archived (for consistency with local session reader)
@@ -175,6 +188,7 @@ class ChatSession {
       linkedBotPlatform: json['linkedBotPlatform'] as String? ?? json['linked_bot_platform'] as String?,
       linkedBotChatId: json['linkedBotChatId'] as String? ?? json['linked_bot_chat_id'] as String?,
       linkedBotChatType: json['linkedBotChatType'] as String? ?? json['linked_bot_chat_type'] as String?,
+      metadata: json['metadata'] as Map<String, dynamic>?,
     );
   }
 
@@ -197,6 +211,7 @@ class ChatSession {
       if (linkedBotPlatform != null) 'linkedBotPlatform': linkedBotPlatform,
       if (linkedBotChatId != null) 'linkedBotChatId': linkedBotChatId,
       if (linkedBotChatType != null) 'linkedBotChatType': linkedBotChatType,
+      if (metadata != null) 'metadata': metadata,
     };
   }
 
@@ -250,6 +265,7 @@ class ChatSession {
     String? linkedBotPlatform,
     String? linkedBotChatId,
     String? linkedBotChatType,
+    Map<String, dynamic>? metadata,
   }) {
     return ChatSession(
       id: id ?? this.id,
@@ -270,6 +286,7 @@ class ChatSession {
       linkedBotPlatform: linkedBotPlatform ?? this.linkedBotPlatform,
       linkedBotChatId: linkedBotChatId ?? this.linkedBotChatId,
       linkedBotChatType: linkedBotChatType ?? this.linkedBotChatType,
+      metadata: metadata ?? this.metadata,
     );
   }
 }

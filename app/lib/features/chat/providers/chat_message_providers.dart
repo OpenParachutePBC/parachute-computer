@@ -13,6 +13,7 @@ import '../services/chat_service.dart';
 import '../services/background_stream_manager.dart';
 import 'package:parachute/core/services/logging_service.dart';
 import 'package:parachute/core/providers/core_service_providers.dart';
+import 'package:parachute/core/providers/app_state_provider.dart' show modelPreferenceProvider;
 import 'chat_session_providers.dart';
 
 // ============================================================
@@ -1140,6 +1141,10 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
       }
       _clearReloadClaudeMdFlag();
 
+      // Read model preference
+      final modelPref = _ref.read(modelPreferenceProvider).valueOrNull;
+      final modelApiValue = modelPref?.apiValue;
+
       await for (final event in _service.streamChat(
         sessionId: existingSessionId,  // null for new sessions, real ID for existing
         message: message,
@@ -1153,6 +1158,7 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
         agentType: agentType,
         agentPath: agentPath,
         trustLevel: trustLevel,
+        model: modelApiValue,
       )) {
         // Check if session has changed (user switched chats during stream)
         // Don't break the stream - let it continue in background so server keeps processing

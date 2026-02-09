@@ -90,7 +90,6 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
   String? _workingDirectory;
   String? _selectedAgentId; // null = default
   TrustLevel? _selectedTrustLevel; // null = module default
-  bool _showAdvanced = false;
 
   @override
   Widget build(BuildContext context) {
@@ -162,20 +161,111 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Agent Type Section
+                // ── Project Folder (primary section) ──
+                Text(
+                  'Project Folder',
+                  style: TextStyle(
+                    fontSize: TypographyTokens.labelMedium,
+                    fontWeight: FontWeight.w600,
+                    color: isDark ? BrandColors.nightText : BrandColors.charcoal,
+                  ),
+                ),
+                const SizedBox(height: Spacing.xs),
+                Text(
+                  'Where the AI reads and writes files',
+                  style: TextStyle(
+                    fontSize: TypographyTokens.bodySmall,
+                    color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+                  ),
+                ),
+                const SizedBox(height: Spacing.sm),
+
+                // Directory selector (prominent)
+                InkWell(
+                  onTap: _selectWorkingDirectory,
+                  borderRadius: BorderRadius.circular(Radii.md),
+                  child: Container(
+                    padding: const EdgeInsets.all(Spacing.md),
+                    decoration: BoxDecoration(
+                      color: isDark
+                          ? BrandColors.nightSurfaceElevated
+                          : BrandColors.stone.withValues(alpha: 0.3),
+                      borderRadius: BorderRadius.circular(Radii.md),
+                      border: Border.all(
+                        color: hasDirectory
+                            ? (isDark ? BrandColors.nightForest : BrandColors.forest)
+                            : (isDark
+                                ? BrandColors.nightSurfaceElevated
+                                : BrandColors.stone.withValues(alpha: 0.5)),
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          hasDirectory ? Icons.folder_open : Icons.auto_awesome,
+                          size: 22,
+                          color: hasDirectory
+                              ? (isDark ? BrandColors.nightForest : BrandColors.forest)
+                              : (isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood),
+                        ),
+                        const SizedBox(width: Spacing.sm),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                hasDirectory
+                                    ? _displayPath(_workingDirectory!)
+                                    : 'Auto workspace',
+                                style: TextStyle(
+                                  fontSize: TypographyTokens.bodyMedium,
+                                  fontWeight: hasDirectory ? FontWeight.w500 : FontWeight.w400,
+                                  color: isDark ? BrandColors.nightText : BrandColors.charcoal,
+                                ),
+                              ),
+                              Text(
+                                hasDirectory
+                                    ? _workingDirectory!
+                                    : 'Each chat gets its own contained workspace',
+                                style: TextStyle(
+                                  fontSize: TypographyTokens.bodySmall,
+                                  color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ],
+                          ),
+                        ),
+                        if (hasDirectory)
+                          IconButton(
+                            onPressed: () => setState(() => _workingDirectory = null),
+                            icon: Icon(
+                              Icons.close,
+                              size: 18,
+                              color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+                            ),
+                            constraints: const BoxConstraints(),
+                            padding: const EdgeInsets.only(left: Spacing.xs),
+                          )
+                        else
+                          Icon(
+                            Icons.chevron_right,
+                            size: 20,
+                            color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+
+                const SizedBox(height: Spacing.lg),
+
+                // ── Agent Type ──
                 Text(
                   'Agent',
                   style: TextStyle(
                     fontSize: TypographyTokens.labelMedium,
                     fontWeight: FontWeight.w600,
-                    color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
-                  ),
-                ),
-                const SizedBox(height: Spacing.xs),
-                Text(
-                  'Choose which AI agent to chat with',
-                  style: TextStyle(
-                    fontSize: TypographyTokens.bodySmall,
                     color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
                   ),
                 ),
@@ -198,161 +288,25 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
 
                 const SizedBox(height: Spacing.lg),
 
-                // Working Directory Section
+                // ── Trust Level (always visible) ──
                 Text(
-                  'Working Directory',
+                  'Trust Level',
                   style: TextStyle(
                     fontSize: TypographyTokens.labelMedium,
                     fontWeight: FontWeight.w600,
                     color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
                   ),
                 ),
-                const SizedBox(height: Spacing.xs),
-                Text(
-                  'Where the AI can read/write files and run commands',
-                  style: TextStyle(
-                    fontSize: TypographyTokens.bodySmall,
-                    color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
-                  ),
-                ),
                 const SizedBox(height: Spacing.sm),
-
-                // Directory selector
-                InkWell(
-                  onTap: _selectWorkingDirectory,
-                  borderRadius: BorderRadius.circular(Radii.md),
-                  child: Container(
-                    padding: const EdgeInsets.all(Spacing.md),
-                    decoration: BoxDecoration(
-                      color: isDark
-                          ? BrandColors.nightSurfaceElevated
-                          : BrandColors.stone.withValues(alpha: 0.3),
-                      borderRadius: BorderRadius.circular(Radii.md),
-                      border: Border.all(
-                        color: hasDirectory
-                            ? (isDark ? BrandColors.nightForest : BrandColors.forest)
-                            : Colors.transparent,
-                      ),
+                Wrap(
+                  spacing: Spacing.sm,
+                  children: [
+                    _buildTrustChip(null, 'Default', Icons.settings, isDark),
+                    ...TrustLevel.values.map((tl) =>
+                      _buildTrustChip(tl, tl.displayName, tl.icon, isDark),
                     ),
-                    child: Row(
-                      children: [
-                        Icon(
-                          hasDirectory ? Icons.folder_open : Icons.home,
-                          size: 20,
-                          color: hasDirectory
-                              ? (isDark ? BrandColors.nightForest : BrandColors.forest)
-                              : (isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood),
-                        ),
-                        const SizedBox(width: Spacing.sm),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                hasDirectory ? _displayPath(_workingDirectory!) : 'Vault (default)',
-                                style: TextStyle(
-                                  fontSize: TypographyTokens.bodyMedium,
-                                  color: isDark ? BrandColors.nightText : BrandColors.charcoal,
-                                ),
-                              ),
-                              if (hasDirectory)
-                                Text(
-                                  _workingDirectory!,
-                                  style: TextStyle(
-                                    fontSize: TypographyTokens.bodySmall,
-                                    color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
-                                  ),
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                            ],
-                          ),
-                        ),
-                        Icon(
-                          Icons.chevron_right,
-                          size: 20,
-                          color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
-                        ),
-                      ],
-                    ),
-                  ),
+                  ],
                 ),
-
-                // Clear button when directory is set
-                if (hasDirectory) ...[
-                  const SizedBox(height: Spacing.sm),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: TextButton.icon(
-                      onPressed: () => setState(() => _workingDirectory = null),
-                      icon: Icon(
-                        Icons.clear,
-                        size: 16,
-                        color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
-                      ),
-                      label: Text(
-                        'Reset to vault',
-                        style: TextStyle(
-                          fontSize: TypographyTokens.bodySmall,
-                          color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-
-                // Advanced section toggle
-                const SizedBox(height: Spacing.md),
-                GestureDetector(
-                  onTap: () => setState(() => _showAdvanced = !_showAdvanced),
-                  child: Row(
-                    children: [
-                      Icon(
-                        _showAdvanced ? Icons.expand_less : Icons.expand_more,
-                        size: 18,
-                        color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
-                      ),
-                      const SizedBox(width: Spacing.xxs),
-                      Text(
-                        'Advanced',
-                        style: TextStyle(
-                          fontSize: TypographyTokens.labelMedium,
-                          color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-
-                // Trust level picker (collapsed by default)
-                if (_showAdvanced) ...[
-                  const SizedBox(height: Spacing.md),
-                  Text(
-                    'Trust Level',
-                    style: TextStyle(
-                      fontSize: TypographyTokens.labelMedium,
-                      fontWeight: FontWeight.w600,
-                      color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
-                    ),
-                  ),
-                  const SizedBox(height: Spacing.xs),
-                  Text(
-                    'Override the module default execution sandbox',
-                    style: TextStyle(
-                      fontSize: TypographyTokens.bodySmall,
-                      color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
-                    ),
-                  ),
-                  const SizedBox(height: Spacing.sm),
-                  Wrap(
-                    spacing: Spacing.sm,
-                    children: [
-                      _buildTrustChip(null, 'Module Default', Icons.settings, isDark),
-                      ...TrustLevel.values.map((tl) =>
-                        _buildTrustChip(tl, tl.displayName, tl.icon, isDark),
-                      ),
-                    ],
-                  ),
-                ],
               ],
             ),
           ),
@@ -478,7 +432,9 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
         (isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood);
 
     return GestureDetector(
-      onTap: () => setState(() => _selectedTrustLevel = level),
+      onTap: () => setState(() {
+        _selectedTrustLevel = level;
+      }),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         decoration: BoxDecoration(

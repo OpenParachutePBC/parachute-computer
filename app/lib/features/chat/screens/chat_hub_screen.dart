@@ -1,7 +1,12 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:http/http.dart' as http;
 import 'package:parachute/core/theme/design_tokens.dart';
+import 'package:parachute/core/providers/app_state_provider.dart';
 import 'package:parachute/core/providers/feature_flags_provider.dart';
+import 'package:parachute/features/settings/models/trust_level.dart';
 import 'package:parachute/features/settings/screens/settings_screen.dart';
 import '../providers/chat_providers.dart';
 import '../models/chat_session.dart';
@@ -123,6 +128,12 @@ class _ChatHubScreenState extends ConsumerState<ChatHubScreen> {
   }
 
   void _openSession(BuildContext context, ChatSession session) {
+    // Pending approval sessions show the approval dialog instead
+    if (session.isPendingApproval && session.pairingRequestId != null) {
+      _showApprovalDialog(context, session);
+      return;
+    }
+
     // Use switchSessionProvider to properly load session with messages
     // This sets currentSessionIdProvider AND calls loadSession
     ref.read(switchSessionProvider)(session.id);
@@ -133,6 +144,253 @@ class _ChatHubScreenState extends ConsumerState<ChatHubScreen> {
         builder: (context) => const ChatScreen(),
       ),
     );
+  }
+
+  void _showApprovalDialog(BuildContext context, ChatSession session) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    var selectedTrust = TrustLevel.vault;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: isDark ? BrandColors.nightSurfaceElevated : Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (context, setSheetState) => Padding(
+          padding: EdgeInsets.only(
+            left: Spacing.lg,
+            right: Spacing.lg,
+            top: Spacing.lg,
+            bottom: MediaQuery.of(context).viewInsets.bottom + Spacing.lg,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Header
+              Row(
+                children: [
+                  Icon(
+                    session.source == ChatSource.telegram
+                        ? Icons.send
+                        : Icons.gamepad,
+                    color: session.source == ChatSource.telegram
+                        ? const Color(0xFF0088CC)
+                        : const Color(0xFF5865F2),
+                  ),
+                  const SizedBox(width: Spacing.sm),
+                  Expanded(
+                    child: Text(
+                      'Approve ${session.displayTitle}?',
+                      style: TextStyle(
+                        fontSize: TypographyTokens.titleMedium,
+                        fontWeight: FontWeight.w600,
+                        color: isDark
+                            ? BrandColors.nightText
+                            : BrandColors.charcoal,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+
+              // First message preview
+              if (session.firstMessage != null) ...[
+                const SizedBox(height: Spacing.md),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(Spacing.md),
+                  decoration: BoxDecoration(
+                    color: isDark
+                        ? BrandColors.nightSurface
+                        : BrandColors.cream,
+                    borderRadius: Radii.card,
+                  ),
+                  child: Text(
+                    session.firstMessage!,
+                    style: TextStyle(
+                      fontSize: TypographyTokens.bodyMedium,
+                      fontStyle: FontStyle.italic,
+                      color: isDark
+                          ? BrandColors.nightTextSecondary
+                          : BrandColors.driftwood,
+                    ),
+                    maxLines: 4,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+
+              // Trust level picker
+              const SizedBox(height: Spacing.lg),
+              Text(
+                'Trust Level',
+                style: TextStyle(
+                  fontSize: TypographyTokens.labelMedium,
+                  fontWeight: FontWeight.w500,
+                  color: isDark
+                      ? BrandColors.nightTextSecondary
+                      : BrandColors.driftwood,
+                ),
+              ),
+              const SizedBox(height: Spacing.sm),
+              ...TrustLevel.values.map((tl) => RadioListTile<TrustLevel>(
+                    title: Text(
+                      tl.displayName,
+                      style: TextStyle(
+                        color: isDark
+                            ? BrandColors.nightText
+                            : BrandColors.charcoal,
+                      ),
+                    ),
+                    subtitle: Text(
+                      tl.description,
+                      style: TextStyle(
+                        fontSize: TypographyTokens.labelSmall,
+                        color: isDark
+                            ? BrandColors.nightTextSecondary
+                            : BrandColors.driftwood,
+                      ),
+                    ),
+                    value: tl,
+                    groupValue: selectedTrust,
+                    dense: true,
+                    activeColor: isDark
+                        ? BrandColors.nightTurquoise
+                        : BrandColors.turquoise,
+                    onChanged: (val) {
+                      if (val != null) {
+                        setSheetState(() => selectedTrust = val);
+                      }
+                    },
+                  )),
+
+              // Action buttons
+              const SizedBox(height: Spacing.lg),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () {
+                        Navigator.pop(sheetContext);
+                        _denyPairing(session.pairingRequestId!);
+                      },
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: BrandColors.error,
+                        side: BorderSide(color: BrandColors.error),
+                      ),
+                      child: const Text('Deny'),
+                    ),
+                  ),
+                  const SizedBox(width: Spacing.md),
+                  Expanded(
+                    child: FilledButton(
+                      onPressed: () {
+                        Navigator.pop(sheetContext);
+                        _approvePairing(
+                          session.pairingRequestId!,
+                          selectedTrust.name,
+                        );
+                      },
+                      style: FilledButton.styleFrom(
+                        backgroundColor: isDark
+                            ? BrandColors.nightForest
+                            : BrandColors.forest,
+                      ),
+                      child: const Text('Approve'),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _approvePairing(String requestId, String trustLevel) async {
+    try {
+      final featureFlags = ref.read(featureFlagsServiceProvider);
+      final serverUrl = await featureFlags.getAiServerUrl();
+      final apiKey = await ref.read(apiKeyProvider.future);
+
+      final response = await http.post(
+        Uri.parse('$serverUrl/api/bots/pairing/$requestId/approve'),
+        headers: {
+          'Content-Type': 'application/json',
+          if (apiKey != null && apiKey.isNotEmpty) 'Authorization': 'Bearer $apiKey',
+        },
+        body: json.encode({'trust_level': trustLevel}),
+      );
+
+      if (mounted) {
+        final data = json.decode(response.body) as Map<String, dynamic>;
+        if (data['success'] == true) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text('User approved'),
+              backgroundColor: BrandColors.forest,
+            ),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Approval failed: ${response.statusCode}'),
+              backgroundColor: BrandColors.error,
+            ),
+          );
+        }
+        // Refresh sessions list
+        ref.invalidate(chatSessionsProvider);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Approval failed: $e'),
+            backgroundColor: BrandColors.error,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _denyPairing(String requestId) async {
+    try {
+      final featureFlags = ref.read(featureFlagsServiceProvider);
+      final serverUrl = await featureFlags.getAiServerUrl();
+      final apiKey = await ref.read(apiKeyProvider.future);
+
+      await http.post(
+        Uri.parse('$serverUrl/api/bots/pairing/$requestId/deny'),
+        headers: {
+          if (apiKey != null && apiKey.isNotEmpty) 'Authorization': 'Bearer $apiKey',
+        },
+      );
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Request denied'),
+            backgroundColor: BrandColors.driftwood,
+          ),
+        );
+        // Refresh sessions list
+        ref.invalidate(chatSessionsProvider);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Deny failed: $e'),
+            backgroundColor: BrandColors.error,
+          ),
+        );
+      }
+    }
   }
 
   Widget _buildNoServerState(BuildContext context, bool isDark) {
