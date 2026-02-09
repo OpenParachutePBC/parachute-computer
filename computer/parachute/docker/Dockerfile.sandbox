@@ -22,6 +22,10 @@ WORKDIR /workspace
 # Copy entrypoint
 COPY entrypoint.py /workspace/entrypoint.py
 
+# Install parachute MCP server if available (mounted at runtime via /app)
+# The host can bind-mount the package at /app for `python -m parachute.mcp_server`
+# This is optional — the entrypoint works without it
+
 USER sandbox
 
 ENTRYPOINT ["python", "/workspace/entrypoint.py"]

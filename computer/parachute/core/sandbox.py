@@ -39,6 +39,9 @@ class AgentSandboxConfig:
     allowed_paths: list[str] = field(default_factory=list)
     network_enabled: bool = False
     timeout_seconds: int = 300  # 5 minute default
+    plugin_dirs: list[Path] = field(default_factory=list)
+    mcp_servers: Optional[dict] = None
+    agents: Optional[dict] = None
 
 
 class DockerSandbox:
@@ -117,13 +120,47 @@ class DockerSandbox:
         if not config.allowed_paths:
             mounts.extend(["-v", f"{self.vault_path}:/vault:ro"])
 
+        # Mount capability files/dirs
+        mounts.extend(self._build_capability_mounts(config))
+
         return mounts
 
-    def _build_run_args(self, config: AgentSandboxConfig) -> tuple[list[str], Optional[str]]:
+    def _build_capability_mounts(self, config: AgentSandboxConfig) -> list[str]:
+        """Build Docker volume mounts for capabilities (MCP, skills, agents, plugins)."""
+        mounts = []
+
+        # Mount vault MCP config (read-only)
+        mcp_json = self.vault_path / ".mcp.json"
+        if mcp_json.exists():
+            mounts.extend(["-v", f"{mcp_json}:/vault/.mcp.json:ro"])
+
+        # Mount skills directory (read-only)
+        skills_dir = self.vault_path / ".skills"
+        if skills_dir.is_dir():
+            mounts.extend(["-v", f"{skills_dir}:/vault/.skills:ro"])
+
+        # Mount custom agents (read-only)
+        agents_dir = self.vault_path / ".parachute" / "agents"
+        if agents_dir.is_dir():
+            mounts.extend(["-v", f"{agents_dir}:/vault/.parachute/agents:ro"])
+
+        # Mount vault CLAUDE.md (read-only)
+        claude_md = self.vault_path / "CLAUDE.md"
+        if claude_md.exists():
+            mounts.extend(["-v", f"{claude_md}:/vault/CLAUDE.md:ro"])
+
+        # Mount plugin directories (read-only)
+        for i, plugin_dir in enumerate(config.plugin_dirs):
+            if plugin_dir.is_dir():
+                mounts.extend(["-v", f"{plugin_dir}:/plugins/plugin-{i}:ro"])
+
+        return mounts
+
+    def _build_run_args(self, config: AgentSandboxConfig) -> tuple[list[str], Optional[str], Optional[str]]:
         """Build complete docker run arguments.
 
-        Returns (args, env_file_path) where env_file_path is a temp file
-        that must be cleaned up after the container starts.
+        Returns (args, env_file_path, caps_file_path) where temp files
+        must be cleaned up after the container starts.
         """
         # Validate session_id is safe for Docker --name
         if not re.match(r'^[a-zA-Z0-9_-]+$', config.session_id):
@@ -147,6 +184,7 @@ class DockerSandbox:
 
         # Environment variables via --env-file to avoid token exposure in process table
         env_file_path = None
+        caps_file_path = None
         env_lines = [
             f"PARACHUTE_SESSION_ID={config.session_id}",
             f"PARACHUTE_AGENT_TYPE={config.agent_type}",
@@ -167,10 +205,36 @@ class DockerSandbox:
             os.unlink(env_file_path)
             raise
 
+        # Write capabilities JSON for the entrypoint to read
+        capabilities = {}
+        if config.plugin_dirs:
+            capabilities["plugin_dirs"] = [
+                f"/plugins/plugin-{i}" for i in range(len(config.plugin_dirs))
+                if config.plugin_dirs[i].is_dir()
+            ]
+        if config.mcp_servers:
+            capabilities["mcp_servers"] = config.mcp_servers
+        if config.agents:
+            capabilities["agents"] = config.agents
+
+        if capabilities:
+            fd2, caps_file_path = tempfile.mkstemp(
+                suffix='.json', prefix='parachute-caps-'
+            )
+            try:
+                with os.fdopen(fd2, 'w') as f:
+                    json.dump(capabilities, f)
+                os.chmod(caps_file_path, 0o600)
+                args.extend(["-v", f"{caps_file_path}:/tmp/capabilities.json:ro"])
+            except Exception:
+                os.unlink(caps_file_path)
+                caps_file_path = None
+                logger.warning("Failed to write capabilities config for sandbox")
+
         # Image
         args.append(SANDBOX_IMAGE)
 
-        return args, env_file_path
+        return args, env_file_path, caps_file_path
 
     async def run_agent(
         self,
@@ -184,7 +248,7 @@ class DockerSandbox:
         if not await self.is_available():
             raise RuntimeError("Docker not available for sandboxed execution")
 
-        args, env_file_path = self._build_run_args(config)
+        args, env_file_path, caps_file_path = self._build_run_args(config)
 
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -255,12 +319,13 @@ class DockerSandbox:
             logger.error(f"Failed to start sandbox: {e}")
             yield {"type": "error", "message": f"Failed to start sandbox: {e}"}
         finally:
-            # Ensure env file is cleaned up even on error
-            if env_file_path:
-                try:
-                    os.unlink(env_file_path)
-                except OSError:
-                    pass
+            # Ensure temp files are cleaned up even on error
+            for tmp_file in (env_file_path, caps_file_path):
+                if tmp_file:
+                    try:
+                        os.unlink(tmp_file)
+                    except OSError:
+                        pass
 
     def health_info(self) -> dict:
         """Return Docker health info for /health endpoint."""
