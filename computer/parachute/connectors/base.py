@@ -64,9 +64,15 @@ class BotConnector(ABC):
         return user_id in self.allowed_users or str(user_id) in [str(u) for u in self.allowed_users]
 
     async def handle_unknown_user(
-        self, platform: str, user_id: str, user_display: str, chat_id: str
+        self,
+        platform: str,
+        user_id: str,
+        user_display: str,
+        chat_id: str,
+        chat_type: str = "dm",
+        message_text: str | None = None,
     ) -> str:
-        """Handle message from unknown user — create pairing request."""
+        """Handle message from unknown user — create pairing request + pending session."""
         db = getattr(self.server, "database", None)
         if not db:
             return "Service unavailable."
@@ -76,8 +82,12 @@ class BotConnector(ABC):
         if existing and existing.status == "pending":
             return "Your request is still pending. The owner will approve it shortly."
 
-        # Create new request
+        # Create new pairing request
         import uuid
+        from datetime import datetime
+
+        from parachute.models.session import SessionCreate
+
         request_id = str(uuid.uuid4())
         await db.create_pairing_request(
             id=request_id,
@@ -87,6 +97,35 @@ class BotConnector(ABC):
             platform_chat_id=chat_id,
         )
         logger.info(f"Created pairing request {request_id} for {platform} user {user_id}")
+
+        # Also create a pending session so it appears in the Chat list
+        session_id = str(uuid.uuid4())
+        trust_level = await self.get_trust_level(chat_type)
+        create_data = SessionCreate(
+            id=session_id,
+            title=f"{user_display} ({platform.title()})",
+            module="chat",
+            source=platform,
+            trust_level=trust_level,
+            linked_bot_platform=platform,
+            linked_bot_chat_id=chat_id,
+            linked_bot_chat_type=chat_type,
+            metadata={
+                "linked_bot": {
+                    "platform": platform,
+                    "chat_id": chat_id,
+                    "chat_type": chat_type,
+                    "user_display": user_display,
+                    "linked_at": datetime.utcnow().isoformat() + "Z",
+                },
+                "pending_approval": True,
+                "pairing_request_id": request_id,
+                "first_message": message_text,
+            },
+        )
+        await db.create_session(create_data)
+        logger.info(f"Created pending session {session_id[:8]} for pairing request {request_id[:8]}")
+
         return "Hi! I need approval before we can chat. Your request has been sent to the owner."
 
     async def send_approval_message(self, chat_id: str) -> None:
