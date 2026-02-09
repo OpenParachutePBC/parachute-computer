@@ -701,6 +701,8 @@ class Orchestrator:
                         allowed_paths=sandbox_paths,
                         network_enabled=True,  # SDK needs network for Anthropic API
                         mcp_servers=resolved_mcps,  # Pass filtered MCPs to container
+                        plugin_dirs=plugin_dirs,  # Pass filtered skill plugins
+                        agents=agents_dict,  # Pass filtered custom agents
                         working_directory=sandbox_wd,
                     )
                     # For continuing sandbox sessions, inject prior conversation
