@@ -370,6 +370,18 @@ async def approve_pairing(request_id: str, body: PairingApproval):
         if hasattr(connector, "update_trust_override"):
             connector.update_trust_override(pr.platform_user_id, body.trust_level)
 
+    # Activate the pending session: clear pending_approval, update trust level
+    linked_session = await db.get_session_by_bot_link(pr.platform, pr.platform_chat_id)
+    if linked_session and linked_session.metadata and linked_session.metadata.get("pending_approval"):
+        updated_metadata = dict(linked_session.metadata)
+        updated_metadata.pop("pending_approval", None)
+        from parachute.models.session import SessionUpdate
+        await db.update_session(linked_session.id, SessionUpdate(
+            metadata=updated_metadata,
+            trust_level=body.trust_level,
+        ))
+        logger.info(f"Activated pending session {linked_session.id[:8]} for approved user")
+
     # Send approval message to user
     if connector and hasattr(connector, "send_approval_message"):
         try:
@@ -394,6 +406,13 @@ async def deny_pairing(request_id: str):
         raise HTTPException(status_code=409, detail=f"Request already {pr.status}")
 
     await db.resolve_pairing_request(request_id, approved=False)
+
+    # Archive the pending session linked to this request
+    linked_session = await db.get_session_by_bot_link(pr.platform, pr.platform_chat_id)
+    if linked_session and linked_session.metadata and linked_session.metadata.get("pending_approval"):
+        await db.archive_session(linked_session.id)
+        logger.info(f"Archived pending session {linked_session.id[:8]} for denied user")
+
     return {"success": True}
 
 

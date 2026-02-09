@@ -132,18 +132,20 @@ class DiscordConnector(BotConnector):
         message = update  # In Discord, 'update' is a discord.Message
 
         user_id = str(message.author.id)
+        chat_type = "dm" if isinstance(message.channel, discord.DMChannel) else "group"
         if not self.is_user_allowed(user_id):
             response = await self.handle_unknown_user(
                 platform="discord",
                 user_id=user_id,
                 user_display=message.author.display_name,
                 chat_id=str(message.channel.id),
+                chat_type=chat_type,
+                message_text=message.content,
             )
             await message.reply(response)
             return
 
         chat_id = str(message.channel.id)
-        chat_type = "dm" if isinstance(message.channel, discord.DMChannel) else "group"
         message_text = message.content
 
         # Group mention gating: only respond to @mentions in guild channels
@@ -212,11 +214,14 @@ class DiscordConnector(BotConnector):
         """Handle /chat slash command."""
         user_id = str(interaction.user.id)
         if not self.is_user_allowed(user_id):
+            chat_type = "dm" if interaction.guild is None else "group"
             response = await self.handle_unknown_user(
                 platform="discord",
                 user_id=user_id,
                 user_display=interaction.user.display_name,
                 chat_id=str(interaction.channel_id),
+                chat_type=chat_type,
+                message_text=message,
             )
             await interaction.response.send_message(response, ephemeral=True)
             return
@@ -257,11 +262,13 @@ class DiscordConnector(BotConnector):
         """Handle /journal slash command."""
         user_id = str(interaction.user.id)
         if not self.is_user_allowed(user_id):
+            chat_type = "dm" if interaction.guild is None else "group"
             response = await self.handle_unknown_user(
                 platform="discord",
                 user_id=user_id,
                 user_display=interaction.user.display_name,
                 chat_id=str(interaction.channel_id),
+                chat_type=chat_type,
             )
             await interaction.response.send_message(response, ephemeral=True)
             return
