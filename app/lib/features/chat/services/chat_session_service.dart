@@ -6,12 +6,19 @@ extension ChatSessionService on ChatService {
   ///
   /// By default, only non-archived sessions are returned.
   /// Pass [includeArchived: true] to get archived sessions as well.
-  Future<List<ChatSession>> getSessions({bool includeArchived = false}) async {
+  /// Pass [search] to filter sessions by title (server-side LIKE query).
+  Future<List<ChatSession>> getSessions({
+    bool includeArchived = false,
+    String? search,
+  }) async {
     try {
       // Request up to 500 sessions to handle large imports
-      final uri = includeArchived
-          ? Uri.parse('$baseUrl/api/chat?archived=true&limit=500')
-          : Uri.parse('$baseUrl/api/chat?limit=500');
+      final params = <String, String>{
+        'limit': '500',
+        if (includeArchived) 'archived': 'true',
+        if (search != null && search.isNotEmpty) 'search': search,
+      };
+      final uri = Uri.parse('$baseUrl/api/chat').replace(queryParameters: params);
 
       final response = await client.get(
         uri,
