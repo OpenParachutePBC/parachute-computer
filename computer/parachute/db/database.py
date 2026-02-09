@@ -451,6 +451,7 @@ class Database:
         module: Optional[str] = None,
         archived: Optional[bool] = None,
         agent_type: Optional[str] = None,
+        search: Optional[str] = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[Session]:
@@ -469,6 +470,10 @@ class Database:
         if agent_type:
             query += " AND agent_type = ?"
             params.append(agent_type)
+
+        if search:
+            query += " AND title LIKE ?"
+            params.append(f"%{search}%")
 
         query += " ORDER BY last_accessed DESC LIMIT ? OFFSET ?"
         params.extend([limit, offset])
