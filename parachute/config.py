@@ -144,6 +144,16 @@ class Settings(BaseSettings):
         description="Log format string",
     )
 
+    # Plugins
+    plugin_dirs: list[str] = Field(
+        default_factory=list,
+        description="Additional plugin directories to load",
+    )
+    include_user_plugins: bool = Field(
+        default=True,
+        description="Load plugins from ~/.claude/plugins/",
+    )
+
     # Development
     debug: bool = Field(default=False, description="Enable debug mode")
     reload: bool = Field(default=False, description="Enable auto-reload")
