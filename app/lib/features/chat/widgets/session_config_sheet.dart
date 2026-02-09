@@ -11,7 +11,8 @@ import '../../settings/models/trust_level.dart';
 /// Bottom sheet for editing per-session configuration.
 ///
 /// Shows platform info for bot sessions, trust level selector,
-/// and module selector. Saves via PATCH /api/chat/{id}/config.
+/// response mode for bot sessions, and activation mode for pending sessions.
+/// Saves via PATCH /api/chat/{id}/config or POST /api/chat/{id}/activate.
 class SessionConfigSheet extends ConsumerStatefulWidget {
   final ChatSession session;
 
@@ -34,15 +35,32 @@ class SessionConfigSheet extends ConsumerStatefulWidget {
 
 class _SessionConfigSheetState extends ConsumerState<SessionConfigSheet> {
   late String _trustLevel;
+  late String _responseMode;
+  late TextEditingController _mentionPatternController;
   bool _isSaving = false;
   String? _error;
 
   static const _trustLevels = ['full', 'vault', 'sandboxed'];
 
+  bool get _isActivation => widget.session.isPendingInitialization;
+  bool get _isBotSession => widget.session.source.isBotSession;
+
   @override
   void initState() {
     super.initState();
     _trustLevel = widget.session.trustLevel ?? 'full';
+    // Default response mode: DMs get all_messages, groups get mention_only
+    final isDm = widget.session.linkedBotChatType == 'dm';
+    _responseMode = widget.session.responseMode ?? (isDm ? 'all_messages' : 'mention_only');
+    _mentionPatternController = TextEditingController(
+      text: widget.session.mentionPattern ?? '',
+    );
+  }
+
+  @override
+  void dispose() {
+    _mentionPatternController.dispose();
+    super.dispose();
   }
 
   Future<void> _save() async {
@@ -56,18 +74,42 @@ class _SessionConfigSheetState extends ConsumerState<SessionConfigSheet> {
       final serverUrl = await featureFlags.getAiServerUrl();
       final apiKey = await ref.read(apiKeyProvider.future);
 
-      final response = await http.patch(
-        Uri.parse('$serverUrl/api/chat/${widget.session.id}/config'),
-        headers: {
-          'Content-Type': 'application/json',
-          if (apiKey != null && apiKey.isNotEmpty) 'Authorization': 'Bearer $apiKey',
-        },
-        body: json.encode({'trustLevel': _trustLevel}),
-      );
+      final headers = <String, String>{
+        'Content-Type': 'application/json',
+        if (apiKey != null && apiKey.isNotEmpty) 'Authorization': 'Bearer $apiKey',
+      };
+
+      final body = <String, dynamic>{
+        'trustLevel': _trustLevel,
+      };
+
+      // Include response settings for bot sessions
+      if (_isBotSession) {
+        body['responseMode'] = _responseMode;
+        final pattern = _mentionPatternController.text.trim();
+        body['mentionPattern'] = pattern.isNotEmpty ? pattern : '';
+      }
+
+      final http.Response response;
+      if (_isActivation) {
+        // POST /api/chat/{id}/activate for pending sessions
+        response = await http.post(
+          Uri.parse('$serverUrl/api/chat/${widget.session.id}/activate'),
+          headers: headers,
+          body: json.encode(body),
+        );
+      } else {
+        // PATCH /api/chat/{id}/config for existing sessions
+        response = await http.patch(
+          Uri.parse('$serverUrl/api/chat/${widget.session.id}/config'),
+          headers: headers,
+          body: json.encode(body),
+        );
+      }
 
       if (mounted) {
         if (response.statusCode == 200) {
-          Navigator.of(context).pop(true); // Return true to indicate saved
+          Navigator.of(context).pop(true);
         } else {
           setState(() => _error = 'Save failed (${response.statusCode})');
         }
@@ -129,7 +171,7 @@ class _SessionConfigSheetState extends ConsumerState<SessionConfigSheet> {
 
           // Title
           Text(
-            'Session Settings',
+            _isActivation ? 'Activate Session' : 'Session Settings',
             style: TextStyle(
               fontSize: TypographyTokens.titleMedium,
               fontWeight: FontWeight.w600,
@@ -137,6 +179,40 @@ class _SessionConfigSheetState extends ConsumerState<SessionConfigSheet> {
             ),
           ),
           SizedBox(height: Spacing.md),
+
+          // Initialization banner
+          if (_isActivation) ...[
+            Container(
+              padding: EdgeInsets.all(Spacing.sm),
+              decoration: BoxDecoration(
+                color: Colors.orange.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(Spacing.xs),
+                border: Border.all(
+                  color: Colors.orange.withValues(alpha: 0.3),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.info_outline,
+                    size: 18,
+                    color: isDark ? Colors.orange.shade300 : Colors.orange.shade700,
+                  ),
+                  SizedBox(width: Spacing.sm),
+                  Expanded(
+                    child: Text(
+                      'This bot session needs configuration before it can respond.',
+                      style: TextStyle(
+                        fontSize: TypographyTokens.bodySmall,
+                        color: isDark ? Colors.orange.shade300 : Colors.orange.shade800,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            SizedBox(height: Spacing.md),
+          ],
 
           // Platform info header for bot sessions
           if (session.source.isBotSession) ...[
@@ -220,6 +296,79 @@ class _SessionConfigSheetState extends ConsumerState<SessionConfigSheet> {
             _buildWorkspaceInfo(isDark, session),
           ],
 
+          // Response mode for bot sessions
+          if (_isBotSession) ...[
+            SizedBox(height: Spacing.lg),
+            Text(
+              'Response Mode',
+              style: TextStyle(
+                fontSize: TypographyTokens.bodySmall,
+                fontWeight: FontWeight.w500,
+                color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+              ),
+            ),
+            SizedBox(height: Spacing.xs),
+            SegmentedButton<String>(
+              segments: const [
+                ButtonSegment(
+                  value: 'all_messages',
+                  label: Text('All Messages', style: TextStyle(fontSize: 12)),
+                ),
+                ButtonSegment(
+                  value: 'mention_only',
+                  label: Text('Mentions Only', style: TextStyle(fontSize: 12)),
+                ),
+              ],
+              selected: {_responseMode},
+              onSelectionChanged: (selected) {
+                setState(() => _responseMode = selected.first);
+              },
+            ),
+            SizedBox(height: Spacing.xs),
+            Text(
+              _responseMode == 'all_messages'
+                  ? 'Bot responds to every message in this chat.'
+                  : 'Bot only responds when mentioned with the trigger pattern.',
+              style: TextStyle(
+                fontSize: TypographyTokens.labelSmall,
+                color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+              ),
+            ),
+
+            // Mention pattern (shown when mention_only)
+            if (_responseMode == 'mention_only') ...[
+              SizedBox(height: Spacing.sm),
+              TextField(
+                controller: _mentionPatternController,
+                decoration: InputDecoration(
+                  hintText: '@botname (default)',
+                  labelText: 'Mention Pattern',
+                  labelStyle: TextStyle(
+                    fontSize: TypographyTokens.bodySmall,
+                    color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+                  ),
+                  hintStyle: TextStyle(
+                    fontSize: TypographyTokens.bodySmall,
+                    color: (isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood)
+                        .withValues(alpha: 0.5),
+                  ),
+                  isDense: true,
+                  contentPadding: EdgeInsets.symmetric(
+                    horizontal: Spacing.sm,
+                    vertical: Spacing.sm,
+                  ),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(Spacing.xs),
+                  ),
+                ),
+                style: TextStyle(
+                  fontSize: TypographyTokens.bodySmall,
+                  color: isDark ? BrandColors.nightText : BrandColors.ink,
+                ),
+              ),
+            ],
+          ],
+
           // Error
           if (_error != null) ...[
             SizedBox(height: Spacing.sm),
@@ -232,7 +381,7 @@ class _SessionConfigSheetState extends ConsumerState<SessionConfigSheet> {
             ),
           ],
 
-          // Save button
+          // Save / Activate button
           SizedBox(height: Spacing.lg),
           SizedBox(
             width: double.infinity,
@@ -252,7 +401,7 @@ class _SessionConfigSheetState extends ConsumerState<SessionConfigSheet> {
                         color: Colors.white,
                       ),
                     )
-                  : const Text('Save'),
+                  : Text(_isActivation ? 'Activate' : 'Save'),
             ),
           ),
         ],
