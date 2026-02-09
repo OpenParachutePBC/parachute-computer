@@ -118,11 +118,13 @@ class TelegramConnector(BotConnector):
         """Handle /start command."""
         user_id = update.effective_user.id
         if not self.is_user_allowed(user_id):
+            chat_type = "dm" if update.effective_chat.type == "private" else "group"
             response = await self.handle_unknown_user(
                 platform="telegram",
                 user_id=str(user_id),
                 user_display=update.effective_user.full_name,
                 chat_id=str(update.effective_chat.id),
+                chat_type=chat_type,
             )
             await update.message.reply_text(response)
             return
@@ -166,11 +168,13 @@ class TelegramConnector(BotConnector):
         """Handle /journal command - route to Daily module."""
         user_id = update.effective_user.id
         if not self.is_user_allowed(user_id):
+            chat_type = "dm" if update.effective_chat.type == "private" else "group"
             response = await self.handle_unknown_user(
                 platform="telegram",
                 user_id=str(user_id),
                 user_display=update.effective_user.full_name,
                 chat_id=str(update.effective_chat.id),
+                chat_type=chat_type,
             )
             await update.message.reply_text(response)
             return
@@ -192,11 +196,14 @@ class TelegramConnector(BotConnector):
         """Handle incoming text message."""
         user_id = update.effective_user.id
         if not self.is_user_allowed(user_id):
+            chat_type = "dm" if update.effective_chat.type == "private" else "group"
             response = await self.handle_unknown_user(
                 platform="telegram",
                 user_id=str(user_id),
                 user_display=update.effective_user.full_name,
                 chat_id=str(update.effective_chat.id),
+                chat_type=chat_type,
+                message_text=update.message.text,
             )
             await update.message.reply_text(response)
             return
@@ -223,6 +230,7 @@ class TelegramConnector(BotConnector):
             chat_id=chat_id,
             chat_type=chat_type,
             user_display=update.effective_user.full_name,
+            user_id=str(update.effective_user.id),
         )
 
         if not session:
@@ -256,11 +264,13 @@ class TelegramConnector(BotConnector):
         """Handle incoming voice message."""
         user_id = update.effective_user.id
         if not self.is_user_allowed(user_id):
+            chat_type = "dm" if update.effective_chat.type == "private" else "group"
             response = await self.handle_unknown_user(
                 platform="telegram",
                 user_id=str(user_id),
                 user_display=update.effective_user.full_name,
                 chat_id=str(update.effective_chat.id),
+                chat_type=chat_type,
             )
             await update.message.reply_text(response)
             return
