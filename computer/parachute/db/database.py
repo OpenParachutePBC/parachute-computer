@@ -840,7 +840,7 @@ class Database:
         set_clauses = []
         values: list[Any] = []
         for key, value in kwargs.items():
-            if key in ("trust_level", "module"):
+            if key in ("trust_level", "module", "workspace_id"):
                 set_clauses.append(f"{key} = ?")
                 values.append(value)
         if set_clauses:

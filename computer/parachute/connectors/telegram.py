@@ -75,6 +75,7 @@ class TelegramConnector(BotConnector):
         self._app.add_handler(CommandHandler("start", self._cmd_start))
         self._app.add_handler(CommandHandler("help", self._cmd_help))
         self._app.add_handler(CommandHandler("new", self._cmd_new))
+        self._app.add_handler(CommandHandler("ask", self._cmd_ask))
         self._app.add_handler(CommandHandler("journal", self._cmd_journal))
         self._app.add_handler(CommandHandler("j", self._cmd_journal))
         self._app.add_handler(
@@ -152,16 +153,42 @@ class TelegramConnector(BotConnector):
             "Starting fresh! Previous conversation archived."
         )
 
+    async def _cmd_ask(self, update: Any, context: Any) -> None:
+        """Handle /ask command - ask a question (especially useful in groups)."""
+        user_id = update.effective_user.id
+        if not self.is_user_allowed(user_id):
+            chat_type = "dm" if update.effective_chat.type == "private" else "group"
+            response = await self.handle_unknown_user(
+                platform="telegram",
+                user_id=str(user_id),
+                user_display=update.effective_user.full_name,
+                chat_id=str(update.effective_chat.id),
+                chat_type=chat_type,
+            )
+            await update.message.reply_text(response)
+            return
+
+        text = " ".join(context.args) if context.args else ""
+        if not text:
+            await update.message.reply_text("Usage: /ask <your question>")
+            return
+
+        # Process directly, bypassing group mention gating
+        await self._process_text_message(update, text)
+
     async def _cmd_help(self, update: Any, context: Any) -> None:
         """Handle /help command."""
         await update.message.reply_text(
             "Parachute Bot Commands:\n\n"
             "/start - Connect to Parachute\n"
             "/new - Start a new conversation\n"
+            "/ask <text> - Ask a question (works in groups)\n"
             "/journal <text> - Create a journal entry\n"
             "/j <text> - Shorthand for /journal\n"
             "/help - Show this help\n\n"
-            "Or just send a message to chat."
+            "In DMs, just send a message to chat.\n"
+            "In groups, use /ask or reply to bot messages. "
+            "To enable @mentions, disable Privacy Mode via BotFather."
         )
 
     async def _cmd_journal(self, update: Any, context: Any) -> None:
@@ -208,7 +235,6 @@ class TelegramConnector(BotConnector):
             await update.message.reply_text(response)
             return
 
-        chat_id = str(update.effective_chat.id)
         chat_type = "dm" if update.effective_chat.type == "private" else "group"
         message_text = update.message.text
 
@@ -223,6 +249,13 @@ class TelegramConnector(BotConnector):
                 message_text = message_text.replace(f"@{bot_username}", "").strip()
             if not message_text:
                 return  # Nothing left after stripping mention
+
+        await self._process_text_message(update, message_text)
+
+    async def _process_text_message(self, update: Any, message_text: str) -> None:
+        """Process a text message (shared by on_text_message and /ask command)."""
+        chat_id = str(update.effective_chat.id)
+        chat_type = "dm" if update.effective_chat.type == "private" else "group"
 
         # Find or create linked session
         session = await self.get_or_create_session(
@@ -289,9 +322,8 @@ class TelegramConnector(BotConnector):
             if transcriber:
                 ogg_path = await voice_file.download_to_drive()
                 text = await transcriber(str(ogg_path))
-                # Treat as text message
-                update.message.text = text
-                await self.on_text_message(update, context)
+                # Process transcribed text directly
+                await self._process_text_message(update, text)
             else:
                 await update.message.reply_text(
                     "Voice transcription not available on server."

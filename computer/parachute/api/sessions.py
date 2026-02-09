@@ -22,6 +22,7 @@ class SessionConfigUpdate(BaseModel):
         alias="configOverrides",
         description="Config overrides merged into session metadata",
     )
+    workspace_id: Optional[str] = Field(None, alias="workspaceId", description="Workspace slug for this session")
 
     model_config = {"populate_by_name": True}
 
@@ -198,6 +199,12 @@ async def update_session_config(
         existing_meta["config_overrides"] = body.config_overrides
         update.metadata = existing_meta
         has_changes = True
+
+    if body.workspace_id is not None:
+        has_changes = True
+        # Empty string clears workspace, otherwise set slug
+        ws_value = body.workspace_id if body.workspace_id else None
+        await db.update_session_config(session_id, workspace_id=ws_value)
 
     if not has_changes:
         raise HTTPException(status_code=400, detail="No fields to update")
