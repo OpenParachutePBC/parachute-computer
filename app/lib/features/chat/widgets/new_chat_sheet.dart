@@ -2,43 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/features/settings/models/trust_level.dart';
+import '../models/agent_info.dart';
 import '../models/workspace.dart';
+import '../providers/agent_providers.dart';
 import '../providers/workspace_providers.dart';
 import 'directory_picker.dart';
-
-/// Available agent types for new chats
-class AgentOption {
-  final String? id; // null = default vault agent
-  final String? path; // path to agent definition file
-  final String label;
-  final String description;
-  final IconData icon;
-
-  const AgentOption({
-    this.id,
-    this.path,
-    required this.label,
-    required this.description,
-    required this.icon,
-  });
-}
-
-const _availableAgents = [
-  AgentOption(
-    id: null,
-    path: null,
-    label: 'Default',
-    description: 'Standard vault agent',
-    icon: Icons.chat_bubble_outline,
-  ),
-  AgentOption(
-    id: 'orchestrator',
-    path: 'Daily/.agents/orchestrator.md',
-    label: 'Daily Orchestrator',
-    description: 'Thinking partner for your day',
-    icon: Icons.auto_awesome,
-  ),
-];
 
 /// Result from the new chat sheet
 class NewChatConfig {
@@ -325,20 +293,8 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
                 ),
                 const SizedBox(height: Spacing.sm),
 
-                // Agent selector chips
-                Row(
-                  children: _availableAgents.map((agent) {
-                    final isSelected = _selectedAgentId == agent.id;
-                    return Expanded(
-                      child: Padding(
-                        padding: EdgeInsets.only(
-                          right: agent != _availableAgents.last ? Spacing.sm : 0,
-                        ),
-                        child: _buildAgentChip(agent, isSelected, isDark),
-                      ),
-                    );
-                  }).toList(),
-                ),
+                // Agent selector chips (dynamic from server)
+                _buildAgentSelector(isDark),
 
                 const SizedBox(height: Spacing.lg),
 
@@ -377,17 +333,17 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
                 width: double.infinity,
                 child: FilledButton.icon(
                   onPressed: () {
-                    final selectedAgent = _availableAgents.firstWhere(
-                      (a) => a.id == _selectedAgentId,
-                      orElse: () => _availableAgents.first,
-                    );
+                    final agents = ref.read(agentsProvider).valueOrNull ?? [];
+                    final selected = _selectedAgentId != null
+                        ? agents.where((a) => a.name == _selectedAgentId).firstOrNull
+                        : null;
                     Navigator.pop(
                       context,
                       NewChatConfig(
                         workspaceId: _selectedWorkspace?.slug,
                         workingDirectory: _workingDirectory,
-                        agentType: selectedAgent.id,
-                        agentPath: selectedAgent.path,
+                        agentType: selected?.isBuiltin == true ? null : selected?.name,
+                        agentPath: selected?.path,
                         trustLevel: _selectedTrustLevel,
                       ),
                     );
@@ -395,7 +351,7 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
                   icon: const Icon(Icons.arrow_forward),
                   label: Text(_selectedAgentId == null
                       ? 'Start Chat'
-                      : 'Start ${_availableAgents.firstWhere((a) => a.id == _selectedAgentId).label}'),
+                      : 'Start ${(ref.read(agentsProvider).valueOrNull ?? []).where((a) => a.name == _selectedAgentId).firstOrNull?.displayName ?? 'Chat'}'),
                   style: FilledButton.styleFrom(
                     backgroundColor:
                         isDark ? BrandColors.nightForest : BrandColors.forest,
@@ -417,9 +373,65 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
     return parts.isNotEmpty ? parts.last : path;
   }
 
-  Widget _buildAgentChip(AgentOption agent, bool isSelected, bool isDark) {
+  Widget _buildAgentSelector(bool isDark) {
+    final agentsAsync = ref.watch(agentsProvider);
+
+    return agentsAsync.when(
+      data: (agents) {
+        if (agents.isEmpty) return const SizedBox.shrink();
+        // Default selection is the builtin agent (first item)
+        _selectedAgentId ??= agents.first.name;
+        return Wrap(
+          spacing: Spacing.sm,
+          runSpacing: Spacing.sm,
+          children: agents.map((agent) {
+            final isSelected = _selectedAgentId == agent.name;
+            return _buildAgentChip(agent, isSelected, isDark);
+          }).toList(),
+        );
+      },
+      loading: () => Wrap(
+        spacing: Spacing.sm,
+        children: [
+          _buildShimmerChip(isDark),
+          _buildShimmerChip(isDark),
+        ],
+      ),
+      error: (_, _) {
+        // Fallback: show just "Default" agent
+        _selectedAgentId ??= 'vault-agent';
+        final fallback = const AgentInfo(
+          name: 'vault-agent',
+          description: 'Standard vault agent',
+          source: 'builtin',
+        );
+        return Wrap(
+          spacing: Spacing.sm,
+          children: [_buildAgentChip(fallback, true, isDark)],
+        );
+      },
+    );
+  }
+
+  Widget _buildShimmerChip(bool isDark) {
+    return Container(
+      width: 120,
+      height: 48,
+      decoration: BoxDecoration(
+        color: isDark
+            ? BrandColors.nightSurfaceElevated
+            : BrandColors.stone.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(8),
+      ),
+    );
+  }
+
+  Widget _buildAgentChip(AgentInfo agent, bool isSelected, bool isDark) {
+    final icon = agent.isBuiltin
+        ? Icons.chat_bubble_outline
+        : (agent.source == 'vault_agents' ? Icons.auto_awesome : Icons.smart_toy_outlined);
     return GestureDetector(
-      onTap: () => setState(() => _selectedAgentId = agent.id),
+      onTap: () => setState(() => _selectedAgentId = agent.name),
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
         decoration: BoxDecoration(
@@ -438,7 +450,7 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(
-              agent.icon,
+              icon,
               size: 16,
               color: isSelected
                   ? BrandColors.turquoise
@@ -447,12 +459,13 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
                       : BrandColors.driftwood),
             ),
             const SizedBox(width: 6),
-            Expanded(
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 140),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    agent.label,
+                    agent.displayName,
                     style: TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w600,
@@ -463,17 +476,18 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
                               : BrandColors.charcoal),
                     ),
                   ),
-                  Text(
-                    agent.description,
-                    style: TextStyle(
-                      fontSize: 10,
-                      color: isDark
-                          ? BrandColors.nightTextSecondary
-                          : BrandColors.driftwood,
+                  if (agent.description != null && agent.description!.isNotEmpty)
+                    Text(
+                      agent.description!,
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: isDark
+                            ? BrandColors.nightTextSecondary
+                            : BrandColors.driftwood,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
                 ],
               ),
             ),

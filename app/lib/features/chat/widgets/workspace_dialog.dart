@@ -4,6 +4,7 @@ import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/features/settings/models/trust_level.dart';
 import '../models/workspace.dart';
 import '../providers/workspace_providers.dart';
+import 'capability_selector.dart';
 import 'directory_picker.dart';
 
 /// Shared workspace form fields used by both create and edit dialogs.
@@ -19,6 +20,8 @@ class _WorkspaceForm extends StatelessWidget {
   final ValueChanged<String?> onModelChanged;
   final VoidCallback? onBrowseDirectory;
   final bool autofocusName;
+  final WorkspaceCapabilities? capabilities;
+  final ValueChanged<WorkspaceCapabilities>? onCapabilitiesChanged;
 
   const _WorkspaceForm({
     required this.nameController,
@@ -30,6 +33,8 @@ class _WorkspaceForm extends StatelessWidget {
     required this.onModelChanged,
     this.onBrowseDirectory,
     this.autofocusName = false,
+    this.capabilities,
+    this.onCapabilitiesChanged,
   });
 
   @override
@@ -102,6 +107,15 @@ class _WorkspaceForm extends StatelessWidget {
             ],
             onChanged: (val) => onModelChanged(val),
           ),
+          if (capabilities != null && onCapabilitiesChanged != null) ...[
+            SizedBox(height: Spacing.lg),
+            const Divider(),
+            SizedBox(height: Spacing.sm),
+            CapabilitiesEditor(
+              capabilities: capabilities!,
+              onChanged: onCapabilitiesChanged!,
+            ),
+          ],
         ],
       ),
     );
@@ -135,6 +149,7 @@ class _CreateWorkspaceDialogState extends ConsumerState<CreateWorkspaceDialog> {
   final _dirController = TextEditingController();
   String _trustLevel = 'trusted';
   String? _model;
+  WorkspaceCapabilities _capabilities = const WorkspaceCapabilities();
   bool _isSubmitting = false;
 
   @override
@@ -159,6 +174,8 @@ class _CreateWorkspaceDialogState extends ConsumerState<CreateWorkspaceDialog> {
         onModelChanged: (val) => setState(() => _model = val),
         onBrowseDirectory: _browseDirectory,
         autofocusName: true,
+        capabilities: _capabilities,
+        onCapabilitiesChanged: (val) => setState(() => _capabilities = val),
       ),
       actions: [
         TextButton(
@@ -202,6 +219,7 @@ class _CreateWorkspaceDialogState extends ConsumerState<CreateWorkspaceDialog> {
         defaultTrustLevel: _trustLevel,
         workingDirectory: _dirController.text.trim().isEmpty ? null : _dirController.text.trim(),
         model: _model,
+        capabilities: _capabilities,
       );
       widget.onCreated?.call(ws);
       if (mounted) Navigator.pop(context, ws);
@@ -243,6 +261,7 @@ class _EditWorkspaceDialogState extends ConsumerState<EditWorkspaceDialog> {
   late final TextEditingController _dirController;
   late String _trustLevel;
   late String? _model;
+  late WorkspaceCapabilities _capabilities;
   bool _isSubmitting = false;
 
   @override
@@ -253,6 +272,7 @@ class _EditWorkspaceDialogState extends ConsumerState<EditWorkspaceDialog> {
     _dirController = TextEditingController(text: widget.workspace.workingDirectory ?? '');
     _trustLevel = widget.workspace.defaultTrustLevel;
     _model = widget.workspace.model;
+    _capabilities = widget.workspace.capabilities;
   }
 
   @override
@@ -276,6 +296,8 @@ class _EditWorkspaceDialogState extends ConsumerState<EditWorkspaceDialog> {
         onTrustChanged: (val) => setState(() => _trustLevel = val),
         onModelChanged: (val) => setState(() => _model = val),
         onBrowseDirectory: _browseDirectory,
+        capabilities: _capabilities,
+        onCapabilitiesChanged: (val) => setState(() => _capabilities = val),
       ),
       actions: [
         TextButton(
@@ -316,6 +338,7 @@ class _EditWorkspaceDialogState extends ConsumerState<EditWorkspaceDialog> {
         'default_trust_level': _trustLevel,
         'working_directory': _dirController.text.trim().isEmpty ? null : _dirController.text.trim(),
         'model': _model,
+        'capabilities': _capabilities.toJson(),
       };
       await service.updateWorkspace(widget.workspace.slug, updates);
       widget.onSaved?.call();
