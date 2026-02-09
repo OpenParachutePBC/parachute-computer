@@ -86,6 +86,16 @@ async def health_check(
     if docker_available:
         docker_info["image_exists"] = await sandbox.image_exists()
 
+    # Bot connector status
+    from parachute.api.bots import _connectors
+    bots = {}
+    for platform in ("telegram", "discord"):
+        connector = _connectors.get(platform)
+        if connector:
+            bots[platform] = {"running": connector._running}
+        else:
+            bots[platform] = {"running": False}
+
     return {
         **basic,
         "vault": {
@@ -94,5 +104,6 @@ async def health_check(
         },
         "modules": modules_status,
         "docker": docker_info,
+        "bots": bots,
         "uptime": time.time() - _start_time,
     }
