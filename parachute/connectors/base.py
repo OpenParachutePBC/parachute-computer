@@ -36,7 +36,7 @@ class BotConnector(ABC):
         self.group_trust_level = group_trust_level
         self.group_mention_mode = group_mention_mode
         self._running = False
-        self._session_locks: dict[str, asyncio.Lock] = {}
+        self._chat_locks: dict[str, asyncio.Lock] = {}
         self._trust_overrides: dict[str, str] = {}  # user_id -> trust_level cache
 
     @abstractmethod
@@ -156,11 +156,11 @@ class BotConnector(ABC):
         """Update the in-memory trust override cache (called on approval)."""
         self._trust_overrides[str(user_id)] = trust_level
 
-    def _get_session_lock(self, session_id: str) -> asyncio.Lock:
-        """Get or create a per-session lock for concurrency control."""
-        if session_id not in self._session_locks:
-            self._session_locks[session_id] = asyncio.Lock()
-        return self._session_locks[session_id]
+    def _get_chat_lock(self, chat_id: str) -> asyncio.Lock:
+        """Get or create a per-chat lock (stable across session finalization)."""
+        if chat_id not in self._chat_locks:
+            self._chat_locks[chat_id] = asyncio.Lock()
+        return self._chat_locks[chat_id]
 
     async def get_or_create_session(
         self,
