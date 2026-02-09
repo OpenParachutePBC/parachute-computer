@@ -300,6 +300,8 @@ class SessionUpdate(BaseModel):
     agent_type: Optional[str] = None
     metadata: Optional[dict[str, Any]] = None
     trust_level: Optional[str] = None
+    working_directory: Optional[str] = None
+    workspace_id: Optional[str] = None
 
 
 class PairingRequest(BaseModel):

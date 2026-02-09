@@ -440,6 +440,14 @@ class Database:
             updates.append("trust_level = ?")
             params.append(update.trust_level)
 
+        if update.working_directory is not None:
+            updates.append("working_directory = ?")
+            params.append(update.working_directory)
+
+        if update.workspace_id is not None:
+            updates.append("workspace_id = ?")
+            params.append(update.workspace_id)
+
         if not updates:
             return await self.get_session(session_id)
 
