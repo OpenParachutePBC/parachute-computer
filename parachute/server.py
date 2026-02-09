@@ -118,15 +118,17 @@ async def lifespan(app: FastAPI):
         """Wrapper that bridges connector call signature to orchestrator.run_streaming().
 
         Connectors call: orchestrate(session_id, message, source)
-        Orchestrator expects: run_streaming(message, session_id, ..., trust_level)
+        Orchestrator expects: run_streaming(message, session_id, ..., trust_level, workspace_id)
         """
         session = await db.get_session(session_id)
         trust_level = getattr(session, 'trust_level', None) if session else None
+        workspace_id = getattr(session, 'workspace_id', None) if session else None
 
         async for event in orchestrator.run_streaming(
             message=message,
             session_id=session_id,
             trust_level=trust_level,
+            workspace_id=workspace_id,
         ):
             yield event
 
