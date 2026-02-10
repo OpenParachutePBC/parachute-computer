@@ -424,6 +424,209 @@ extension ChatSessionService on ChatService {
     }
   }
 
+  // ============================================================
+  // Agent CRUD
+  // ============================================================
+
+  /// Create a custom agent on the server.
+  Future<Map<String, dynamic>> createAgent({
+    required String name,
+    String? description,
+    required String prompt,
+    List<String> tools = const [],
+    String? model,
+  }) async {
+    try {
+      final body = <String, dynamic>{
+        'name': name,
+        'prompt': prompt,
+        if (description != null) 'description': description,
+        if (tools.isNotEmpty) 'tools': tools,
+        if (model != null) 'model': model,
+      };
+      final response = await client.post(
+        Uri.parse('$baseUrl/api/agents'),
+        headers: defaultHeaders,
+        body: jsonEncode(body),
+      ).timeout(ChatService.requestTimeout);
+
+      if (response.statusCode == 409) {
+        throw NetworkError('Agent already exists', statusCode: 409);
+      }
+      if (response.statusCode != 200) {
+        throw NetworkError('Failed to create agent', statusCode: response.statusCode);
+      }
+      return jsonDecode(response.body) as Map<String, dynamic>;
+    } on SocketException catch (e) {
+      throw ServerUnreachableError(cause: e);
+    } on http.ClientException catch (e) {
+      throw NetworkError('Network error creating agent', cause: e);
+    } on TimeoutException catch (e) {
+      throw ServerUnreachableError(cause: e);
+    }
+  }
+
+  /// Delete a custom agent from the server.
+  Future<void> deleteAgent(String name) async {
+    try {
+      final response = await client.delete(
+        Uri.parse('$baseUrl/api/agents/${Uri.encodeComponent(name)}'),
+        headers: defaultHeaders,
+      ).timeout(ChatService.requestTimeout);
+
+      if (response.statusCode == 403) {
+        throw NetworkError('Cannot delete this agent', statusCode: 403);
+      }
+      if (response.statusCode != 200) {
+        throw NetworkError('Failed to delete agent', statusCode: response.statusCode);
+      }
+    } on SocketException catch (e) {
+      throw ServerUnreachableError(cause: e);
+    } on http.ClientException catch (e) {
+      throw NetworkError('Network error deleting agent', cause: e);
+    } on TimeoutException catch (e) {
+      throw ServerUnreachableError(cause: e);
+    }
+  }
+
+  // ============================================================
+  // Skill CRUD
+  // ============================================================
+
+  /// Create a new skill on the server.
+  Future<Map<String, dynamic>> createSkill({
+    required String name,
+    String? description,
+    required String content,
+  }) async {
+    try {
+      final body = <String, dynamic>{
+        'name': name,
+        'content': content,
+        if (description != null) 'description': description,
+      };
+      final response = await client.post(
+        Uri.parse('$baseUrl/api/skills'),
+        headers: defaultHeaders,
+        body: jsonEncode(body),
+      ).timeout(ChatService.requestTimeout);
+
+      if (response.statusCode == 409) {
+        throw NetworkError('Skill already exists', statusCode: 409);
+      }
+      if (response.statusCode != 200 && response.statusCode != 201) {
+        throw NetworkError('Failed to create skill', statusCode: response.statusCode);
+      }
+      return jsonDecode(response.body) as Map<String, dynamic>;
+    } on SocketException catch (e) {
+      throw ServerUnreachableError(cause: e);
+    } on http.ClientException catch (e) {
+      throw NetworkError('Network error creating skill', cause: e);
+    } on TimeoutException catch (e) {
+      throw ServerUnreachableError(cause: e);
+    }
+  }
+
+  /// Delete a skill from the server.
+  Future<void> deleteSkill(String name) async {
+    try {
+      final response = await client.delete(
+        Uri.parse('$baseUrl/api/skills/${Uri.encodeComponent(name)}'),
+        headers: defaultHeaders,
+      ).timeout(ChatService.requestTimeout);
+
+      if (response.statusCode != 200) {
+        throw NetworkError('Failed to delete skill', statusCode: response.statusCode);
+      }
+    } on SocketException catch (e) {
+      throw ServerUnreachableError(cause: e);
+    } on http.ClientException catch (e) {
+      throw NetworkError('Network error deleting skill', cause: e);
+    } on TimeoutException catch (e) {
+      throw ServerUnreachableError(cause: e);
+    }
+  }
+
+  // ============================================================
+  // MCP Server CRUD
+  // ============================================================
+
+  /// Add an MCP server configuration.
+  Future<Map<String, dynamic>> addMcpServer({
+    required String name,
+    required Map<String, dynamic> config,
+  }) async {
+    try {
+      final body = <String, dynamic>{
+        'name': name,
+        ...config,
+      };
+      final response = await client.post(
+        Uri.parse('$baseUrl/api/mcps'),
+        headers: defaultHeaders,
+        body: jsonEncode(body),
+      ).timeout(ChatService.requestTimeout);
+
+      if (response.statusCode == 409) {
+        throw NetworkError('MCP server already exists', statusCode: 409);
+      }
+      if (response.statusCode != 200 && response.statusCode != 201) {
+        throw NetworkError('Failed to add MCP server', statusCode: response.statusCode);
+      }
+      return jsonDecode(response.body) as Map<String, dynamic>;
+    } on SocketException catch (e) {
+      throw ServerUnreachableError(cause: e);
+    } on http.ClientException catch (e) {
+      throw NetworkError('Network error adding MCP server', cause: e);
+    } on TimeoutException catch (e) {
+      throw ServerUnreachableError(cause: e);
+    }
+  }
+
+  /// Delete an MCP server configuration.
+  Future<void> deleteMcpServer(String name) async {
+    try {
+      final response = await client.delete(
+        Uri.parse('$baseUrl/api/mcps/${Uri.encodeComponent(name)}'),
+        headers: defaultHeaders,
+      ).timeout(ChatService.requestTimeout);
+
+      if (response.statusCode == 403) {
+        throw NetworkError('Cannot delete built-in MCP server', statusCode: 403);
+      }
+      if (response.statusCode != 200) {
+        throw NetworkError('Failed to delete MCP server', statusCode: response.statusCode);
+      }
+    } on SocketException catch (e) {
+      throw ServerUnreachableError(cause: e);
+    } on http.ClientException catch (e) {
+      throw NetworkError('Network error deleting MCP server', cause: e);
+    } on TimeoutException catch (e) {
+      throw ServerUnreachableError(cause: e);
+    }
+  }
+
+  /// Test an MCP server connection.
+  Future<Map<String, dynamic>> testMcpServer(String name) async {
+    try {
+      final response = await client.post(
+        Uri.parse('$baseUrl/api/mcps/${Uri.encodeComponent(name)}/test'),
+        headers: defaultHeaders,
+      ).timeout(const Duration(seconds: 15));
+
+      if (response.statusCode != 200) {
+        throw NetworkError('Failed to test MCP server', statusCode: response.statusCode);
+      }
+      return jsonDecode(response.body) as Map<String, dynamic>;
+    } on SocketException catch (e) {
+      throw ServerUnreachableError(cause: e);
+    } on http.ClientException catch (e) {
+      throw NetworkError('Network error testing MCP server', cause: e);
+    } on TimeoutException catch (e) {
+      throw ServerUnreachableError(cause: e);
+    }
+  }
+
   /// Get all sessions with active streams on the server
   Future<List<String>> getActiveStreams() async {
     try {
