@@ -797,8 +797,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               ),
             ],
           ),
-          if (hasBadges) ...[
-            const SizedBox(height: Spacing.xxs),
+          if (hasBadges)
             SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: Row(
@@ -827,7 +826,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                 ],
               ),
             ),
-          ],
         ],
       ),
     );
