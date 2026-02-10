@@ -103,19 +103,23 @@ async def list_agents(request: Request) -> dict[str, Any]:
 
 @router.get("/agents/{name}")
 async def get_agent(request: Request, name: str) -> dict[str, Any]:
-    """Get a single agent by name."""
+    """Get a single agent by name with full detail."""
     settings = get_settings()
 
     # Check built-in
     if name == "vault-agent":
+        agent = create_vault_agent()
         item = _vault_agent_to_item().model_dump()
-        vault_agent = create_vault_agent()
-        # Include truncated system prompt for detail view
-        prompt = vault_agent.system_prompt or ""
+        prompt = agent.system_prompt or ""
+        item["system_prompt"] = prompt
         item["system_prompt_preview"] = prompt[:500] if prompt else None
+        item["permissions"] = agent.permissions.model_dump(by_alias=True)
+        item["constraints"] = agent.constraints.model_dump(by_alias=True)
+        item["mcp_servers"] = agent.mcp_servers
+        item["spawns"] = agent.spawns
         return item
 
-    # Check vault agents
+    # Check vault agents (AgentDefinition - has permissions/constraints)
     vault_agents = await load_all_agents(settings.vault_path)
     for agent in vault_agents:
         if agent.name == name:
@@ -129,10 +133,15 @@ async def get_agent(request: Request, name: str) -> dict[str, Any]:
                 tools=agent.tools,
             ).model_dump()
             prompt = agent.system_prompt or ""
+            item["system_prompt"] = prompt
             item["system_prompt_preview"] = prompt[:500] if prompt else None
+            item["permissions"] = agent.permissions.model_dump(by_alias=True)
+            item["constraints"] = agent.constraints.model_dump(by_alias=True)
+            item["mcp_servers"] = agent.mcp_servers
+            item["spawns"] = agent.spawns
             return item
 
-    # Check custom agents
+    # Check custom agents (AgentConfig - simpler, no permissions/constraints)
     custom_agents = discover_agents(settings.vault_path)
     for agent in custom_agents:
         if agent.name == name:
@@ -146,6 +155,7 @@ async def get_agent(request: Request, name: str) -> dict[str, Any]:
                 tools=agent.tools,
             ).model_dump()
             prompt = agent.prompt or ""
+            item["system_prompt"] = prompt
             item["system_prompt_preview"] = prompt[:500] if prompt else None
             return item
 

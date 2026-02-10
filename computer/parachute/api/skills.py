@@ -43,6 +43,8 @@ def parse_skill_file(skill_path: Path) -> Optional[dict[str, Any]]:
         # Parse frontmatter if present
         name = skill_path.stem
         description = ""
+        version = "1.0.0"
+        allowed_tools: list[str] = []
         prompt = content
 
         if content.startswith("---"):
@@ -54,23 +56,62 @@ def parse_skill_file(skill_path: Path) -> Optional[dict[str, Any]]:
                 for line in frontmatter.split("\n"):
                     if ":" in line:
                         key, value = line.split(":", 1)
-                        key = key.strip().lower()
-                        value = value.strip().strip('"').strip("'")
+                        key = key.strip().lower().replace("-", "_")
+                        value = value.strip()
+                        raw_value = value.strip('"').strip("'")
                         if key == "name":
-                            name = value
+                            name = raw_value
                         elif key == "description":
-                            description = value
+                            description = raw_value
+                        elif key == "version":
+                            version = raw_value
+                        elif key == "allowed_tools":
+                            if value.startswith("[") and value.endswith("]"):
+                                allowed_tools = [
+                                    t.strip().strip('"').strip("'")
+                                    for t in value[1:-1].split(",")
+                                    if t.strip()
+                                ]
+                            elif raw_value:
+                                allowed_tools = [raw_value]
 
         stat = skill_path.stat()
+        skills_dir = get_skills_dir()
+        is_directory = skill_path.parent != skills_dir
 
-        return {
+        # Detect source
+        path_str = str(skill_path)
+        if ".parachute/plugins/" in path_str:
+            source = "plugin"
+        elif ".skills/" in path_str:
+            source = "custom"
+        else:
+            source = "vault"
+
+        result: dict[str, Any] = {
             "name": name,
-            "directory": skill_path.parent.name if skill_path.parent != get_skills_dir() else skill_path.stem,
+            "directory": skill_path.parent.name if is_directory else skill_path.stem,
             "description": description,
             "content": prompt,
             "size": stat.st_size,
             "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+            "version": version,
+            "allowed_tools": allowed_tools,
+            "is_directory": is_directory,
+            "source": source,
         }
+
+        # For directory skills, list all files
+        if is_directory:
+            files = []
+            for f in skill_path.parent.iterdir():
+                if f.is_file():
+                    fstat = f.stat()
+                    files.append({"name": f.name, "size": fstat.st_size})
+            files.sort(key=lambda x: x["name"])
+            result["files"] = files
+
+        return result
     except Exception as e:
         logger.error(f"Error parsing skill {skill_path}: {e}")
         return None

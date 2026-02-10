@@ -400,10 +400,192 @@ async def test_mcp_server(request: Request, name: str) -> dict[str, Any]:
         }
 
 
+async def _discover_stdio_tools(
+    name: str, server_config: dict[str, Any]
+) -> dict[str, Any]:
+    """Discover tools from a stdio MCP server via JSON-RPC."""
+    import subprocess
+
+    command = server_config.get("command")
+    if not command:
+        return {"name": name, "tools": [], "error": "No command configured"}
+
+    args = server_config.get("args", [])
+    env = {**dict(os.environ), **server_config.get("env", {})}
+
+    try:
+        proc = subprocess.Popen(
+            [command] + args,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            stdin=subprocess.PIPE,
+        )
+
+        def _rpc_request(method: str, params: dict | None = None, req_id: int = 1) -> bytes:
+            msg = {"jsonrpc": "2.0", "method": method, "id": req_id}
+            if params:
+                msg["params"] = params
+            raw = json.dumps(msg)
+            return raw.encode("utf-8") + b"\n"
+
+        def _rpc_notification(method: str, params: dict | None = None) -> bytes:
+            msg = {"jsonrpc": "2.0", "method": method}
+            if params:
+                msg["params"] = params
+            raw = json.dumps(msg)
+            return raw.encode("utf-8") + b"\n"
+
+        # Send initialize request
+        init_params = {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {},
+            "clientInfo": {"name": "parachute", "version": "1.0.0"},
+        }
+        proc.stdin.write(_rpc_request("initialize", init_params, req_id=1))
+        proc.stdin.flush()
+
+        # Read initialize response (with timeout)
+        import select
+        import time
+
+        deadline = time.time() + 10
+        init_response = b""
+        while time.time() < deadline:
+            remaining = deadline - time.time()
+            ready, _, _ = select.select([proc.stdout], [], [], min(remaining, 0.5))
+            if ready:
+                chunk = proc.stdout.read1(4096) if hasattr(proc.stdout, 'read1') else proc.stdout.readline()
+                if not chunk:
+                    break
+                init_response += chunk
+                # Try to parse as JSON
+                try:
+                    json.loads(init_response.decode("utf-8").strip())
+                    break  # Got valid JSON
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    continue
+            if proc.poll() is not None:
+                break
+
+        if not init_response:
+            proc.kill()
+            return {"name": name, "tools": [], "error": "Server did not respond to initialize"}
+
+        # Send initialized notification
+        proc.stdin.write(_rpc_notification("notifications/initialized"))
+        proc.stdin.flush()
+
+        # Send tools/list request
+        proc.stdin.write(_rpc_request("tools/list", req_id=2))
+        proc.stdin.flush()
+
+        # Read tools/list response
+        deadline = time.time() + 10
+        tools_response = b""
+        while time.time() < deadline:
+            remaining = deadline - time.time()
+            ready, _, _ = select.select([proc.stdout], [], [], min(remaining, 0.5))
+            if ready:
+                chunk = proc.stdout.read1(4096) if hasattr(proc.stdout, 'read1') else proc.stdout.readline()
+                if not chunk:
+                    break
+                tools_response += chunk
+                try:
+                    json.loads(tools_response.decode("utf-8").strip())
+                    break
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    continue
+            if proc.poll() is not None:
+                break
+
+        # Clean up
+        proc.terminate()
+        try:
+            proc.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
+        if not tools_response:
+            return {"name": name, "tools": [], "error": "No response to tools/list"}
+
+        parsed = json.loads(tools_response.decode("utf-8").strip())
+        raw_tools = parsed.get("result", {}).get("tools", [])
+        tools = [
+            {
+                "name": t.get("name", ""),
+                "description": t.get("description"),
+            }
+            for t in raw_tools
+        ]
+        return {"name": name, "tools": tools}
+
+    except FileNotFoundError:
+        return {"name": name, "tools": [], "error": f"Command not found: {command}"}
+    except Exception as e:
+        return {"name": name, "tools": [], "error": str(e)}
+
+
+async def _discover_http_tools(
+    name: str, server_config: dict[str, Any]
+) -> dict[str, Any]:
+    """Discover tools from an HTTP MCP server via JSON-RPC."""
+    import httpx
+
+    url = server_config.get("url")
+    if not url:
+        return {"name": name, "tools": [], "error": "No URL configured"}
+
+    headers = dict(server_config.get("headers", {}))
+    headers["Content-Type"] = "application/json"
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            # Initialize
+            init_body = {
+                "jsonrpc": "2.0",
+                "method": "initialize",
+                "id": 1,
+                "params": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {"name": "parachute", "version": "1.0.0"},
+                },
+            }
+            await client.post(url, json=init_body, headers=headers)
+
+            # tools/list
+            tools_body = {
+                "jsonrpc": "2.0",
+                "method": "tools/list",
+                "id": 2,
+            }
+            response = await client.post(url, json=tools_body, headers=headers)
+
+            if response.status_code != 200:
+                return {"name": name, "tools": [], "error": f"HTTP {response.status_code}"}
+
+            parsed = response.json()
+            raw_tools = parsed.get("result", {}).get("tools", [])
+            tools = [
+                {
+                    "name": t.get("name", ""),
+                    "description": t.get("description"),
+                }
+                for t in raw_tools
+            ]
+            return {"name": name, "tools": tools}
+
+    except Exception as e:
+        return {"name": name, "tools": [], "error": str(e)}
+
+
 @router.get("/mcps/{name}/tools")
 async def get_mcp_server_tools(request: Request, name: str) -> dict[str, Any]:
     """
     Get the list of tools provided by an MCP server.
+
+    Connects to the server via JSON-RPC and calls tools/list.
     """
     settings = get_settings()
     all_servers = await load_mcp_servers(settings.vault_path)
@@ -412,9 +594,9 @@ async def get_mcp_server_tools(request: Request, name: str) -> dict[str, Any]:
     if not server_config:
         raise HTTPException(status_code=404, detail=f"MCP server '{name}' not found")
 
-    # For now, return empty tools - full implementation would query the server
-    return {
-        "name": name,
-        "tools": [],
-        "message": "Tool discovery not yet implemented in Python backend",
-    }
+    server_type = _get_server_type(server_config)
+
+    if server_type == "http":
+        return await _discover_http_tools(name, server_config)
+    else:
+        return await _discover_stdio_tools(name, server_config)

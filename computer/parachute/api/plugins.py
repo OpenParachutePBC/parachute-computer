@@ -6,6 +6,8 @@ Plugins are stored in {vault}/.parachute/plugins/{slug}/.
 """
 
 import logging
+from datetime import datetime
+from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Request
@@ -13,6 +15,7 @@ from pydantic import BaseModel
 
 from parachute.config import get_settings
 from parachute.core.plugins import discover_plugins
+from parachute.core.agents import _parse_markdown_agent, _data_to_agent
 from parachute.core.plugin_installer import (
     install_plugin_from_url,
     uninstall_plugin,
@@ -141,3 +144,184 @@ async def check_plugin_update_endpoint(
         return {"upToDate": True, "slug": slug}
 
     return {"upToDate": False, "behind": result["behind"], "slug": slug}
+
+
+def _find_plugin_path(slug: str) -> tuple[Path, Any]:
+    """Find a plugin by slug and return (plugin_path, plugin_info)."""
+    settings = get_settings()
+    plugins = discover_plugins(settings.vault_path)
+    for plugin in plugins:
+        if plugin.slug == slug:
+            return Path(plugin.path), plugin
+    raise HTTPException(status_code=404, detail=f"Plugin '{slug}' not found")
+
+
+def _parse_plugin_skill(skill_path: Path, name: str) -> dict[str, Any]:
+    """Parse a plugin skill file, same shape as GET /skills/{name}."""
+    content = skill_path.read_text(encoding="utf-8")
+
+    skill_name = name
+    description = ""
+    version = "1.0.0"
+    allowed_tools: list[str] = []
+    prompt = content
+
+    if content.startswith("---"):
+        parts = content.split("---", 2)
+        if len(parts) >= 3:
+            frontmatter = parts[1].strip()
+            prompt = parts[2].strip()
+
+            for line in frontmatter.split("\n"):
+                if ":" in line:
+                    key, value = line.split(":", 1)
+                    key = key.strip().lower().replace("-", "_")
+                    value = value.strip()
+                    raw_value = value.strip('"').strip("'")
+                    if key == "name":
+                        skill_name = raw_value
+                    elif key == "description":
+                        description = raw_value
+                    elif key == "version":
+                        version = raw_value
+                    elif key == "allowed_tools":
+                        if value.startswith("[") and value.endswith("]"):
+                            allowed_tools = [
+                                t.strip().strip('"').strip("'")
+                                for t in value[1:-1].split(",")
+                                if t.strip()
+                            ]
+                        elif raw_value:
+                            allowed_tools = [raw_value]
+
+    stat = skill_path.stat()
+    is_directory = skill_path.name.upper() in ("SKILL.MD", "INDEX.MD") or skill_path.parent.name != "skills"
+
+    result: dict[str, Any] = {
+        "name": skill_name,
+        "description": description,
+        "content": prompt,
+        "size": stat.st_size,
+        "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+        "version": version,
+        "allowed_tools": allowed_tools,
+        "is_directory": is_directory,
+        "source": "plugin",
+    }
+
+    if is_directory and skill_path.parent.is_dir():
+        files = []
+        for f in skill_path.parent.iterdir():
+            if f.is_file():
+                fstat = f.stat()
+                files.append({"name": f.name, "size": fstat.st_size})
+        files.sort(key=lambda x: x["name"])
+        result["files"] = files
+
+    return result
+
+
+@router.get("/plugins/{slug}/skills/{skill_name:path}")
+async def get_plugin_skill(
+    request: Request, slug: str, skill_name: str
+) -> dict[str, Any]:
+    """Get a specific skill from a plugin."""
+    plugin_path, _ = _find_plugin_path(slug)
+    skills_dir = plugin_path / "skills"
+
+    if not skills_dir.is_dir():
+        raise HTTPException(status_code=404, detail=f"Plugin '{slug}' has no skills")
+
+    # Try single file first
+    skill_file = skills_dir / f"{skill_name}.md"
+    if skill_file.exists():
+        return _parse_plugin_skill(skill_file, skill_name)
+
+    # Try directory skill
+    skill_dir = skills_dir / skill_name
+    if skill_dir.is_dir():
+        for candidate in ["SKILL.md", "skill.md", "index.md", f"{skill_name}.md"]:
+            skill_file = skill_dir / candidate
+            if skill_file.exists():
+                return _parse_plugin_skill(skill_file, skill_name)
+
+    # Handle colon-separated names (e.g. "workflows:work")
+    if ":" in skill_name:
+        parts = skill_name.split(":")
+        skill_dir = skills_dir
+        for part in parts[:-1]:
+            skill_dir = skill_dir / part
+        final_name = parts[-1]
+        # Try as directory
+        final_dir = skill_dir / final_name
+        if final_dir.is_dir():
+            for candidate in ["SKILL.md", "skill.md", "index.md", f"{final_name}.md"]:
+                skill_file = final_dir / candidate
+                if skill_file.exists():
+                    return _parse_plugin_skill(skill_file, skill_name)
+        # Try as file
+        skill_file = skill_dir / f"{final_name}.md"
+        if skill_file.exists():
+            return _parse_plugin_skill(skill_file, skill_name)
+
+    raise HTTPException(
+        status_code=404,
+        detail=f"Skill '{skill_name}' not found in plugin '{slug}'",
+    )
+
+
+@router.get("/plugins/{slug}/agents/{agent_name:path}")
+async def get_plugin_agent(
+    request: Request, slug: str, agent_name: str
+) -> dict[str, Any]:
+    """Get a specific agent from a plugin."""
+    plugin_path, _ = _find_plugin_path(slug)
+    agents_dir = plugin_path / "agents"
+
+    if not agents_dir.is_dir():
+        raise HTTPException(status_code=404, detail=f"Plugin '{slug}' has no agents")
+
+    # Search for agent file by name (supports nested dirs)
+    for ext in (".md", ".yaml", ".yml"):
+        # Direct file
+        agent_file = agents_dir / f"{agent_name}{ext}"
+        if agent_file.exists():
+            break
+        # Recursive search
+        for candidate in agents_dir.rglob(f"{agent_name}{ext}"):
+            agent_file = candidate
+            break
+        if agent_file.exists():
+            break
+    else:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Agent '{agent_name}' not found in plugin '{slug}'",
+        )
+
+    if agent_file.suffix == ".md":
+        agent = _parse_markdown_agent(agent_file, agent_name)
+    else:
+        # YAML/JSON agent
+        import yaml
+
+        data = yaml.safe_load(agent_file.read_text(encoding="utf-8"))
+        agent = _data_to_agent(data, agent_name) if isinstance(data, dict) else None
+
+    if not agent:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Could not parse agent '{agent_name}' in plugin '{slug}'",
+        )
+
+    return {
+        "name": agent.name,
+        "description": agent.description,
+        "type": "chatbot",
+        "model": agent.model,
+        "path": str(agent_file.relative_to(plugin_path)),
+        "source": "plugin",
+        "tools": agent.tools,
+        "system_prompt": agent.prompt,
+        "system_prompt_preview": agent.prompt[:500] if agent.prompt else None,
+    }
