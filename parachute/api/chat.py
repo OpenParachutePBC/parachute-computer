@@ -52,7 +52,8 @@ async def event_generator(request: Request, chat_request: ChatRequest):
 
     logger.info(
         f"Chat request: session={chat_request.session_id or 'new'} "
-        f"module={chat_request.module} contexts={chat_request.contexts}"
+        f"module={chat_request.module} trust={chat_request.trust_level} "
+        f"workspace={chat_request.workspace_id} contexts={chat_request.contexts}"
     )
 
     # Normalize 'new' to None - client sends 'new' when it wants a new session
