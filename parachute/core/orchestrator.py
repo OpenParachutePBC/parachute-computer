@@ -529,11 +529,14 @@ class Orchestrator:
             # Priority: client param > session stored > workspace default > trusted
             _legacy = {"full": "trusted", "vault": "trusted", "sandboxed": "untrusted"}
 
+            logger.info(f"Trust resolution: client={trust_level}, session.trust_level={session.trust_level}, ws_default={workspace_config.default_trust_level if workspace_config else None}")
+
             if trust_level:
                 # Client explicitly set trust level — use it
                 try:
                     mapped = _legacy.get(trust_level, trust_level)
                     session_trust = TrustLevel(mapped)
+                    logger.info(f"Using client trust: {trust_level} -> {session_trust.value}")
                 except ValueError:
                     logger.warning(f"Invalid trust_level from client: {trust_level}")
                     session_trust = session.get_trust_level()
@@ -681,8 +684,10 @@ class Orchestrator:
                     # Use a real session ID for sandbox — "pending" would cause the SDK
                     # inside the container to try resuming a nonexistent session
                     sandbox_sid = session.id if session.id != "pending" else str(uuid.uuid4())
-                    # Working directory is already /vault/... — pass directly
+                    # Ensure working directory has /vault/ prefix for container paths
                     sandbox_wd = str(effective_working_dir) if effective_working_dir else None
+                    if sandbox_wd and not sandbox_wd.startswith("/vault/"):
+                        sandbox_wd = f"/vault/{sandbox_wd}"
 
                     sandbox_paths = list(session.permissions.allowed_paths)
                     # Auto-add working directory to allowed_paths so it gets mounted
@@ -694,6 +699,9 @@ class Orchestrator:
                         f"wd={sandbox_wd} paths={sandbox_paths}"
                     )
 
+                    # Resolve model for sandbox (same logic as trusted path)
+                    sandbox_model = model or self.settings.default_model
+
                     sandbox_config = AgentSandboxConfig(
                         session_id=sandbox_sid,
                         agent_type=agent.type.value if agent.type else "chat",
@@ -703,6 +711,7 @@ class Orchestrator:
                         plugin_dirs=plugin_dirs,  # Pass filtered skill plugins
                         agents=agents_dict,  # Pass filtered custom agents
                         working_directory=sandbox_wd,
+                        model=sandbox_model,
                     )
                     # For continuing sandbox sessions, inject prior conversation
                     # as context. Each container is fresh and can't resume from transcripts.
@@ -723,6 +732,16 @@ class Orchestrator:
                                 f"Injected {len(prior_messages)} prior messages "
                                 f"into sandbox prompt for session {sandbox_sid[:8]}"
                             )
+
+                    # Pre-check sandbox image before starting container
+                    if not await self._sandbox.image_exists():
+                        from parachute.core.sandbox import SANDBOX_IMAGE
+                        logger.error(f"Sandbox image '{SANDBOX_IMAGE}' not built")
+                        yield ErrorEvent(
+                            error=f"Sandbox image '{SANDBOX_IMAGE}' not found. "
+                                  "Build it from Settings or run: parachute doctor (for instructions).",
+                        ).model_dump(by_alias=True)
+                        return
 
                     had_text = False
                     sandbox_response_text = ""
@@ -786,8 +805,8 @@ class Orchestrator:
                     # No fallback — Docker is required for untrusted sessions
                     logger.error("Docker not available for untrusted session")
                     yield ErrorEvent(
-                        error="Docker is required for untrusted sessions but is not available. "
-                              "Install Docker to enable untrusted execution.",
+                        error="Docker is required for sandboxed sessions but is not available. "
+                              "Either install Docker (brew install orbstack) or change trust level to 'full'.",
                     ).model_dump(by_alias=True)
                     return
 

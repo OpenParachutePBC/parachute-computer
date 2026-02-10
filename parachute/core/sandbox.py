@@ -42,6 +42,7 @@ class AgentSandboxConfig:
     mcp_servers: Optional[dict] = None  # Filtered MCP configs to pass to container
     agents: Optional[dict] = None
     working_directory: Optional[str] = None  # /vault/... absolute path for container CWD
+    model: Optional[str] = None  # Model to use (e.g., "claude-opus-4-6")
 
 
 class DockerSandbox:
@@ -211,6 +212,10 @@ class DockerSandbox:
         if config.working_directory:
             env_lines.append(f"PARACHUTE_CWD={config.working_directory}")
 
+        # Pass model configuration to sandbox
+        if config.model:
+            env_lines.append(f"PARACHUTE_MODEL={config.model}")
+
         # Pass filtered MCP server names so the container knows what's allowed
         if config.mcp_servers is not None:
             mcp_names = ",".join(config.mcp_servers.keys())
@@ -269,6 +274,13 @@ class DockerSandbox:
         """
         if not await self.is_available():
             raise RuntimeError("Docker not available for sandboxed execution")
+
+        if not await self.image_exists():
+            raise RuntimeError(
+                f"Sandbox image '{SANDBOX_IMAGE}' not found. "
+                "Build it from Settings > Capabilities or run: "
+                "docker build -t parachute-sandbox:latest parachute-computer/parachute/docker/"
+            )
 
         args, env_file_path, caps_file_path = self._build_run_args(config)
 

@@ -79,11 +79,23 @@ async def run():
         # Pass capabilities to SDK if available
         if capabilities.get("mcp_servers"):
             options_kwargs["mcp_servers"] = capabilities["mcp_servers"]
-        if capabilities.get("plugin_dirs"):
-            from pathlib import Path
-            options_kwargs["plugin_dirs"] = [Path(d) for d in capabilities["plugin_dirs"]]
         if capabilities.get("agents"):
             options_kwargs["agents"] = capabilities["agents"]
+
+        # plugin_dirs may not be supported by all SDK versions — probe first
+        if capabilities.get("plugin_dirs"):
+            import inspect
+            sig = inspect.signature(ClaudeAgentOptions.__init__)
+            if "plugin_dirs" in sig.parameters:
+                from pathlib import Path
+                options_kwargs["plugin_dirs"] = [Path(d) for d in capabilities["plugin_dirs"]]
+            else:
+                emit({"type": "warning", "message": "SDK does not support plugin_dirs, skipping"})
+
+        # Pass model if configured
+        parachute_model = os.environ.get("PARACHUTE_MODEL")
+        if parachute_model:
+            options_kwargs["model"] = parachute_model
 
         # Note: We intentionally do NOT use "resume" here. The container has no
         # access to SDK session transcripts (stored in host's .claude/ directory),
