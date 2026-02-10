@@ -20,7 +20,16 @@ class PluginManifest(BaseModel):
     name: str = ""
     version: str = "0.0.0"
     description: str = ""
-    author: Optional[str] = None
+    author: Optional[Any] = None  # str or {"name": "...", "email": "..."}
+
+    @property
+    def author_name(self) -> Optional[str]:
+        """Extract author name from string or object."""
+        if isinstance(self.author, str):
+            return self.author
+        if isinstance(self.author, dict):
+            return self.author.get("name")
+        return None
 
 
 class InstalledPlugin(BaseModel):
