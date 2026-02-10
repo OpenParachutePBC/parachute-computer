@@ -11,11 +11,11 @@ Plus the built-in vault-agent which is always first.
 import logging
 from typing import Any, Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, UploadFile, File
 from pydantic import BaseModel
 
 from parachute.config import get_settings
-from parachute.core.agents import discover_agents
+from parachute.core.agents import discover_agents, _parse_markdown_agent
 from parachute.lib.agent_loader import load_all_agents
 from parachute.models.agent import create_vault_agent
 
@@ -33,6 +33,16 @@ class AgentListItem(BaseModel):
     path: Optional[str] = None
     source: str  # "builtin", "vault_agents", "custom_agents"
     tools: list[str] = []
+
+
+class CreateAgentInput(BaseModel):
+    """Input for creating a new custom agent."""
+
+    name: str
+    description: Optional[str] = None
+    prompt: str
+    tools: list[str] = []
+    model: Optional[str] = None
 
 
 def _vault_agent_to_item() -> AgentListItem:
@@ -140,3 +150,111 @@ async def get_agent(request: Request, name: str) -> dict[str, Any]:
             return item
 
     raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
+
+
+@router.post("/agents")
+async def create_agent(request: Request, body: CreateAgentInput) -> dict[str, Any]:
+    """Create a new custom agent as a markdown file with YAML frontmatter."""
+    settings = get_settings()
+    agents_dir = settings.vault_path / ".parachute" / "agents"
+    agents_dir.mkdir(parents=True, exist_ok=True)
+
+    agent_file = agents_dir / f"{body.name}.md"
+    if agent_file.exists():
+        raise HTTPException(status_code=409, detail=f"Agent '{body.name}' already exists")
+
+    # Validate model if provided
+    if body.model and body.model not in ("sonnet", "opus", "haiku"):
+        raise HTTPException(status_code=400, detail=f"Invalid model '{body.model}'. Must be sonnet, opus, or haiku.")
+
+    # Build markdown with YAML frontmatter
+    frontmatter_lines = [f"description: {body.description or f'Agent: {body.name}'}"]
+    if body.tools:
+        frontmatter_lines.append(f"tools: [{', '.join(body.tools)}]")
+    if body.model:
+        frontmatter_lines.append(f"model: {body.model}")
+
+    content = f"---\n{chr(10).join(frontmatter_lines)}\n---\n\n{body.prompt}\n"
+
+    agent_file.write_text(content, encoding="utf-8")
+    logger.info(f"Created custom agent: {body.name}")
+
+    return AgentListItem(
+        name=body.name,
+        description=body.description or f"Agent: {body.name}",
+        type="chatbot",
+        model=body.model,
+        path=f".parachute/agents/{body.name}",
+        source="custom_agents",
+        tools=body.tools,
+    ).model_dump()
+
+
+@router.post("/agents/upload")
+async def upload_agent(request: Request, file: UploadFile = File(...)) -> dict[str, Any]:
+    """Upload a .md agent file directly."""
+    settings = get_settings()
+    agents_dir = settings.vault_path / ".parachute" / "agents"
+    agents_dir.mkdir(parents=True, exist_ok=True)
+
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No file provided")
+
+    if not file.filename.endswith(".md"):
+        raise HTTPException(status_code=400, detail="Agent file must be .md format")
+
+    name = file.filename.replace(".md", "")
+    agent_file = agents_dir / file.filename
+
+    if agent_file.exists():
+        raise HTTPException(status_code=409, detail=f"Agent '{name}' already exists")
+
+    content = await file.read()
+    agent_file.write_bytes(content)
+
+    # Parse to validate and return the agent info
+    agent = _parse_markdown_agent(agent_file, name)
+    if not agent:
+        agent_file.unlink()
+        raise HTTPException(status_code=400, detail="Could not parse agent file (missing prompt?)")
+
+    logger.info(f"Uploaded custom agent: {name}")
+
+    return AgentListItem(
+        name=agent.name,
+        description=agent.description,
+        type="chatbot",
+        model=agent.model,
+        path=f".parachute/agents/{name}",
+        source="custom_agents",
+        tools=agent.tools,
+    ).model_dump()
+
+
+@router.delete("/agents/{name}")
+async def delete_agent(request: Request, name: str) -> dict[str, Any]:
+    """Delete a custom agent. Rejects builtin and vault agents."""
+    if name == "vault-agent":
+        raise HTTPException(status_code=403, detail="Cannot delete built-in vault-agent")
+
+    settings = get_settings()
+
+    # Check if it's a vault agent (not deletable from here)
+    vault_agents = await load_all_agents(settings.vault_path)
+    for agent in vault_agents:
+        if agent.name == name:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Cannot delete vault agent '{name}'. Remove the file from agents/ in your vault.",
+            )
+
+    # Delete from custom agents directory
+    agents_dir = settings.vault_path / ".parachute" / "agents"
+    for ext in (".md", ".yaml", ".yml", ".json"):
+        agent_file = agents_dir / f"{name}{ext}"
+        if agent_file.exists():
+            agent_file.unlink()
+            logger.info(f"Deleted custom agent: {name}")
+            return {"success": True, "deleted": name}
+
+    raise HTTPException(status_code=404, detail=f"Agent '{name}' not found in custom agents")
