@@ -151,6 +151,42 @@ def _port_in_use(port: int) -> bool:
         return s.connect_ex(("127.0.0.1", port)) == 0
 
 
+def _find_port_pid(port: int) -> int | None:
+    """Find the PID of the process listening on a port. Returns None if not found."""
+    try:
+        result = subprocess.run(
+            ["lsof", "-ti", f":{port}"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            # lsof may return multiple PIDs (one per line); take the first
+            return int(result.stdout.strip().splitlines()[0])
+    except Exception:
+        pass
+    return None
+
+
+def _kill_port_holder(port: int) -> bool:
+    """Kill whatever process is holding a port. Returns True if a process was killed."""
+    pid = _find_port_pid(port)
+    if pid is None:
+        return False
+    try:
+        print(f"Killing stale process on port {port} (PID {pid})...")
+        os.kill(pid, signal.SIGTERM)
+        # Wait for clean shutdown
+        for _ in range(10):
+            if not _process_alive(pid):
+                return True
+            time.sleep(0.5)
+        # Force kill
+        os.kill(pid, signal.SIGKILL)
+        time.sleep(0.5)
+        return not _process_alive(pid)
+    except (OSError, ProcessLookupError):
+        return True
+
+
 def _process_alive(pid: int) -> bool:
     """Check if a process is alive."""
     try:
@@ -337,6 +373,8 @@ def cmd_install(args: argparse.Namespace) -> None:
 
     # 6. Docker check
     print("\nContainer runtime:")
+    print("  Docker provides sandboxed code execution for agents.")
+    print("  Chat still works without it — Docker is optional.")
     docker_path = shutil.which("docker")
     if docker_path:
         print(f"  Docker: {docker_path}")
@@ -350,11 +388,29 @@ def cmd_install(args: argparse.Namespace) -> None:
                 print("  Daemon: running")
             else:
                 print("  Daemon: not running (sandbox features unavailable)")
+                if sys.platform == "darwin":
+                    print("  If already installed, start with:")
+                    print("    open /Applications/OrbStack.app  OR  open -a Docker")
+                    print("  If not installed:")
+                    print("    brew install orbstack          # lightweight, recommended")
+                    print("    brew install --cask docker     # Docker Desktop")
+                else:
+                    print("  To start: sudo systemctl start docker")
+                    print("  If not installed: curl -fsSL https://get.docker.com | sh")
         except (subprocess.TimeoutExpired, OSError):
             print("  Daemon: check timed out")
     else:
         print("  Docker: not found")
-        print("  Tip: Install OrbStack (https://orbstack.dev) for sandbox features")
+        if sys.platform == "darwin":
+            print("  Install with one of:")
+            print("    brew install orbstack          # lightweight, recommended")
+            print("    brew install --cask docker     # Docker Desktop")
+            print("  Or download: https://orbstack.dev  /  https://docker.com/products/docker-desktop")
+        else:
+            print("  Install with:")
+            print("    curl -fsSL https://get.docker.com | sh")
+            print("    sudo usermod -aG docker $USER")
+            print("  Then log out and back in for group changes to take effect.")
 
     # 7. Save config
     config_file = save_yaml_config(vault_path, config)
@@ -604,31 +660,52 @@ def _server_start() -> None:
 
 
 def _server_stop() -> None:
-    """Stop the daemon."""
+    """Stop the daemon and any rogue process on the port."""
     vault_path = _get_vault_path()
     config = _load_yaml_config(vault_path)
+    port = config.get("port", 3333)
 
     try:
         from parachute.daemon import get_daemon_manager
 
         daemon = get_daemon_manager(vault_path, config)
         daemon.stop()
-        print("Server stopped.")
     except Exception as e:
-        print(f"Failed to stop server: {e}")
-        sys.exit(1)
+        print(f"Failed to stop daemon: {e}")
+
+    # Also kill any rogue process holding the port
+    if _port_in_use(port):
+        _kill_port_holder(port)
+
+    if _port_in_use(port):
+        print(f"Warning: port {port} still in use.")
+    else:
+        print("Server stopped.")
 
 
 def _server_restart() -> None:
-    """Restart the daemon."""
+    """Restart the daemon, killing any rogue process on the port first."""
     vault_path = _get_vault_path()
     config = _load_yaml_config(vault_path)
+    port = config.get("port", 3333)
 
     try:
         from parachute.daemon import get_daemon_manager
 
         daemon = get_daemon_manager(vault_path, config)
-        daemon.restart()
+        daemon.stop()
+        time.sleep(1)
+
+        # Kill any rogue process still holding the port
+        if _port_in_use(port):
+            _kill_port_holder(port)
+            time.sleep(0.5)
+
+        if _port_in_use(port):
+            print(f"Error: port {port} still in use (PID {_find_port_pid(port)}). Cannot restart.")
+            sys.exit(1)
+
+        daemon.start()
         print("Server restarted.")
     except Exception as e:
         print(f"Failed to restart server: {e}")
@@ -655,11 +732,13 @@ def _server_status() -> None:
         except Exception:
             pass
 
+        # Resolve PID: prefer daemon-tracked PID, fall back to lsof
+        pid = status.get("pid") or _find_port_pid(port)
+
         if status.get("running") and http_ok:
-            print(f"Server: running (PID {status.get('pid')})")
-            print(f"  Port: {port}")
+            print(f"Server: running (PID {pid}, port {port})")
         elif http_ok:
-            print(f"Server: running on port {port}")
+            print(f"Server: running (PID {pid}, port {port})")
             print(f"  (not managed by daemon)")
         elif status.get("loaded") and not status.get("running"):
             print("Server: crashed")
@@ -668,6 +747,9 @@ def _server_status() -> None:
             if status.get("state"):
                 print(f"  State: {status['state']}")
             print("  Check logs: parachute logs")
+        elif _port_in_use(port):
+            print(f"Server: running (PID {pid}, port {port})")
+            print(f"  (not managed by daemon)")
         else:
             print("Server: not running")
 
@@ -721,7 +803,15 @@ def cmd_status(args: argparse.Namespace) -> None:
         version = health.get("version", "?")
         commit = health.get("commit", "")
         uptime = health.get("uptime", 0)
-        print(f"  status: running (v{version} {commit})")
+
+        # Find PID of the running server
+        from urllib.parse import urlparse
+        parsed = urlparse(server_url)
+        server_port = parsed.port or 3333
+        pid = _find_port_pid(server_port)
+        pid_str = f", PID {pid}" if pid else ""
+
+        print(f"  status: running (v{version} {commit}{pid_str})")
         print(f"  uptime: {uptime:.0f}s")
 
         # Modules
@@ -871,14 +961,22 @@ def cmd_doctor(args: argparse.Namespace) -> None:
     def check_docker():
         docker_path = shutil.which("docker")
         if not docker_path:
-            return False, "docker not found"
+            if sys.platform == "darwin":
+                hint = "install: brew install orbstack  OR  brew install --cask docker"
+            else:
+                hint = "install: curl -fsSL https://get.docker.com | sh"
+            return False, f"not found ({hint})"
         result = subprocess.run(
             ["docker", "info"],
             capture_output=True,
             timeout=5,
         )
         if result.returncode != 0:
-            return False, "docker not running"
+            if sys.platform == "darwin":
+                hint = "start Docker Desktop or OrbStack; install: brew install orbstack"
+            else:
+                hint = "start: sudo systemctl start docker"
+            return False, f"not running ({hint})"
 
         # Check sandbox image
         result = subprocess.run(

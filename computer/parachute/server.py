@@ -24,6 +24,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from parachute import __version__
 from parachute.api import api_router
 from parachute.config import get_settings, Settings
 from parachute.core.module_loader import ModuleLoader
@@ -185,7 +186,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Parachute Computer",
     description="Modular backend server for Parachute ecosystem - AI agents, session management, and vault operations",
-    version="0.1.0",
+    version=__version__,
     lifespan=lifespan,
 )
 
@@ -301,7 +302,7 @@ async def root():
     """Root endpoint - returns server info."""
     return {
         "name": "Parachute Computer",
-        "version": "0.1.0",
+        "version": __version__,
         "status": "running",
     }
 
