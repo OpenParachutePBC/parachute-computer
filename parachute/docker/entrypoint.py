@@ -70,11 +70,30 @@ async def run():
         # Use the resolved CWD (either PARACHUTE_CWD or process default)
         effective_cwd = os.getcwd()
 
+        # Note: No setting_sources — Parachute explicitly constructs all parameters.
+        # The host passes system prompt, capabilities, model, etc. via mounted files
+        # and environment variables. No SDK auto-discovery.
         options_kwargs = {
             "permission_mode": "bypassPermissions",
             "env": {"CLAUDE_CODE_OAUTH_TOKEN": oauth_token},
             "cwd": effective_cwd,
         }
+
+        # Load system prompt if mounted by the host
+        prompt_path = "/tmp/system_prompt.txt"
+        if os.path.exists(prompt_path):
+            try:
+                with open(prompt_path) as f:
+                    system_prompt = f.read().strip()
+                if system_prompt:
+                    # Use Claude Code preset with appended content
+                    options_kwargs["system_prompt"] = {
+                        "type": "preset",
+                        "preset": "claude_code",
+                        "append": system_prompt,
+                    }
+            except OSError as e:
+                emit({"type": "warning", "message": f"Failed to load system prompt: {e}"})
 
         # Pass capabilities to SDK if available
         if capabilities.get("mcp_servers"):
