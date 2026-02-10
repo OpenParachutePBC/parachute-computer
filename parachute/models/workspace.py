@@ -8,13 +8,17 @@ in sessions created under them.
 
 from typing import Any, Literal, Optional, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 TrustLevelStr = Literal["trusted", "untrusted"]
 
 
 class PluginConfig(BaseModel):
-    """Plugin configuration for a workspace."""
+    """Plugin configuration for a workspace.
+
+    DEPRECATED: Use the 'plugins' field on WorkspaceCapabilities instead.
+    Kept for backwards compatibility with existing workspace configs.
+    """
 
     include_user: bool = Field(
         default=True,
@@ -40,7 +44,7 @@ class WorkspaceCapabilities(BaseModel):
     Each capability can be:
     - "all": pass everything through (default)
     - "none": empty set
-    - list[str]: only named items
+    - list[str]: only named items (plugin slugs, MCP names, etc.)
     """
 
     mcps: Union[Literal["all", "none"], list[str]] = Field(
@@ -55,10 +59,21 @@ class WorkspaceCapabilities(BaseModel):
         default="all",
         description="Agents: all, none, or list of names",
     )
-    plugins: PluginConfig = Field(
-        default_factory=PluginConfig,
-        description="Plugin configuration",
+    plugins: Union[Literal["all", "none"], list[str]] = Field(
+        default="all",
+        description="Plugins: all, none, or list of plugin slugs",
     )
+
+    @field_validator("plugins", mode="before")
+    @classmethod
+    def _migrate_plugin_config(cls, v: Any) -> Any:
+        """Migrate old PluginConfig format to string-based format."""
+        if isinstance(v, dict):
+            # Old format: {"include_user": true, "dirs": [...]}
+            # Convert: include_user=true → "all", include_user=false → "none"
+            if "include_user" in v or "dirs" in v:
+                return "all" if v.get("include_user", True) else "none"
+        return v
 
 
 class WorkspaceConfig(BaseModel):

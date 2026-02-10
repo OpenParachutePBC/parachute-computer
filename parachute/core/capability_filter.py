@@ -146,21 +146,21 @@ def filter_capabilities(
     if all_agents is not None:
         result.agents = _filter_by_set(all_agents, capabilities.agents, "agents")
 
-    # Filter plugins based on workspace plugin config
+    # Filter plugins by slug (directory name)
     if plugin_dirs is not None:
-        if capabilities.plugins.include_user:
+        plugin_set = capabilities.plugins
+        if plugin_set == "all":
             result.plugin_dirs = list(plugin_dirs)
+        elif plugin_set == "none":
+            result.plugin_dirs = []
         else:
-            # Remove user plugin dir (~/.claude/plugins/)
-            user_plugins = Path.home() / ".claude" / "plugins"
-            result.plugin_dirs = [p for p in plugin_dirs if p != user_plugins]
-
-        # Add workspace-specific plugin dirs
-        for pd in capabilities.plugins.dirs:
-            p = Path(pd).expanduser()
-            if p.is_dir() and p not in result.plugin_dirs:
-                result.plugin_dirs.append(p)
-            elif not p.is_dir():
-                logger.warning(f"Workspace plugin dir does not exist: {pd}")
+            # Filter by slug (directory name matches allowed list)
+            allowed = set(plugin_set) if isinstance(plugin_set, list) else set()
+            result.plugin_dirs = [
+                p for p in plugin_dirs if p.name in allowed
+            ]
+            removed = {p.name for p in plugin_dirs} - allowed
+            if removed:
+                logger.debug(f"Workspace filtered out plugins: {removed}")
 
     return result

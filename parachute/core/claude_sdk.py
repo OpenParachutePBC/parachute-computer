@@ -81,9 +81,9 @@ async def query_streaming(
         system_prompt: Full custom system prompt (overrides preset if provided)
         system_prompt_append: Text to append to Claude Code preset (ignored if system_prompt is set)
         use_claude_code_preset: If True (default), use Claude Code's system prompt as base
-        setting_sources: List of setting sources to load CLAUDE.md from ("user", "project", "local")
-                        Defaults to ["project"] to enable CLAUDE.md hierarchy loading
-        cwd: Working directory - CLAUDE.md files are discovered from here upward
+        setting_sources: List of setting sources for SDK config loading (optional).
+                        Parachute loads CLAUDE.md explicitly — this is not used by default.
+        cwd: Working directory for the agent session
         resume: Session ID to resume
         tools: List of allowed tools
         mcp_servers: MCP server configurations
@@ -97,9 +97,8 @@ async def query_streaming(
         SDK events as dictionaries
 
     Note:
-        When setting_sources includes "project", Claude SDK loads CLAUDE.md files from
-        the directory hierarchy, walking up from cwd to root. This enables hierarchical context:
-        ~/Parachute/CLAUDE.md → ~/Parachute/projects/foo/CLAUDE.md → etc.
+        Parachute loads CLAUDE.md files explicitly and passes them via system_prompt_append.
+        setting_sources is not used — all SDK parameters are explicitly constructed.
     """
     # Import the SDK
     from claude_agent_sdk import query as sdk_query, ClaudeAgentOptions, ClaudeSDKError

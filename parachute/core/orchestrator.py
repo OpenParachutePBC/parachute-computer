@@ -19,6 +19,7 @@ from typing import Any, AsyncGenerator, Optional
 from parachute.config import Settings, get_settings
 from parachute.core.claude_sdk import query_streaming, QueryInterrupt
 from parachute.core.permission_handler import PermissionHandler
+from parachute.core.plugins import discover_plugins, get_plugin_dirs
 from parachute.core.sandbox import DockerSandbox, AgentSandboxConfig
 from parachute.core.skills import generate_runtime_plugin, cleanup_runtime_plugin, discover_skills
 from parachute.core.agents import discover_agents, agents_to_sdk_format
@@ -500,15 +501,29 @@ class Orchestrator:
                 plugin_dirs.append(skills_plugin_dir)
                 logger.info(f"Generated skills plugin at {skills_plugin_dir}")
 
-            # Discover user plugins (~/.claude/plugins/)
+            # Discover installed plugins (parachute-managed + user)
             settings = get_settings()
-            if settings.include_user_plugins:
-                user_plugin_dir = Path.home() / ".claude" / "plugins"
-                if user_plugin_dir.is_dir():
-                    for entry in user_plugin_dir.iterdir():
-                        if entry.is_dir():
-                            plugin_dirs.append(entry)
-                            logger.info(f"Loaded user plugin: {entry.name}")
+            installed_plugins = discover_plugins(
+                self.vault_path,
+                include_user=settings.include_user_plugins,
+            )
+            plugin_dirs.extend(get_plugin_dirs(installed_plugins))
+
+            # Merge plugin MCPs into global MCPs
+            for plugin in installed_plugins:
+                if plugin.mcps and resolved_mcps is not None:
+                    for mcp_name, mcp_config in plugin.mcps.items():
+                        if mcp_name not in resolved_mcps:
+                            resolved_mcps[mcp_name] = mcp_config
+                            logger.info(f"Added MCP '{mcp_name}' from plugin '{plugin.slug}'")
+                        else:
+                            logger.debug(f"MCP '{mcp_name}' from plugin '{plugin.slug}' skipped (already exists)")
+
+            if installed_plugins:
+                logger.info(
+                    f"Discovered {len(installed_plugins)} plugins, "
+                    f"{len(plugin_dirs)} total plugin dirs"
+                )
 
             # Load additional configured plugin directories
             for dir_str in settings.plugin_dirs:
@@ -702,6 +717,9 @@ class Orchestrator:
                     # Resolve model for sandbox (same logic as trusted path)
                     sandbox_model = model or self.settings.default_model
 
+                    # Pass system prompt to sandbox (same prompt as trusted path)
+                    sandbox_system_prompt = effective_prompt if not is_full_prompt and effective_prompt else None
+
                     sandbox_config = AgentSandboxConfig(
                         session_id=sandbox_sid,
                         agent_type=agent.type.value if agent.type else "chat",
@@ -712,6 +730,7 @@ class Orchestrator:
                         agents=agents_dict,  # Pass filtered custom agents
                         working_directory=sandbox_wd,
                         model=sandbox_model,
+                        system_prompt=sandbox_system_prompt,
                     )
                     # For continuing sandbox sessions, inject prior conversation
                     # as context. Each container is fresh and can't resume from transcripts.
@@ -821,7 +840,8 @@ class Orchestrator:
                 system_prompt=effective_prompt if is_full_prompt else None,
                 system_prompt_append=effective_prompt if not is_full_prompt and effective_prompt else None,
                 use_claude_code_preset=not is_full_prompt,  # Use preset unless custom/agent
-                setting_sources=["project"],  # Enable CLAUDE.md hierarchy loading
+                # No setting_sources — Parachute explicitly loads CLAUDE.md and
+                # constructs all parameters. No SDK auto-discovery.
                 cwd=effective_cwd,
                 resume=resume_id,
                 tools=agent.tools if agent.tools else None,
@@ -1150,6 +1170,57 @@ class Orchestrator:
             ]
         return []
 
+    def _load_claude_md(self, working_directory: Optional[str] = None) -> Optional[str]:
+        """Load CLAUDE.md content from vault root and working directory.
+
+        Parachute explicitly loads these instead of relying on SDK auto-discovery.
+        Walks from working directory up to vault root, collecting CLAUDE.md files.
+        """
+        parts: list[str] = []
+        seen: set[Path] = set()
+
+        # Vault root CLAUDE.md (always loaded)
+        vault_claude = self.vault_path / "CLAUDE.md"
+        if vault_claude.exists():
+            try:
+                content = vault_claude.read_text().strip()
+                if content:
+                    parts.append(content)
+                    seen.add(vault_claude.resolve())
+            except OSError as e:
+                logger.warning(f"Failed to read vault CLAUDE.md: {e}")
+
+        # Working directory CLAUDE.md (and any intermediate directories)
+        if working_directory:
+            wd_path = Path(working_directory)
+            if not wd_path.is_absolute():
+                wd_path = self.vault_path / working_directory
+
+            # Walk from working directory up to vault root
+            current = wd_path
+            wd_parts: list[str] = []
+            while current != self.vault_path and self.vault_path in current.parents:
+                claude_md = current / "CLAUDE.md"
+                if claude_md.exists() and claude_md.resolve() not in seen:
+                    try:
+                        content = claude_md.read_text().strip()
+                        if content:
+                            wd_parts.append(content)
+                            seen.add(claude_md.resolve())
+                    except OSError:
+                        pass
+                current = current.parent
+
+            # Add in top-down order (parent before child)
+            parts.extend(reversed(wd_parts))
+
+        if not parts:
+            return None
+
+        combined = "\n\n".join(parts)
+        logger.info(f"Loaded {len(parts)} CLAUDE.md file(s), {len(combined)} chars")
+        return combined
+
     async def _build_system_prompt(
         self,
         agent: AgentDefinition,
@@ -1159,17 +1230,14 @@ class Orchestrator:
         working_directory: Optional[str] = None,
     ) -> tuple[str, dict[str, Any]]:
         """
-        Build runtime additions to the system prompt.
+        Build the system prompt additions.
 
-        With setting_sources=["project"], Claude SDK automatically loads CLAUDE.md
-        files from the directory hierarchy (cwd up to root). This method now only
-        builds content that CANNOT be in static files:
+        Parachute explicitly loads all content — no SDK auto-discovery.
+        This method builds:
+        - CLAUDE.md content from vault root and working directory
         - Prior conversation history (runtime only)
+        - Explicitly selected context files
         - Runtime-discovered skills and agents
-        - Explicitly selected context files (beyond hierarchy)
-
-        The base prompt (DEFAULT_VAULT_PROMPT) is now in ~/Parachute/CLAUDE.md
-        and loaded automatically by the SDK.
 
         Returns:
             Tuple of (append_string, metadata_dict) for transparency
@@ -1207,11 +1275,13 @@ class Orchestrator:
             # Agent has custom prompt - return it for full override
             return agent.system_prompt, metadata
 
-        # For vault-agent: SDK loads CLAUDE.md hierarchy automatically
-        # with setting_sources=["project"]. CLAUDE.md uses @ references to include:
-        # - .parachute/system.md (system prompt)
-        # - parachute/*.md (bootstrap files: identity, orientation, profile, now, memory, tools)
-        # No need to inject them manually here.
+        # For vault-agent: Load CLAUDE.md hierarchy explicitly
+        # Parachute controls all SDK parameters — no setting_sources auto-discovery.
+        # We load CLAUDE.md from vault root and working directory ourselves.
+        claude_md_content = self._load_claude_md(working_directory)
+        if claude_md_content:
+            append_parts.append(claude_md_content)
+            metadata["claude_md_loaded"] = True
 
         # Handle explicitly selected context files (beyond automatic hierarchy)
         # These are files the user explicitly selected in the UI
@@ -1257,13 +1327,12 @@ class Orchestrator:
                 except Exception as e:
                     logger.warning(f"Failed to load file context: {e}")
 
-        # Note working directory for metadata (SDK loads CLAUDE.md automatically)
+        # Note working directory CLAUDE.md for metadata
         if working_directory:
             working_dir_path = Path(working_directory)
             if not working_dir_path.is_absolute():
                 working_dir_path = self.vault_path / working_directory
 
-            # Check if CLAUDE.md exists (for metadata, SDK loads it)
             for md_name in ["AGENTS.md", "CLAUDE.md"]:
                 md_path = working_dir_path / md_name
                 if md_path.exists():
