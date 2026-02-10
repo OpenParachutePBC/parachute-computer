@@ -19,6 +19,7 @@ from typing import Any, AsyncGenerator, Optional
 from parachute.config import Settings, get_settings
 from parachute.core.claude_sdk import query_streaming, QueryInterrupt
 from parachute.core.permission_handler import PermissionHandler
+from parachute.core.plugins import discover_plugins, get_plugin_dirs
 from parachute.core.sandbox import DockerSandbox, AgentSandboxConfig
 from parachute.core.skills import generate_runtime_plugin, cleanup_runtime_plugin, discover_skills
 from parachute.core.agents import discover_agents, agents_to_sdk_format
@@ -500,15 +501,29 @@ class Orchestrator:
                 plugin_dirs.append(skills_plugin_dir)
                 logger.info(f"Generated skills plugin at {skills_plugin_dir}")
 
-            # Discover user plugins (~/.claude/plugins/)
+            # Discover installed plugins (parachute-managed + user)
             settings = get_settings()
-            if settings.include_user_plugins:
-                user_plugin_dir = Path.home() / ".claude" / "plugins"
-                if user_plugin_dir.is_dir():
-                    for entry in user_plugin_dir.iterdir():
-                        if entry.is_dir():
-                            plugin_dirs.append(entry)
-                            logger.info(f"Loaded user plugin: {entry.name}")
+            installed_plugins = discover_plugins(
+                self.vault_path,
+                include_user=settings.include_user_plugins,
+            )
+            plugin_dirs.extend(get_plugin_dirs(installed_plugins))
+
+            # Merge plugin MCPs into global MCPs
+            for plugin in installed_plugins:
+                if plugin.mcps and resolved_mcps is not None:
+                    for mcp_name, mcp_config in plugin.mcps.items():
+                        if mcp_name not in resolved_mcps:
+                            resolved_mcps[mcp_name] = mcp_config
+                            logger.info(f"Added MCP '{mcp_name}' from plugin '{plugin.slug}'")
+                        else:
+                            logger.debug(f"MCP '{mcp_name}' from plugin '{plugin.slug}' skipped (already exists)")
+
+            if installed_plugins:
+                logger.info(
+                    f"Discovered {len(installed_plugins)} plugins, "
+                    f"{len(plugin_dirs)} total plugin dirs"
+                )
 
             # Load additional configured plugin directories
             for dir_str in settings.plugin_dirs:
