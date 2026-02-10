@@ -11,6 +11,7 @@ import '../../chat/models/agent_info.dart';
 import '../../chat/models/skill_info.dart';
 import '../../chat/models/mcp_server_info.dart';
 import '../../chat/models/plugin_info.dart';
+import 'capability_detail_screen.dart';
 
 /// Browse and manage agents, skills, and MCP servers.
 class CapabilitiesScreen extends ConsumerStatefulWidget {
@@ -195,6 +196,12 @@ class _AgentsTab extends ConsumerWidget {
               itemBuilder: (_, i) => _AgentCard(
                 agent: list[i],
                 isDark: isDark,
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => AgentDetailScreen(agent: list[i]),
+                  ),
+                ),
                 onDelete: list[i].source == 'custom_agents'
                     ? () => _deleteAgent(context, ref, list[i].name)
                     : null,
@@ -249,12 +256,15 @@ class _AgentsTab extends ConsumerWidget {
 class _AgentCard extends StatelessWidget {
   final AgentInfo agent;
   final bool isDark;
+  final VoidCallback? onTap;
   final VoidCallback? onDelete;
-  const _AgentCard({required this.agent, required this.isDark, this.onDelete});
+  const _AgentCard({required this.agent, required this.isDark, this.onTap, this.onDelete});
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
       padding: EdgeInsets.all(Spacing.md),
       decoration: BoxDecoration(
         color: isDark
@@ -335,6 +345,7 @@ class _AgentCard extends StatelessWidget {
             ),
           ],
         ],
+      ),
       ),
     );
   }
@@ -540,6 +551,12 @@ class _McpServersTab extends ConsumerWidget {
               itemBuilder: (_, i) => _McpServerCard(
                 server: list[i],
                 isDark: isDark,
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => McpDetailScreen(server: list[i]),
+                  ),
+                ),
                 onTest: () => _testMcp(context, ref, list[i].name),
                 onDelete: list[i].builtin
                     ? null
@@ -622,11 +639,13 @@ class _McpServersTab extends ConsumerWidget {
 class _McpServerCard extends StatelessWidget {
   final McpServerInfo server;
   final bool isDark;
+  final VoidCallback? onTap;
   final VoidCallback? onTest;
   final VoidCallback? onDelete;
   const _McpServerCard({
     required this.server,
     required this.isDark,
+    this.onTap,
     this.onTest,
     this.onDelete,
   });
@@ -636,7 +655,9 @@ class _McpServerCard extends StatelessWidget {
     final hasErrors =
         server.validationErrors != null && server.validationErrors!.isNotEmpty;
 
-    return Container(
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
       padding: EdgeInsets.all(Spacing.md),
       decoration: BoxDecoration(
         color: isDark
@@ -721,6 +742,7 @@ class _McpServerCard extends StatelessWidget {
           ],
         ],
       ),
+      ),
     );
   }
 }
@@ -758,6 +780,12 @@ class _PluginsTab extends ConsumerWidget {
               itemBuilder: (_, i) => _PluginCard(
                 plugin: list[i],
                 isDark: isDark,
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => PluginDetailScreen(plugin: list[i]),
+                  ),
+                ),
                 onUpdate: list[i].isRemote
                     ? () => _updatePlugin(context, ref, list[i].slug)
                     : null,
@@ -836,18 +864,22 @@ class _PluginsTab extends ConsumerWidget {
 class _PluginCard extends StatelessWidget {
   final PluginInfo plugin;
   final bool isDark;
+  final VoidCallback? onTap;
   final VoidCallback? onUpdate;
   final VoidCallback? onDelete;
   const _PluginCard({
     required this.plugin,
     required this.isDark,
+    this.onTap,
     this.onUpdate,
     this.onDelete,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
       padding: EdgeInsets.all(Spacing.md),
       decoration: BoxDecoration(
         color: isDark
@@ -949,6 +981,7 @@ class _PluginCard extends StatelessWidget {
             ),
           ],
         ],
+      ),
       ),
     );
   }
