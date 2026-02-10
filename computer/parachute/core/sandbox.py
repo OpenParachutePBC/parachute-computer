@@ -43,6 +43,7 @@ class AgentSandboxConfig:
     agents: Optional[dict] = None
     working_directory: Optional[str] = None  # /vault/... absolute path for container CWD
     model: Optional[str] = None  # Model to use (e.g., "claude-opus-4-6")
+    system_prompt: Optional[str] = None  # System prompt to pass to SDK inside container
 
 
 class DockerSandbox:
@@ -170,11 +171,11 @@ class DockerSandbox:
 
         return mounts
 
-    def _build_run_args(self, config: AgentSandboxConfig) -> tuple[list[str], Optional[str], Optional[str]]:
+    def _build_run_args(self, config: AgentSandboxConfig) -> tuple[list[str], list[str]]:
         """Build complete docker run arguments.
 
-        Returns (args, env_file_path, caps_file_path) where temp files
-        must be cleaned up after the container starts.
+        Returns (args, temp_files) where temp_files must be cleaned up
+        after the container exits.
         """
         # Validate session_id is safe for Docker --name
         if not re.match(r'^[a-zA-Z0-9_-]+$', config.session_id):
@@ -196,9 +197,10 @@ class DockerSandbox:
         # Volume mounts
         args.extend(self._build_mounts(config))
 
+        # Track temp files for cleanup
+        temp_files: list[str] = []
+
         # Environment variables via --env-file to avoid token exposure in process table
-        env_file_path = None
-        caps_file_path = None
         env_lines = [
             f"PARACHUTE_SESSION_ID={config.session_id}",
             f"PARACHUTE_AGENT_TYPE={config.agent_type}",
@@ -227,8 +229,8 @@ class DockerSandbox:
                 f.write('\n'.join(env_lines) + '\n')
             os.chmod(env_file_path, 0o600)
             args.extend(["--env-file", env_file_path])
+            temp_files.append(env_file_path)
         except Exception:
-            # Clean up on error
             os.unlink(env_file_path)
             raise
 
@@ -253,15 +255,30 @@ class DockerSandbox:
                     json.dump(capabilities, f)
                 os.chmod(caps_file_path, 0o600)
                 args.extend(["-v", f"{caps_file_path}:/tmp/capabilities.json:ro"])
+                temp_files.append(caps_file_path)
             except Exception:
                 os.unlink(caps_file_path)
-                caps_file_path = None
                 logger.warning("Failed to write capabilities config for sandbox")
+
+        # Mount system prompt as file (avoids env var size limits)
+        if config.system_prompt:
+            fd3, prompt_file = tempfile.mkstemp(
+                suffix='.txt', prefix='parachute-prompt-'
+            )
+            try:
+                with os.fdopen(fd3, 'w') as f:
+                    f.write(config.system_prompt)
+                os.chmod(prompt_file, 0o600)
+                args.extend(["-v", f"{prompt_file}:/tmp/system_prompt.txt:ro"])
+                temp_files.append(prompt_file)
+            except Exception:
+                os.unlink(prompt_file)
+                logger.warning("Failed to write system prompt for sandbox")
 
         # Image
         args.append(SANDBOX_IMAGE)
 
-        return args, env_file_path, caps_file_path
+        return args, temp_files
 
     async def run_agent(
         self,
@@ -282,7 +299,7 @@ class DockerSandbox:
                 "docker build -t parachute-sandbox:latest parachute-computer/parachute/docker/"
             )
 
-        args, env_file_path, caps_file_path = self._build_run_args(config)
+        args, temp_files = self._build_run_args(config)
 
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -354,12 +371,11 @@ class DockerSandbox:
             yield {"type": "error", "message": f"Failed to start sandbox: {e}"}
         finally:
             # Ensure temp files are cleaned up even on error
-            for tmp_file in (env_file_path, caps_file_path):
-                if tmp_file:
-                    try:
-                        os.unlink(tmp_file)
-                    except OSError:
-                        pass
+            for tmp_file in temp_files:
+                try:
+                    os.unlink(tmp_file)
+                except OSError:
+                    pass
 
     def health_info(self) -> dict:
         """Return Docker health info for /health endpoint."""

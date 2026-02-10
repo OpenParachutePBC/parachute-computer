@@ -702,6 +702,9 @@ class Orchestrator:
                     # Resolve model for sandbox (same logic as trusted path)
                     sandbox_model = model or self.settings.default_model
 
+                    # Pass system prompt to sandbox (same prompt as trusted path)
+                    sandbox_system_prompt = effective_prompt if not is_full_prompt and effective_prompt else None
+
                     sandbox_config = AgentSandboxConfig(
                         session_id=sandbox_sid,
                         agent_type=agent.type.value if agent.type else "chat",
@@ -712,6 +715,7 @@ class Orchestrator:
                         agents=agents_dict,  # Pass filtered custom agents
                         working_directory=sandbox_wd,
                         model=sandbox_model,
+                        system_prompt=sandbox_system_prompt,
                     )
                     # For continuing sandbox sessions, inject prior conversation
                     # as context. Each container is fresh and can't resume from transcripts.
