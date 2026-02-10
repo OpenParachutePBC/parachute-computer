@@ -4,6 +4,7 @@ import 'package:parachute/core/theme/design_tokens.dart';
 import '../providers/agent_providers.dart';
 import '../providers/skill_providers.dart';
 import '../providers/mcp_providers.dart';
+import '../providers/plugin_providers.dart';
 import '../models/workspace.dart';
 
 /// Editor for workspace capabilities (agents, skills, MCP servers).
@@ -26,6 +27,7 @@ class CapabilitiesEditor extends ConsumerWidget {
     final agents = ref.watch(agentsProvider);
     final skills = ref.watch(skillsProvider);
     final mcps = ref.watch(mcpServersProvider);
+    final plugins = ref.watch(pluginsProvider);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -50,6 +52,7 @@ class CapabilitiesEditor extends ConsumerWidget {
             mcps: capabilities.mcps,
             skills: capabilities.skills,
             agents: val,
+            plugins: capabilities.plugins,
           )),
           isDark: isDark,
         ),
@@ -65,6 +68,7 @@ class CapabilitiesEditor extends ConsumerWidget {
             mcps: capabilities.mcps,
             skills: val,
             agents: capabilities.agents,
+            plugins: capabilities.plugins,
           )),
           isDark: isDark,
         ),
@@ -80,6 +84,23 @@ class CapabilitiesEditor extends ConsumerWidget {
             mcps: val,
             skills: capabilities.skills,
             agents: capabilities.agents,
+            plugins: capabilities.plugins,
+          )),
+          isDark: isDark,
+        ),
+        SizedBox(height: Spacing.sm),
+        _CapabilitySection(
+          label: 'Plugins',
+          value: capabilities.plugins,
+          availableNames: plugins.whenOrNull(
+            data: (list) => list.map((p) => p.slug).toList(),
+          ),
+          isLoading: plugins.isLoading,
+          onChanged: (val) => onChanged(WorkspaceCapabilities(
+            mcps: capabilities.mcps,
+            skills: capabilities.skills,
+            agents: capabilities.agents,
+            plugins: val,
           )),
           isDark: isDark,
         ),
