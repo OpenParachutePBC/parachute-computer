@@ -11,3 +11,10 @@ final agentsProvider = FutureProvider.autoDispose<List<AgentInfo>>((ref) async {
   final service = ref.watch(chatServiceProvider);
   return service.getAgents();
 });
+
+/// Provider that fetches full agent detail by name (system prompt, permissions, etc.).
+final agentDetailProvider =
+    FutureProvider.autoDispose.family<AgentInfo, String>((ref, name) async {
+  final service = ref.watch(chatServiceProvider);
+  return service.getAgentDetail(name);
+});

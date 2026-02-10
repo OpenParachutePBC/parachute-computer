@@ -397,6 +397,12 @@ class _SkillsTab extends ConsumerWidget {
               itemBuilder: (_, i) => _SkillCard(
                 skill: list[i],
                 isDark: isDark,
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => SkillDetailScreen(skill: list[i]),
+                  ),
+                ),
                 onDelete: () => _deleteSkill(context, ref, list[i].name),
               ),
             ),
@@ -449,12 +455,15 @@ class _SkillsTab extends ConsumerWidget {
 class _SkillCard extends StatelessWidget {
   final SkillInfo skill;
   final bool isDark;
+  final VoidCallback? onTap;
   final VoidCallback? onDelete;
-  const _SkillCard({required this.skill, required this.isDark, this.onDelete});
+  const _SkillCard({required this.skill, required this.isDark, this.onTap, this.onDelete});
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
       padding: EdgeInsets.all(Spacing.md),
       decoration: BoxDecoration(
         color: isDark
@@ -513,6 +522,7 @@ class _SkillCard extends StatelessWidget {
             ),
           ],
         ],
+      ),
       ),
     );
   }

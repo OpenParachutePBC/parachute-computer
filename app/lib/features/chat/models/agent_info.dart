@@ -5,8 +5,16 @@ class AgentInfo {
   final String type;
   final String? model;
   final String? path;
-  final String source; // "builtin", "vault_agents", "custom_agents"
+  final String source; // "builtin", "vault_agents", "custom_agents", "plugin"
   final List<String> tools;
+
+  // Detail fields (populated by GET /agents/{name})
+  final String? systemPrompt;
+  final String? systemPromptPreview;
+  final Map<String, dynamic>? permissions;
+  final Map<String, dynamic>? constraints;
+  final dynamic mcpServers; // Can be "all", List<String>, or null
+  final List<String>? spawns;
 
   const AgentInfo({
     required this.name,
@@ -16,6 +24,12 @@ class AgentInfo {
     this.path,
     required this.source,
     this.tools = const [],
+    this.systemPrompt,
+    this.systemPromptPreview,
+    this.permissions,
+    this.constraints,
+    this.mcpServers,
+    this.spawns,
   });
 
   factory AgentInfo.fromJson(Map<String, dynamic> json) {
@@ -30,6 +44,14 @@ class AgentInfo {
               ?.map((e) => e as String)
               .toList() ??
           const [],
+      systemPrompt: json['system_prompt'] as String?,
+      systemPromptPreview: json['system_prompt_preview'] as String?,
+      permissions: json['permissions'] as Map<String, dynamic>?,
+      constraints: json['constraints'] as Map<String, dynamic>?,
+      mcpServers: json['mcp_servers'],
+      spawns: (json['spawns'] as List<dynamic>?)
+              ?.map((e) => e as String)
+              .toList(),
     );
   }
 

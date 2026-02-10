@@ -765,6 +765,123 @@ extension ChatSessionService on ChatService {
     }
   }
 
+  // ============================================================
+  // Detail Fetch Methods (for enriched capability views)
+  // ============================================================
+
+  /// Fetch full agent detail (system prompt, permissions, etc.).
+  Future<AgentInfo> getAgentDetail(String name) async {
+    try {
+      final response = await client.get(
+        Uri.parse('$baseUrl/api/agents/${Uri.encodeComponent(name)}'),
+        headers: defaultHeaders,
+      ).timeout(ChatService.requestTimeout);
+
+      if (response.statusCode != 200) {
+        throw NetworkError('Failed to get agent detail', statusCode: response.statusCode);
+      }
+      return AgentInfo.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+    } on SocketException catch (e) {
+      throw ServerUnreachableError(cause: e);
+    } on http.ClientException catch (e) {
+      throw NetworkError('Network error fetching agent detail', cause: e);
+    } on TimeoutException catch (e) {
+      throw ServerUnreachableError(cause: e);
+    }
+  }
+
+  /// Fetch full skill detail (content, version, files, etc.).
+  Future<SkillInfo> getSkillDetail(String name) async {
+    try {
+      final response = await client.get(
+        Uri.parse('$baseUrl/api/skills/${Uri.encodeComponent(name)}'),
+        headers: defaultHeaders,
+      ).timeout(ChatService.requestTimeout);
+
+      if (response.statusCode != 200) {
+        throw NetworkError('Failed to get skill detail', statusCode: response.statusCode);
+      }
+      return SkillInfo.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+    } on SocketException catch (e) {
+      throw ServerUnreachableError(cause: e);
+    } on http.ClientException catch (e) {
+      throw NetworkError('Network error fetching skill detail', cause: e);
+    } on TimeoutException catch (e) {
+      throw ServerUnreachableError(cause: e);
+    }
+  }
+
+  /// Fetch tools exposed by an MCP server.
+  Future<List<McpTool>> getMcpTools(String name) async {
+    try {
+      final response = await client.get(
+        Uri.parse('$baseUrl/api/mcps/${Uri.encodeComponent(name)}/tools'),
+        headers: defaultHeaders,
+      ).timeout(const Duration(seconds: 15));
+
+      if (response.statusCode != 200) {
+        throw NetworkError('Failed to get MCP tools', statusCode: response.statusCode);
+      }
+      final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+      final error = decoded['error'] as String?;
+      if (error != null) {
+        throw Exception(error);
+      }
+      final list = decoded['tools'] as List<dynamic>? ?? [];
+      return list
+          .map((e) => McpTool.fromJson(e as Map<String, dynamic>))
+          .toList();
+    } on SocketException catch (e) {
+      throw ServerUnreachableError(cause: e);
+    } on http.ClientException catch (e) {
+      throw NetworkError('Network error fetching MCP tools', cause: e);
+    } on TimeoutException catch (e) {
+      throw ServerUnreachableError(cause: e);
+    }
+  }
+
+  /// Fetch a skill from a specific plugin.
+  Future<SkillInfo> getPluginSkill(String slug, String skillName) async {
+    try {
+      final response = await client.get(
+        Uri.parse('$baseUrl/api/plugins/${Uri.encodeComponent(slug)}/skills/${Uri.encodeComponent(skillName)}'),
+        headers: defaultHeaders,
+      ).timeout(ChatService.requestTimeout);
+
+      if (response.statusCode != 200) {
+        throw NetworkError('Failed to get plugin skill', statusCode: response.statusCode);
+      }
+      return SkillInfo.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+    } on SocketException catch (e) {
+      throw ServerUnreachableError(cause: e);
+    } on http.ClientException catch (e) {
+      throw NetworkError('Network error fetching plugin skill', cause: e);
+    } on TimeoutException catch (e) {
+      throw ServerUnreachableError(cause: e);
+    }
+  }
+
+  /// Fetch an agent from a specific plugin.
+  Future<AgentInfo> getPluginAgent(String slug, String agentName) async {
+    try {
+      final response = await client.get(
+        Uri.parse('$baseUrl/api/plugins/${Uri.encodeComponent(slug)}/agents/${Uri.encodeComponent(agentName)}'),
+        headers: defaultHeaders,
+      ).timeout(ChatService.requestTimeout);
+
+      if (response.statusCode != 200) {
+        throw NetworkError('Failed to get plugin agent', statusCode: response.statusCode);
+      }
+      return AgentInfo.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+    } on SocketException catch (e) {
+      throw ServerUnreachableError(cause: e);
+    } on http.ClientException catch (e) {
+      throw NetworkError('Network error fetching plugin agent', cause: e);
+    } on TimeoutException catch (e) {
+      throw ServerUnreachableError(cause: e);
+    }
+  }
+
   /// Get all sessions with active streams on the server
   Future<List<String>> getActiveStreams() async {
     try {

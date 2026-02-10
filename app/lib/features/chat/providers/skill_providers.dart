@@ -8,3 +8,10 @@ final skillsProvider = FutureProvider.autoDispose<List<SkillInfo>>((ref) async {
   final service = ref.watch(chatServiceProvider);
   return service.getSkills();
 });
+
+/// Provider that fetches full skill detail by name (content, version, files, etc.).
+final skillDetailProvider =
+    FutureProvider.autoDispose.family<SkillInfo, String>((ref, name) async {
+  final service = ref.watch(chatServiceProvider);
+  return service.getSkillDetail(name);
+});
