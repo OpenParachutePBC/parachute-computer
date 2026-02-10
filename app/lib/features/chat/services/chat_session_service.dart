@@ -627,6 +627,144 @@ extension ChatSessionService on ChatService {
     }
   }
 
+  // ============================================================
+  // Plugin CRUD
+  // ============================================================
+
+  /// Get all installed plugins from the server.
+  Future<List<PluginInfo>> getPlugins() async {
+    try {
+      final response = await client.get(
+        Uri.parse('$baseUrl/api/plugins'),
+        headers: defaultHeaders,
+      ).timeout(ChatService.requestTimeout);
+
+      if (response.statusCode != 200) {
+        throw NetworkError(
+          'Failed to get plugins',
+          statusCode: response.statusCode,
+        );
+      }
+
+      final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+      final list = decoded['plugins'] as List<dynamic>? ?? [];
+      return list
+          .map((e) => PluginInfo.fromJson(e as Map<String, dynamic>))
+          .toList();
+    } catch (e) {
+      debugPrint('[ChatService] Error fetching plugins: $e');
+      rethrow;
+    }
+  }
+
+  /// Install a plugin from a Git URL.
+  Future<PluginInfo> installPlugin({
+    required String url,
+    String? slug,
+  }) async {
+    try {
+      final body = <String, dynamic>{
+        'url': url,
+        if (slug != null) 'slug': slug,
+      };
+      final response = await client.post(
+        Uri.parse('$baseUrl/api/plugins/install'),
+        headers: defaultHeaders,
+        body: jsonEncode(body),
+      ).timeout(const Duration(seconds: 120)); // Longer timeout for git clone
+
+      if (response.statusCode == 400) {
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        throw NetworkError(
+          decoded['detail'] as String? ?? 'Invalid plugin',
+          statusCode: 400,
+        );
+      }
+      if (response.statusCode != 200) {
+        throw NetworkError('Failed to install plugin', statusCode: response.statusCode);
+      }
+
+      final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+      final pluginData = decoded['plugin'] as Map<String, dynamic>;
+      return PluginInfo.fromJson(pluginData);
+    } on SocketException catch (e) {
+      throw ServerUnreachableError(cause: e);
+    } on http.ClientException catch (e) {
+      throw NetworkError('Network error installing plugin', cause: e);
+    } on TimeoutException catch (e) {
+      throw ServerUnreachableError(cause: e);
+    }
+  }
+
+  /// Uninstall a plugin.
+  Future<void> uninstallPlugin(String slug) async {
+    try {
+      final response = await client.delete(
+        Uri.parse('$baseUrl/api/plugins/${Uri.encodeComponent(slug)}'),
+        headers: defaultHeaders,
+      ).timeout(ChatService.requestTimeout);
+
+      if (response.statusCode == 403) {
+        throw NetworkError('Cannot delete user plugin', statusCode: 403);
+      }
+      if (response.statusCode != 200) {
+        throw NetworkError('Failed to uninstall plugin', statusCode: response.statusCode);
+      }
+    } on SocketException catch (e) {
+      throw ServerUnreachableError(cause: e);
+    } on http.ClientException catch (e) {
+      throw NetworkError('Network error uninstalling plugin', cause: e);
+    } on TimeoutException catch (e) {
+      throw ServerUnreachableError(cause: e);
+    }
+  }
+
+  /// Update a plugin to latest version.
+  Future<PluginInfo> updatePlugin(String slug) async {
+    try {
+      final response = await client.post(
+        Uri.parse('$baseUrl/api/plugins/${Uri.encodeComponent(slug)}/update'),
+        headers: defaultHeaders,
+      ).timeout(const Duration(seconds: 60));
+
+      if (response.statusCode != 200) {
+        throw NetworkError('Failed to update plugin', statusCode: response.statusCode);
+      }
+
+      final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+      final pluginData = decoded['plugin'] as Map<String, dynamic>;
+      return PluginInfo.fromJson(pluginData);
+    } on SocketException catch (e) {
+      throw ServerUnreachableError(cause: e);
+    } on http.ClientException catch (e) {
+      throw NetworkError('Network error updating plugin', cause: e);
+    } on TimeoutException catch (e) {
+      throw ServerUnreachableError(cause: e);
+    }
+  }
+
+  /// Check if a plugin has updates available.
+  Future<Map<String, dynamic>> checkPluginUpdate(String slug) async {
+    try {
+      final response = await client.get(
+        Uri.parse('$baseUrl/api/plugins/${Uri.encodeComponent(slug)}/check-update'),
+        headers: defaultHeaders,
+      ).timeout(ChatService.requestTimeout);
+
+      if (response.statusCode != 200) {
+        throw NetworkError('Failed to check plugin update', statusCode: response.statusCode);
+      }
+
+      return jsonDecode(response.body) as Map<String, dynamic>;
+    } on SocketException catch (e) {
+      throw ServerUnreachableError(cause: e);
+    } on http.ClientException catch (e) {
+      throw NetworkError('Network error checking plugin update', cause: e);
+    } on TimeoutException catch (e) {
+      throw ServerUnreachableError(cause: e);
+    }
+  }
+
   /// Get all sessions with active streams on the server
   Future<List<String>> getActiveStreams() async {
     try {

@@ -4,11 +4,14 @@ import 'package:parachute/core/theme/design_tokens.dart';
 import '../../chat/providers/agent_providers.dart';
 import '../../chat/providers/skill_providers.dart';
 import '../../chat/providers/mcp_providers.dart';
+import '../../chat/providers/plugin_providers.dart';
 import '../../chat/providers/chat_session_providers.dart';
 import '../../chat/services/chat_service.dart';
 import '../../chat/models/agent_info.dart';
 import '../../chat/models/skill_info.dart';
 import '../../chat/models/mcp_server_info.dart';
+import '../../chat/models/plugin_info.dart';
+import 'capability_detail_screen.dart';
 
 /// Browse and manage agents, skills, and MCP servers.
 class CapabilitiesScreen extends ConsumerStatefulWidget {
@@ -25,7 +28,7 @@ class _CapabilitiesScreenState extends ConsumerState<CapabilitiesScreen>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
+    _tabController = TabController(length: 4, vsync: this);
     _tabController.addListener(() => setState(() {}));
   }
 
@@ -61,7 +64,8 @@ class _CapabilitiesScreenState extends ConsumerState<CapabilitiesScreen>
           tabs: const [
             Tab(text: 'Agents'),
             Tab(text: 'Skills'),
-            Tab(text: 'MCP Servers'),
+            Tab(text: 'MCPs'),
+            Tab(text: 'Plugins'),
           ],
         ),
       ),
@@ -72,6 +76,7 @@ class _CapabilitiesScreenState extends ConsumerState<CapabilitiesScreen>
           _AgentsTab(isDark: isDark),
           _SkillsTab(isDark: isDark),
           _McpServersTab(isDark: isDark),
+          _PluginsTab(isDark: isDark),
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(
@@ -92,7 +97,9 @@ class _CapabilitiesScreenState extends ConsumerState<CapabilitiesScreen>
       case 1:
         return 'Add Skill';
       case 2:
-        return 'Add MCP Server';
+        return 'Add MCP';
+      case 3:
+        return 'Install Plugin';
       default:
         return 'Add';
     }
@@ -108,6 +115,9 @@ class _CapabilitiesScreenState extends ConsumerState<CapabilitiesScreen>
         break;
       case 2:
         _showAddMcpDialog(context);
+        break;
+      case 3:
+        _showInstallPluginDialog(context);
         break;
     }
   }
@@ -137,6 +147,16 @@ class _CapabilitiesScreenState extends ConsumerState<CapabilitiesScreen>
       context: context,
       builder: (_) => _AddMcpDialog(
         onCreated: () => ref.invalidate(mcpServersProvider),
+        ref: ref,
+      ),
+    );
+  }
+
+  void _showInstallPluginDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (_) => _InstallPluginDialog(
+        onInstalled: () => ref.invalidate(pluginsProvider),
         ref: ref,
       ),
     );
@@ -176,6 +196,12 @@ class _AgentsTab extends ConsumerWidget {
               itemBuilder: (_, i) => _AgentCard(
                 agent: list[i],
                 isDark: isDark,
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => AgentDetailScreen(agent: list[i]),
+                  ),
+                ),
                 onDelete: list[i].source == 'custom_agents'
                     ? () => _deleteAgent(context, ref, list[i].name)
                     : null,
@@ -230,12 +256,15 @@ class _AgentsTab extends ConsumerWidget {
 class _AgentCard extends StatelessWidget {
   final AgentInfo agent;
   final bool isDark;
+  final VoidCallback? onTap;
   final VoidCallback? onDelete;
-  const _AgentCard({required this.agent, required this.isDark, this.onDelete});
+  const _AgentCard({required this.agent, required this.isDark, this.onTap, this.onDelete});
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
       padding: EdgeInsets.all(Spacing.md),
       decoration: BoxDecoration(
         color: isDark
@@ -316,6 +345,7 @@ class _AgentCard extends StatelessWidget {
             ),
           ],
         ],
+      ),
       ),
     );
   }
@@ -521,6 +551,12 @@ class _McpServersTab extends ConsumerWidget {
               itemBuilder: (_, i) => _McpServerCard(
                 server: list[i],
                 isDark: isDark,
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => McpDetailScreen(server: list[i]),
+                  ),
+                ),
                 onTest: () => _testMcp(context, ref, list[i].name),
                 onDelete: list[i].builtin
                     ? null
@@ -603,11 +639,13 @@ class _McpServersTab extends ConsumerWidget {
 class _McpServerCard extends StatelessWidget {
   final McpServerInfo server;
   final bool isDark;
+  final VoidCallback? onTap;
   final VoidCallback? onTest;
   final VoidCallback? onDelete;
   const _McpServerCard({
     required this.server,
     required this.isDark,
+    this.onTap,
     this.onTest,
     this.onDelete,
   });
@@ -617,7 +655,9 @@ class _McpServerCard extends StatelessWidget {
     final hasErrors =
         server.validationErrors != null && server.validationErrors!.isNotEmpty;
 
-    return Container(
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
       padding: EdgeInsets.all(Spacing.md),
       decoration: BoxDecoration(
         color: isDark
@@ -701,6 +741,247 @@ class _McpServerCard extends StatelessWidget {
             ),
           ],
         ],
+      ),
+      ),
+    );
+  }
+}
+
+// ============================================================
+// Plugins Tab
+// ============================================================
+
+class _PluginsTab extends ConsumerWidget {
+  final bool isDark;
+  const _PluginsTab({required this.isDark});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final plugins = ref.watch(pluginsProvider);
+
+    return plugins.when(
+      data: (list) => list.isEmpty
+          ? _EmptyState(
+              isDark: isDark,
+              message: 'No plugins installed',
+              actionLabel: 'Install your first plugin',
+              onAction: () => showDialog(
+                context: context,
+                builder: (_) => _InstallPluginDialog(
+                  onInstalled: () => ref.invalidate(pluginsProvider),
+                  ref: ref,
+                ),
+              ),
+            )
+          : ListView.separated(
+              padding: EdgeInsets.all(Spacing.lg),
+              itemCount: list.length,
+              separatorBuilder: (_, _) => SizedBox(height: Spacing.sm),
+              itemBuilder: (_, i) => _PluginCard(
+                plugin: list[i],
+                isDark: isDark,
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => PluginDetailScreen(plugin: list[i]),
+                  ),
+                ),
+                onUpdate: list[i].isRemote
+                    ? () => _updatePlugin(context, ref, list[i].slug)
+                    : null,
+                onDelete: !list[i].isUserPlugin
+                    ? () => _deletePlugin(context, ref, list[i].slug)
+                    : null,
+              ),
+            ),
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (e, _) =>
+          _ErrorState(isDark: isDark, message: 'Could not load plugins'),
+    );
+  }
+
+  Future<void> _updatePlugin(
+      BuildContext context, WidgetRef ref, String slug) async {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Updating "$slug"...')),
+    );
+    try {
+      final service = ref.read(chatServiceProvider);
+      await service.updatePlugin(slug);
+      ref.invalidate(pluginsProvider);
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(content: Text('Updated "$slug"')));
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(content: Text('Update failed: $e')));
+    }
+  }
+
+  Future<void> _deletePlugin(
+      BuildContext context, WidgetRef ref, String slug) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Uninstall Plugin'),
+        content: Text('Uninstall plugin "$slug"? This cannot be undone.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text('Uninstall', style: TextStyle(color: BrandColors.error)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+
+    try {
+      final service = ref.read(chatServiceProvider);
+      await service.uninstallPlugin(slug);
+      ref.invalidate(pluginsProvider);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Uninstalled "$slug"')),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to uninstall: $e')),
+        );
+      }
+    }
+  }
+}
+
+class _PluginCard extends StatelessWidget {
+  final PluginInfo plugin;
+  final bool isDark;
+  final VoidCallback? onTap;
+  final VoidCallback? onUpdate;
+  final VoidCallback? onDelete;
+  const _PluginCard({
+    required this.plugin,
+    required this.isDark,
+    this.onTap,
+    this.onUpdate,
+    this.onDelete,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+      padding: EdgeInsets.all(Spacing.md),
+      decoration: BoxDecoration(
+        color: isDark
+            ? BrandColors.nightSurfaceElevated
+            : BrandColors.softWhite,
+        borderRadius: BorderRadius.circular(Radii.md),
+        border: Border.all(
+          color: isDark
+              ? Colors.white.withValues(alpha: 0.08)
+              : Colors.black.withValues(alpha: 0.06),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.extension_outlined,
+                size: 20,
+                color: isDark ? BrandColors.nightForest : BrandColors.forest,
+              ),
+              SizedBox(width: Spacing.sm),
+              Expanded(
+                child: Text(
+                  plugin.displayName,
+                  style: TextStyle(
+                    fontSize: TypographyTokens.bodyLarge,
+                    fontWeight: FontWeight.w600,
+                    color: isDark ? BrandColors.nightText : BrandColors.charcoal,
+                  ),
+                ),
+              ),
+              _InfoChip(label: 'v${plugin.version}', isDark: isDark),
+              SizedBox(width: Spacing.xs),
+              _InfoChip(label: plugin.source, isDark: isDark),
+              if (onUpdate != null || onDelete != null) ...[
+                SizedBox(width: Spacing.xs),
+                _CardMenuButton(
+                  isDark: isDark,
+                  actions: [
+                    if (onUpdate != null)
+                      _MenuAction('Update', Icons.refresh_outlined, onUpdate!),
+                    if (onDelete != null)
+                      _MenuAction('Uninstall', Icons.delete_outline, onDelete!),
+                  ],
+                ),
+              ],
+            ],
+          ),
+          if (plugin.description.isNotEmpty) ...[
+            SizedBox(height: Spacing.xs),
+            Text(
+              plugin.description,
+              style: TextStyle(
+                fontSize: TypographyTokens.bodySmall,
+                color: isDark
+                    ? BrandColors.nightTextSecondary
+                    : BrandColors.driftwood,
+              ),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+          if (plugin.capabilityCount > 0) ...[
+            SizedBox(height: Spacing.sm),
+            Wrap(
+              spacing: Spacing.xs,
+              runSpacing: Spacing.xs,
+              children: [
+                if (plugin.skills.isNotEmpty)
+                  _InfoChip(
+                    label: '${plugin.skills.length} skills',
+                    isDark: isDark,
+                  ),
+                if (plugin.agents.isNotEmpty)
+                  _InfoChip(
+                    label: '${plugin.agents.length} agents',
+                    isDark: isDark,
+                  ),
+                if (plugin.mcpNames.isNotEmpty)
+                  _InfoChip(
+                    label: '${plugin.mcpNames.length} MCPs',
+                    isDark: isDark,
+                  ),
+              ],
+            ),
+          ],
+          if (plugin.author != null) ...[
+            SizedBox(height: Spacing.xs),
+            Text(
+              'by ${plugin.author}',
+              style: TextStyle(
+                fontSize: TypographyTokens.labelSmall,
+                color: isDark
+                    ? BrandColors.nightTextSecondary
+                    : BrandColors.driftwood,
+              ),
+            ),
+          ],
+        ],
+      ),
       ),
     );
   }
@@ -1087,6 +1368,127 @@ class _AddMcpDialogState extends State<_AddMcpDialog> {
       }
     } finally {
       if (mounted) setState(() => _saving = false);
+    }
+  }
+}
+
+class _InstallPluginDialog extends StatefulWidget {
+  final VoidCallback onInstalled;
+  final WidgetRef ref;
+  const _InstallPluginDialog({required this.onInstalled, required this.ref});
+
+  @override
+  State<_InstallPluginDialog> createState() => _InstallPluginDialogState();
+}
+
+class _InstallPluginDialogState extends State<_InstallPluginDialog> {
+  final _urlController = TextEditingController();
+  bool _installing = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _urlController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Install Plugin'),
+      content: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 500),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Install a plugin from a GitHub URL. The repository must contain '
+                'a .claude-plugin/plugin.json manifest.',
+                style: TextStyle(
+                  fontSize: TypographyTokens.bodySmall,
+                  color: Theme.of(context).brightness == Brightness.dark
+                      ? BrandColors.nightTextSecondary
+                      : BrandColors.driftwood,
+                ),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: _urlController,
+                decoration: const InputDecoration(
+                  labelText: 'GitHub URL',
+                  hintText: 'https://github.com/org/plugin-name',
+                ),
+                autofocus: true,
+                onChanged: (_) {
+                  if (_error != null) setState(() => _error = null);
+                },
+              ),
+              if (_error != null) ...[
+                const SizedBox(height: 8),
+                Text(
+                  _error!,
+                  style: TextStyle(
+                    fontSize: TypographyTokens.labelSmall,
+                    color: BrandColors.error,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _installing ? null : () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: _installing ? null : _install,
+          child: _installing
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Text('Install'),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _install() async {
+    final url = _urlController.text.trim();
+    if (url.isEmpty) return;
+
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      setState(() => _error = 'URL must start with https://');
+      return;
+    }
+
+    setState(() {
+      _installing = true;
+      _error = null;
+    });
+
+    try {
+      final service = widget.ref.read(chatServiceProvider);
+      final plugin = await service.installPlugin(url: url);
+      widget.onInstalled();
+      if (mounted) {
+        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Installed "${plugin.displayName}"')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _error = e.toString().replaceFirst('Exception: ', '');
+          _installing = false;
+        });
+      }
     }
   }
 }

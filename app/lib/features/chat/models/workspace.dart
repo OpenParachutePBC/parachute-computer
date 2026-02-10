@@ -63,10 +63,14 @@ class WorkspaceCapabilities {
   /// Agents: "all", "none", or list of names
   final dynamic agents;
 
+  /// Plugins: "all", "none", or list of slugs
+  final dynamic plugins;
+
   const WorkspaceCapabilities({
     this.mcps = 'all',
     this.skills = 'all',
     this.agents = 'all',
+    this.plugins = 'all',
   });
 
   factory WorkspaceCapabilities.fromJson(Map<String, dynamic> json) {
@@ -74,6 +78,7 @@ class WorkspaceCapabilities {
       mcps: json['mcps'] ?? 'all',
       skills: json['skills'] ?? 'all',
       agents: json['agents'] ?? 'all',
+      plugins: json['plugins'] ?? 'all',
     );
   }
 
@@ -82,6 +87,7 @@ class WorkspaceCapabilities {
       'mcps': mcps,
       'skills': skills,
       'agents': agents,
+      'plugins': plugins,
     };
   }
 
@@ -102,6 +108,11 @@ class WorkspaceCapabilities {
       parts.add('Agents: $agents');
     } else if (agents is List) {
       parts.add('Agents: ${(agents as List).length}');
+    }
+    if (plugins is String) {
+      parts.add('Plugins: $plugins');
+    } else if (plugins is List) {
+      parts.add('Plugins: ${(plugins as List).length}');
     }
     return parts.join(', ');
   }
