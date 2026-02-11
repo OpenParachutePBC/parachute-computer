@@ -72,6 +72,10 @@ class UserQuestionCard extends StatefulWidget {
 class _UserQuestionCardState extends State<UserQuestionCard> {
   // Track selected answers per question
   final Map<String, Set<String>> _selectedAnswers = {};
+  // Track "Other" text input per question
+  final Map<String, TextEditingController> _otherControllers = {};
+  // Track whether "Other" is selected per question
+  final Map<String, bool> _otherSelected = {};
   bool _isSubmitting = false;
   bool _isAnswered = false;
 
@@ -79,10 +83,20 @@ class _UserQuestionCardState extends State<UserQuestionCard> {
   void initState() {
     super.initState();
     _isAnswered = widget.isAnswered;
-    // Initialize selection sets for each question
+    // Initialize selection sets and "Other" state for each question
     for (final q in widget.questions) {
       _selectedAnswers[q.question] = {};
+      _otherControllers[q.question] = TextEditingController();
+      _otherSelected[q.question] = false;
     }
+  }
+
+  @override
+  void dispose() {
+    for (final controller in _otherControllers.values) {
+      controller.dispose();
+    }
+    super.dispose();
   }
 
   void _toggleOption(UserQuestion question, String optionLabel) {
@@ -98,9 +112,23 @@ class _UserQuestionCardState extends State<UserQuestionCard> {
           selected.add(optionLabel);
         }
       } else {
-        // Single-select: replace selection
+        // Single-select: replace selection, deselect "Other"
         selected.clear();
         selected.add(optionLabel);
+        _otherSelected[question.question] = false;
+      }
+    });
+  }
+
+  void _toggleOther(UserQuestion question) {
+    if (_isAnswered || _isSubmitting) return;
+
+    setState(() {
+      final isOther = !(_otherSelected[question.question] ?? false);
+      _otherSelected[question.question] = isOther;
+      if (!question.multiSelect) {
+        // Single-select: deselect predefined options when "Other" is chosen
+        _selectedAnswers[question.question]!.clear();
       }
     });
   }
@@ -110,6 +138,12 @@ class _UserQuestionCardState extends State<UserQuestionCard> {
     // All questions must have at least one answer
     return widget.questions.every((q) {
       final selected = _selectedAnswers[q.question] ?? {};
+      final otherActive = _otherSelected[q.question] ?? false;
+      final otherText = _otherControllers[q.question]?.text.trim() ?? '';
+      if (otherActive) {
+        // "Other" is selected — need text (and for multi-select, optionally predefined too)
+        return otherText.isNotEmpty;
+      }
       return selected.isNotEmpty;
     });
   }
@@ -123,10 +157,21 @@ class _UserQuestionCardState extends State<UserQuestionCard> {
     final answers = <String, dynamic>{};
     for (final q in widget.questions) {
       final selected = _selectedAnswers[q.question]!;
+      final otherActive = _otherSelected[q.question] ?? false;
+      final otherText = _otherControllers[q.question]?.text.trim() ?? '';
+
       if (q.multiSelect) {
-        answers[q.question] = selected.toList();
+        final all = selected.toList();
+        if (otherActive && otherText.isNotEmpty) {
+          all.add(otherText);
+        }
+        answers[q.question] = all;
       } else {
-        answers[q.question] = selected.first;
+        if (otherActive && otherText.isNotEmpty) {
+          answers[q.question] = otherText;
+        } else {
+          answers[q.question] = selected.first;
+        }
       }
     }
 
@@ -244,16 +289,56 @@ class _UserQuestionCardState extends State<UserQuestionCard> {
         Wrap(
           spacing: 8,
           runSpacing: 8,
-          children: question.options.map((option) {
-            final isSelected = selected.contains(option.label);
-            return _buildOptionChip(
-              context,
-              option,
-              isSelected,
-              () => _toggleOption(question, option.label),
-            );
-          }).toList(),
+          children: [
+            ...question.options.map((option) {
+              final isSelected = selected.contains(option.label);
+              return _buildOptionChip(
+                context,
+                option,
+                isSelected,
+                () => _toggleOption(question, option.label),
+              );
+            }),
+            // "Other" chip
+            FilterChip(
+              label: const Text('Other'),
+              selected: _otherSelected[question.question] ?? false,
+              onSelected: (_isAnswered || _isSubmitting)
+                  ? null
+                  : (_) => _toggleOther(question),
+              selectedColor: theme.colorScheme.primaryContainer,
+              checkmarkColor: theme.colorScheme.primary,
+              labelStyle: TextStyle(
+                color: (_otherSelected[question.question] ?? false)
+                    ? theme.colorScheme.primary
+                    : theme.colorScheme.onSurface,
+                fontWeight: (_otherSelected[question.question] ?? false)
+                    ? FontWeight.w600
+                    : FontWeight.normal,
+              ),
+            ),
+          ],
         ),
+        // "Other" text field
+        if (_otherSelected[question.question] ?? false) ...[
+          const SizedBox(height: 8),
+          TextField(
+            controller: _otherControllers[question.question],
+            enabled: !_isAnswered && !_isSubmitting,
+            decoration: InputDecoration(
+              hintText: 'Type your answer...',
+              isDense: true,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            ),
+            maxLines: null,
+            textInputAction: TextInputAction.done,
+            onChanged: (_) => setState(() {}),
+          ),
+        ],
         const SizedBox(height: 12),
       ],
     );
