@@ -2,7 +2,13 @@
   "mcpServers": {
     "marionette": {
       "command": "dart",
-      "args": ["run", "marionette_mcp"]
+      "args": [
+        "run",
+        "marionette_mcp"
+      ]
     }
+  },
+  "enabledPlugins": {
+    "compound-engineering@every-marketplace": true
   }
 }
