@@ -8,12 +8,20 @@
 
 set -e
 
-# Source shell config for environment variables (JAVA_HOME, ANDROID_HOME, etc.)
-# This ensures the script works in non-interactive shells (e.g., from Claude Code)
-if [[ -f "$HOME/.zshrc" ]]; then
-    source "$HOME/.zshrc" 2>/dev/null || true
-elif [[ -f "$HOME/.bashrc" ]]; then
-    source "$HOME/.bashrc" 2>/dev/null || true
+# Set up environment variables for Android/Java if not already set.
+# Sourcing .zshrc can hang in non-interactive shells, so we set paths directly.
+if [[ -z "$ANDROID_HOME" ]]; then
+    if [[ -d "$HOME/Library/Android/sdk" ]]; then
+        export ANDROID_HOME="$HOME/Library/Android/sdk"
+    elif [[ -d "/usr/local/lib/android/sdk" ]]; then
+        export ANDROID_HOME="/usr/local/lib/android/sdk"
+    fi
+fi
+if [[ -n "$ANDROID_HOME" ]]; then
+    export PATH="$ANDROID_HOME/platform-tools:$ANDROID_HOME/tools:$PATH"
+fi
+if [[ -z "$JAVA_HOME" && -x /usr/libexec/java_home ]]; then
+    export JAVA_HOME="$(/usr/libexec/java_home 2>/dev/null)" || true
 fi
 
 cd "$(dirname "$0")/.."
