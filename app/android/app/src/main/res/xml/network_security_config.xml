@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Allow cleartext for localhost development -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">localhost</domain>
+        <domain includeSubdomains="false">10.0.2.2</domain>
+        <domain includeSubdomains="true">192.168.</domain>
+        <domain includeSubdomains="true">100.114.</domain>
+    </domain-config>
+
+    <!-- Base config: secure by default -->
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <!-- Trust system certificates -->
+            <certificates src="system" />
+            <!-- Trust user-added certificates (for debugging) -->
+            <certificates src="user" />
+        </trust-anchors>
+    </base-config>
+
+    <!-- Explicitly allow R2 CDN domain for model downloads -->
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">r2.dev</domain>
+        <domain includeSubdomains="true">pub-83d77b23427846aa85d32982f50d7f18.r2.dev</domain>
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </domain-config>
+
+    <!-- Allow GitHub for OAuth -->
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">github.com</domain>
+        <domain includeSubdomains="true">githubusercontent.com</domain>
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </domain-config>
+
+    <!-- Allow HuggingFace for model downloads -->
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">huggingface.co</domain>
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </domain-config>
+</network-security-config>

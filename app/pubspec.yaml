@@ -1,0 +1,162 @@
+name: parachute
+description: "Your extended mind - voice journaling, AI chat, and knowledge vault"
+publish_to: "none"
+
+version: 0.2.11+1
+
+environment:
+  sdk: ^3.10.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  # UI
+  cupertino_icons: ^1.0.8
+  google_fonts: ^6.1.0
+  flutter_staggered_grid_view: ^0.7.0
+
+  # State Management
+  flutter_riverpod: ^2.6.1
+  riverpod_annotation: ^2.6.1
+
+  # HTTP & WebSocket
+  dio: ^5.4.0
+  web_socket_channel: ^3.0.0
+
+  # Navigation
+  go_router: ^14.0.0
+
+  # Markdown
+  flutter_markdown: ^0.7.0
+  markdown: ^7.2.2
+
+  # Storage
+  flutter_secure_storage: ^9.0.0
+  path_provider: ^2.0.0
+  path: ^1.9.0
+  shared_preferences: ^2.0.0
+  sqlite3: ^2.4.0
+  sqlite3_flutter_libs: ^0.5.0
+
+  # GitHub OAuth & API
+  oauth2: ^2.0.2
+  app_links: ^6.3.2
+  crypto: ^3.0.3
+
+  # App Info
+  package_info_plus: ^8.0.0
+
+  # Utilities
+  uuid: ^4.4.0
+  collection: ^1.18.0
+  yaml: ^3.1.2
+  http: ^1.2.0
+  url_launcher: ^6.3.0
+  file_picker: ^8.0.0+1
+  archive: ^3.6.1
+  device_info_plus: ^11.0.0
+
+  # Android Storage Access Framework
+  docman: ^1.2.0
+
+  # macOS Security-Scoped Bookmarks
+  macos_secure_bookmarks: ^0.2.1
+
+  # Audio & Recording
+  record: ^6.1.2
+  just_audio: ^0.10.0
+  audio_session: ^0.2.0
+  wakelock_plus: ^1.2.0
+
+  # Omi Device Integration (BLE)
+  flutter_blue_plus: ^1.33.6
+
+  # Audio Codecs (for Omi BLE audio decoding)
+  opus_dart: ^3.0.1
+  opus_flutter: ^3.0.3
+
+  # OTA Firmware Updates for Omi
+  nordic_dfu: ^6.1.4
+
+  # Permissions
+  permission_handler: ^12.0.1
+
+  # Notifications
+  flutter_local_notifications: ^17.0.0
+
+  # Background/Foreground Service for continuous recording
+  flutter_foreground_task: ^8.13.2
+
+  # Sherpa-ONNX for local ASR (Parakeet)
+  sherpa_onnx: 1.12.20
+
+  # Local LLM for embeddings & title generation
+  flutter_gemma: ^0.11.8
+  ollama_dart: ^0.3.0
+
+  # BM25 keyword search for local RAG
+  bm25: ^1.0.0
+
+  # Image Capture & Vision (Daily)
+  image_picker: ^1.1.2
+  image_cropper: ^8.0.2
+  google_mlkit_text_recognition: ^0.14.0
+
+  # Handwriting Canvas (Daily)
+  perfect_freehand: ^2.5.1
+  marionette_flutter: ^0.3.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+  integration_test:
+    sdk: flutter
+
+  flutter_lints: ^6.0.0
+
+  # Code Generation
+  build_runner: ^2.4.13
+  riverpod_generator: ^2.6.2
+  riverpod_lint: ^2.3.7
+
+  # Testing
+  http_mock_adapter: ^0.6.0
+  mockito: ^5.4.0
+  mocktail: ^1.0.4
+
+  # Icon Generation
+  flutter_launcher_icons: ^0.13.1
+  marionette_mcp: ^0.3.0
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/firmware/
+    - assets/models/
+    - assets/icon/
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/icon/parachute_icon.png"
+
+  # Android adaptive icon
+  adaptive_icon_background: "#F4E96D"
+  adaptive_icon_foreground: "assets/icon/parachute_icon.png"
+
+  # macOS
+  macos:
+    generate: true
+    image_path: "assets/icon/parachute_icon.png"
+
+# Force exact sherpa_onnx versions to match standalone Daily app
+# Version 1.12.21 has a native crash on Daylight DC-1 device
+dependency_overrides:
+  sherpa_onnx: 1.12.20
+  sherpa_onnx_android: 1.12.20
+  sherpa_onnx_ios: 1.12.20
+  sherpa_onnx_linux: 1.12.20
+  sherpa_onnx_macos: 1.12.20
+  sherpa_onnx_windows: 1.12.20

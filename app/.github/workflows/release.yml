@@ -1,0 +1,299 @@
+# Build and Release Parachute Computer
+#
+# Triggers on version tags like v0.1.0, v1.0.0, etc.
+# Creates a GitHub Release with:
+# - macOS DMG (Parachute Computer)
+# - SHA256 checksums
+#
+# Prerequisites (GitHub Secrets):
+# - MACOS_CERTIFICATE: Base64-encoded .p12 Developer ID certificate
+# - MACOS_CERTIFICATE_PASSWORD: Password for the certificate
+# - APPLE_ID: Apple ID email for notarization
+# - APPLE_APP_PASSWORD: App-specific password for notarization
+# - APPLE_TEAM_ID: Apple Developer Team ID
+#
+# To trigger a release:
+#   git tag v0.2.0
+#   git push origin v0.2.0
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., 0.2.0)'
+        required: true
+        type: string
+
+env:
+  FLUTTER_VERSION: '3.38.6'
+
+jobs:
+  build-macos:
+    name: Build macOS DMG
+    runs-on: macos-15  # Apple Silicon runner with Xcode 16+
+    env:
+      MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+    steps:
+      - name: Select Xcode 16
+        run: sudo xcode-select -s /Applications/Xcode_16.2.app/Contents/Developer
+
+      - name: Checkout app repository
+        uses: actions/checkout@v4
+        with:
+          path: app
+
+      - name: Checkout base repository
+        id: checkout-base
+        uses: actions/checkout@v4
+        with:
+          repository: OpenParachutePBC/parachute-base
+          path: base
+          # Uses same tag if it exists, otherwise main
+          ref: ${{ github.ref_name }}
+        continue-on-error: true
+
+      - name: Fallback to base main branch
+        if: steps.checkout-base.outcome == 'failure'
+        uses: actions/checkout@v4
+        with:
+          repository: OpenParachutePBC/parachute-base
+          path: base
+          ref: main
+        continue-on-error: true
+
+      - name: Create empty base directory if needed
+        run: mkdir -p base
+
+      # Note: Flutter cache may show "ambiguous argument 'HEAD'" warnings during restore.
+      # This is harmless - the action recreates the Flutter directory if the cache is stale.
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: 'stable'
+          cache: true
+
+      - name: Install dependencies
+        run: |
+          cd app
+          flutter pub get
+
+      - name: Install create-dmg
+        run: brew install create-dmg
+
+      - name: Extract version
+        id: version
+        run: |
+          # Always use version from pubspec.yaml to match what build_computer_dmg.sh uses
+          VERSION=$(grep '^version:' app/pubspec.yaml | sed 's/version: //' | cut -d'+' -f1)
+          if [ -z "$VERSION" ]; then
+            echo "Error: Could not extract version from pubspec.yaml"
+            exit 1
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Building version: $VERSION"
+
+      - name: Update version in build script
+        run: |
+          cd app
+          sed -i '' "s/VERSION=\".*\"/VERSION=\"${{ steps.version.outputs.version }}\"/" scripts/build_computer_dmg.sh
+
+      # Code signing (if certificates are configured)
+      - name: Import signing certificate
+        if: env.MACOS_CERTIFICATE != ''
+        run: |
+          # Create temporary keychain
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          KEYCHAIN_PASSWORD=$(openssl rand -base64 32)
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+
+          # Download and import Apple intermediate certificates (required for chain validation)
+          echo "Downloading Apple intermediate certificates..."
+          curl -sL "https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer" -o $RUNNER_TEMP/DeveloperIDG2CA.cer
+          curl -sL "https://www.apple.com/appleca/AppleIncRootCertificate.cer" -o $RUNNER_TEMP/AppleRoot.cer
+
+          security import $RUNNER_TEMP/DeveloperIDG2CA.cer -k $KEYCHAIN_PATH
+          security import $RUNNER_TEMP/AppleRoot.cer -k $KEYCHAIN_PATH
+
+          # Import Developer ID certificate
+          echo "$MACOS_CERTIFICATE" | base64 --decode > $RUNNER_TEMP/certificate.p12
+          security import $RUNNER_TEMP/certificate.p12 -P "$MACOS_CERTIFICATE_PASSWORD" \
+            -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
+
+          # Add keychain to search list (include System keychain for additional roots)
+          security list-keychains -d user -s $KEYCHAIN_PATH /Library/Keychains/System.keychain
+
+          # Allow codesign to access keychain
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+
+          # Verify the identity is available
+          echo "Available signing identities:"
+          security find-identity -v -p codesigning
+
+      - name: Build Flutter app
+        run: |
+          cd app
+
+          # Create project structure expected by build script
+          mkdir -p ../base
+
+          # Build the macOS app with computer flavor (via dart-define, not xcode scheme)
+          flutter build macos --release --dart-define=FLAVOR=computer
+
+      - name: Get signing identity
+        id: signing
+        if: env.MACOS_CERTIFICATE != ''
+        run: |
+          IDENTITY=$(security find-identity -v -p codesigning | grep "Developer ID Application" | head -1 | awk -F'"' '{print $2}')
+          echo "identity=$IDENTITY" >> $GITHUB_OUTPUT
+          echo "Found signing identity: $IDENTITY"
+
+      - name: Create DMG
+        run: |
+          cd app
+          SKIP_BUILD=true CODESIGN_IDENTITY="${{ steps.signing.outputs.identity }}" ./scripts/build_computer_dmg.sh
+
+      # Notarization (if Apple credentials are configured)
+      - name: Notarize DMG
+        if: env.APPLE_ID != ''
+        timeout-minutes: 30
+        run: |
+          # List what's in the dist directory for debugging
+          echo "Contents of app/dist:"
+          ls -la app/dist/ || echo "Directory not found"
+
+          DMG_PATH="app/dist/ParachuteComputer-${{ steps.version.outputs.version }}.dmg"
+
+          if [ ! -f "$DMG_PATH" ]; then
+            echo "Error: DMG not found at $DMG_PATH"
+            echo "Looking for DMG files:"
+            find . -name "*.dmg" 2>/dev/null
+            exit 1
+          fi
+
+          # Submit for notarization and wait
+          echo "Submitting for notarization..."
+          echo "This may take several minutes..."
+
+          xcrun notarytool submit "$DMG_PATH" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_ID_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait \
+            --timeout 20m \
+            2>&1 | tee notarization.log
+
+          RESULT=${PIPESTATUS[0]}
+
+          if [ $RESULT -ne 0 ]; then
+            echo "Notarization failed. Fetching detailed log..."
+            # Extract submission ID from log and get details
+            SUBMISSION_ID=$(grep -o 'id: [a-f0-9-]*' notarization.log | head -1 | cut -d' ' -f2)
+            if [ -n "$SUBMISSION_ID" ]; then
+              xcrun notarytool log "$SUBMISSION_ID" \
+                --apple-id "$APPLE_ID" \
+                --password "$APPLE_ID_PASSWORD" \
+                --team-id "$APPLE_TEAM_ID" || true
+            fi
+            exit 1
+          fi
+
+          # Staple the notarization ticket
+          echo "Stapling notarization ticket..."
+          xcrun stapler staple "$DMG_PATH"
+
+          echo "Notarization complete!"
+
+      - name: Generate checksums
+        run: |
+          cd app/dist
+          shasum -a 256 *.dmg > checksums-sha256.txt
+          cat checksums-sha256.txt
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-dmg
+          path: |
+            app/dist/*.dmg
+            app/dist/checksums-sha256.txt
+          retention-days: 7
+
+  create-release:
+    name: Create GitHub Release
+    needs: build-macos
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-dmg
+          path: artifacts
+
+      - name: Extract version
+        id: version
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: List downloaded artifacts
+        run: |
+          echo "Contents of artifacts directory:"
+          ls -la artifacts/ || echo "No artifacts directory found"
+          echo "Looking for DMG files:"
+          find . -name "*.dmg" -o -name "*.txt" | head -20
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Parachute Computer v${{ steps.version.outputs.version }}
+          tag_name: ${{ github.ref_name }}
+          draft: false
+          generate_release_notes: true
+          files: |
+            artifacts/*.dmg
+            artifacts/checksums-sha256.txt
+          body: |
+            ## Parachute Computer v${{ steps.version.outputs.version }}
+
+            ### Installation
+
+            1. Download `ParachuteComputer-${{ steps.version.outputs.version }}.dmg`
+            2. Open the DMG and drag Parachute to Applications
+            3. Launch Parachute and follow the setup wizard
+
+            ### Verification
+
+            Verify the download using the checksum:
+            ```bash
+            shasum -a 256 -c checksums-sha256.txt
+            ```
+
+            ### What's New
+
+            See the automatically generated release notes below.
+
+            ---
+
+            **Full Changelog**: https://github.com/${{ github.repository }}/compare/...v${{ steps.version.outputs.version }}

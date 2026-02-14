@@ -1,0 +1,71 @@
+/// Information about an available agent fetched from the server.
+class AgentInfo {
+  final String name;
+  final String? description;
+  final String type;
+  final String? model;
+  final String? path;
+  final String source; // "builtin", "vault_agents", "custom_agents", "plugin"
+  final List<String> tools;
+
+  // Detail fields (populated by GET /agents/{name})
+  final String? systemPrompt;
+  final String? systemPromptPreview;
+  final Map<String, dynamic>? permissions;
+  final Map<String, dynamic>? constraints;
+  final dynamic mcpServers; // Can be "all", List<String>, or null
+  final List<String>? spawns;
+
+  const AgentInfo({
+    required this.name,
+    this.description,
+    this.type = 'chatbot',
+    this.model,
+    this.path,
+    required this.source,
+    this.tools = const [],
+    this.systemPrompt,
+    this.systemPromptPreview,
+    this.permissions,
+    this.constraints,
+    this.mcpServers,
+    this.spawns,
+  });
+
+  factory AgentInfo.fromJson(Map<String, dynamic> json) {
+    return AgentInfo(
+      name: json['name'] as String,
+      description: json['description'] as String?,
+      type: json['type'] as String? ?? 'chatbot',
+      model: json['model'] as String?,
+      path: json['path'] as String?,
+      source: json['source'] as String? ?? 'builtin',
+      tools: (json['tools'] as List<dynamic>?)
+              ?.map((e) => e as String)
+              .toList() ??
+          const [],
+      systemPrompt: json['system_prompt'] as String?,
+      systemPromptPreview: json['system_prompt_preview'] as String?,
+      permissions: json['permissions'] as Map<String, dynamic>?,
+      constraints: json['constraints'] as Map<String, dynamic>?,
+      mcpServers: json['mcp_servers'],
+      spawns: (json['spawns'] as List<dynamic>?)
+              ?.map((e) => e as String)
+              .toList(),
+    );
+  }
+
+  /// Display label: capitalize first letter of name, replace hyphens with spaces.
+  String get displayName {
+    if (name == 'vault-agent') return 'Default';
+    return name
+        .replaceAll('-', ' ')
+        .replaceAll('_', ' ')
+        .split(' ')
+        .map((w) => w.isNotEmpty ? '${w[0].toUpperCase()}${w.substring(1)}' : '')
+        .join(' ');
+  }
+
+  /// Whether this is the built-in default agent.
+  bool get isBuiltin => source == 'builtin';
+}
