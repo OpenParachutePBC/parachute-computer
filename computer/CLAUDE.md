@@ -2,9 +2,7 @@
 
 AI orchestration server with modular architecture. The unified Parachute app requires this running for Chat, Daily, Brain, and Vault features.
 
-**Repository**: https://github.com/OpenParachutePBC/parachute-computer
-
-**Related**: [App (Flutter Client)](../app/CLAUDE.md) | [Parent Project](../CLAUDE.md)
+**Related**: [App (Flutter Client)](../app/CLAUDE.md) | [Monorepo Root](../CLAUDE.md)
 
 ---
 
