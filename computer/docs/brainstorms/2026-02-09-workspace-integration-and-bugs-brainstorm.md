@@ -1,0 +1,121 @@
+# Workspace Integration & Bug Fixes Brainstorm
+
+**Date:** 2026-02-09
+**Status:** Ready for planning
+
+---
+
+## What We're Building
+
+Four improvements to the Parachute app and server, covering workspace UX integration and three bugs identified through testing.
+
+---
+
+## Issue 1: Workspace Integration with New Chat Flow
+
+### Problem
+Workspaces exist in settings and the desktop sidebar, but starting a new chat doesn't let you pick one. The new chat sheet has folder/agent/trust pickers but no workspace picker. Workspaces are disconnected from the actual chat creation flow.
+
+### Design Decision
+**Both auto-inherit AND explicit picker:**
+- When a workspace is selected in the sidebar, new chats auto-inherit its settings (trust level, model, working directory)
+- The new chat sheet also gets a workspace selector so users can explicitly choose/override
+
+### Approach
+1. Add a `workspace` field to `NewChatConfig`
+2. Pre-populate from `activeWorkspaceProvider` when creating a new chat
+3. Add workspace picker chip/dropdown to `NewChatSheet`
+4. When a workspace is selected, auto-fill trust level, model, and working directory from workspace config (user can still override)
+5. Pass `workspace_id` through to the server on first message (already partially wired — `sendMessage` reads `activeWorkspaceProvider`)
+
+### Key Decisions
+- Workspace selection is optional — users can still start chats without one
+- Workspace settings are defaults, not locks — user can override trust/model/dir per chat
+- Auto-inheritance from sidebar reduces friction for workspace-focused workflows
+
+---
+
+## Issue 2: Desktop New Chat — Right Column Stays Empty
+
+### Root Cause
+`ChatContentPanel` has a condition that returns an empty placeholder when `currentSessionId == null`:
+
+```dart
+if (currentSessionId == null) {
+  return _buildEmptyState(context);  // "Select a conversation"
+}
+```
+
+In **mobile**, `_startNewChat()` pushes a new `ChatScreen` route, bypassing this check.
+In **desktop/tablet**, no navigation occurs — the panel just watches `currentSessionIdProvider`, sees `null`, and shows the empty state.
+
+`ChatScreen` IS designed to handle `null` session IDs (shows input + suggestions), but `ChatContentPanel` never renders it.
+
+### Approach
+Introduce a `isNewChatMode` state (or similar flag) so `ChatContentPanel` can distinguish between:
+- "No session selected yet" → show placeholder
+- "User clicked New Chat" → render `ChatScreen` in new-chat mode
+
+The simplest fix: add a `newChatModeProvider` (StateProvider<bool>) that `newChatProvider` sets to `true`, and `ChatContentPanel` checks. When `currentSessionId == null && newChatMode == true`, render `ChatScreen(embeddedMode: true)`.
+
+---
+
+## Issue 3: Sandbox Working Directory — Agent Sees Empty Workspace
+
+### Root Cause (3 compounding problems)
+1. **Missing mount:** When `trust_level=sandboxed` with a `working_directory`, that directory is NOT automatically added to `allowed_paths` in the sandbox config, so Docker never mounts it specifically.
+2. **No cwd forwarded to container:** The `cwd` parameter is passed to `query_streaming()` for host execution, but when Docker sandbox runs, the entrypoint doesn't receive or use a working directory.
+3. **Path mapping mismatch:** Even if mounted, the SDK inside the container doesn't know to look in `/vault/{relative_path}`.
+
+### Approach
+1. In the orchestrator, when `trust_level=sandboxed`, auto-add `working_directory` to `allowed_paths`
+2. Pass a `PARACHUTE_CWD` environment variable to the Docker container
+3. Have the entrypoint set the SDK's working directory from that env var
+4. Ensure the mount maps the host working directory to the container path the SDK expects
+
+### Open Question
+- Does this also affect vault-level trust with working directories? (User wasn't sure — needs testing)
+
+---
+
+## Issue 4: Telegram Bot Loses All Message History
+
+### Root Cause
+Each Telegram message creates a fresh SDK session because:
+1. Bot connector creates a database session (metadata only) when a Telegram chat first connects
+2. No SDK JSONL transcript file is created at that point
+3. On each message, the orchestrator finds the DB session (`is_new=False`)
+4. But when it checks for an SDK transcript file — there is none
+5. Orchestrator falls back to `is_new=True`, creating a brand new SDK session
+6. That SDK session is used for one message, then abandoned
+7. Next message repeats the cycle
+
+The bridge between "DB session exists" and "SDK session exists" is broken for bot-originated sessions.
+
+### Approach
+When a bot session exists in the DB but has no SDK transcript yet, the orchestrator should:
+1. Keep `is_new=True` for the SDK call (creating a new SDK session is correct for the first message)
+2. After the SDK session is created, save its session ID back to the database
+3. On subsequent messages, the SDK transcript will exist and can be resumed
+
+The key fix is in `orchestrator.py` around lines 598-610 — the session ID generated by the SDK on the first real message needs to be persisted so future messages can resume it.
+
+### Alternative
+Since the bot's DB session ID != SDK session ID (the bot creates its own ID), we may need a mapping or to update the DB session's ID to match the SDK session ID after first use.
+
+---
+
+## Priority Order
+
+1. **Desktop new chat bug** — Quick fix, high visibility, affects core UX
+2. **Telegram history** — Fundamental broken functionality for bot users
+3. **Workspace integration** — Design-heavy, biggest feature value
+4. **Sandbox working dir** — Affects sandboxed sessions only, fewer users impacted
+
+---
+
+## Open Questions
+
+- Should workspace settings (trust/model/dir) be shown as pre-filled but editable in the new chat sheet, or as a collapsible "inherited from workspace" section?
+- For Telegram fix, should we update the DB session ID to match the SDK session ID, or maintain a separate mapping?
+- Is the sandbox working dir issue also present for vault-level trust?
