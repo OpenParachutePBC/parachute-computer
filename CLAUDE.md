@@ -103,10 +103,35 @@ The app connects to the server at `localhost:3333`. Chat, Vault, and Brain featu
 
 ---
 
-## Issue Tracking
+## Development Workflow
+
+### Brainstorm → Issue → Plan → Work
+
+1. **Brainstorm** — Run `/para:brainstorm` to explore an idea collaboratively
+2. **File issue** — Create a GitHub issue from the brainstorm (`brainstorm` label + module/priority labels)
+3. **Pick up** — Pull down a brainstorm issue when ready to work on it
+4. **Plan** — Run `/para:plan` to create a concrete implementation plan from the brainstorm
+5. **Work** — Run `/para:work` to implement; PR references the brainstorm issue
+
+Brainstorm issues are the durable artifact — they capture the *what* and *why*. Plans are implementation details that live in PRs or issue comments.
+
+### Issue Tracking
 
 GitHub Issues on this repo. Use labels:
 - `brainstorm` / `plan` - Feature development workflow stages
 - `daily` / `chat` / `brain` / `computer` / `app` - Module/component
 - `P1` / `P2` / `P3` - Priority
 - `bug` / `enhancement` / `needs-thinking` - Type
+
+### Engineering Tools
+
+Workflow commands, research agents, review agents, and skills live in `.claude/` (standalone, no plugin wrapper). Forked from compound-engineering v2.30.0, trimmed for this repo.
+
+```
+.claude/
+├── commands/workflows/   # /para:brainstorm, /para:plan, /para:work, etc.
+├── agents/research/      # repo-research-analyst, best-practices, framework-docs, etc.
+├── agents/review/        # security-sentinel, architecture-strategist, performance-oracle, etc.
+├── agents/workflow/      # bug-reproduction-validator, pr-comment-resolver, spec-flow-analyzer
+└── skills/               # brainstorming, agent-native-architecture, create-agent-skills
+```

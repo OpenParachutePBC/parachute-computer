@@ -7,8 +7,5 @@
         "marionette_mcp"
       ]
     }
-  },
-  "enabledPlugins": {
-    "compound-engineering@every-marketplace": true
   }
 }
