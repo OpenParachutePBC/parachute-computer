@@ -3,17 +3,17 @@ layout: base.njk
 ---
 <main>
     <article>
-        <div class="post-header">
+        <div class="post-header fade-up fade-up-1">
             <h1>{{ title }}</h1>
             {% if subtitle %}<p class="post-subtitle">{{ subtitle }}</p>{% endif %}
             <p class="post-meta">{{ date | dateDisplay }}{% if author %} &middot; {{ author }}{% endif %}</p>
         </div>
 
-        <div class="post-content">
+        <div class="post-content fade-up fade-up-2">
             {{ content | safe }}
         </div>
 
-        <div class="post-nav">
+        <div class="post-nav fade-up fade-up-3">
             <a href="/blog/">&larr; All posts</a>
         </div>
     </article>

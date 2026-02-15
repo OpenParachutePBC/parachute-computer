@@ -4,8 +4,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ title }}{% if title %} | {% endif %}Parachute Computer</title>
-    <meta name="description" content="{{ description or 'Open source personal AI computer. Local-first. Voice-first.' }}">
+    <meta name="description" content="{{ description or 'Open source personal AI computer. Local-first. Voice-first. Your data, your machine, your mind.' }}">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="stylesheet" href="/style.css">
+    <meta property="og:title" content="{{ title }}{% if title %} | {% endif %}Parachute Computer">
+    <meta property="og:description" content="{{ description or 'Open source personal AI computer. Local-first. Voice-first.' }}">
+    <meta property="og:type" content="website">
 </head>
 <body>
     <header>
@@ -23,8 +28,9 @@
     {{ content | safe }}
 
     <footer>
-        <p>&copy; 2026 Open Parachute, PBC. A Colorado Public Benefit Corporation.</p>
-        <p><a href="/blog/">Blog</a> &middot; <a href="/architecture/">Docs</a> &middot; <a href="/roadmap/">Roadmap</a> &middot; <a href="https://github.com/OpenParachutePBC/parachute-computer" target="_blank">GitHub</a></p>
+        <p>&copy; 2026 Open Parachute, PBC</p>
+        <p>A Colorado Public Benefit Corporation building open tools for thinking.</p>
+        <p style="margin-top: 0.75rem;"><a href="/blog/">Blog</a> &middot; <a href="/architecture/">Docs</a> &middot; <a href="/roadmap/">Roadmap</a> &middot; <a href="https://github.com/OpenParachutePBC/parachute-computer" target="_blank">GitHub</a></p>
     </footer>
 </body>
 </html>
