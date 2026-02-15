@@ -60,11 +60,16 @@ class SessionManager:
 
         wd_path = Path(working_directory)
         if wd_path.is_absolute():
-            # /vault/... paths or legacy absolute paths — use as-is
-            resolved = wd_path
+            if str(wd_path).startswith("/vault/"):
+                # /vault/... paths from Docker convention — translate to real vault path
+                relative = str(wd_path)[len("/vault/"):]
+                resolved = self.vault_path / relative
+            else:
+                # Legacy absolute paths (e.g., /Volumes/...) — use as-is
+                resolved = wd_path
         else:
-            # Legacy relative path (e.g., "Projects/foo") — prepend /vault/
-            resolved = Path("/vault") / wd_path
+            # Relative path (e.g., "Projects/foo") — prepend vault path
+            resolved = self.vault_path / wd_path
 
         # Validate resolved path doesn't escape vault (e.g., via ../../../)
         try:

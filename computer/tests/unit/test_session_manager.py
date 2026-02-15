@@ -187,3 +187,43 @@ async def test_session_with_metadata(session_manager, test_database):
     assert session.metadata is not None
     assert session.metadata["custom_field"] == "custom_value"
     assert session.metadata["number"] == 42
+
+
+# ── resolve_working_directory tests ──
+
+
+def test_resolve_working_directory_none(session_manager, test_vault):
+    """None or empty returns vault root."""
+    assert session_manager.resolve_working_directory(None) == test_vault
+    assert session_manager.resolve_working_directory("") == test_vault
+
+
+def test_resolve_working_directory_relative(session_manager, test_vault):
+    """Relative path is resolved under vault."""
+    # Create the target directory so resolve() works
+    projects = test_vault / "Projects" / "my-repo"
+    projects.mkdir(parents=True)
+
+    result = session_manager.resolve_working_directory("Projects/my-repo")
+    assert result == test_vault / "Projects" / "my-repo"
+
+
+def test_resolve_working_directory_vault_prefix(session_manager, test_vault):
+    """/vault/... paths are translated to real vault path."""
+    projects = test_vault / "Projects" / "my-repo"
+    projects.mkdir(parents=True)
+
+    result = session_manager.resolve_working_directory("/vault/Projects/my-repo")
+    assert result == test_vault / "Projects" / "my-repo"
+
+
+def test_resolve_working_directory_absolute(session_manager, test_vault):
+    """Absolute paths (non /vault/) are used as-is."""
+    result = session_manager.resolve_working_directory(str(test_vault / "Chat"))
+    assert result == test_vault / "Chat"
+
+
+def test_resolve_working_directory_escapes_vault(session_manager, test_vault):
+    """Paths that escape the vault fall back to vault root."""
+    result = session_manager.resolve_working_directory("../../etc/passwd")
+    assert result == test_vault
