@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bot Connectors | Parachute Documentation</title>
+    <meta name="description" content="Telegram and Discord bot connectors for Parachute">
+    <link rel="stylesheet" href="/style.css">
+    <link rel="stylesheet" href="docs.css">
+</head>
+<body>
+    <header>
+        <nav>
+            <a href="/" class="logo">Parachute Computer</a>
+            <div class="nav-links">
+                <a href="/blog/">Blog</a>
+                <a href="/architecture/" class="active">Docs</a>
+                <a href="/roadmap/">Roadmap</a>
+                <a href="https://github.com/OpenParachutePBC/parachute-computer" target="_blank">GitHub</a>
+            </div>
+        </nav>
+    </header>
+
+    <div class="docs-layout">
+        <!-- Sidebar Navigation -->
+        <aside class="docs-sidebar">
+            <div class="sidebar-section">
+                <h3>Overview</h3>
+                <a href="index.html">Architecture</a>
+                <a href="data-flow.html">Data Flow</a>
+                <a href="integration.html">Integration</a>
+            </div>
+            <div class="sidebar-section">
+                <h3>App (Flutter)</h3>
+                <a href="app-overview.html">Overview</a>
+                <a href="app-chat.html">Chat Feature</a>
+                <a href="app-daily.html">Daily Feature</a>
+                <a href="app-vault.html">Vault Feature</a>
+                <a href="app-services.html">Services</a>
+            </div>
+            <div class="sidebar-section">
+                <h3>Computer (Python)</h3>
+                <a href="computer-overview.html">Overview</a>
+                <a href="computer-api.html">API Routes</a>
+                <a href="computer-orchestrator.html">Orchestrator</a>
+                <a href="computer-agents.html">Modules & Agents</a>
+                <a href="computer-database.html">Database</a>
+                <a href="computer-connectors.html" class="active">Bot Connectors</a>
+            </div>
+            <div class="sidebar-section">
+                <h3>Reference</h3>
+                <a href="issues.html">Issues & TODOs</a>
+                <a href="file-manifest.html">File Manifest</a>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="docs-content">
+            <div class="breadcrumb">
+                <a href="../index.html">Home</a> / <a href="../blog/">Blog</a>
+                <a href="index.html">Docs</a> / <span>Bot Connectors</span>
+            </div>
+
+            <h1>Bot Connectors</h1>
+            <p class="lead">Telegram and Discord bots that bridge external messaging platforms to Parachute Chat sessions. Each connector manages its own session lifecycle, trust levels, and message formatting.</p>
+
+            <!-- Architecture Overview -->
+            <section class="docs-section">
+                <h2>Architecture</h2>
+
+                <div class="architecture-visual">
+                    <pre>
+┌──────────────┐     ┌──────────────┐
+│   Telegram   │     │   Discord    │
+│   Message    │     │   Message    │
+└──────┬───────┘     └──────┬───────┘
+       │                    │
+       ▼                    ▼
+┌──────────────┐     ┌──────────────┐
+│  Telegram    │     │   Discord    │
+│  Connector   │     │  Connector   │
+│              │     │              │
+│ - Streaming  │     │ - Slash cmds │
+│ - Ack emoji  │     │ - Ack emoji  │
+│ - Voice      │     │ - Typing     │
+│ - /new /init │     │ - /new /chat │
+└──────┬───────┘     └──────┬───────┘
+       │                    │
+       └────────┬───────────┘
+                │
+       ┌────────▼────────┐
+       │  BotConnector   │
+       │    (base.py)    │
+       │                 │
+       │ - Per-chat lock │
+       │ - Trust levels  │
+       │ - User pairing  │
+       │ - Init flow     │
+       │ - Group history │
+       │ - Split response│
+       └────────┬────────┘
+                │
+       ┌────────▼────────┐
+       │   Orchestrator  │
+       │  (streaming)    │
+       └─────────────────┘
+                    </pre>
+                </div>
+
+                <h3>Source Files</h3>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>File</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>connectors/base.py</code></td>
+                            <td>Abstract BotConnector base class, GroupHistoryBuffer</td>
+                        </tr>
+                        <tr>
+                            <td><code>connectors/telegram.py</code></td>
+                            <td>Telegram connector (streaming, voice, commands)</td>
+                        </tr>
+                        <tr>
+                            <td><code>connectors/discord_bot.py</code></td>
+                            <td>Discord connector (slash commands, channel history)</td>
+                        </tr>
+                        <tr>
+                            <td><code>connectors/config.py</code></td>
+                            <td>Bot configuration from <code>vault/.parachute/bots.yaml</code></td>
+                        </tr>
+                        <tr>
+                            <td><code>connectors/message_formatter.py</code></td>
+                            <td>Claude markdown to platform format conversion</td>
+                        </tr>
+                        <tr>
+                            <td><code>api/bots.py</code></td>
+                            <td>API endpoints for bot management + pairing</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+
+            <!-- Configuration -->
+            <section class="docs-section">
+                <h2>Configuration</h2>
+                <p>Bot connectors are configured in <code>vault/.parachute/bots.yaml</code>:</p>
+
+                <div class="code-block">
+                    <div class="code-header">bots.yaml</div>
+                    <pre><code>telegram:
+  enabled: true
+  bot_token: "123456:ABC-DEF..."
+  allowed_users:
+    - 12345678           # Telegram user IDs
+  dm_trust_level: vault
+  group_trust_level: sandboxed
+  group_mention_mode: mention_only
+  ack_emoji: "👀"
+
+discord:
+  enabled: true
+  bot_token: "MTIzNDU2..."
+  allowed_users:
+    - "987654321"        # Discord user IDs (strings)
+  dm_trust_level: vault
+  group_trust_level: sandboxed
+  group_mention_mode: mention_only
+  ack_emoji: "👀"</code></pre>
+                </div>
+
+                <h3>Trust Levels per Platform</h3>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Setting</th>
+                            <th>Default</th>
+                            <th>Description</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>dm_trust_level</code></td>
+                            <td><code>vault</code></td>
+                            <td>Trust level for DM conversations</td>
+                        </tr>
+                        <tr>
+                            <td><code>group_trust_level</code></td>
+                            <td><code>sandboxed</code></td>
+                            <td>Trust level for group conversations</td>
+                        </tr>
+                        <tr>
+                            <td><code>group_mention_mode</code></td>
+                            <td><code>mention_only</code></td>
+                            <td>Default: only respond when @mentioned in groups</td>
+                        </tr>
+                        <tr>
+                            <td><code>ack_emoji</code></td>
+                            <td><code>👀</code></td>
+                            <td>Reaction added on message receipt (instant feedback)</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+
+            <!-- Features -->
+            <section class="docs-section">
+                <h2>Features</h2>
+
+                <div class="concept-grid">
+                    <div class="concept-card">
+                        <div class="concept-icon">⚡</div>
+                        <h3>Ack Reactions</h3>
+                        <p>Instantly adds an emoji reaction when a message is received. Removed after the response completes. Provides immediate feedback before the AI generates a response.</p>
+                    </div>
+
+                    <div class="concept-card">
+                        <div class="concept-icon">📡</div>
+                        <h3>Streaming (Telegram)</h3>
+                        <p>Telegram connector edits a draft message as tokens stream in. Updates every ~30 tokens for real-time output. Falls back to batch send on edit failures.</p>
+                    </div>
+
+                    <div class="concept-card">
+                        <div class="concept-icon">👥</div>
+                        <h3>Group History</h3>
+                        <p>Injects recent group messages as context when the bot is mentioned. Uses XML tags (<code>&lt;group_context&gt;</code>) with sanitized display names to resist prompt injection.</p>
+                    </div>
+
+                    <div class="concept-card">
+                        <div class="concept-icon">🔐</div>
+                        <h3>User Pairing</h3>
+                        <p>Unknown users get a pairing request sent to the Parachute app for approval. Until approved, the bot responds with a "request pending" message.</p>
+                    </div>
+
+                    <div class="concept-card">
+                        <div class="concept-icon">🔒</div>
+                        <h3>Per-Chat Locks</h3>
+                        <p>Each chat gets an asyncio lock to prevent concurrent message processing. Keyed on stable <code>chat_id</code> (not session_id which changes during finalization).</p>
+                    </div>
+
+                    <div class="concept-card">
+                        <div class="concept-icon">🎤</div>
+                        <h3>Voice Messages</h3>
+                        <p>Telegram supports voice messages: downloads OGG, converts to WAV (ffmpeg), transcribes with Whisper API, then processes as text.</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Session Lifecycle -->
+            <section class="docs-section">
+                <h2>Session Lifecycle</h2>
+
+                <div class="architecture-visual">
+                    <pre>
+User sends message
+        │
+        ▼
+┌───────────────────┐
+│ is_user_allowed?  │──── No ──▶ handle_unknown_user()
+└───────┬───────────┘             → Create pairing_request
+        │ Yes                     → Create pending session
+        ▼                         → "Request sent to owner"
+┌───────────────────┐
+│ get_or_create_    │
+│ session()         │
+│                   │
+│ Find by bot link  │
+│ or create new     │
+└───────┬───────────┘
+        │
+        ▼
+┌───────────────────┐
+│ is_session_       │──── No ──▶ Nudge: "Configure in app"
+│ initialized?      │             (max 2 nudges, then silent)
+└───────┬───────────┘
+        │ Yes
+        ▼
+┌───────────────────┐
+│ Check response    │
+│ mode (per-session)│──── mention_only + no mention ──▶ ignore
+└───────┬───────────┘
+        │
+        ▼
+┌───────────────────┐
+│ Add ack reaction  │
+│ Inject group      │
+│ history if group  │
+│ Acquire chat lock │
+│ Route to          │
+│ orchestrator      │
+│ Stream/send       │
+│ Remove ack        │
+└───────────────────┘
+                    </pre>
+                </div>
+            </section>
+
+            <!-- Telegram Specifics -->
+            <section class="docs-section">
+                <h2>Telegram Connector</h2>
+
+                <h3>Commands</h3>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Command</th>
+                            <th>Description</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>/new</code></td>
+                            <td>Archive current session, start fresh</td>
+                        </tr>
+                        <tr>
+                            <td><code>/init</code></td>
+                            <td>Re-initialize session (archive + create pending)</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <h3>Streaming Implementation</h3>
+                <p>Telegram streams responses by editing a "draft" message as tokens arrive:</p>
+                <ol>
+                    <li>Send initial empty message (or first chunk)</li>
+                    <li>Accumulate tokens from orchestrator SSE events</li>
+                    <li>Every ~30 tokens, edit the message with accumulated text</li>
+                    <li>Format with <code>claude_to_telegram()</code> (markdown adjustments for Telegram HTML)</li>
+                    <li>On completion, send final edit with full response</li>
+                </ol>
+
+                <h3>Group Mention Detection</h3>
+                <p>Uses Telegram's entity system for reliable mention detection (not string matching). Checks <code>MessageEntity.MENTION</code> and <code>MessageEntity.TEXT_MENTION</code> types against the bot's username.</p>
+            </section>
+
+            <!-- Discord Specifics -->
+            <section class="docs-section">
+                <h2>Discord Connector</h2>
+
+                <h3>Slash Commands</h3>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Command</th>
+                            <th>Description</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>/chat [message]</code></td>
+                            <td>Chat with Parachute (deferred response)</td>
+                        </tr>
+                        <tr>
+                            <td><code>/new</code></td>
+                            <td>Start a new conversation (archive current)</td>
+                        </tr>
+                        <tr>
+                            <td><code>/journal [entry]</code></td>
+                            <td>Create a Daily journal entry</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <h3>Response Handling</h3>
+                <p>Discord doesn't stream mid-message edits like Telegram. Instead:</p>
+                <ol>
+                    <li>Show typing indicator while processing</li>
+                    <li>Collect full response from orchestrator</li>
+                    <li>Format with <code>claude_to_discord()</code></li>
+                    <li>Split at 2000-char limit (Discord max), send as reply chain</li>
+                </ol>
+
+                <h3>Group History</h3>
+                <p>Discord has <code>channel.history()</code> API, so history is fetched on-demand rather than buffered. Same XML tag injection and name sanitization as Telegram.</p>
+            </section>
+
+            <!-- Message Formatting -->
+            <section class="docs-section">
+                <h2>Message Formatting</h2>
+                <p><code>message_formatter.py</code> converts Claude's markdown output to platform-compatible formats:</p>
+
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Element</th>
+                            <th>Telegram</th>
+                            <th>Discord</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Bold</td>
+                            <td><code>&lt;b&gt;text&lt;/b&gt;</code></td>
+                            <td><code>**text**</code></td>
+                        </tr>
+                        <tr>
+                            <td>Italic</td>
+                            <td><code>&lt;i&gt;text&lt;/i&gt;</code></td>
+                            <td><code>*text*</code></td>
+                        </tr>
+                        <tr>
+                            <td>Code</td>
+                            <td><code>&lt;code&gt;text&lt;/code&gt;</code></td>
+                            <td><code>`text`</code></td>
+                        </tr>
+                        <tr>
+                            <td>Code block</td>
+                            <td><code>&lt;pre&gt;text&lt;/pre&gt;</code></td>
+                            <td><code>```text```</code></td>
+                        </tr>
+                        <tr>
+                            <td>Max length</td>
+                            <td>4096 chars</td>
+                            <td>2000 chars</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <p>Long responses are split at paragraph boundaries using <code>BotConnector.split_response()</code>, preserving code blocks across chunks.</p>
+            </section>
+
+            <!-- User Pairing Flow -->
+            <section class="docs-section">
+                <h2>User Pairing Flow</h2>
+                <p>When an unknown user messages the bot:</p>
+
+                <ol>
+                    <li>Bot creates a <code>pairing_request</code> in the database</li>
+                    <li>Bot creates a "pending" session visible in the Parachute app chat list</li>
+                    <li>Bot replies: "Your request has been sent to the owner"</li>
+                    <li>Owner sees request in app &rarr; approves with trust level</li>
+                    <li><code>POST /api/bots/pairing/{id}/approve</code> triggers approval</li>
+                    <li>Connector adds user to allowed list + sends "You've been approved!" message</li>
+                    <li>Subsequent messages from user are processed normally</li>
+                </ol>
+
+                <p>Per-user trust level overrides are cached in-memory and looked up from the approved pairing request.</p>
+            </section>
+
+            <!-- Security -->
+            <section class="docs-section">
+                <h2>Security Considerations</h2>
+
+                <ul>
+                    <li><strong>Allowlist enforcement:</strong> Only <code>allowed_users</code> from bots.yaml can trigger AI responses</li>
+                    <li><strong>Prompt injection resistance:</strong> Group messages are wrapped in <code>&lt;group_context&gt;</code> XML tags; display names are sanitized (brackets, angle brackets, newlines stripped, max 50 chars)</li>
+                    <li><strong>Trust isolation:</strong> Group chats default to <code>sandboxed</code> (Docker container). DMs default to <code>vault</code>.</li>
+                    <li><strong>Per-chat locks:</strong> Prevent race conditions from rapid messages in the same chat</li>
+                    <li><strong>Bot tokens:</strong> Stored in <code>bots.yaml</code> which should be protected (not version-controlled)</li>
+                </ul>
+            </section>
+
+            <!-- Management -->
+            <section class="docs-section">
+                <h2>Management API</h2>
+                <p>Connectors can be managed through the API or the Parachute app Settings screen:</p>
+
+                <div class="code-block">
+                    <div class="code-header">Bot Management</div>
+                    <pre><code># Check status
+GET /api/bots/status
+
+# Start/stop connectors
+POST /api/bots/telegram/start
+POST /api/bots/telegram/stop
+
+# View and manage pairing requests
+GET /api/bots/pairing
+POST /api/bots/pairing/{id}/approve  {"trust_level": "vault"}
+POST /api/bots/pairing/{id}/deny
+
+# Update configuration
+GET /api/bots/config
+PUT /api/bots/config  {...}</code></pre>
+                </div>
+
+                <p>Connectors auto-start on server boot if <code>enabled: true</code> in bots.yaml. Errors during auto-start are logged but never crash the server.</p>
+            </section>
+
+            <!-- Navigation -->
+            <section class="docs-section">
+                <h2>Next Steps</h2>
+                <div class="nav-cards">
+                    <a href="computer-orchestrator.html" class="nav-card">
+                        <h3>🎭 Orchestrator</h3>
+                        <p>How connectors route messages through the orchestrator for AI processing.</p>
+                    </a>
+                    <a href="computer-database.html" class="nav-card">
+                        <h3>💾 Database</h3>
+                        <p>Session and pairing_request tables that support bot operations.</p>
+                    </a>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <footer>
+        <p>&copy; 2026 Open Parachute, PBC. A Colorado Public Benefit Corporation.</p>
+        <p><a href="/blog/">Blog</a> &middot; <a href="/architecture/">Docs</a> &middot; <a href="/roadmap/">Roadmap</a> &middot; <a href="https://github.com/OpenParachutePBC/parachute-computer" target="_blank">GitHub</a></p>
+    </footer>
+</body>
+</html>

@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Architecture Documentation | Parachute</title>
+    <meta name="description" content="Technical documentation for Parachute - local-first, voice-first extended mind technology">
+    <link rel="stylesheet" href="/style.css">
+    <link rel="stylesheet" href="docs.css">
+</head>
+<body>
+    <header>
+        <nav>
+            <a href="/" class="logo">Parachute Computer</a>
+            <div class="nav-links">
+                <a href="/blog/">Blog</a>
+                <a href="/architecture/" class="active">Docs</a>
+                <a href="/roadmap/">Roadmap</a>
+                <a href="https://github.com/OpenParachutePBC/parachute-computer" target="_blank">GitHub</a>
+            </div>
+        </nav>
+    </header>
+
+    <div class="docs-layout">
+        <!-- Sidebar Navigation -->
+        <aside class="docs-sidebar">
+            <div class="sidebar-section">
+                <h3>Overview</h3>
+                <a href="index.html" class="active">Architecture</a>
+                <a href="data-flow.html">Data Flow</a>
+                <a href="integration.html">Integration</a>
+            </div>
+            <div class="sidebar-section">
+                <h3>App (Flutter)</h3>
+                <a href="app-overview.html">Overview</a>
+                <a href="app-chat.html">Chat Feature</a>
+                <a href="app-daily.html">Daily Feature</a>
+                <a href="app-vault.html">Vault Feature</a>
+                <a href="app-services.html">Services</a>
+            </div>
+            <div class="sidebar-section">
+                <h3>Computer (Python)</h3>
+                <a href="computer-overview.html">Overview</a>
+                <a href="computer-api.html">API Routes</a>
+                <a href="computer-orchestrator.html">Orchestrator</a>
+                <a href="computer-agents.html">Modules & Agents</a>
+                <a href="computer-database.html">Database</a>
+                <a href="computer-connectors.html">Bot Connectors</a>
+            </div>
+            <div class="sidebar-section">
+                <h3>Reference</h3>
+                <a href="issues.html">Issues & TODOs</a>
+                <a href="file-manifest.html">File Manifest</a>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="docs-content">
+            <div class="breadcrumb">
+                <a href="../index.html">Home</a> / <span>Documentation</span>
+            </div>
+
+            <h1>Parachute Architecture</h1>
+            <p class="lead">Local-first, voice-first extended mind technology. A comprehensive system for AI-assisted chat, journaling, and knowledge management.</p>
+
+            <!-- Quick Stats -->
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-number">247</div>
+                    <div class="stat-label">Dart Files (App)</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number">81</div>
+                    <div class="stat-label">Python Files (Computer)</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number">101K</div>
+                    <div class="stat-label">Lines of Code</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number">90</div>
+                    <div class="stat-label">API Endpoints</div>
+                </div>
+            </div>
+
+            <!-- System Overview -->
+            <section class="docs-section">
+                <h2>System Overview</h2>
+                <p>Parachute consists of two main components &mdash; a Flutter app and a Python server &mdash; that work together to provide an AI-powered extended mind. Bot connectors bridge the system to Telegram and Discord.</p>
+
+                <div class="architecture-visual">
+                    <pre>
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                            USER INTERFACES                                    │
+│                                                                               │
+│  ┌───────────────┐  ┌───────────────┐  ┌───────────────┐  ┌──────────────┐  │
+│  │  iOS/Android  │  │    macOS      │  │     Web       │  │   Telegram   │  │
+│  │   (Mobile)    │  │   (Desktop)   │  │   (Chrome)    │  │   Discord    │  │
+│  └───────┬───────┘  └───────┬───────┘  └───────┬───────┘  └──────┬───────┘  │
+│          │                  │                  │                  │           │
+│          └──────────────────┼──────────────────┘                  │           │
+│                             │                                     │           │
+│  ┌──────────────────────────▼─────────────────────────┐          │           │
+│  │              PARACHUTE APP (Flutter)                 │          │           │
+│  │                                                      │          │           │
+│  │  ┌────────┐ ┌────────┐ ┌────────┐ ┌────────────┐   │          │           │
+│  │  │  Chat  │ │ Daily  │ │ Vault  │ │   Brain    │   │          │           │
+│  │  └───┬────┘ └───┬────┘ └───┬────┘ └─────┬──────┘   │          │           │
+│  │      │          │          │             │          │          │           │
+│  │  ┌───▼──────────▼──────────▼─────────────▼──────┐   │          │           │
+│  │  │         Riverpod State + Services            │   │          │           │
+│  │  └──────────────────┬───────────────────────────┘   │          │           │
+│  └─────────────────────│───────────────────────────────┘          │           │
+└────────────────────────│──────────────────────────────────────────│───────────┘
+                         │ HTTP/SSE                                 │
+                         │                                          │
+┌────────────────────────▼──────────────────────────────────────────▼───────────┐
+│                        PARACHUTE COMPUTER (Python/FastAPI)                     │
+│                                                                               │
+│  ┌─────────────────────────────────────────────────────────────────────────┐  │
+│  │  API Router (19 route files, ~90 endpoints)                             │  │
+│  │  chat │ sessions │ bots │ workspaces │ auth │ hooks │ modules │ ...     │  │
+│  └───────────────────────────┬─────────────────────────────────────────────┘  │
+│                              │                                                │
+│  ┌───────────────────────────▼─────────────────────────────────────────────┐  │
+│  │                       Orchestrator                                      │  │
+│  │  Trust enforcement (full │ vault │ sandboxed)                           │  │
+│  │  Docker sandbox for untrusted sessions                                  │  │
+│  └────────┬──────────────────────┬────────────────────┬────────────────────┘  │
+│           │                      │                    │                       │
+│           ▼                      ▼                    ▼                       │
+│  ┌──────────────┐    ┌────────────────┐    ┌──────────────────────┐          │
+│  │  Claude SDK  │    │ Session Mgr    │    │  Module Loader       │          │
+│  │  (Agent)     │    │ + SQLite DB    │    │  brain│chat│daily    │          │
+│  └──────┬───────┘    └────────────────┘    └──────────────────────┘          │
+│         │                                                                     │
+│         ▼                                                                     │
+│  ┌────────────┐    ┌───────────────────────────────────────────────────────┐  │
+│  │ Claude AI  │    │  Bot Connectors (Telegram, Discord)                   │  │
+│  │ (Anthropic)│    │  Streaming │ group history │ pairing │ ack reactions  │  │
+│  └────────────┘    └───────────────────────────────────────────────────────┘  │
+│                                                                               │
+│  ┌─────────────────────────────────────────────────────────────────────────┐  │
+│  │                         VAULT (~\/Parachute)                            │  │
+│  │                                                                         │  │
+│  │  Daily/             Chat/              .claude/         .parachute/     │  │
+│  │  └── 2026-02-09.md  └── sessions.db   └── projects/   └── config.yaml │  │
+│  │  └── assets/        └── assets/          └── (JSONL)  └── .token      │  │
+│  │                                                        └── bots.yaml  │  │
+│  │  .modules/                                             └── hooks/     │  │
+│  │  └── brain/ chat/ daily/                               └── logs/      │  │
+│  └─────────────────────────────────────────────────────────────────────────┘  │
+└───────────────────────────────────────────────────────────────────────────────┘
+                    </pre>
+                </div>
+            </section>
+
+            <!-- Key Concepts -->
+            <section class="docs-section">
+                <h2>Key Concepts</h2>
+
+                <div class="concept-grid">
+                    <div class="concept-card">
+                        <div class="concept-icon">📱</div>
+                        <h3>App (Flutter)</h3>
+                        <p>Unified mobile/desktop app with four features: Chat (AI conversations), Daily (voice journaling), Vault (knowledge browser), and Brain (semantic search). Built with Flutter and Riverpod.</p>
+                        <a href="app-overview.html" class="concept-link">Learn more →</a>
+                    </div>
+
+                    <div class="concept-card">
+                        <div class="concept-icon">🖥️</div>
+                        <h3>Computer (Python)</h3>
+                        <p>AI orchestration server running FastAPI. Manages agent execution with trust levels, session persistence, Claude SDK integration, module loading, and bot connectors.</p>
+                        <a href="computer-overview.html" class="concept-link">Learn more →</a>
+                    </div>
+
+                    <div class="concept-card">
+                        <div class="concept-icon">📂</div>
+                        <h3>Vault</h3>
+                        <p>Your local-first data store at ~/Parachute. Contains journals (Daily/), chat sessions (Chat/), modules (.modules/), and server config (.parachute/). Plain files, always accessible.</p>
+                        <a href="data-flow.html#vault" class="concept-link">Learn more →</a>
+                    </div>
+
+                    <div class="concept-card">
+                        <div class="concept-icon">🔒</div>
+                        <h3>Trust Levels</h3>
+                        <p>Three-tier security model: <code>full</code> (unrestricted), <code>vault</code> (directory-restricted), <code>sandboxed</code> (Docker container). Per-session enforcement with workspace-level floors.</p>
+                        <a href="computer-orchestrator.html" class="concept-link">Learn more →</a>
+                    </div>
+
+                    <div class="concept-card">
+                        <div class="concept-icon">🔄</div>
+                        <h3>Pointer Architecture</h3>
+                        <p>Session metadata lives in SQLite, actual transcripts in SDK JSONL files. Database is a pointer layer, not source of truth for messages.</p>
+                        <a href="computer-database.html" class="concept-link">Learn more →</a>
+                    </div>
+
+                    <div class="concept-card">
+                        <div class="concept-icon">🤖</div>
+                        <h3>Bot Connectors</h3>
+                        <p>Telegram and Discord bots bridge external messaging to Parachute sessions. Per-platform trust levels, streaming responses, group history injection, and user pairing/approval.</p>
+                        <a href="computer-connectors.html" class="concept-link">Learn more →</a>
+                    </div>
+
+                    <div class="concept-card">
+                        <div class="concept-icon">🧩</div>
+                        <h3>Module System</h3>
+                        <p>Brain, Chat, and Daily are loadable modules with manifest.yaml, hash verification, and approval workflow. Bundled in modules/ and deployed to vault/.modules/.</p>
+                        <a href="computer-agents.html" class="concept-link">Learn more →</a>
+                    </div>
+
+                    <div class="concept-card">
+                        <div class="concept-icon">🎯</div>
+                        <h3>Para-ID System</h3>
+                        <p>Portable identifiers (para:abc123xyz) for cross-device sync. Every journal entry gets a unique ID that stays with it across devices and exports.</p>
+                        <a href="data-flow.html#para-id" class="concept-link">Learn more →</a>
+                    </div>
+
+                    <div class="concept-card">
+                        <div class="concept-icon">🏗️</div>
+                        <h3>Workspaces</h3>
+                        <p>Organize sessions into workspaces with directory scoping and trust level floors. Each workspace maps to a vault subdirectory with its own working context.</p>
+                        <a href="computer-api.html" class="concept-link">Learn more →</a>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Build Flavors -->
+            <section class="docs-section">
+                <h2>Build Flavors</h2>
+                <p>The app supports multiple deployment configurations via compile-time flags:</p>
+
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Flavor</th>
+                            <th>Use Case</th>
+                            <th>Visible Tabs</th>
+                            <th>Server</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>daily</code></td>
+                            <td>Standalone journal app</td>
+                            <td>Daily only</td>
+                            <td>None (offline)</td>
+                        </tr>
+                        <tr>
+                            <td><code>client</code></td>
+                            <td>Standard app (default)</td>
+                            <td>Chat, Daily, Vault, Brain</td>
+                            <td>External URL</td>
+                        </tr>
+                        <tr>
+                            <td><code>computer</code></td>
+                            <td>Bundled server (macOS)</td>
+                            <td>All + Settings</td>
+                            <td>Lima VM or Bare Metal</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <div class="code-block">
+                    <div class="code-header">Build Commands</div>
+                    <pre><code># Daily-only standalone
+flutter build apk --release --flavor daily --dart-define=FLAVOR=daily
+
+# Full Parachute (Android)
+flutter build apk --debug --flavor full
+
+# macOS desktop
+flutter run -d macos
+
+# Parachute Computer (macOS bundled)
+flutter build macos --release --dart-define=FLAVOR=computer</code></pre>
+                </div>
+            </section>
+
+            <!-- Tech Stack -->
+            <section class="docs-section">
+                <h2>Technology Stack</h2>
+
+                <div class="stack-comparison">
+                    <div class="stack-column">
+                        <h3>App (Flutter)</h3>
+                        <ul>
+                            <li><strong>Framework:</strong> Flutter 3.x</li>
+                            <li><strong>State:</strong> Riverpod 2.6</li>
+                            <li><strong>Transcription:</strong> Sherpa-ONNX (Parakeet)</li>
+                            <li><strong>Markdown:</strong> flutter_markdown</li>
+                            <li><strong>Audio:</strong> record, audio_session</li>
+                            <li><strong>Storage:</strong> SharedPreferences, local files</li>
+                            <li><strong>HTTP:</strong> http package + SSE streaming</li>
+                        </ul>
+                    </div>
+                    <div class="stack-column">
+                        <h3>Computer (Python)</h3>
+                        <ul>
+                            <li><strong>Framework:</strong> FastAPI 0.109+</li>
+                            <li><strong>Database:</strong> SQLite (aiosqlite)</li>
+                            <li><strong>AI:</strong> Claude Agent SDK</li>
+                            <li><strong>Streaming:</strong> SSE (sse-starlette)</li>
+                            <li><strong>Validation:</strong> Pydantic 2.5+</li>
+                            <li><strong>Bots:</strong> python-telegram-bot, discord.py</li>
+                            <li><strong>Sandbox:</strong> Docker (aiodocker)</li>
+                        </ul>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Quick Start -->
+            <section class="docs-section">
+                <h2>Quick Start for Developers</h2>
+
+                <div class="code-block">
+                    <div class="code-header">Development Setup</div>
+                    <pre><code># Clone the repos
+git clone https://github.com/OpenParachutePBC/parachute-computer.git computer
+git clone https://github.com/OpenParachutePBC/parachute-app.git app
+
+# Start the server (first-time install + daemon)
+cd computer && ./install.sh
+
+# Check server status
+parachute server status
+
+# In another terminal, run the app
+cd app && flutter run -d macos</code></pre>
+                </div>
+
+                <div class="callout callout-info">
+                    <strong>Note:</strong> The app/ and computer/ directories are separate git repositories. Make commits within each directory, not at the parent level. The server requires a Claude OAuth token &mdash; run <code>claude setup-token</code> to obtain one.
+                </div>
+            </section>
+
+            <!-- Navigation Cards -->
+            <section class="docs-section">
+                <h2>Explore the Documentation</h2>
+                <div class="nav-cards">
+                    <a href="app-overview.html" class="nav-card">
+                        <h3>📱 App Deep Dive</h3>
+                        <p>247 files, 78K lines. Explore the Flutter architecture, state management, and feature implementations.</p>
+                    </a>
+                    <a href="computer-overview.html" class="nav-card">
+                        <h3>🖥️ Computer Deep Dive</h3>
+                        <p>81 files, 23K lines. Explore the FastAPI routes, orchestrator, modules, and Claude SDK integration.</p>
+                    </a>
+                    <a href="data-flow.html" class="nav-card">
+                        <h3>🔄 Data Flow</h3>
+                        <p>How data moves between app, server, and vault. Streaming, sessions, and sync.</p>
+                    </a>
+                    <a href="computer-connectors.html" class="nav-card">
+                        <h3>🤖 Bot Connectors</h3>
+                        <p>Telegram and Discord integration: streaming, trust levels, group history, and user pairing.</p>
+                    </a>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <footer>
+        <p>&copy; 2026 Open Parachute, PBC. A Colorado Public Benefit Corporation.</p>
+        <p><a href="/blog/">Blog</a> &middot; <a href="/architecture/">Docs</a> &middot; <a href="/roadmap/">Roadmap</a> &middot; <a href="https://github.com/OpenParachutePBC/parachute-computer" target="_blank">GitHub</a></p>
+    </footer>
+</body>
+</html>

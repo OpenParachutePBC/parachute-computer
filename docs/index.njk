@@ -1,0 +1,98 @@
+---
+layout: base.njk
+title: ""
+description: "Open source personal AI computer. Local-first. Voice-first. Your data, your machine, your mind."
+permalink: /
+---
+<main>
+    <!-- Hero -->
+    <section class="hero">
+        <p class="quote">"The mind is like a parachute&mdash;it doesn't work if it's not open."</p>
+        <p class="quote-attr">&mdash; Frank Zappa</p>
+        <h1>Parachute Computer</h1>
+        <p class="tagline">Your personal AI computer</p>
+        <p class="subtitle">Open source. Local-first. Voice-first.</p>
+    </section>
+
+    <!-- What it is -->
+    <section class="section">
+        <h2>What Is Parachute?</h2>
+        <p>Parachute is an open-source personal AI platform that runs on your machine. It combines the power of Claude Code, the conversational depth of Claude.ai, and a personal knowledge system&mdash;all in one integrated experience that connects directly with your everyday thinking.</p>
+        <p>Instead of scattered tools that forget you exist between sessions, Parachute builds a picture of who you are, what you're working on, and what matters to you. <strong>Instead of you learning the system, the system learns you.</strong></p>
+    </section>
+
+    <!-- Components -->
+    <section class="section">
+        <h2>How It Works</h2>
+
+        <div class="product">
+            <h3>Parachute Computer</h3>
+            <p>Your personal AI server. Install it on your machine, a VPS, or a Raspberry Pi. It orchestrates AI agents with three tiers of trust, connects to Telegram and Discord, and keeps everything in your vault&mdash;plain files you own forever.</p>
+            <p>If you've used Claude Code, think of this as Claude Code for your whole life, not just your codebase.</p>
+            <div class="code-inline">
+                <code>curl -fsSL https://parachute.computer/install.sh | bash</code>
+            </div>
+        </div>
+
+        <div class="product">
+            <h3>Parachute App</h3>
+            <p>One app, three core views. <strong>Chat</strong> for AI conversations with full context. <strong>Daily</strong> for voice journaling&mdash;capture thoughts on walks, in the car, wherever you think. <strong>Brain</strong> to search your personal knowledge graph.</p>
+            <p>Available on macOS, Android, and web. Daily works offline. Everything else connects to your Parachute Computer.</p>
+        </div>
+    </section>
+
+    <!-- Architecture -->
+    <section class="section">
+        <h2>Architecture</h2>
+        <div class="architecture-diagram">
+User -> App (Flutter) -> Parachute Computer -> Claude Agent SDK -> AI
+                               |
+                         ~/Parachute (vault)
+                               |
+                    ModuleLoader -> brain | chat | daily</div>
+        <p>One server, one app, modular architecture. Your data stays in <code>~/Parachute</code> as plain files. <a href="/architecture/">Read the full docs &rarr;</a></p>
+    </section>
+
+    <!-- Principles -->
+    <section class="section">
+        <h2>Principles</h2>
+        <ul>
+            <li><strong>Local-first.</strong> Your data lives on your devices in plain files. If we disappeared tomorrow, your notes would still be there, readable in any text editor.</li>
+            <li><strong>Voice-first.</strong> Talking is often more natural than typing. We meet people where their thinking actually happens.</li>
+            <li><strong>Open source as trust.</strong> The only way to deserve trust with personal thinking is transparency. You can see exactly what the software does.</li>
+            <li><strong>AI as partner.</strong> The goal isn't to automate your thinking. It's to help you think more clearly, remember more completely, make connections you might have missed.</li>
+        </ul>
+    </section>
+
+    <!-- Quick Start -->
+    <section class="section">
+        <h2>Quick Start</h2>
+        <div class="product">
+            <h3>Install the Server</h3>
+            <div class="code-inline">
+                <code>git clone https://github.com/OpenParachutePBC/parachute-computer.git<br>
+cd parachute-computer/computer<br>
+./install.sh<br>
+parachute server status</code>
+            </div>
+            <p>Requires Python 3.11+ and a Claude OAuth token (<code>claude setup-token</code>).</p>
+        </div>
+
+        <div class="product">
+            <h3>Run the App</h3>
+            <div class="code-inline">
+                <code>cd parachute-computer/app<br>
+flutter run -d macos</code>
+            </div>
+            <p>Or download from <a href="https://github.com/OpenParachutePBC/parachute-computer/releases" style="color: var(--accent);">releases</a>.</p>
+        </div>
+    </section>
+
+    <!-- CTA -->
+    <section class="cta">
+        <h2>Get Involved</h2>
+        <p>Parachute Computer is open source and launching now. Install it, try it, break it, make it better.</p>
+        <a href="https://github.com/OpenParachutePBC/parachute-computer" class="button" target="_blank">GitHub</a>
+        <p class="cta-secondary">Read the <a href="/blog/">blog</a> to follow along, or check the <a href="/roadmap/">roadmap</a> to see where we're headed.</p>
+    </section>
+</main>

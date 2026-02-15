@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Data Flow | Parachute Documentation</title>
+    <meta name="description" content="How data flows through the Parachute system - streaming, sessions, sync, and storage">
+    <link rel="stylesheet" href="/style.css">
+    <link rel="stylesheet" href="docs.css">
+</head>
+<body>
+    <header>
+        <nav>
+            <a href="/" class="logo">Parachute Computer</a>
+            <div class="nav-links">
+                <a href="/blog/">Blog</a>
+                <a href="/architecture/" class="active">Docs</a>
+                <a href="/roadmap/">Roadmap</a>
+                <a href="https://github.com/OpenParachutePBC/parachute-computer" target="_blank">GitHub</a>
+            </div>
+        </nav>
+    </header>
+
+    <div class="docs-layout">
+        <!-- Sidebar Navigation -->
+        <aside class="docs-sidebar">
+            <div class="sidebar-section">
+                <h3>Overview</h3>
+                <a href="index.html">Architecture</a>
+                <a href="data-flow.html" class="active">Data Flow</a>
+                <a href="integration.html">Integration</a>
+            </div>
+            <div class="sidebar-section">
+                <h3>App (Flutter)</h3>
+                <a href="app-overview.html">Overview</a>
+                <a href="app-chat.html">Chat Feature</a>
+                <a href="app-daily.html">Daily Feature</a>
+                <a href="app-vault.html">Vault Feature</a>
+                <a href="app-services.html">Services</a>
+            </div>
+            <div class="sidebar-section">
+                <h3>Computer (Python)</h3>
+                <a href="computer-overview.html">Overview</a>
+                <a href="computer-api.html">API Routes</a>
+                <a href="computer-orchestrator.html">Orchestrator</a>
+                <a href="computer-agents.html">Modules &amp; Agents</a>
+                <a href="computer-database.html">Database</a>
+                <a href="computer-connectors.html">Bot Connectors</a>
+            </div>
+            <div class="sidebar-section">
+                <h3>Reference</h3>
+                <a href="issues.html">Issues & TODOs</a>
+                <a href="file-manifest.html">File Manifest</a>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="docs-content">
+            <div class="breadcrumb">
+                <a href="../index.html">Home</a> / <a href="../blog/">Blog</a>
+                <a href="index.html">Docs</a> / <span>Data Flow</span>
+            </div>
+
+            <h1>Data Flow</h1>
+            <p class="lead">How data moves through the Parachute system: from user input to AI response, from voice to transcript, from app to vault.</p>
+
+            <!-- Chat Message Flow -->
+            <section class="docs-section">
+                <h2>Chat Message Flow</h2>
+                <p>When a user sends a chat message, here's how it flows through the system:</p>
+
+                <div class="architecture-visual">
+                    <pre>
+┌──────────────────────────────────────────────────────────────────────────┐
+│  1. USER INPUT                                                            │
+│                                                                           │
+│     User types message in ChatScreen                                      │
+│     ↓                                                                     │
+│     ChatInput widget captures text + attachments                          │
+│     ↓                                                                     │
+│     chatMessagesNotifier.sendMessage()                                    │
+└────────────────────────────────────┬─────────────────────────────────────┘
+                                     │
+┌────────────────────────────────────▼─────────────────────────────────────┐
+│  2. APP STATE UPDATE                                                      │
+│                                                                           │
+│     Add optimistic user message to state                                  │
+│     Add empty assistant message (for streaming)                           │
+│     ↓                                                                     │
+│     ChatService.sendMessage() → HTTP POST /api/chat                       │
+│     ↓                                                                     │
+│     Open SSE connection for streaming response                            │
+└────────────────────────────────────┬─────────────────────────────────────┘
+                                     │
+┌────────────────────────────────────▼─────────────────────────────────────┐
+│  3. SERVER RECEIVES REQUEST                                               │
+│                                                                           │
+│     POST /api/chat                                                        │
+│     ├── Validate auth (API key or localhost)                              │
+│     ├── Parse ChatRequest                                                 │
+│     └── Call orchestrator.run_streaming()                                 │
+└────────────────────────────────────┬─────────────────────────────────────┘
+                                     │
+┌────────────────────────────────────▼─────────────────────────────────────┐
+│  4. ORCHESTRATOR PREPARES                                                 │
+│                                                                           │
+│     Load agent definition (or default vault-agent)                        │
+│     Get or create session:                                                │
+│     ├── New: Create pending placeholder, SDK will assign ID               │
+│     └── Resume: Load from DB, verify SDK session exists                   │
+│     Build system prompt:                                                  │
+│     ├── Agent system prompt                                               │
+│     ├── Context files/folders                                             │
+│     └── Working directory context                                         │
+│     Process attachments:                                                  │
+│     ├── Save to vault/Chat/assets/{date}/                                 │
+│     └── Build attachment message parts                                    │
+│     Check permissions:                                                    │
+│     ├── Session grants (Read, Write, Bash, MCP)                           │
+│     └── Global deny patterns                                              │
+└────────────────────────────────────┬─────────────────────────────────────┘
+                                     │
+┌────────────────────────────────────▼─────────────────────────────────────┐
+│  5. CLAUDE SDK CALL                                                       │
+│                                                                           │
+│     claude_sdk.query_streaming():                                         │
+│     ├── Override HOME to vault path (for .claude/ isolation)              │
+│     ├── Build SDK query options (model, max_tokens, permissions)          │
+│     └── Call SDK with async generator                                     │
+│                                                                           │
+│     SDK connects to Claude AI:                                            │
+│     ├── Sends conversation history                                        │
+│     ├── Processes tool calls internally                                   │
+│     └── Streams response chunks                                           │
+└────────────────────────────────────┬─────────────────────────────────────┘
+                                     │
+┌────────────────────────────────────▼─────────────────────────────────────┐
+│  6. STREAMING RESPONSE                                                    │
+│                                                                           │
+│     SDK yields events → Orchestrator yields SSE events                    │
+│                                                                           │
+│     Event types:                                                          │
+│     ├── session: {id, title, created_at} — First event                    │
+│     ├── text: {content} — Text chunk                                      │
+│     ├── thinking: {content} — Thinking content                            │
+│     ├── tool_use_start: {id, name, input} — Tool beginning                │
+│     ├── tool_result: {tool_use_id, result} — Tool completed               │
+│     ├── message_stop: {} — Message complete                               │
+│     └── error: {message} — Error occurred                                 │
+│                                                                           │
+│     Each event sent as:                                                   │
+│     data: {"type": "text", "content": "Hello"}                            │
+└────────────────────────────────────┬─────────────────────────────────────┘
+                                     │
+┌────────────────────────────────────▼─────────────────────────────────────┐
+│  7. APP RECEIVES & UPDATES                                                │
+│                                                                           │
+│     ChatService parses SSE events                                         │
+│     ├── session: Save session ID to state                                 │
+│     ├── text: Append to assistant message content                         │
+│     ├── thinking: Add to thinking section                                 │
+│     ├── tool_use_start: Add ToolCall to message                           │
+│     ├── tool_result: Update ToolCall with result                          │
+│     └── message_stop: Mark message complete                               │
+│                                                                           │
+│     UI updates reactively via Riverpod:                                   │
+│     MessageBubble renders streaming content                               │
+└────────────────────────────────────┬─────────────────────────────────────┘
+                                     │
+┌────────────────────────────────────▼─────────────────────────────────────┐
+│  8. SESSION PERSISTENCE                                                   │
+│                                                                           │
+│     After message complete:                                               │
+│                                                                           │
+│     Server:                                                               │
+│     ├── session_manager.update() — Update DB metadata                     │
+│     ├── SDK writes to ~/.claude/projects/.../*.jsonl                      │
+│     └── Activity hook triggers (title + summary generation)               │
+│                                                                           │
+│     App:                                                                  │
+│     ├── Update local session state                                        │
+│     └── Session available for resume                                      │
+└──────────────────────────────────────────────────────────────────────────┘
+                    </pre>
+                </div>
+            </section>
+
+            <!-- Vault Structure -->
+            <section class="docs-section" id="vault">
+                <h2>Vault Structure</h2>
+                <p>The vault is your local-first data store. All Parachute data lives in plain files at <code>~/Parachute</code>:</p>
+
+                <div class="architecture-visual">
+                    <pre>
+~/Parachute/
+├── Daily/                          # Journal entries (local-first)
+│   ├── 2026-01-28.md              # Today's journal
+│   ├── 2026-01-27.md              # Yesterday's journal
+│   ├── assets/                     # Media files
+│   │   ├── 2026-01-28/
+│   │   │   ├── audio-10-30-am.m4a
+│   │   │   └── photo-10-45-am.jpg
+│   │   └── ...
+│   ├── reflection/                 # Reflection agent outputs
+│   │   └── 2026-01-28.md
+│   ├── content-scout/              # Content-scout outputs
+│   │   └── 2026-01-28.md
+│   ├── .agents/                    # Custom daily agents
+│   │   └── my-agent.md
+│   └── .agents/                    # Daily agent configs
+│       └── content-scout.md
+│
+├── Chat/                           # Chat sessions (server-managed)
+│   ├── sessions.db                 # SQLite metadata
+│   ├── assets/                     # Chat attachments
+│   │   └── 2026-01-28/
+│   │       └── uploaded-file.pdf
+│   └── contexts/                   # Saved context configurations
+│       └── my-project.json
+│
+├── .claude/                        # Claude SDK data
+│   ├── projects/                   # Session transcripts (JSONL)
+│   │   └── {project-hash}/
+│   │       └── {session-id}.jsonl
+│   └── settings.json               # SDK settings
+│
+├── .parachute/                     # Parachute config
+│   ├── server-config.json          # Auth settings, API keys
+│   ├── agents/                     # Global agent definitions
+│   │   └── vault-agent.md
+│   └── skills/                     # Skill plugins
+│       └── my-skill.md
+│
+└── ... (user files)                # Rest of your vault
+                    </pre>
+                </div>
+
+                <div class="callout callout-info">
+                    <strong>Pointer Architecture:</strong> The SQLite database (<code>sessions.db</code>) stores only metadata. Actual message transcripts live in SDK JSONL files. This makes the database a pointer layer, not the source of truth for message content.
+                </div>
+            </section>
+
+            <!-- Para-ID System -->
+            <section class="docs-section" id="para-id">
+                <h2>Para-ID System</h2>
+                <p>Portable identifiers for cross-device sync. Every journal entry gets a unique ID that follows it everywhere.</p>
+
+                <div class="code-block">
+                    <div class="code-header">Journal Entry Format</div>
+                    <pre><code># para:abc123def456 10:30 AM
+
+Walked to the coffee shop this morning. Had a great idea about
+the project architecture...
+
+## Images
+![Morning sky](../assets/2026-01-28/photo-10-30-am.jpg)
+
+## Audio
+- Duration: 2:30
+- Path: ../assets/2026-01-28/audio-10-30-am.m4a</code></pre>
+                </div>
+
+                <h3>Format Specification</h3>
+                <ul>
+                    <li><strong>Pattern:</strong> <code>para:{12-char-alphanumeric}</code></li>
+                    <li><strong>Example:</strong> <code>para:abc123def456</code></li>
+                    <li><strong>Location:</strong> H1 header of entry section</li>
+                    <li><strong>Generated:</strong> On entry creation, never changes</li>
+                    <li><strong>Scope:</strong> Unique across all modules (Daily, Chat, etc.)</li>
+                </ul>
+
+                <h3>Sync Flow</h3>
+                <div class="architecture-visual">
+                    <pre>
+Device A                           Server                          Device B
+   │                                 │                                 │
+   │  Create entry                   │                                 │
+   │  para:abc123def456              │                                 │
+   │                                 │                                 │
+   │  ────── Sync (push) ──────────▶│                                 │
+   │  Hash: sha256:123...            │                                 │
+   │                                 │                                 │
+   │                                 │◀────── Sync (pull) ────────────│
+   │                                 │  Request manifest               │
+   │                                 │                                 │
+   │                                 │─────── Manifest ───────────────▶│
+   │                                 │  para:abc123def456              │
+   │                                 │  Hash: sha256:123...            │
+   │                                 │                                 │
+   │                                 │◀────── Fetch entry ────────────│
+   │                                 │                                 │
+   │                                 │─────── Entry content ──────────▶│
+   │                                 │  # para:abc123def456 10:30 AM  │
+   │                                 │  ...                            │
+   │                                 │                                 │
+   │                                 │                         Entry saved
+   │                                 │                         Same para:ID
+                    </pre>
+                </div>
+            </section>
+
+            <!-- Voice Transcription Flow -->
+            <section class="docs-section">
+                <h2>Voice Transcription Flow</h2>
+                <p>Local-first transcription using Sherpa-ONNX with streaming display:</p>
+
+                <div class="architecture-visual">
+                    <pre>
+┌──────────────────────────────────────────────────────────────────────────┐
+│  1. AUDIO CAPTURE                                                         │
+│                                                                           │
+│     Microphone → record package → PCM audio stream                        │
+│     ↓                                                                     │
+│     Audio chunks (16kHz, 16-bit, mono)                                    │
+│     ↓                                                                     │
+│     StreamingVoiceService receives chunks                                 │
+└────────────────────────────────────┬─────────────────────────────────────┘
+                                     │
+┌────────────────────────────────────▼─────────────────────────────────────┐
+│  2. VOICE ACTIVITY DETECTION                                              │
+│                                                                           │
+│     SimpleVAD analyzes audio levels                                       │
+│     ├── Below threshold: Silence                                          │
+│     └── Above threshold: Speech detected                                  │
+│     ↓                                                                     │
+│     SmartChunker groups speech into segments                              │
+│     ├── Min segment: 1 second                                             │
+│     ├── Max segment: 30 seconds                                           │
+│     └── Split on silence > 500ms                                          │
+└────────────────────────────────────┬─────────────────────────────────────┘
+                                     │
+┌────────────────────────────────────▼─────────────────────────────────────┐
+│  3. TRANSCRIPTION (Sherpa-ONNX)                                           │
+│                                                                           │
+│     Audio segment → SherpaOnnxService                                     │
+│     ├── Runs in isolate (background thread)                               │
+│     ├── Uses Parakeet model (465MB)                                       │
+│     └── Returns: TranscriptionResult                                      │
+│                                                                           │
+│     LocalAgreement-2 algorithm:                                           │
+│     ├── Re-transcribe every 2 seconds                                     │
+│     ├── Compare consecutive transcriptions                                │
+│     ├── Confirm text stable across 2+ iterations                          │
+│     └── Display: [confirmed] + [tentative] + [interim]                    │
+└────────────────────────────────────┬─────────────────────────────────────┘
+                                     │
+┌────────────────────────────────────▼─────────────────────────────────────┐
+│  4. STATE UPDATE                                                          │
+│                                                                           │
+│     StreamingTranscriptionState:                                          │
+│     ├── confirmed: "I went to the store"     ← Stable, won't change       │
+│     ├── tentative: "and bought some"         ← Likely stable              │
+│     └── interim: "coff"                      ← Still processing           │
+│                                                                           │
+│     UI shows: "I went to the store and bought some coff▌"                 │
+└────────────────────────────────────┬─────────────────────────────────────┘
+                                     │
+┌────────────────────────────────────▼─────────────────────────────────────┐
+│  5. SAVE TO JOURNAL                                                       │
+│                                                                           │
+│     User stops recording → Final transcription                            │
+│     ↓                                                                     │
+│     JournalService.saveEntry():                                           │
+│     ├── Generate para:ID                                                  │
+│     ├── Save audio to Daily/assets/{date}/                                │
+│     ├── Write markdown entry with transcript                              │
+│     └── Update journal day file                                           │
+└──────────────────────────────────────────────────────────────────────────┘
+                    </pre>
+                </div>
+            </section>
+
+            <!-- Session Lifecycle -->
+            <section class="docs-section">
+                <h2>Session Lifecycle</h2>
+
+                <h3>New Session</h3>
+                <ol>
+                    <li>User sends first message (no session_id)</li>
+                    <li>Orchestrator creates "pending" placeholder</li>
+                    <li>SDK executes and generates session ID</li>
+                    <li>SessionManager creates DB record with SDK session ID</li>
+                    <li>SDK writes transcript to <code>~/.claude/projects/.../session.jsonl</code></li>
+                    <li>Activity hook triggers title generation</li>
+                </ol>
+
+                <h3>Resume Session</h3>
+                <ol>
+                    <li>User opens existing session</li>
+                    <li>App loads session from provider (cached or fetched)</li>
+                    <li>User sends message with session_id</li>
+                    <li>SessionManager looks up DB record</li>
+                    <li>SDK resumes with existing session ID</li>
+                    <li>Conversation continues from where it left off</li>
+                </ol>
+
+                <h3>Imported Session (Claude/ChatGPT)</h3>
+                <ol>
+                    <li>User uploads JSON export file</li>
+                    <li>ImportService parses format (auto-detects source)</li>
+                    <li>Converts messages to SDK JSONL format</li>
+                    <li>Creates session in DB with source flag</li>
+                    <li>Optionally enables "continuation" mode</li>
+                    <li>User can continue conversation with full context</li>
+                </ol>
+            </section>
+
+            <!-- Background Processing -->
+            <section class="docs-section">
+                <h2>Background Processing</h2>
+                <p>Automated agents and hooks process content in the background:</p>
+
+                <div class="architecture-visual">
+                    <pre>
+┌────────────────────────────────────────────────────────────────────────────┐
+│                    ACTIVITY HOOK (Post-Session)                              │
+│                                                                            │
+│  Triggered: After each chat exchange completes                             │
+│  Purpose: Generate/update title, summarize to daily chat log               │
+│                                                                            │
+│  ┌──────────────────┐      ┌──────────────────┐      ┌──────────────────┐ │
+│  │  Session         │ ───▶ │  Summarizer      │ ───▶ │  update_title()  │ │
+│  │  completes       │      │  Agent           │      │  write_chat_log  │ │
+│  │                  │      │  (one-shot)      │      │  track_metrics   │ │
+│  └──────────────────┘      └──────────────────┘      └──────────────────┘ │
+│                                                                            │
+│  Output: Daily/chat-log/{date}.md                                          │
+└────────────────────────────────────────────────────────────────────────────┘
+
+┌────────────────────────────────────────────────────────────────────────────┐
+│                   DAILY AGENTS (Scheduled via APScheduler)                   │
+│                                                                            │
+│  Location: Daily/.agents/*.md                                              │
+│  Schedule: Time from YAML frontmatter (default 3:00 UTC)                   │
+│  Runner:   core/daily_agent.py + core/scheduler.py                         │
+│                                                                            │
+│  Example agent (content-scout.md):                                         │
+│  ---                                                                       │
+│  schedule: "8:00"                                                          │
+│  schedule_enabled: true                                                    │
+│  tools: [read_journal, web_search]                                         │
+│  ---                                                                       │
+│  Find relevant news and articles based on journal interests...             │
+│                                                                            │
+│  Scheduler discovers agents → Runs at scheduled times → Writes outputs     │
+│                                                                            │
+│  State: Daily/.{agent-name}/state.json (tracks last run date)              │
+└────────────────────────────────────────────────────────────────────────────┘
+                    </pre>
+                </div>
+            </section>
+
+            <!-- Streaming Protocol -->
+            <section class="docs-section">
+                <h2>Streaming Protocol</h2>
+                <p>SSE (Server-Sent Events) for real-time responses:</p>
+
+                <div class="code-block">
+                    <div class="code-header">SSE Event Stream Example</div>
+                    <pre><code># Connection opened to POST /api/chat
+
+data: {"type": "session", "id": "sess_abc123", "title": "New Chat"}
+
+data: {"type": "prompt_metadata", "model": "claude-sonnet-4", "context_files": 2}
+
+data: {"type": "text", "content": "I'll help you "}
+
+data: {"type": "text", "content": "with that. Let me "}
+
+data: {"type": "tool_use_start", "id": "tool_1", "name": "Read", "input": {"file_path": "/src/main.py"}}
+
+data: {"type": "tool_result", "tool_use_id": "tool_1", "result": "# Main entry point..."}
+
+data: {"type": "text", "content": "I can see the main file. "}
+
+data: {"type": "thinking", "content": "The user wants to understand the architecture..."}
+
+data: {"type": "text", "content": "Here's what I found:"}
+
+data: {"type": "message_stop"}
+
+# Connection closed</code></pre>
+                </div>
+
+                <h3>Event Types</h3>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Type</th>
+                            <th>When</th>
+                            <th>Content</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>session</code></td>
+                            <td>First event</td>
+                            <td>Session ID, title, created_at</td>
+                        </tr>
+                        <tr>
+                            <td><code>prompt_metadata</code></td>
+                            <td>After session</td>
+                            <td>Model, context files count</td>
+                        </tr>
+                        <tr>
+                            <td><code>text</code></td>
+                            <td>During response</td>
+                            <td>Text content chunk</td>
+                        </tr>
+                        <tr>
+                            <td><code>thinking</code></td>
+                            <td>During response</td>
+                            <td>Thinking/reasoning content</td>
+                        </tr>
+                        <tr>
+                            <td><code>tool_use_start</code></td>
+                            <td>Tool beginning</td>
+                            <td>Tool ID, name, input</td>
+                        </tr>
+                        <tr>
+                            <td><code>tool_result</code></td>
+                            <td>Tool completed</td>
+                            <td>Tool ID, result/error</td>
+                        </tr>
+                        <tr>
+                            <td><code>message_stop</code></td>
+                            <td>Response complete</td>
+                            <td>Empty (signals end)</td>
+                        </tr>
+                        <tr>
+                            <td><code>error</code></td>
+                            <td>On error</td>
+                            <td>Error message</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+
+            <!-- Navigation -->
+            <section class="docs-section">
+                <h2>Next Steps</h2>
+                <div class="nav-cards">
+                    <a href="integration.html" class="nav-card">
+                        <h3>🔗 Integration</h3>
+                        <p>How app and Computer server connect: API contracts, authentication, and sync.</p>
+                    </a>
+                    <a href="computer-orchestrator.html" class="nav-card">
+                        <h3>🎭 Orchestrator</h3>
+                        <p>Deep dive into the server's central agent controller.</p>
+                    </a>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <footer>
+        <p>&copy; 2026 Open Parachute, PBC. A Colorado Public Benefit Corporation.</p>
+        <p><a href="/blog/">Blog</a> &middot; <a href="/architecture/">Docs</a> &middot; <a href="/roadmap/">Roadmap</a> &middot; <a href="https://github.com/OpenParachutePBC/parachute-computer" target="_blank">GitHub</a></p>
+    </footer>
+</body>
+</html>

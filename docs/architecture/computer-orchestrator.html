@@ -1,0 +1,644 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Orchestrator | Parachute Documentation</title>
+    <link rel="stylesheet" href="/style.css">
+    <link rel="stylesheet" href="docs.css">
+</head>
+<body>
+    <header>
+        <nav>
+            <a href="/" class="logo">Parachute Computer</a>
+            <div class="nav-links">
+                <a href="/blog/">Blog</a>
+                <a href="/architecture/" class="active">Docs</a>
+                <a href="/roadmap/">Roadmap</a>
+                <a href="https://github.com/OpenParachutePBC/parachute-computer" target="_blank">GitHub</a>
+            </div>
+        </nav>
+    </header>
+    <div class="docs-layout">
+        <aside class="docs-sidebar">
+            <div class="sidebar-section">
+                <h3>Overview</h3>
+                <a href="index.html">Architecture</a>
+                <a href="data-flow.html">Data Flow</a>
+                <a href="integration.html">Integration</a>
+            </div>
+            <div class="sidebar-section">
+                <h3>App (Flutter)</h3>
+                <a href="app-overview.html">Overview</a>
+                <a href="app-chat.html">Chat Feature</a>
+                <a href="app-daily.html">Daily Feature</a>
+                <a href="app-vault.html">Vault Feature</a>
+                <a href="app-services.html">Services</a>
+            </div>
+            <div class="sidebar-section">
+                <h3>Computer (Python)</h3>
+                <a href="computer-overview.html">Overview</a>
+                <a href="computer-api.html">API Routes</a>
+                <a href="computer-orchestrator.html" class="active">Orchestrator</a>
+                <a href="computer-agents.html">Modules &amp; Agents</a>
+                <a href="computer-database.html">Database</a>
+                <a href="computer-connectors.html">Bot Connectors</a>
+            </div>
+            <div class="sidebar-section">
+                <h3>Reference</h3>
+                <a href="issues.html">Issues & TODOs</a>
+                <a href="file-manifest.html">File Manifest</a>
+            </div>
+        </aside>
+        <main class="docs-content">
+            <div class="breadcrumb">
+                <a href="../index.html">Home</a> / <a href="../blog/">Blog</a>
+                <a href="index.html">Docs</a> / <span>Orchestrator</span>
+            </div>
+            <h1>Orchestrator</h1>
+            <p class="lead">The Orchestrator is the core execution controller for the Parachute Computer server, managing agent execution, session lifecycle, trust level enforcement, permission handling, and streaming responses to clients via Server-Sent Events (SSE).</p>
+
+            <section class="docs-section">
+                <h2>Architecture Overview</h2>
+                <div class="code-block">
+                    <pre>
+┌─────────────────────────────────────────────────────────────┐
+│                       API Router                            │
+│                    (FastAPI routes)                         │
+└────────────────────────┬────────────────────────────────────┘
+                         │
+                         ▼
+        ┌────────────────────────────────┐
+        │      Orchestrator              │
+        │  (Agent Execution Controller)  │
+        │                                │
+        │  - run_streaming()             │
+        │  - abort_stream()              │
+        │  - grant/deny_permission()     │
+        └────┬──────────────────────┬────┘
+             │                      │
+             ▼                      ▼
+    ┌─────────────────┐   ┌──────────────────────┐
+    │ SessionManager  │   │ PermissionHandler    │
+    │                 │   │                      │
+    │ - Session CRUD  │   │ - check_permission() │
+    │ - SDK mapping   │   │ - request_approval() │
+    │ - Transcript    │   │ - grant/deny()       │
+    │   loading       │   │ - AskUserQuestion    │
+    └────┬────────────┘   └────────┬─────────────┘
+         │                         │
+         ▼                         ▼
+    ┌─────────────────┐   ┌──────────────────────┐
+    │ Claude SDK      │   │ Permission Handler   │
+    │ Wrapper         │   │ Callbacks (SSE)      │
+    │                 │   │                      │
+    │ - query_streaming   - on_denial           │
+    │ - HOME override │   │ - on_request        │
+    │ - Event convert │   │ - on_user_question  │
+    └────┬────────────┘   └─────────────────────┘
+         │
+         ▼
+    ┌─────────────────────────────────┐
+    │   Claude Agent SDK              │
+    │   (Streaming from Claude)       │
+    │                                 │
+    │   Session Storage:              │
+    │   {vault}/.claude/projects/     │
+    └─────────────────────────────────┘</pre>
+                </div>
+            </section>
+
+            <section class="docs-section">
+                <h2>Key Components</h2>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Component</th>
+                            <th>File</th>
+                            <th>Responsibility</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>Orchestrator</code></td>
+                            <td>orchestrator.py</td>
+                            <td>Execute agents, stream events, manage permissions</td>
+                        </tr>
+                        <tr>
+                            <td><code>SessionManager</code></td>
+                            <td>session_manager.py</td>
+                            <td>CRUD sessions, load transcripts, map SDK to DB</td>
+                        </tr>
+                        <tr>
+                            <td><code>Claude SDK Wrapper</code></td>
+                            <td>claude_sdk.py</td>
+                            <td>Async streaming, event conversion, vault-portable storage</td>
+                        </tr>
+                        <tr>
+                            <td><code>PermissionHandler</code></td>
+                            <td>permission_handler.py</td>
+                            <td>Check tool access, request approval, handle questions</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+
+            <section class="docs-section">
+                <h2>run_streaming() Flow</h2>
+                <p>The main entry point for processing chat messages. Returns an async generator of SSE events.</p>
+
+                <h3>Execution Steps</h3>
+                <ol>
+                    <li><strong>Session Resolution:</strong> Get or create session via SessionManager</li>
+                    <li><strong>Early Session Event:</strong> Emit SessionEvent with session metadata</li>
+                    <li><strong>Agent Loading:</strong> Resolve agent config from vault or defaults</li>
+                    <li><strong>Working Directory:</strong> Resolve to absolute path for SDK operations</li>
+                    <li><strong>Context Building:</strong> Load attachments, files, images for prompt</li>
+                    <li><strong>System Prompt:</strong> Build from CLAUDE.md hierarchy or agent config</li>
+                    <li><strong>Permission Handler:</strong> Create with session and callbacks</li>
+                    <li><strong>SDK Query:</strong> Stream events from Claude Agent SDK</li>
+                    <li><strong>Event Processing:</strong> Transform SDK events to SSE events</li>
+                    <li><strong>Cleanup:</strong> Store final metrics and clean up active stream tracking</li>
+                </ol>
+
+                <h3>Event Flow</h3>
+                <div class="code-block">
+                    <pre>
+Client POST /api/chat
+        │
+        ▼
+run_streaming(message, session_id, ...)
+        │
+        ├──► SessionEvent (session metadata)
+        │
+        ├──► UserMessageEvent (echo user prompt)
+        │
+        ├──► PromptMetadataEvent (transparency)
+        │
+        ├──► InitEvent (tools available)
+        │
+        ├──► TextEvent / ThinkingEvent / ToolUseEvent ...
+        │
+        ├──► PermissionRequestEvent (if needed)
+        │
+        └──► DoneEvent (final response + metrics)</pre>
+                </div>
+            </section>
+
+            <section class="docs-section">
+                <h2>SessionManager</h2>
+                <p>Manages session lifecycle with SQLite backend for metadata and SDK JSONL files for transcripts.</p>
+
+                <h3>Pointer Architecture</h3>
+                <div class="callout callout-info">
+                    <strong>Key Design:</strong> SQLite stores metadata only (pointers). SDK JSONL files are the source of truth for messages. SessionManager links them together for portability.
+                </div>
+
+                <h3>Key Methods</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Method</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>get_or_create_session()</code></td>
+                            <td>Returns (session, resume_info, is_new) tuple</td>
+                        </tr>
+                        <tr>
+                            <td><code>finalize_session()</code></td>
+                            <td>Convert placeholder to real session after SDK provides ID</td>
+                        </tr>
+                        <tr>
+                            <td><code>resolve_working_directory()</code></td>
+                            <td>Convert relative/absolute path for SDK</td>
+                        </tr>
+                        <tr>
+                            <td><code>get_sdk_transcript_path()</code></td>
+                            <td>Calculate where SDK stored the JSONL</td>
+                        </tr>
+                        <tr>
+                            <td><code>load_sdk_messages_by_id()</code></td>
+                            <td>Load messages from SDK session file</td>
+                        </tr>
+                        <tr>
+                            <td><code>get_prior_conversation()</code></td>
+                            <td>Load context for imported sessions</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <h3>Session File Locations</h3>
+                <div class="code-block">
+                    <pre>
+Two locations checked in order:
+
+1. Vault-based (new):
+   {vault}/.claude/projects/{encoded-cwd}/{session_id}.jsonl
+
+2. Home-based (pre-migration):
+   ~/.claude/projects/{encoded-cwd}/{session_id}.jsonl
+
+Path encoding: /foo/bar/ → -foo-bar-</pre>
+                </div>
+
+                <h3>ResumeInfo</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Field</th>
+                            <th>Description</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>method</code></td>
+                            <td>"sdk_resume" or "new"</td>
+                        </tr>
+                        <tr>
+                            <td><code>is_new_session</code></td>
+                            <td>Whether this is a fresh session</td>
+                        </tr>
+                        <tr>
+                            <td><code>previous_message_count</code></td>
+                            <td>Messages from prior session</td>
+                        </tr>
+                        <tr>
+                            <td><code>sdk_session_available</code></td>
+                            <td>Whether SDK session exists</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+
+            <section class="docs-section">
+                <h2>Claude SDK Wrapper</h2>
+                <p>Wraps the Claude Agent SDK to provide async streaming with vault-portable session storage.</p>
+
+                <h3>HOME Override</h3>
+                <div class="code-block">
+                    <pre>
+# Sessions stored in vault instead of ~/.claude/
+with _override_home(vault_path):
+    async for event in sdk_query(prompt=..., options=...):
+        yield _event_to_dict(event)</pre>
+                </div>
+
+                <h3>SDK Query Parameters</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Parameter</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>system_prompt</code></td>
+                            <td>Full custom prompt or None for preset</td>
+                        </tr>
+                        <tr>
+                            <td><code>system_prompt_append</code></td>
+                            <td>Content to append to preset</td>
+                        </tr>
+                        <tr>
+                            <td><code>use_claude_code_preset</code></td>
+                            <td>True unless custom/agent prompt</td>
+                        </tr>
+                        <tr>
+                            <td><code>setting_sources=["project"]</code></td>
+                            <td>Enables CLAUDE.md hierarchy loading</td>
+                        </tr>
+                        <tr>
+                            <td><code>cwd</code></td>
+                            <td>Working directory for file operations</td>
+                        </tr>
+                        <tr>
+                            <td><code>resume</code></td>
+                            <td>Session ID to resume, or None</td>
+                        </tr>
+                        <tr>
+                            <td><code>tools</code></td>
+                            <td>Allowed tools list</td>
+                        </tr>
+                        <tr>
+                            <td><code>mcp_servers</code></td>
+                            <td>MCP server configurations</td>
+                        </tr>
+                        <tr>
+                            <td><code>permission_mode="bypassPermissions"</code></td>
+                            <td>Checked via can_use_tool callback</td>
+                        </tr>
+                        <tr>
+                            <td><code>can_use_tool</code></td>
+                            <td>Permission handler's SDK callback</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <h3>Event Conversion</h3>
+                <p>SDK events are converted to dictionaries for SSE streaming:</p>
+                <div class="code-block">
+                    <pre>
+SDK Event Types → String mapping:
+- UserMessage    → "user"
+- AssistantMessage → "assistant"
+- SystemMessage  → "system"
+- ResultMessage  → "result"
+- StreamMessage  → "stream"
+
+Content extraction:
+- Text blocks → {type: "text", text: ...}
+- Thinking blocks → {type: "thinking", thinking: ...}
+- Tool use blocks → {type: "tool_use", id, name, input}</pre>
+                </div>
+            </section>
+
+            <section class="docs-section">
+                <h2>PermissionHandler</h2>
+                <p>Implements session-based permission checking for tool access with interactive user approval.</p>
+
+                <h3>Tool Categories</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Category</th>
+                            <th>Tools</th>
+                            <th>Behavior</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Always Allowed</td>
+                            <td>MCP tools, WebSearch, WebFetch, Task</td>
+                            <td>Bypass permission checks</td>
+                        </tr>
+                        <tr>
+                            <td>Require Permission</td>
+                            <td>Read, Glob, Grep, Write, Edit, Bash</td>
+                            <td>Check session permissions</td>
+                        </tr>
+                        <tr>
+                            <td>Always Denied</td>
+                            <td>.env, credentials.json, private keys</td>
+                            <td>Global deny list (even with trust mode)</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <h3>Permission Check Flow</h3>
+                <div class="code-block">
+                    <pre>
+check_permission(tool_name, input_data, tool_use_id)
+        │
+        ├── Always allow? (MCP, web, task) → Allow
+        │
+        ├── Dangerous bash? (sudo, rm -rf /) → Deny
+        │
+        ├── Trust mode enabled? → Allow (except deny list)
+        │
+        ├── Session permissions match? → Allow
+        │
+        └── Request approval → Wait for user response
+                                      │
+                              ┌───────┴───────┐
+                              ▼               ▼
+                           Grant           Deny
+                              │
+                              ▼
+                    Add pattern to session</pre>
+                </div>
+
+                <h3>Dangerous Commands (Always Blocked)</h3>
+                <ul>
+                    <li><code>sudo</code> - privilege escalation</li>
+                    <li><code>rm -rf /</code> - delete root filesystem</li>
+                    <li><code>rm -rf ~</code> - delete home directory</li>
+                    <li><code>:(){:|:&amp;};:</code> - fork bomb</li>
+                    <li><code>mkfs</code> - format filesystems</li>
+                    <li><code>dd if=</code> - direct disk access</li>
+                    <li><code>chmod -R 777 /</code> - permission changes on root</li>
+                </ul>
+
+                <h3>Suggested Grants</h3>
+                <p>Returns graduated permission options from specific to broad:</p>
+                <ol>
+                    <li><strong>File only:</strong> <code>path/to/file.md</code></li>
+                    <li><strong>Folder:</strong> <code>folder/*</code></li>
+                    <li><strong>Recursive:</strong> <code>folder/**/*</code></li>
+                    <li><strong>Root folder:</strong> <code>root/**/*</code></li>
+                    <li><strong>Vault access:</strong> <code>**/*</code></li>
+                </ol>
+
+                <h3>AskUserQuestion Handling</h3>
+                <div class="code-block">
+                    <pre>
+_handle_ask_user_question(input_data, context)
+        │
+        ├── Extract questions list
+        │
+        ├── Generate request ID
+        │
+        ├── Create UserQuestionRequest
+        │
+        ├── Emit on_user_question callback (SSE event)
+        │
+        ├── Wait for answers (300-second timeout)
+        │
+        └── Return updated input with answers</pre>
+                </div>
+            </section>
+
+            <section class="docs-section">
+                <h2>System Prompt Building</h2>
+                <p>The <code>_build_system_prompt</code> method constructs the context for Claude:</p>
+
+                <h3>Prompt Sources</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Source</th>
+                            <th>Behavior</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Custom prompt provided</td>
+                            <td>Full override, return as-is</td>
+                        </tr>
+                        <tr>
+                            <td>Agent with system_prompt</td>
+                            <td>Full override from agent config</td>
+                        </tr>
+                        <tr>
+                            <td>Vault agent</td>
+                            <td>SDK loads CLAUDE.md hierarchy, build append only</td>
+                        </tr>
+                        <tr>
+                            <td>Default</td>
+                            <td>Claude Code preset with optional append</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <h3>Metadata Returned</h3>
+                <ul>
+                    <li><code>prompt_source</code>: "claude_code_preset", "custom", "agent"</li>
+                    <li><code>context_files</code>: List of included context files</li>
+                    <li><code>context_tokens</code>: Token count of context</li>
+                    <li><code>context_truncated</code>: Whether context was truncated</li>
+                    <li><code>agent_name</code>: Name of agent being used</li>
+                    <li><code>available_agents</code>: Agents discovered in vault</li>
+                </ul>
+            </section>
+
+            <section class="docs-section">
+                <h2>Stream Management</h2>
+
+                <h3>Active Streams</h3>
+                <div class="code-block">
+                    <pre>
+# QueryInterrupt for cancellation
+interrupt = QueryInterrupt()
+active_streams[session_id] = interrupt
+
+# Check each event loop iteration
+if interrupt.is_interrupted:
+    yield AbortedEvent(...)
+    break</pre>
+                </div>
+
+                <h3>Stream Control Methods</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Method</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>abort_stream(session_id)</code></td>
+                            <td>Signal interrupt for active stream</td>
+                        </tr>
+                        <tr>
+                            <td><code>has_active_stream(session_id)</code></td>
+                            <td>Check if session has active streaming</td>
+                        </tr>
+                        <tr>
+                            <td><code>get_active_stream_ids()</code></td>
+                            <td>Get all session IDs with active streams</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+
+            <section class="docs-section">
+                <h2>Early Session Finalization</h2>
+                <div class="callout callout-info">
+                    <strong>Design Note:</strong> New sessions are finalized immediately when SDK provides session ID (not at end). This allows the session to appear in the chat list even if the user navigates away mid-stream.
+                </div>
+
+                <div class="code-block">
+                    <pre>
+# Capture session ID from InitEvent
+if event.type == "init" and "session_id" in event.data:
+    captured_session_id = event.data["session_id"]
+
+    # Finalize immediately for new sessions
+    if is_new_session:
+        session = await session_manager.finalize_session(
+            placeholder, captured_session_id, model, title
+        )
+
+    # Update permission handler with real session ID
+    permission_handler.session_id = captured_session_id</pre>
+                </div>
+            </section>
+
+            <section class="docs-section">
+                <h2>Trust Level Enforcement</h2>
+                <p>The orchestrator enforces trust levels per-session, determining how the agent is executed:</p>
+
+                <div class="code-block">
+                    <pre>
+Trust Level Resolution:
+        │
+        ├── "full"      → Unrestricted SDK execution
+        │                  All tools available, full filesystem access
+        │
+        ├── "vault"     → Restricted SDK execution
+        │                  Tools limited to vault directory
+        │                  Working directory must be within vault
+        │
+        └── "sandboxed" → Docker container execution
+                           Fresh container per message
+                           Isolated filesystem (vault mounted read-only)
+                           Container destroyed after response</pre>
+                </div>
+
+                <p>Trust level is stored in session metadata and persists across messages. Workspace trust levels act as a floor — sessions can't be less restrictive than their workspace.</p>
+            </section>
+
+            <section class="docs-section">
+                <h2>Edge Cases Handled</h2>
+
+                <h3>Session Management</h3>
+                <ul>
+                    <li><strong>Working directory doesn't exist:</strong> Falls back to vault root</li>
+                    <li><strong>Pre-migration sessions:</strong> Searches both vault and home .claude/</li>
+                    <li><strong>Imported sessions:</strong> Prior conversation injected as context</li>
+                    <li><strong>Session ID collision:</strong> Creates new session with warning</li>
+                </ul>
+
+                <h3>Permission Handling</h3>
+                <ul>
+                    <li><strong>Deny list supersedes trust mode:</strong> .env always blocked</li>
+                    <li><strong>MCP tools always allowed:</strong> Provide structured vault access</li>
+                    <li><strong>AskUserQuestion timeout:</strong> 5 minutes, then empty answers</li>
+                    <li><strong>Permission request timeout:</strong> 2 minutes, then denied</li>
+                </ul>
+
+                <h3>Streaming</h3>
+                <ul>
+                    <li><strong>Stream interrupted mid-tool:</strong> Partial response in AbortedEvent</li>
+                    <li><strong>MCP loading failure:</strong> Continue without MCP, warnings logged</li>
+                </ul>
+            </section>
+
+            <section class="docs-section">
+                <h2>Design Patterns</h2>
+
+                <h3>Pointer Architecture</h3>
+                <p>SQLite stores metadata only (pointers). SDK JSONL files are source of truth. Vault can move to different machine.</p>
+
+                <h3>Callback-Driven Permissions</h3>
+                <p>Permission checks emit callbacks → SSE events → Client responds via API → grant/deny methods.</p>
+
+                <h3>Streaming Transparency</h3>
+                <p>SSE events show all intermediate steps. PromptMetadataEvent shows what's included. Tools/thinking/results all streamed.</p>
+
+                <h3>Graceful Degradation</h3>
+                <p>MCP loading failure → continue without MCP. Working directory missing → fallback to vault. All failures logged but non-critical.</p>
+            </section>
+
+            <div class="nav-cards">
+                <a href="computer-api.html" class="nav-card">
+                    <h3>API Routes</h3>
+                    <p>REST and streaming endpoints for the Computer server.</p>
+                </a>
+                <a href="computer-agents.html" class="nav-card">
+                    <h3>Modules &amp; Agents</h3>
+                    <p>Module system, custom agents, and daily pipelines.</p>
+                </a>
+            </div>
+        </main>
+    </div>
+    <footer>
+        <p>&copy; 2026 Open Parachute, PBC. A Colorado Public Benefit Corporation.</p>
+        <p><a href="/blog/">Blog</a> &middot; <a href="/architecture/">Docs</a> &middot; <a href="/roadmap/">Roadmap</a> &middot; <a href="https://github.com/OpenParachutePBC/parachute-computer" target="_blank">GitHub</a></p>
+    </footer>
+</body>
+</html>

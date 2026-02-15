@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Integration | Parachute Documentation</title>
+    <meta name="description" content="How the Parachute app and Computer server integrate">
+    <link rel="stylesheet" href="/style.css">
+    <link rel="stylesheet" href="docs.css">
+</head>
+<body>
+    <header>
+        <nav>
+            <a href="/" class="logo">Parachute Computer</a>
+            <div class="nav-links">
+                <a href="/blog/">Blog</a>
+                <a href="/architecture/" class="active">Docs</a>
+                <a href="/roadmap/">Roadmap</a>
+                <a href="https://github.com/OpenParachutePBC/parachute-computer" target="_blank">GitHub</a>
+            </div>
+        </nav>
+    </header>
+
+    <div class="docs-layout">
+        <!-- Sidebar Navigation -->
+        <aside class="docs-sidebar">
+            <div class="sidebar-section">
+                <h3>Overview</h3>
+                <a href="index.html">Architecture</a>
+                <a href="data-flow.html">Data Flow</a>
+                <a href="integration.html" class="active">Integration</a>
+            </div>
+            <div class="sidebar-section">
+                <h3>App (Flutter)</h3>
+                <a href="app-overview.html">Overview</a>
+                <a href="app-chat.html">Chat Feature</a>
+                <a href="app-daily.html">Daily Feature</a>
+                <a href="app-vault.html">Vault Feature</a>
+                <a href="app-services.html">Services</a>
+            </div>
+            <div class="sidebar-section">
+                <h3>Computer (Python)</h3>
+                <a href="computer-overview.html">Overview</a>
+                <a href="computer-api.html">API Routes</a>
+                <a href="computer-orchestrator.html">Orchestrator</a>
+                <a href="computer-agents.html">Modules &amp; Agents</a>
+                <a href="computer-database.html">Database</a>
+                <a href="computer-connectors.html">Bot Connectors</a>
+            </div>
+            <div class="sidebar-section">
+                <h3>Reference</h3>
+                <a href="issues.html">Issues & TODOs</a>
+                <a href="file-manifest.html">File Manifest</a>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="docs-content">
+            <div class="breadcrumb">
+                <a href="../index.html">Home</a> / <a href="../blog/">Blog</a>
+                <a href="index.html">Docs</a> / <span>Integration</span>
+            </div>
+
+            <h1>Integration</h1>
+            <p class="lead">How the Flutter app and Parachute Computer server connect: API contracts, authentication, communication patterns, and deployment modes.</p>
+
+            <!-- Communication Overview -->
+            <section class="docs-section">
+                <h2>Communication Overview</h2>
+
+                <div class="architecture-visual">
+                    <pre>
+┌────────────────────────────────────────────────────────────────────────────┐
+│                           PARACHUTE APP                                     │
+│                                                                             │
+│    ┌─────────────────┐                                                     │
+│    │   ChatService   │ ───── HTTP POST /api/chat ────────────────────┐    │
+│    │   (2,059 lines) │ ◀──── SSE Stream ─────────────────────────────│    │
+│    └─────────────────┘                                                │    │
+│                                                                        │    │
+│    ┌─────────────────┐                                                │    │
+│    │ SyncService     │ ───── HTTP POST /api/sync/* ──────────────────│    │
+│    │                 │ ◀──── JSON Response ──────────────────────────│    │
+│    └─────────────────┘                                                │    │
+│                                                                        │    │
+│    ┌─────────────────┐                                                │    │
+│    │ FileBrowserSvc  │ ───── HTTP GET /api/fs/* ─────────────────────│    │
+│    │ (remote)        │ ◀──── JSON Response ──────────────────────────│    │
+│    └─────────────────┘                                                │    │
+│                                                                        │    │
+└────────────────────────────────────────────────────────────────────────│────┘
+                                                                         │
+                                                                         │
+                                          ┌──────────────────────────────▼────┐
+                                          │      COMPUTER SERVER             │
+                                          │     http://localhost:3333        │
+                                          │                                  │
+                                          │  ┌───────────────────────────┐  │
+                                          │  │      FastAPI Router       │  │
+                                          │  │                           │  │
+                                          │  │  /api/chat   → chat.py    │  │
+                                          │  │  /api/auth   → auth.py    │  │
+                                          │  │  /api/fs     → filesystem │  │
+                                          │  │  /api/sync   → sync.py    │  │
+                                          │  │  /api/health → health.py  │  │
+                                          │  └───────────────────────────┘  │
+                                          │                                  │
+                                          └──────────────────────────────────┘
+                    </pre>
+                </div>
+            </section>
+
+            <!-- Service Mapping -->
+            <section class="docs-section">
+                <h2>Service to Endpoint Mapping</h2>
+
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>App Service</th>
+                            <th>Server Endpoint</th>
+                            <th>Protocol</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>ChatService</code></td>
+                            <td><code>POST /api/chat</code></td>
+                            <td>SSE</td>
+                            <td>AI chat with streaming</td>
+                        </tr>
+                        <tr>
+                            <td><code>ChatService</code></td>
+                            <td><code>GET /api/chat</code></td>
+                            <td>HTTP</td>
+                            <td>List sessions</td>
+                        </tr>
+                        <tr>
+                            <td><code>ChatService</code></td>
+                            <td><code>GET /api/chat/{id}</code></td>
+                            <td>HTTP</td>
+                            <td>Get session details</td>
+                        </tr>
+                        <tr>
+                            <td><code>SyncService</code></td>
+                            <td><code>POST /api/sync/*</code></td>
+                            <td>HTTP</td>
+                            <td>Journal sync</td>
+                        </tr>
+                        <tr>
+                            <td><code>RemoteFileBrowserService</code></td>
+                            <td><code>GET /api/fs/*</code></td>
+                            <td>HTTP</td>
+                            <td>Remote file browsing</td>
+                        </tr>
+                        <tr>
+                            <td><code>BaseServerService</code></td>
+                            <td><code>GET /api/health</code></td>
+                            <td>HTTP</td>
+                            <td>Server health check</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+
+            <!-- Authentication Flow -->
+            <section class="docs-section">
+                <h2>Authentication Flow</h2>
+
+                <div class="architecture-visual">
+                    <pre>
+┌─────────────────┐                              ┌─────────────────┐
+│       App       │                              │   Computer      │
+└────────┬────────┘                              └────────┬────────┘
+         │                                                │
+         │ 1. First launch (no API key)                   │
+         │                                                │
+         │    GET /api/health (localhost)                 │
+         │ ──────────────────────────────────────────────▶│
+         │                                                │ Auth bypassed
+         │ ◀────────────── {"status": "ok"} ─────────────│ (localhost)
+         │                                                │
+         │ 2. Create API key (Settings)                   │
+         │                                                │
+         │    POST /api/auth/keys                         │
+         │    {"label": "My iPhone"}                      │
+         │ ──────────────────────────────────────────────▶│
+         │                                                │
+         │ ◀──── {"key": "para_abc...", "id": "k_..."} ──│
+         │                                                │
+         │ 3. Store key in SharedPreferences              │
+         │                                                │
+         │ 4. Future requests (any network)               │
+         │                                                │
+         │    POST /api/chat                              │
+         │    X-API-Key: para_abc...                      │
+         │ ──────────────────────────────────────────────▶│
+         │                                                │ Validate key
+         │ ◀──────────── SSE response ───────────────────│
+         │                                                │
+                    </pre>
+                </div>
+
+                <h3>Key Storage Locations</h3>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Location</th>
+                            <th>What's Stored</th>
+                            <th>Format</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>App (SharedPreferences)</td>
+                            <td>Full API key</td>
+                            <td><code>para_aBcDeFgHiJkLmNoPqRsT1234</code></td>
+                        </tr>
+                        <tr>
+                            <td>Server (server-config.json)</td>
+                            <td>Key hash + metadata</td>
+                            <td><code>sha256:abc123...</code></td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+
+            <!-- Deployment Modes -->
+            <section class="docs-section">
+                <h2>Deployment Modes</h2>
+
+                <div class="concept-grid">
+                    <div class="concept-card">
+                        <div class="concept-icon">🌐</div>
+                        <h3>Client Mode</h3>
+                        <p>App connects to external server URL. User configures server address in Settings. Used for remote/cloud deployments.</p>
+                        <ul>
+                            <li>Server URL from user input</li>
+                            <li>API key required (remote)</li>
+                            <li>Sync enabled</li>
+                        </ul>
+                    </div>
+
+                    <div class="concept-card">
+                        <div class="concept-icon">🖥️</div>
+                        <h3>Computer Mode (Lima)</h3>
+                        <p>Server runs in isolated Lima VM on macOS. App auto-starts VM on launch. Most secure option.</p>
+                        <ul>
+                            <li>Server at localhost:3333</li>
+                            <li>Auth bypassed (localhost)</li>
+                            <li>Shared vault (no sync)</li>
+                        </ul>
+                    </div>
+
+                    <div class="concept-card">
+                        <div class="concept-icon">⚡</div>
+                        <h3>Computer Mode (Bare Metal)</h3>
+                        <p>Server runs directly on macOS. Best performance, full hardware access. For dedicated Parachute machines.</p>
+                        <ul>
+                            <li>Server at localhost:3333</li>
+                            <li>Auth bypassed (localhost)</li>
+                            <li>Shared vault (no sync)</li>
+                        </ul>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Shared Vault -->
+            <section class="docs-section">
+                <h2>Shared Vault Architecture</h2>
+                <p>In Computer mode, app and server share the same vault directory:</p>
+
+                <div class="architecture-visual">
+                    <pre>
+┌─────────────────────────────────────────────────────────────────────┐
+│                        ~/Parachute (Vault)                           │
+│                                                                      │
+│   ┌──────────────────────────────────────────────────────────────┐  │
+│   │                          Daily/                               │  │
+│   │                                                               │  │
+│   │     ┌─────────────────┐         ┌─────────────────┐          │  │
+│   │     │   App writes    │         │  Server reads   │          │  │
+│   │     │   journal       │ ◀─────▶ │  for agents     │          │  │
+│   │     │   entries       │         │                 │          │  │
+│   │     └─────────────────┘         └─────────────────┘          │  │
+│   └──────────────────────────────────────────────────────────────┘  │
+│                                                                      │
+│   ┌──────────────────────────────────────────────────────────────┐  │
+│   │                          Chat/                                │  │
+│   │                                                               │  │
+│   │     ┌─────────────────┐         ┌─────────────────┐          │  │
+│   │     │   App reads     │         │  Server writes  │          │  │
+│   │     │   sessions      │ ◀─────▶ │  sessions       │          │  │
+│   │     │                 │         │                 │          │  │
+│   │     └─────────────────┘         └─────────────────┘          │  │
+│   └──────────────────────────────────────────────────────────────┘  │
+│                                                                      │
+│   ┌──────────────────────────────────────────────────────────────┐  │
+│   │                         .claude/                              │  │
+│   │                                                               │  │
+│   │     Server writes SDK transcripts here                        │  │
+│   │     App doesn't access directly (reads via API)               │  │
+│   └──────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────────┘
+
+  Benefits:
+  ✓ No sync needed (same files)
+  ✓ Immediate updates
+  ✓ No data duplication
+
+  Considerations:
+  ⚠ File locking important (concurrent access)
+  ⚠ App must use server's vault path
+                    </pre>
+                </div>
+            </section>
+
+            <!-- Error Handling -->
+            <section class="docs-section">
+                <h2>Error Handling</h2>
+
+                <h3>Connection Errors</h3>
+                <p>When the server is unreachable:</p>
+                <ul>
+                    <li>Chat: Shows "Server unavailable" banner, retries on next message</li>
+                    <li>Daily: Works offline, queues sync for later</li>
+                    <li>Vault: Shows cached content, remote features disabled</li>
+                </ul>
+
+                <h3>Authentication Errors</h3>
+                <p>When API key is invalid or expired:</p>
+                <ul>
+                    <li>401 response triggers key re-entry prompt</li>
+                    <li>Settings opens to API key section</li>
+                    <li>User can create new key from server</li>
+                </ul>
+
+                <h3>Streaming Errors</h3>
+                <p>When SSE connection drops mid-stream:</p>
+                <ul>
+                    <li>Partial message shown with error indicator</li>
+                    <li>Session can be resumed (session_id preserved)</li>
+                    <li>User can resend last message</li>
+                </ul>
+            </section>
+
+            <!-- Navigation -->
+            <section class="docs-section">
+                <h2>Next Steps</h2>
+                <div class="nav-cards">
+                    <a href="data-flow.html" class="nav-card">
+                        <h3>🔄 Data Flow</h3>
+                        <p>Follow data through the complete request/response cycle.</p>
+                    </a>
+                    <a href="computer-api.html" class="nav-card">
+                        <h3>🔌 API Routes</h3>
+                        <p>Complete reference for all server endpoints.</p>
+                    </a>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <footer>
+        <p>&copy; 2026 Open Parachute, PBC. A Colorado Public Benefit Corporation.</p>
+        <p><a href="/blog/">Blog</a> &middot; <a href="/architecture/">Docs</a> &middot; <a href="/roadmap/">Roadmap</a> &middot; <a href="https://github.com/OpenParachutePBC/parachute-computer" target="_blank">GitHub</a></p>
+    </footer>
+</body>
+</html>

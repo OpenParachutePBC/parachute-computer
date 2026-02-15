@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Core Services | Parachute Documentation</title>
+    <link rel="stylesheet" href="/style.css">
+    <link rel="stylesheet" href="docs.css">
+</head>
+<body>
+    <header>
+        <nav>
+            <a href="/" class="logo">Parachute Computer</a>
+            <div class="nav-links">
+                <a href="/blog/">Blog</a>
+                <a href="/architecture/" class="active">Docs</a>
+                <a href="/roadmap/">Roadmap</a>
+                <a href="https://github.com/OpenParachutePBC/parachute-computer" target="_blank">GitHub</a>
+            </div>
+        </nav>
+    </header>
+    <div class="docs-layout">
+        <aside class="docs-sidebar">
+            <div class="sidebar-section">
+                <h3>Overview</h3>
+                <a href="index.html">Architecture</a>
+                <a href="data-flow.html">Data Flow</a>
+                <a href="integration.html">Integration</a>
+            </div>
+            <div class="sidebar-section">
+                <h3>App (Flutter)</h3>
+                <a href="app-overview.html">Overview</a>
+                <a href="app-chat.html">Chat Feature</a>
+                <a href="app-daily.html">Daily Feature</a>
+                <a href="app-vault.html">Vault Feature</a>
+                <a href="app-services.html" class="active">Services</a>
+            </div>
+            <div class="sidebar-section">
+                <h3>Computer (Python)</h3>
+                <a href="computer-overview.html">Overview</a>
+                <a href="computer-api.html">API Routes</a>
+                <a href="computer-orchestrator.html">Orchestrator</a>
+                <a href="computer-agents.html">Modules &amp; Agents</a>
+                <a href="computer-database.html">Database</a>
+                <a href="computer-connectors.html">Bot Connectors</a>
+            </div>
+            <div class="sidebar-section">
+                <h3>Reference</h3>
+                <a href="issues.html">Issues & TODOs</a>
+                <a href="file-manifest.html">File Manifest</a>
+            </div>
+        </aside>
+        <main class="docs-content">
+            <div class="breadcrumb">
+                <a href="../index.html">Home</a> / <a href="../blog/">Blog</a>
+                <a href="index.html">Docs</a> / <span>Core Services</span>
+            </div>
+            <h1>Core Services</h1>
+            <p class="lead">The app's core services layer provides platform-adaptive abstractions for file systems, transcription, synchronization, and server management. These services enable the app to work seamlessly across macOS, iOS, Android, and Linux.</p>
+
+            <section class="docs-section">
+                <h2>Service Overview</h2>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Service</th>
+                            <th>Purpose</th>
+                            <th>Lines</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>FileSystemService</code></td>
+                            <td>Modular vault management with platform-specific security</td>
+                            <td>~1,127</td>
+                        </tr>
+                        <tr>
+                            <td><code>SyncService</code></td>
+                            <td>Multi-phase sync with conflict resolution</td>
+                            <td>~1,396</td>
+                        </tr>
+                        <tr>
+                            <td><code>StreamingVoiceService</code></td>
+                            <td>Real-time transcription with VAD-based chunking</td>
+                            <td>~1,178</td>
+                        </tr>
+                        <tr>
+                            <td><code>TranscriptionServiceAdapter</code></td>
+                            <td>Platform-adaptive transcription engine selection</td>
+                            <td>~313</td>
+                        </tr>
+                        <tr>
+                            <td><code>LimaVMService</code></td>
+                            <td>Lima VM lifecycle for Parachute Computer</td>
+                            <td>~809</td>
+                        </tr>
+                        <tr>
+                            <td><code>BundledServerService</code></td>
+                            <td>Embedded server process management</td>
+                            <td>~479</td>
+                        </tr>
+                        <tr>
+                            <td><code>SmartChunker</code></td>
+                            <td>VAD-based audio segmentation</td>
+                            <td>~240</td>
+                        </tr>
+                        <tr>
+                            <td><code>SimpleVAD</code></td>
+                            <td>RMS energy-based voice activity detection</td>
+                            <td>~176</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+
+            <section class="docs-section">
+                <h2>FileSystemService</h2>
+                <p>Unified file system service managing modular vault structures (Daily and Chat modules) with platform-specific security handling.</p>
+
+                <h3>Module Architecture</h3>
+                <div class="code-block">
+                    <pre>
+~/Parachute/              (Vault Root - user configurable)
+├── Daily/               (Module folder)
+│   ├── journals/        (Required subfolder)
+│   ├── assets/          (Required subfolder)
+│   └── reflections/     (Required subfolder)
+│
+└── Chat/                (Module folder)
+    ├── sessions/
+    ├── assets/
+    ├── artifacts/
+    └── contexts/</pre>
+                </div>
+
+                <h3>Key Methods</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Method</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>initialize()</code></td>
+                            <td>Async init with lazy loading, legacy migration, secure bookmarks</td>
+                        </tr>
+                        <tr>
+                            <td><code>getRootPath()</code></td>
+                            <td>Get module root path (e.g., ~/Parachute/Daily)</td>
+                        </tr>
+                        <tr>
+                            <td><code>getVaultPath()</code></td>
+                            <td>Get vault root (e.g., ~/Parachute)</td>
+                        </tr>
+                        <tr>
+                            <td><code>setVaultPath(path, migrateFiles)</code></td>
+                            <td>Configure vault with optional file migration</td>
+                        </tr>
+                        <tr>
+                            <td><code>getFolderPath(type)</code></td>
+                            <td>Get path for specific folder type</td>
+                        </tr>
+                        <tr>
+                            <td><code>getNewAssetPath()</code></td>
+                            <td>Generate date-organized asset path (YYYY-MM-DD)</td>
+                        </tr>
+                        <tr>
+                            <td><code>cleanupTempAudioFiles()</code></td>
+                            <td>Clean temp files with retention policies</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <h3>Platform-Specific Behavior</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Platform</th>
+                            <th>Default Vault Path</th>
+                            <th>Special Handling</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>macOS</td>
+                            <td>Home directory (<code>$HOME</code>)</td>
+                            <td>SecureBookmarks for sandbox compliance</td>
+                        </tr>
+                        <tr>
+                            <td>iOS</td>
+                            <td>App documents + Parachute/</td>
+                            <td>No external storage access</td>
+                        </tr>
+                        <tr>
+                            <td>Android</td>
+                            <td>External storage + Parachute/</td>
+                            <td>MANAGE_EXTERNAL_STORAGE permission</td>
+                        </tr>
+                        <tr>
+                            <td>Linux</td>
+                            <td>Home directory</td>
+                            <td>Standard filesystem access</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <h3>Temp File Retention</h3>
+                <ul>
+                    <li><strong>Recordings:</strong> 7 days</li>
+                    <li><strong>Playback:</strong> 24 hours</li>
+                    <li><strong>Segments:</strong> 1 hour</li>
+                </ul>
+            </section>
+
+            <section class="docs-section">
+                <h2>SyncService</h2>
+                <p>Multi-phase sync orchestration between local Daily vault and server with conflict resolution and tombstone tracking.</p>
+
+                <h3>Sync Protocol</h3>
+                <div class="code-block">
+                    <pre>
+1. Manifest Comparison
+   └── SHA-256 hashing for content change detection
+
+2. Local vs Server Decision
+   └── Push/pull/merge based on timestamps and content hashes
+
+3. Conflict Detection
+   └── Files with close timestamps (&lt;60s) + different content
+
+4. Tombstone Tracking
+   └── .tombstones/ directory tracks deleted files
+
+5. Version Backups
+   └── .versions/ keeps last 3 versions before overwriting</pre>
+                </div>
+
+                <h3>Conflict Resolution Strategy</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>File Type</th>
+                            <th>Resolution Method</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Journal files (.md in journals/)</td>
+                            <td>Entry-level merge via JournalMergeService</td>
+                        </tr>
+                        <tr>
+                            <td>Other files</td>
+                            <td>Create conflict file (.sync-conflict-{timestamp}-{deviceId})</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <h3>Batching Strategy</h3>
+                <ul>
+                    <li><strong>Text files:</strong> 50 files per batch (fast, checksummed)</li>
+                    <li><strong>Binary files:</strong> 5 files per batch (slow, base64-encoded, longer timeouts)</li>
+                </ul>
+
+                <h3>Key Methods</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Method</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>sync()</code></td>
+                            <td>Full vault sync with batched operations</td>
+                        </tr>
+                        <tr>
+                            <td><code>syncDate(date)</code></td>
+                            <td>Efficient date-scoped sync for single day</td>
+                        </tr>
+                        <tr>
+                            <td><code>getServerManifest()</code></td>
+                            <td>Query server state</td>
+                        </tr>
+                        <tr>
+                            <td><code>pushFiles()</code></td>
+                            <td>Upload local changes to server</td>
+                        </tr>
+                        <tr>
+                            <td><code>pullFiles()</code></td>
+                            <td>Download server changes to local</td>
+                        </tr>
+                        <tr>
+                            <td><code>deleteFileWithTombstone()</code></td>
+                            <td>Delete with tombstone for sync propagation</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+
+            <section class="docs-section">
+                <h2>StreamingVoiceService</h2>
+                <p>Real-time transcription feedback during Chat voice input with VAD-based audio chunking and streaming WAV file generation.</p>
+
+                <h3>LocalAgreement-2 Algorithm</h3>
+                <div class="code-block">
+                    <pre>
+Rolling Buffer: 30-second max audio buffer
+    │
+    ▼
+VAD Chunker: Detects 1s silence threshold
+    │
+    ▼
+Transcription Queue: Only chunks with ≥1s speech
+    │
+    ▼
+Text Stability Tracking:
+    ├── Confirmed (2+ iterations)
+    ├── Tentative (1 iteration)
+    └── Interim (changing)</pre>
+                </div>
+
+                <h3>Streaming State Flow</h3>
+                <ol>
+                    <li><code>startRecording()</code> - Initialize noise filter, VAD, temp WAV, wakelock</li>
+                    <li><code>_processAudioChunk()</code> - Convert bytes to int16, apply filter, stream to disk</li>
+                    <li><code>_handleChunk()</code> (VAD callback) - Queue chunk for async transcription</li>
+                    <li><code>_transcribeSegment()</code> - Transcribe chunk, add to confirmed segments</li>
+                    <li><code>stopRecording()</code> - Flush VAD, final transcription, fallback if empty</li>
+                    <li><code>getStreamingTranscript()</code> - Join segments with fuzzy overlap removal</li>
+                </ol>
+
+                <h3>Model Status Tracking</h3>
+                <div class="code-block">
+                    <pre>
+notInitialized → initializing (lazy init) → ready
+                                          → error</pre>
+                </div>
+            </section>
+
+            <section class="docs-section">
+                <h2>TranscriptionServiceAdapter</h2>
+                <p>Platform-adaptive abstraction layer selecting optimal transcription engine per platform.</p>
+
+                <h3>Platform Strategy</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Platform</th>
+                            <th>Primary Engine</th>
+                            <th>Fallback</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>iOS / macOS</td>
+                            <td>FluidAudio (Parakeet v3 CoreML)</td>
+                            <td>Sherpa-ONNX</td>
+                        </tr>
+                        <tr>
+                            <td>Android</td>
+                            <td>Sherpa-ONNX (Parakeet v3 ONNX Runtime)</td>
+                            <td>None</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <h3>Key Features</h3>
+                <ul>
+                    <li><strong>Lazy Initialization:</strong> Models not loaded until first transcription</li>
+                    <li><strong>Progress Tracking:</strong> Broadcasts via <code>transcriptionProgressStream</code></li>
+                    <li><strong>Fallback Logic:</strong> FluidAudio failure falls through to Sherpa-ONNX</li>
+                    <li><strong>Singleton Management:</strong> Sherpa-ONNX isolate reused across instances</li>
+                </ul>
+            </section>
+
+            <section class="docs-section">
+                <h2>LimaVMService</h2>
+                <p>Complete lifecycle management for Parachute Computer - an isolated Lima VM running the Computer server.</p>
+
+                <h3>Lifecycle States</h3>
+                <div class="code-block">
+                    <pre>
+notInstalled ──► notCreated ──► stopped ◄──► starting
+                                    │            │
+                                    ▼            ▼
+                                 error      running
+                                    ▲            │
+                                    └── stopping ◄┘</pre>
+                </div>
+
+                <h3>Key Methods</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Method</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>checkStatus()</code></td>
+                            <td>Probe VM state from limactl</td>
+                        </tr>
+                        <tr>
+                            <td><code>createVM()</code></td>
+                            <td>First-time VM creation from YAML config</td>
+                        </tr>
+                        <tr>
+                            <td><code>start() / stop() / delete()</code></td>
+                            <td>VM lifecycle control</td>
+                        </tr>
+                        <tr>
+                            <td><code>startServer()</code></td>
+                            <td>Boot Computer server inside VM</td>
+                        </tr>
+                        <tr>
+                            <td><code>isServerHealthy()</code></td>
+                            <td>Health check via /api/health</td>
+                        </tr>
+                        <tr>
+                            <td><code>runClaudeLogin()</code></td>
+                            <td>Interactive auth in Terminal.app</td>
+                        </tr>
+                        <tr>
+                            <td><code>installBaseServer()</code></td>
+                            <td>Install/update server in VM</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <h3>Auto-Start (launchd)</h3>
+                <ul>
+                    <li><strong>Label:</strong> <code>io.openparachute.vm</code></li>
+                    <li><strong>Path:</strong> <code>~/Library/LaunchAgents/io.openparachute.vm.plist</code></li>
+                    <li><strong>RunAtLoad:</strong> true (starts on login)</li>
+                </ul>
+            </section>
+
+            <section class="docs-section">
+                <h2>BundledServerService</h2>
+                <p>Lifecycle management for bundled server binary in desktop distributions.</p>
+
+                <h3>Status States</h3>
+                <div class="code-block">
+                    <pre>
+notBundled ──► stopped ◄──► starting
+                  │            │
+                  ▼            ▼
+               error       running</pre>
+                </div>
+
+                <h3>Cross-Platform Bundle Paths</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Platform</th>
+                            <th>Bundle Location</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>macOS</td>
+                            <td><code>MyApp.app/Contents/Resources/parachute-server/</code></td>
+                        </tr>
+                        <tr>
+                            <td>Linux</td>
+                            <td><code>parachute-linux-x64/lib/parachute-server/</code></td>
+                        </tr>
+                        <tr>
+                            <td>Windows</td>
+                            <td><code>parachute-windows-x64/data/parachute-server/</code></td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <h3>Environment Variables</h3>
+                <ul>
+                    <li><code>VAULT_PATH</code> - User's vault directory</li>
+                    <li><code>PORT</code> - 3333 (configurable)</li>
+                    <li><code>PATH</code> - Inherited for external tool access</li>
+                    <li><code>HOME</code> - Explicit to prevent sandboxing issues</li>
+                </ul>
+
+                <h3>Health Monitoring</h3>
+                <ul>
+                    <li><strong>Startup:</strong> Poll /api/health every 500ms for 30s</li>
+                    <li><strong>Running:</strong> Check every 10s</li>
+                    <li><strong>Max Restart Attempts:</strong> 3 (then error state)</li>
+                </ul>
+            </section>
+
+            <section class="docs-section">
+                <h2>VAD System</h2>
+                <p>Voice Activity Detection for intelligent audio segmentation, ported from RichardTate.</p>
+
+                <h3>SmartChunker</h3>
+                <p>VAD-based audio segmentation preventing silent/noise-only chunks from reaching transcription.</p>
+
+                <h4>Safety Thresholds</h4>
+                <ul>
+                    <li><strong>Min speech duration:</strong> 1s (prevents hallucinations)</li>
+                    <li><strong>Min chunk duration:</strong> 500ms (efficiency)</li>
+                    <li><strong>Max chunk duration:</strong> 30s (safety limit)</li>
+                    <li><strong>Silence threshold:</strong> 1s (configurable)</li>
+                </ul>
+
+                <h3>SimpleVAD</h3>
+                <p>RMS energy-based voice activity detection for distinguishing speech from silence.</p>
+
+                <h4>RMS Calculation</h4>
+                <div class="code-block">
+                    <pre>
+RMS = sqrt(sum(sample^2) / num_samples)
+
+Threshold Tuning:
+- 100.0: Default (ideal lab conditions)
+- 400-800+: Real-world with background noise
+- Lower = more aggressive (false positives)
+- Higher = conservative (may miss quiet speech)</pre>
+                </div>
+
+                <h4>State Tracking</h4>
+                <ul>
+                    <li>Silence/speech durations (cumulative)</li>
+                    <li>Consecutive frame counts</li>
+                    <li>Current speaking state</li>
+                    <li>Last frame classification</li>
+                </ul>
+            </section>
+
+            <section class="docs-section">
+                <h2>Error Handling Patterns</h2>
+                <p>All services follow consistent patterns:</p>
+
+                <ul>
+                    <li>Try-catch blocks with descriptive <code>debugPrint</code> logging</li>
+                    <li>Platform-specific fallbacks (e.g., home directory detection)</li>
+                    <li>Timeouts on network operations (30-120s)</li>
+                    <li>Graceful degradation rather than exceptions</li>
+                </ul>
+
+                <h3>Logging Convention</h3>
+                <div class="code-block">
+                    <pre>
+debugPrint('[ClassName] message');          // Standard
+debugPrint('[ClassName] Success');          // Success
+debugPrint('[ClassName] Warning');          // Warning
+debugPrint('[ClassName] Error reason: $e'); // Error</pre>
+                </div>
+            </section>
+
+            <section class="docs-section">
+                <h2>Resource Cleanup</h2>
+                <ul>
+                    <li>Timers always cancelled in <code>dispose()</code></li>
+                    <li>Stream subscriptions unsubscribed</li>
+                    <li>File handles closed</li>
+                    <li>WakeLock explicitly disabled</li>
+                </ul>
+            </section>
+
+            <div class="nav-cards">
+                <a href="app-vault.html" class="nav-card">
+                    <h3>Vault Feature</h3>
+                    <p>File browser for exploring vault content.</p>
+                </a>
+                <a href="computer-overview.html" class="nav-card">
+                    <h3>Computer Server</h3>
+                    <p>Python backend powering the AI.</p>
+                </a>
+            </div>
+        </main>
+    </div>
+    <footer>
+        <p>&copy; 2026 Open Parachute, PBC. A Colorado Public Benefit Corporation.</p>
+        <p><a href="/blog/">Blog</a> &middot; <a href="/architecture/">Docs</a> &middot; <a href="/roadmap/">Roadmap</a> &middot; <a href="https://github.com/OpenParachutePBC/parachute-computer" target="_blank">GitHub</a></p>
+    </footer>
+</body>
+</html>

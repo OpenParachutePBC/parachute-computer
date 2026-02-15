@@ -1,0 +1,827 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Database | Parachute Documentation</title>
+    <link rel="stylesheet" href="/style.css">
+    <link rel="stylesheet" href="docs.css">
+</head>
+<body>
+    <header>
+        <nav>
+            <a href="/" class="logo">Parachute Computer</a>
+            <div class="nav-links">
+                <a href="/blog/">Blog</a>
+                <a href="/architecture/" class="active">Docs</a>
+                <a href="/roadmap/">Roadmap</a>
+                <a href="https://github.com/OpenParachutePBC/parachute-computer" target="_blank">GitHub</a>
+            </div>
+        </nav>
+    </header>
+    <div class="docs-layout">
+        <aside class="docs-sidebar">
+            <div class="sidebar-section">
+                <h3>Overview</h3>
+                <a href="index.html">Architecture</a>
+                <a href="data-flow.html">Data Flow</a>
+                <a href="integration.html">Integration</a>
+            </div>
+            <div class="sidebar-section">
+                <h3>App (Flutter)</h3>
+                <a href="app-overview.html">Overview</a>
+                <a href="app-chat.html">Chat Feature</a>
+                <a href="app-daily.html">Daily Feature</a>
+                <a href="app-vault.html">Vault Feature</a>
+                <a href="app-services.html">Services</a>
+            </div>
+            <div class="sidebar-section">
+                <h3>Computer (Python)</h3>
+                <a href="computer-overview.html">Overview</a>
+                <a href="computer-api.html">API Routes</a>
+                <a href="computer-orchestrator.html">Orchestrator</a>
+                <a href="computer-agents.html">Modules &amp; Agents</a>
+                <a href="computer-database.html" class="active">Database</a>
+                <a href="computer-connectors.html">Bot Connectors</a>
+            </div>
+            <div class="sidebar-section">
+                <h3>Reference</h3>
+                <a href="issues.html">Issues &amp; TODOs</a>
+                <a href="file-manifest.html">File Manifest</a>
+            </div>
+        </aside>
+        <main class="docs-content">
+            <div class="breadcrumb">
+                <a href="../index.html">Home</a> / <a href="../blog/">Blog</a>
+                <a href="index.html">Docs</a> / <span>Database</span>
+            </div>
+            <h1>Database Layer</h1>
+            <p class="lead">SQLite database for session metadata, tags, RAG indexing, and bot connector pairing. Uses async operations via aiosqlite with schema migrations support. 8 active tables with pointer architecture — sessions.db stores metadata only, SDK JSONL files are the source of truth for messages.</p>
+
+            <!-- Architecture Diagram -->
+            <section class="docs-section">
+                <h2>Architecture Overview</h2>
+                <pre class="code-block">
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         Database Layer (8 tables)                        │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  ┌────────────────────────────────────────────────────────────────────┐ │
+│  │                      Core Tables (Pointer Architecture)            │ │
+│  │  ┌──────────────┐  ┌──────────────┐  ┌───────────────────────┐   │ │
+│  │  │   sessions   │  │ session_tags │  │   session_contexts    │   │ │
+│  │  │ (metadata)   │──│  (full-text) │  │  (folder bindings)    │   │ │
+│  │  └──────────────┘  └──────────────┘  └───────────────────────┘   │ │
+│  │         │                                                         │ │
+│  │         │ SDK JSONL files are source of truth for messages        │ │
+│  │         ▼ ({vault}/.claude/projects/{encoded-cwd}/)               │ │
+│  └────────────────────────────────────────────────────────────────────┘ │
+│                                                                          │
+│  ┌────────────────────────────────────────────────────────────────────┐ │
+│  │                      RAG Index Tables                              │ │
+│  │  ┌──────────────┐  ┌────────────────┐  ┌────────────────────┐    │ │
+│  │  │    chunks    │  │ index_manifest │  │      metadata      │    │ │
+│  │  │ (text+embed) │  │ (indexed docs) │  │   (key-value)      │    │ │
+│  │  └──────────────┘  └────────────────┘  └────────────────────┘    │ │
+│  └────────────────────────────────────────────────────────────────────┘ │
+│                                                                          │
+│  ┌────────────────────────────────────────────────────────────────────┐ │
+│  │                      Bot Connector Tables                          │ │
+│  │  ┌──────────────────────────────────────────────────────────────┐ │ │
+│  │  │ pairing_requests (user approval flow for Telegram/Discord)  │ │ │
+│  │  └──────────────────────────────────────────────────────────────┘ │ │
+│  └────────────────────────────────────────────────────────────────────┘ │
+│                                                                          │
+│  ┌────────────────────────────────────────────────────────────────────┐ │
+│  │  schema_version (v10+) - Migration tracking                        │ │
+│  └────────────────────────────────────────────────────────────────────┘ │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+</pre>
+            </section>
+
+            <!-- Key Files -->
+            <section class="docs-section">
+                <h2>Key Files</h2>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>File</th>
+                            <th>Lines</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>parachute/db/database.py</code></td>
+                            <td>~834</td>
+                            <td>Database class, schema, CRUD operations</td>
+                        </tr>
+                        <tr>
+                            <td><code>parachute/models/session.py</code></td>
+                            <td>~200</td>
+                            <td>Pydantic models for sessions, permissions</td>
+                        </tr>
+                        <tr>
+                            <td><code>parachute/models/events.py</code></td>
+                            <td>~150</td>
+                            <td>SSE event models for streaming</td>
+                        </tr>
+                        <tr>
+                            <td><code>parachute/connectors/base.py</code></td>
+                            <td>~600</td>
+                            <td>Bot connector base with pairing request operations</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+
+            <!-- Sessions Table -->
+            <section class="docs-section">
+                <h2>Sessions Table</h2>
+                <p>Primary session metadata storage. The pointer architecture means this table stores metadata only; actual messages live in SDK JSONL files.</p>
+
+                <pre class="code-block">
+CREATE TABLE IF NOT EXISTS sessions (
+    id TEXT PRIMARY KEY,                    -- SDK session ID (UUID)
+    title TEXT,                             -- Session title (auto-generated or user-set)
+    module TEXT NOT NULL DEFAULT 'chat',    -- Module: 'chat', 'daily', 'build'
+    source TEXT NOT NULL DEFAULT 'parachute', -- Source: parachute, claude-code, claude, chatgpt
+    working_directory TEXT,                 -- Working directory for file operations
+    vault_root TEXT,                        -- Original vault path (cross-machine portability)
+    model TEXT,                             -- Model used (e.g., 'claude-opus-4')
+    message_count INTEGER DEFAULT 0,        -- Total message count
+    archived INTEGER DEFAULT 0,             -- Boolean: 1=archived, 0=active
+    created_at TEXT NOT NULL,               -- ISO 8601 timestamp
+    last_accessed TEXT NOT NULL,            -- ISO 8601 timestamp (auto-updated)
+    continued_from TEXT,                    -- Parent session ID if continuation
+    agent_type TEXT,                        -- Agent type (vault-agent, orchestrator, etc.)
+    metadata TEXT                           -- JSON: permissions, custom metadata
+);
+
+-- Performance indexes
+CREATE INDEX IF NOT EXISTS idx_sessions_module ON sessions(module);
+CREATE INDEX IF NOT EXISTS idx_sessions_archived ON sessions(archived);
+CREATE INDEX IF NOT EXISTS idx_sessions_source ON sessions(source);
+CREATE INDEX IF NOT EXISTS idx_sessions_last_accessed ON sessions(last_accessed DESC);
+CREATE INDEX IF NOT EXISTS idx_sessions_agent_type ON sessions(agent_type);
+</pre>
+
+                <h3>Key Design Decisions</h3>
+                <ul>
+                    <li><strong>Pointer Architecture:</strong> Session table contains metadata only; SDK JSONL files are source of truth for messages</li>
+                    <li><strong>Soft Deletes:</strong> <code>archived</code> flag instead of hard delete for audit trail</li>
+                    <li><strong>Auto-update:</strong> <code>last_accessed</code> updated on every session access</li>
+                    <li><strong>Permissions in Metadata:</strong> JSON blob contains <code>SessionPermissions</code> object</li>
+                </ul>
+            </section>
+
+            <!-- Session Tags Table -->
+            <section class="docs-section">
+                <h2>Session Tags Table</h2>
+                <p>Enables fast filtering of sessions by tags without expensive text search.</p>
+
+                <pre class="code-block">
+CREATE TABLE IF NOT EXISTS session_tags (
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    tag TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (session_id, tag)
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_tags_tag ON session_tags(tag);
+</pre>
+
+                <h3>Tag Operations</h3>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Method</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>add_tag(session_id, tag)</code></td>
+                            <td>Adds tag (normalized to lowercase)</td>
+                        </tr>
+                        <tr>
+                            <td><code>remove_tag(session_id, tag)</code></td>
+                            <td>Removes tag from session</td>
+                        </tr>
+                        <tr>
+                            <td><code>get_session_tags(session_id)</code></td>
+                            <td>Lists all tags for a session</td>
+                        </tr>
+                        <tr>
+                            <td><code>get_sessions_by_tag(tag, limit)</code></td>
+                            <td>Finds all sessions with a specific tag</td>
+                        </tr>
+                        <tr>
+                            <td><code>list_all_tags()</code></td>
+                            <td>Lists all tags with usage counts</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+
+            <!-- RAG Index Tables -->
+            <section class="docs-section">
+                <h2>RAG Index Tables</h2>
+                <p>Support for Retrieval-Augmented Generation with chunked content and optional embeddings.</p>
+
+                <h3>Chunks Table</h3>
+                <pre class="code-block">
+CREATE TABLE IF NOT EXISTS chunks (
+    id TEXT PRIMARY KEY,              -- Format: "chunk:{content_id}:{field}:{chunk_index}"
+    content_id TEXT NOT NULL,         -- Foreign key: session_id or document_id
+    content_type TEXT NOT NULL,       -- Type: 'session', 'journal', 'document'
+    field TEXT NOT NULL DEFAULT 'content',  -- Field name (for multi-field indexing)
+    chunk_index INTEGER NOT NULL,     -- Sequential index of this chunk
+    chunk_text TEXT NOT NULL,         -- The actual text content
+    embedding BLOB,                   -- Optional vector embedding (for similarity search)
+    created_at TEXT NOT NULL,
+    UNIQUE(content_id, field, chunk_index)
+);
+
+CREATE INDEX IF NOT EXISTS idx_chunks_content_id ON chunks(content_id);
+CREATE INDEX IF NOT EXISTS idx_chunks_content_type ON chunks(content_type);
+</pre>
+
+                <h3>Index Manifest Table</h3>
+                <pre class="code-block">
+CREATE TABLE IF NOT EXISTS index_manifest (
+    content_id TEXT PRIMARY KEY,      -- ID of indexed content
+    content_type TEXT NOT NULL,       -- Type: 'session', 'journal', etc.
+    content_hash TEXT,                -- Hash of original content (change detection)
+    title TEXT,                       -- Title/name of content
+    indexed_at TEXT NOT NULL,         -- ISO 8601 timestamp
+    chunk_count INTEGER NOT NULL,     -- How many chunks were created
+    source_path TEXT,                 -- Path to original file (if applicable)
+    metadata TEXT                     -- JSON: additional indexing metadata
+);
+</pre>
+
+                <h3>Chunk Operations</h3>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Method</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>upsert_chunk(...)</code></td>
+                            <td>Insert or replace chunk with embedding</td>
+                        </tr>
+                        <tr>
+                            <td><code>get_chunks_for_content(content_id, field)</code></td>
+                            <td>Retrieve all chunks for content</td>
+                        </tr>
+                        <tr>
+                            <td><code>delete_chunks_for_content(content_id)</code></td>
+                            <td>Purge chunks (for re-indexing)</td>
+                        </tr>
+                        <tr>
+                            <td><code>search_chunks(content_type, tags, limit)</code></td>
+                            <td>Query chunks with filters</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+
+            <!-- Pairing Requests Table -->
+            <section class="docs-section">
+                <h2>Pairing Requests Table</h2>
+                <p>Tracks user approval flow for bot connectors (Telegram, Discord). When an unknown user messages the bot, a pairing request is created for the admin to approve or deny.</p>
+
+                <pre class="code-block">
+CREATE TABLE IF NOT EXISTS pairing_requests (
+    id TEXT PRIMARY KEY,                               -- UUID
+    platform TEXT NOT NULL,                            -- 'telegram' or 'discord'
+    platform_user_id TEXT NOT NULL,                    -- Platform-specific user ID
+    platform_user_display TEXT,                        -- Display name at time of request
+    platform_chat_id TEXT NOT NULL,                    -- Chat/channel ID
+    status TEXT NOT NULL DEFAULT 'pending',            -- pending → approved/denied
+    approved_trust_level TEXT,                         -- Trust level if approved
+    created_at TEXT NOT NULL,                          -- ISO 8601
+    resolved_at TEXT,                                  -- When approved/denied
+    resolved_by TEXT,                                  -- Who resolved (admin)
+    UNIQUE(platform, platform_user_id, status)         -- One pending per user per platform
+);
+
+CREATE INDEX IF NOT EXISTS idx_pairing_requests_status ON pairing_requests(status);
+CREATE INDEX IF NOT EXISTS idx_pairing_requests_platform ON pairing_requests(platform, platform_user_id);
+</pre>
+
+                <h3>Pairing Request Operations</h3>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Method</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>upsert_pairing_request(request)</code></td>
+                            <td>Create or update a pairing request</td>
+                        </tr>
+                        <tr>
+                            <td><code>get_pending_pairing_requests()</code></td>
+                            <td>List all pending requests (for admin UI)</td>
+                        </tr>
+                        <tr>
+                            <td><code>get_pairing_request(id)</code></td>
+                            <td>Get single request by ID</td>
+                        </tr>
+                        <tr>
+                            <td><code>get_pairing_by_platform_user(platform, user_id)</code></td>
+                            <td>Find approved pairing for a platform user</td>
+                        </tr>
+                        <tr>
+                            <td><code>resolve_pairing_request(id, status, trust_level)</code></td>
+                            <td>Approve or deny a pairing request</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <div class="callout callout-info">
+                    <strong>Pairing Flow:</strong>
+                    <ol>
+                        <li>Unknown user sends message to bot on Telegram/Discord</li>
+                        <li>Bot connector creates pairing request with status='pending'</li>
+                        <li>Admin approves/denies via app Settings or API (<code>POST /api/bots/pairing/{id}/approve</code>)</li>
+                        <li>On approval, user is added to allowlist with specified trust level</li>
+                        <li>Subsequent messages from that user are processed normally</li>
+                    </ol>
+                </div>
+            </section>
+
+            <!-- Session Contexts Table -->
+            <section class="docs-section">
+                <h2>Session Contexts Table</h2>
+                <p>Links sessions to context folders. The system loads all AGENTS.md files from the folder hierarchy to provide context.</p>
+
+                <pre class="code-block">
+CREATE TABLE IF NOT EXISTS session_contexts (
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    folder_path TEXT NOT NULL,         -- Relative path to vault (e.g., "Projects/parachute")
+    added_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (session_id, folder_path)
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_contexts_session ON session_contexts(session_id);
+CREATE INDEX IF NOT EXISTS idx_session_contexts_folder ON session_contexts(folder_path);
+</pre>
+
+                <h3>Context Operations</h3>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Method</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>set_session_contexts(session_id, paths)</code></td>
+                            <td>Replace all contexts for session</td>
+                        </tr>
+                        <tr>
+                            <td><code>add_session_context(session_id, path)</code></td>
+                            <td>Add single context folder</td>
+                        </tr>
+                        <tr>
+                            <td><code>remove_session_context(session_id, path)</code></td>
+                            <td>Remove single context folder</td>
+                        </tr>
+                        <tr>
+                            <td><code>get_session_contexts(session_id)</code></td>
+                            <td>List all contexts for session</td>
+                        </tr>
+                        <tr>
+                            <td><code>get_sessions_by_context(path)</code></td>
+                            <td>Find sessions using a folder</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+
+            <!-- Metadata Table -->
+            <section class="docs-section">
+                <h2>Metadata Table</h2>
+                <p>Key-value store for system settings, version info, and global metadata.</p>
+
+                <pre class="code-block">
+CREATE TABLE IF NOT EXISTS metadata (
+    key TEXT PRIMARY KEY,    -- Config key
+    value TEXT,              -- JSON or string value
+    updated_at TEXT NOT NULL
+);
+</pre>
+
+                <h3>Operations</h3>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Method</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>set_metadata(key, value)</code></td>
+                            <td>Store/update value (upsert)</td>
+                        </tr>
+                        <tr>
+                            <td><code>get_metadata(key)</code></td>
+                            <td>Retrieve value</td>
+                        </tr>
+                        <tr>
+                            <td><code>delete_metadata(key)</code></td>
+                            <td>Remove entry</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+
+            <!-- Pydantic Models -->
+            <section class="docs-section">
+                <h2>Pydantic Models</h2>
+                <p>Data validation models for sessions and permissions.</p>
+
+                <h3>Session Model</h3>
+                <pre class="code-block">
+class Session(BaseModel):
+    id: str                              # SDK session ID (UUID)
+    title: Optional[str]                 # Session title
+    module: str = 'chat'                 # 'chat' | 'daily' | 'build'
+    source: SessionSource                # parachute, claude-code, claude, chatgpt
+    working_directory: Optional[str]     # Absolute or relative path
+    vault_root: Optional[str]            # Original vault path
+    model: Optional[str]                 # Model name
+    message_count: int = 0               # Total messages
+    archived: bool = False               # Soft delete flag
+    created_at: datetime                 # With timezone
+    last_accessed: datetime              # With timezone, auto-updated
+    continued_from: Optional[str]        # Parent session ID
+    agent_type: Optional[str]            # Agent type string
+    metadata: Optional[dict]             # Permissions + custom data
+
+    @property
+    def permissions(self) -> SessionPermissions:
+        """Extract permissions from metadata"""
+        ...
+
+    def with_permissions(self, perms: SessionPermissions) -> Session:
+        """Returns copy with updated permissions"""
+        ...
+</pre>
+
+                <h3>SessionPermissions Model</h3>
+                <pre class="code-block">
+class SessionPermissions(BaseModel):
+    read: List[str] = []                 # Glob patterns for allowed read paths
+    write: List[str] = ["Chat/artifacts/*"]  # Glob patterns for write paths
+    bash: Union[List[str], bool] = False # Commands list, or bool (all/none)
+    trust_mode: bool = True              # Skip prompts when True
+
+    def can_read(self, path: str) -> bool:
+        """Check if path is allowed for reading"""
+        ...
+
+    def can_write(self, path: str) -> bool:
+        """Check if path is allowed for writing"""
+        ...
+
+    def can_bash(self, command: str) -> bool:
+        """Check if command is allowed"""
+        ...
+</pre>
+
+                <h3>Additional Models</h3>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Model</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>SessionCreate</code></td>
+                            <td>Validation model for creating sessions</td>
+                        </tr>
+                        <tr>
+                            <td><code>SessionUpdate</code></td>
+                            <td>Partial update model (all fields optional)</td>
+                        </tr>
+                        <tr>
+                            <td><code>SessionWithMessages</code></td>
+                            <td>Extends Session with messages list from SDK JSONL</td>
+                        </tr>
+                        <tr>
+                            <td><code>ResumeInfo</code></td>
+                            <td>Info about how session was resumed (method, previous count)</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+
+            <!-- Session CRUD Operations -->
+            <section class="docs-section">
+                <h2>Session CRUD Operations</h2>
+
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Method</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>create_session(session)</code></td>
+                            <td>Insert new session, timestamp set to now</td>
+                        </tr>
+                        <tr>
+                            <td><code>get_session(session_id)</code></td>
+                            <td>Retrieve single session by ID</td>
+                        </tr>
+                        <tr>
+                            <td><code>update_session(session_id, update)</code></td>
+                            <td>Partial update + auto-update last_accessed</td>
+                        </tr>
+                        <tr>
+                            <td><code>delete_session(session_id)</code></td>
+                            <td>Hard delete (CASCADE deletes tags, contexts)</td>
+                        </tr>
+                        <tr>
+                            <td><code>list_sessions(module, archived, agent_type, limit, offset)</code></td>
+                            <td>Query with filtering, sorted by last_accessed DESC</td>
+                        </tr>
+                        <tr>
+                            <td><code>archive_session(session_id)</code></td>
+                            <td>Set archived=1 (soft delete)</td>
+                        </tr>
+                        <tr>
+                            <td><code>unarchive_session(session_id)</code></td>
+                            <td>Set archived=0</td>
+                        </tr>
+                        <tr>
+                            <td><code>touch_session(session_id)</code></td>
+                            <td>Update last_accessed to now</td>
+                        </tr>
+                        <tr>
+                            <td><code>increment_message_count(session_id, increment)</code></td>
+                            <td>Atomic +1 message counter</td>
+                        </tr>
+                        <tr>
+                            <td><code>get_session_count(module, archived)</code></td>
+                            <td>Count sessions matching filters</td>
+                        </tr>
+                        <tr>
+                            <td><code>cleanup_old_sessions(days)</code></td>
+                            <td>Delete archived sessions older than N days</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+
+            <!-- Schema Migrations -->
+            <section class="docs-section">
+                <h2>Schema Migrations</h2>
+                <p>Automatic migrations run on <code>Database.connect()</code> in <code>_run_migrations()</code>.</p>
+
+                <h3>Schema Version Table</h3>
+                <pre class="code-block">
+CREATE TABLE IF NOT EXISTS schema_version (
+    version INTEGER PRIMARY KEY,
+    applied_at TEXT NOT NULL
+);
+
+-- Initialized to version 10
+INSERT OR IGNORE INTO schema_version (version, applied_at)
+VALUES (10, datetime('now'));
+</pre>
+
+                <h3>Migration History</h3>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Version</th>
+                            <th>Migration</th>
+                            <th>Reason</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>v9</td>
+                            <td><code>ALTER TABLE sessions ADD COLUMN vault_root TEXT</code></td>
+                            <td>Cross-machine portability - remember original vault path</td>
+                        </tr>
+                        <tr>
+                            <td>v10</td>
+                            <td><code>ALTER TABLE sessions ADD COLUMN agent_type TEXT</code></td>
+                            <td>Filter sessions by agent type</td>
+                        </tr>
+                        <tr>
+                            <td>v11</td>
+                            <td>Removed <code>curator_sessions</code> and <code>curator_queue</code> tables</td>
+                            <td>Curator system replaced by modular architecture</td>
+                        </tr>
+                        <tr>
+                            <td>v12</td>
+                            <td><code>CREATE TABLE pairing_requests</code></td>
+                            <td>Bot connector user approval flow (Telegram/Discord)</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+
+            <!-- Connection Management -->
+            <section class="docs-section">
+                <h2>Connection Management</h2>
+
+                <pre class="code-block">
+class Database:
+    def __init__(self, db_path: Path):
+        self.db_path = db_path
+        self._connection: Optional[aiosqlite.Connection] = None
+
+    async def connect(self) -> None:
+        # Creates parent directories if needed
+        # Opens SQLite connection with aiosqlite
+        # Initializes schema
+        # Runs migrations
+        # Sets row_factory to aiosqlite.Row (dict-like access)
+
+    async def close(self) -> None:
+        # Gracefully close connection
+
+    @property
+    def connection(self) -> aiosqlite.Connection:
+        # Getter that raises if not connected
+</pre>
+
+                <h3>Global Instance</h3>
+                <pre class="code-block">
+_database: Optional[Database] = None
+
+async def init_database(db_path: Path) -> Database:
+    """Initialize global instance"""
+
+async def get_database() -> Database:
+    """Get global instance"""
+
+async def close_database() -> None:
+    """Close global instance"""
+</pre>
+
+                <div class="callout callout-info">
+                    <strong>Default Location:</strong> <code>Chat/sessions.db</code> in the vault directory
+                </div>
+            </section>
+
+            <!-- SSE Event Models -->
+            <section class="docs-section">
+                <h2>SSE Event Models</h2>
+                <p>Streaming events sent from server to client (server-sent events).</p>
+
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Event Type</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>SessionEvent</code></td>
+                            <td>Session info at stream start</td>
+                        </tr>
+                        <tr>
+                            <td><code>ModelEvent</code></td>
+                            <td>Notifies which model is being used</td>
+                        </tr>
+                        <tr>
+                            <td><code>InitEvent</code></td>
+                            <td>SDK ready, lists available tools</td>
+                        </tr>
+                        <tr>
+                            <td><code>TextEvent</code></td>
+                            <td>Streaming text response</td>
+                        </tr>
+                        <tr>
+                            <td><code>ThinkingEvent</code></td>
+                            <td>Extended thinking output</td>
+                        </tr>
+                        <tr>
+                            <td><code>ToolUseEvent</code></td>
+                            <td>Agent using a tool</td>
+                        </tr>
+                        <tr>
+                            <td><code>ToolResultEvent</code></td>
+                            <td>Result from tool execution</td>
+                        </tr>
+                        <tr>
+                            <td><code>DoneEvent</code></td>
+                            <td>Stream complete (includes final response, stats)</td>
+                        </tr>
+                        <tr>
+                            <td><code>AbortedEvent</code></td>
+                            <td>User cancelled stream</td>
+                        </tr>
+                        <tr>
+                            <td><code>ErrorEvent</code></td>
+                            <td>Error occurred</td>
+                        </tr>
+                        <tr>
+                            <td><code>PermissionRequestEvent</code></td>
+                            <td>Asking user for permission</td>
+                        </tr>
+                        <tr>
+                            <td><code>UserQuestionEvent</code></td>
+                            <td>Claude asking user a question</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+
+            <!-- Query Examples -->
+            <section class="docs-section">
+                <h2>Query Examples</h2>
+
+                <h3>List Recent Chat Sessions</h3>
+                <pre class="code-block">
+sessions = await db.list_sessions(
+    module='chat',
+    archived=False,
+    limit=20,
+    offset=0
+)
+</pre>
+
+                <h3>Find Sessions by Tag</h3>
+                <pre class="code-block">
+tagged = await db.get_sessions_by_tag('daily-standup', limit=10)
+</pre>
+
+                <h3>Update Session After Message</h3>
+                <pre class="code-block">
+await db.increment_message_count(session_id)
+await db.touch_session(session_id)
+</pre>
+
+                <h3>Archive Old Sessions</h3>
+                <pre class="code-block">
+deleted = await db.cleanup_old_sessions(days=30)
+</pre>
+
+                <h3>Check Session Permissions</h3>
+                <pre class="code-block">
+session = await db.get_session(session_id)
+perms = session.permissions
+if perms.can_read('Projects/parachute'):
+    # Allow operation
+</pre>
+            </section>
+
+            <!-- Key Design Decisions -->
+            <section class="docs-section">
+                <h2>Key Design Decisions</h2>
+
+                <ul>
+                    <li><strong>Metadata as JSON:</strong> Permissions, agent config, custom data stored as JSON in <code>metadata</code> column</li>
+                    <li><strong>Async-first:</strong> All operations are async using <code>aiosqlite</code> for non-blocking I/O</li>
+                    <li><strong>Row factory:</strong> <code>aiosqlite.Row</code> allows dict-like access (<code>row["column_name"]</code>)</li>
+                    <li><strong>Timestamps:</strong> ISO 8601 format (timezone-aware UTC strings)</li>
+                    <li><strong>Boolean storage:</strong> Integers (0/1) for SQLite compatibility</li>
+                    <li><strong>Soft deletes:</strong> Archive flag instead of hard delete for audit trail</li>
+                    <li><strong>Cascading deletes:</strong> Foreign key constraints clean up related records</li>
+                    <li><strong>Pointer architecture:</strong> Session DB contains metadata only; SDK stores actual messages in JSONL files</li>
+                    <li><strong>Bot pairing isolation:</strong> Dedicated table for pairing requests separate from session metadata</li>
+                </ul>
+            </section>
+
+            <!-- Navigation -->
+            <div class="nav-cards">
+                <a href="computer-agents.html" class="nav-card">
+                    <h3>Modules &amp; Agents</h3>
+                    <p>Module system, custom agents, and daily pipelines.</p>
+                </a>
+                <a href="computer-api.html" class="nav-card">
+                    <h3>API Routes</h3>
+                    <p>REST and streaming endpoints.</p>
+                </a>
+            </div>
+        </main>
+    </div>
+    <footer>
+        <p>&copy; 2026 Open Parachute, PBC. A Colorado Public Benefit Corporation.</p>
+        <p><a href="/blog/">Blog</a> &middot; <a href="/architecture/">Docs</a> &middot; <a href="/roadmap/">Roadmap</a> &middot; <a href="https://github.com/OpenParachutePBC/parachute-computer" target="_blank">GitHub</a></p>
+    </footer>
+</body>
+</html>

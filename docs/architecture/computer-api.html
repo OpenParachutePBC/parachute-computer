@@ -1,0 +1,755 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>API Routes | Parachute Documentation</title>
+    <meta name="description" content="Complete API reference for the Parachute Computer server">
+    <link rel="stylesheet" href="/style.css">
+    <link rel="stylesheet" href="docs.css">
+</head>
+<body>
+    <header>
+        <nav>
+            <a href="/" class="logo">Parachute Computer</a>
+            <div class="nav-links">
+                <a href="/blog/">Blog</a>
+                <a href="/architecture/" class="active">Docs</a>
+                <a href="/roadmap/">Roadmap</a>
+                <a href="https://github.com/OpenParachutePBC/parachute-computer" target="_blank">GitHub</a>
+            </div>
+        </nav>
+    </header>
+
+    <div class="docs-layout">
+        <!-- Sidebar Navigation -->
+        <aside class="docs-sidebar">
+            <div class="sidebar-section">
+                <h3>Overview</h3>
+                <a href="index.html">Architecture</a>
+                <a href="data-flow.html">Data Flow</a>
+                <a href="integration.html">Integration</a>
+            </div>
+            <div class="sidebar-section">
+                <h3>App (Flutter)</h3>
+                <a href="app-overview.html">Overview</a>
+                <a href="app-chat.html">Chat Feature</a>
+                <a href="app-daily.html">Daily Feature</a>
+                <a href="app-vault.html">Vault Feature</a>
+                <a href="app-services.html">Services</a>
+            </div>
+            <div class="sidebar-section">
+                <h3>Computer (Python)</h3>
+                <a href="computer-overview.html">Overview</a>
+                <a href="computer-api.html" class="active">API Routes</a>
+                <a href="computer-orchestrator.html">Orchestrator</a>
+                <a href="computer-agents.html">Modules & Agents</a>
+                <a href="computer-database.html">Database</a>
+                <a href="computer-connectors.html">Bot Connectors</a>
+            </div>
+            <div class="sidebar-section">
+                <h3>Reference</h3>
+                <a href="issues.html">Issues & TODOs</a>
+                <a href="file-manifest.html">File Manifest</a>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="docs-content">
+            <div class="breadcrumb">
+                <a href="../index.html">Home</a> / <a href="../blog/">Blog</a>
+                <a href="index.html">Docs</a> / <span>API Routes</span>
+            </div>
+
+            <h1>API Routes</h1>
+            <p class="lead">Complete reference for the ~90 endpoints exposed by Parachute Computer across 19 route files. All routes are under <code>/api/</code>. Module routes (brain, daily) are registered dynamically at <code>/api/{module}/</code>.</p>
+
+            <!-- Route Summary Table -->
+            <section class="docs-section">
+                <h2>Route Groups</h2>
+
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Group</th>
+                            <th>File</th>
+                            <th>Prefix</th>
+                            <th>Endpoints</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr><td>Chat (streaming)</td><td><code>chat.py</code></td><td><code>/api/chat</code></td><td>5</td></tr>
+                        <tr><td>Sessions</td><td><code>sessions.py</code></td><td><code>/api/chat</code></td><td>11</td></tr>
+                        <tr><td>Workspaces</td><td><code>workspaces.py</code></td><td><code>/api/workspaces</code></td><td>7</td></tr>
+                        <tr><td>Auth</td><td><code>auth.py</code></td><td><code>/api/auth</code></td><td>5</td></tr>
+                        <tr><td>Bots</td><td><code>bots.py</code></td><td><code>/api/bots</code></td><td>8</td></tr>
+                        <tr><td>Modules</td><td><code>modules.py</code></td><td><code>/api/modules</code></td><td>5</td></tr>
+                        <tr><td>MCP Servers</td><td><code>mcp.py</code></td><td><code>/api/mcps</code></td><td>6</td></tr>
+                        <tr><td>Skills</td><td><code>skills.py</code></td><td><code>/api/skills</code></td><td>5</td></tr>
+                        <tr><td>Context Folders</td><td><code>context_folders.py</code></td><td><code>/api/contexts</code></td><td>6</td></tr>
+                        <tr><td>Claude Code</td><td><code>claude_code.py</code></td><td><code>/api/claude-code</code></td><td>5</td></tr>
+                        <tr><td>Scheduler</td><td><code>scheduler.py</code></td><td><code>/api/scheduler</code></td><td>3</td></tr>
+                        <tr><td>Sync</td><td><code>sync.py</code></td><td><code>/api/sync</code></td><td>5</td></tr>
+                        <tr><td>Imports</td><td><code>imports.py</code></td><td><code>/api/import</code></td><td>5</td></tr>
+                        <tr><td>Filesystem</td><td><code>filesystem.py</code></td><td><code>/api/fs</code></td><td>3</td></tr>
+                        <tr><td>Prompts</td><td><code>prompts.py</code></td><td><code>/api/prompts</code></td><td>1</td></tr>
+                        <tr><td>Usage</td><td><code>usage.py</code></td><td><code>/api/usage</code></td><td>1</td></tr>
+                        <tr><td>Hooks</td><td><code>hooks.py</code></td><td><code>/api/hooks</code></td><td>3</td></tr>
+                        <tr><td>Sandbox</td><td><code>sandbox.py</code></td><td><code>/api/sandbox</code></td><td>2</td></tr>
+                        <tr><td>Health</td><td><code>health.py</code></td><td><code>/api/health</code></td><td>1</td></tr>
+                    </tbody>
+                </table>
+            </section>
+
+            <!-- Chat Endpoints -->
+            <section class="docs-section">
+                <h2>Chat (Streaming)</h2>
+                <p>Core chat functionality with streaming SSE responses. Defined in <code>chat.py</code>.</p>
+
+                <div class="endpoint-list">
+                    <div class="endpoint">
+                        <span class="endpoint-method post">POST</span>
+                        <span class="endpoint-path">/api/chat</span>
+                        <span class="endpoint-desc">Run agent with streaming response</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method post">POST</span>
+                        <span class="endpoint-path">/api/chat/{session_id}/abort</span>
+                        <span class="endpoint-desc">Abort active stream</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method get">GET</span>
+                        <span class="endpoint-path">/api/chat/{session_id}/stream-status</span>
+                        <span class="endpoint-desc">Check if stream is active</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method get">GET</span>
+                        <span class="endpoint-path">/api/chat/active-streams</span>
+                        <span class="endpoint-desc">List all active streams</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method post">POST</span>
+                        <span class="endpoint-path">/api/chat/{session_id}/answer</span>
+                        <span class="endpoint-desc">Answer a permission prompt</span>
+                    </div>
+                </div>
+
+                <h3>POST /api/chat</h3>
+                <p>The main chat endpoint. Sends a message and returns a streaming SSE response.</p>
+
+                <div class="code-block">
+                    <div class="code-header">Request Body</div>
+                    <pre><code>{
+  "message": "Help me understand this code",
+  "session_id": null,                    // null = new session, string = resume
+  "trust_level": "vault",               // "full" | "vault" | "sandboxed"
+  "workspace_id": "my-project",         // optional workspace scope
+  "attachments": [                       // optional
+    {"name": "screenshot.png", "mimeType": "image/png", "base64Data": "..."}
+  ],
+  "context_files": ["/src/main.py"],     // optional file context
+  "context_folders": ["/src"],           // optional folder context
+  "working_directory": "/path/to/project" // optional CWD for agent
+}</code></pre>
+                </div>
+
+                <div class="code-block">
+                    <div class="code-header">Response (SSE Stream)</div>
+                    <pre><code>data: {"type": "session", "id": "abc123", "title": "New Chat"}
+data: {"type": "text", "content": "I'll help you...", "delta": "I'll"}
+data: {"type": "tool_use_start", "id": "t1", "name": "Read", "input": {...}}
+data: {"type": "tool_result", "tool_use_id": "t1", "result": "..."}
+data: {"type": "result", "session_id": "abc123", "sdk_session_id": "sdk_xyz"}</code></pre>
+                </div>
+            </section>
+
+            <!-- Session Endpoints -->
+            <section class="docs-section">
+                <h2>Sessions</h2>
+                <p>Session CRUD, configuration, and permission management. Defined in <code>sessions.py</code>.</p>
+
+                <div class="endpoint-list">
+                    <div class="endpoint">
+                        <span class="endpoint-method get">GET</span>
+                        <span class="endpoint-path">/api/chat</span>
+                        <span class="endpoint-desc">List sessions (with filters)</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method get">GET</span>
+                        <span class="endpoint-path">/api/chat/stats</span>
+                        <span class="endpoint-desc">Session statistics</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method get">GET</span>
+                        <span class="endpoint-path">/api/chat/{session_id}</span>
+                        <span class="endpoint-desc">Get session details</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method delete">DELETE</span>
+                        <span class="endpoint-path">/api/chat/{session_id}</span>
+                        <span class="endpoint-desc">Delete session</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method post">POST</span>
+                        <span class="endpoint-path">/api/chat/{session_id}/archive</span>
+                        <span class="endpoint-desc">Archive session</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method post">POST</span>
+                        <span class="endpoint-path">/api/chat/{session_id}/unarchive</span>
+                        <span class="endpoint-desc">Unarchive session</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method post">POST</span>
+                        <span class="endpoint-path">/api/chat/{session_id}/activate</span>
+                        <span class="endpoint-desc">Activate pending bot session</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method put">PUT</span>
+                        <span class="endpoint-path">/api/chat/{session_id}/config</span>
+                        <span class="endpoint-desc">Update session configuration</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method get">GET</span>
+                        <span class="endpoint-path">/api/chat/{session_id}/transcript</span>
+                        <span class="endpoint-desc">Get full transcript</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method get">GET</span>
+                        <span class="endpoint-path">/api/chat/{session_id}/permissions</span>
+                        <span class="endpoint-desc">Get permission grants/denies</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method post">POST</span>
+                        <span class="endpoint-path">/api/chat/{session_id}/permissions/grant</span>
+                        <span class="endpoint-desc">Grant a tool permission</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Workspace Endpoints -->
+            <section class="docs-section">
+                <h2>Workspaces</h2>
+                <p>Workspace management for organizing sessions. Defined in <code>workspaces.py</code>.</p>
+
+                <div class="endpoint-list">
+                    <div class="endpoint">
+                        <span class="endpoint-method get">GET</span>
+                        <span class="endpoint-path">/api/workspaces</span>
+                        <span class="endpoint-desc">List all workspaces</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method post">POST</span>
+                        <span class="endpoint-path">/api/workspaces</span>
+                        <span class="endpoint-desc">Create workspace</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method get">GET</span>
+                        <span class="endpoint-path">/api/workspaces/{slug}</span>
+                        <span class="endpoint-desc">Get workspace details</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method put">PUT</span>
+                        <span class="endpoint-path">/api/workspaces/{slug}</span>
+                        <span class="endpoint-desc">Update workspace</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method delete">DELETE</span>
+                        <span class="endpoint-path">/api/workspaces/{slug}</span>
+                        <span class="endpoint-desc">Delete workspace</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method get">GET</span>
+                        <span class="endpoint-path">/api/workspaces/{slug}/sessions</span>
+                        <span class="endpoint-desc">List sessions in workspace</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Auth Endpoints -->
+            <section class="docs-section">
+                <h2>Authentication</h2>
+                <p>API key management and auth settings. Defined in <code>auth.py</code>.</p>
+
+                <div class="endpoint-list">
+                    <div class="endpoint">
+                        <span class="endpoint-method get">GET</span>
+                        <span class="endpoint-path">/api/auth/keys</span>
+                        <span class="endpoint-desc">List API keys (hashed)</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method post">POST</span>
+                        <span class="endpoint-path">/api/auth/keys</span>
+                        <span class="endpoint-desc">Create new API key</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method delete">DELETE</span>
+                        <span class="endpoint-path">/api/auth/keys/{key_id}</span>
+                        <span class="endpoint-desc">Revoke API key</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method get">GET</span>
+                        <span class="endpoint-path">/api/auth/settings</span>
+                        <span class="endpoint-desc">Get auth settings</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method put">PUT</span>
+                        <span class="endpoint-path">/api/auth/settings</span>
+                        <span class="endpoint-desc">Update auth mode</span>
+                    </div>
+                </div>
+
+                <div class="code-block">
+                    <div class="code-header">Header Options</div>
+                    <pre><code># Option 1: X-API-Key header
+X-API-Key: para_aBcDeFgHiJkLmNoPqRsT1234
+
+# Option 2: Authorization header
+Authorization: Bearer para_aBcDeFgHiJkLmNoPqRsT1234</code></pre>
+                </div>
+            </section>
+
+            <!-- Bot Endpoints -->
+            <section class="docs-section">
+                <h2>Bots</h2>
+                <p>Bot connector management and user pairing. Defined in <code>bots.py</code>.</p>
+
+                <div class="endpoint-list">
+                    <div class="endpoint">
+                        <span class="endpoint-method get">GET</span>
+                        <span class="endpoint-path">/api/bots/status</span>
+                        <span class="endpoint-desc">Get connector status</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method get">GET</span>
+                        <span class="endpoint-path">/api/bots/config</span>
+                        <span class="endpoint-desc">Get bot configuration</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method put">PUT</span>
+                        <span class="endpoint-path">/api/bots/config</span>
+                        <span class="endpoint-desc">Update bot configuration</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method post">POST</span>
+                        <span class="endpoint-path">/api/bots/{platform}/start</span>
+                        <span class="endpoint-desc">Start a connector</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method post">POST</span>
+                        <span class="endpoint-path">/api/bots/{platform}/stop</span>
+                        <span class="endpoint-desc">Stop a connector</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method post">POST</span>
+                        <span class="endpoint-path">/api/bots/{platform}/test</span>
+                        <span class="endpoint-desc">Test connector connectivity</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method get">GET</span>
+                        <span class="endpoint-path">/api/bots/pairing</span>
+                        <span class="endpoint-desc">List pairing requests</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method post">POST</span>
+                        <span class="endpoint-path">/api/bots/pairing/{id}/approve</span>
+                        <span class="endpoint-desc">Approve pairing request</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Module Endpoints -->
+            <section class="docs-section">
+                <h2>Modules</h2>
+                <p>Module management, prompts, and approval. Defined in <code>modules.py</code>.</p>
+
+                <div class="endpoint-list">
+                    <div class="endpoint">
+                        <span class="endpoint-method get">GET</span>
+                        <span class="endpoint-path">/api/modules</span>
+                        <span class="endpoint-desc">List loaded modules</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method post">POST</span>
+                        <span class="endpoint-path">/api/modules/{name}/approve</span>
+                        <span class="endpoint-desc">Approve module (record hash)</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method get">GET</span>
+                        <span class="endpoint-path">/api/modules/{mod}/prompt</span>
+                        <span class="endpoint-desc">Get module system prompt</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method put">PUT</span>
+                        <span class="endpoint-path">/api/modules/{mod}/prompt</span>
+                        <span class="endpoint-desc">Update module system prompt</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method get">GET</span>
+                        <span class="endpoint-path">/api/modules/{mod}/stats</span>
+                        <span class="endpoint-desc">Module statistics</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- MCP Endpoints -->
+            <section class="docs-section">
+                <h2>MCP Servers</h2>
+                <p>Model Context Protocol server management. Defined in <code>mcp.py</code>.</p>
+
+                <div class="endpoint-list">
+                    <div class="endpoint">
+                        <span class="endpoint-method get">GET</span>
+                        <span class="endpoint-path">/api/mcps</span>
+                        <span class="endpoint-desc">List MCP servers</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method get">GET</span>
+                        <span class="endpoint-path">/api/mcps/{name}</span>
+                        <span class="endpoint-desc">Get MCP server details</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method post">POST</span>
+                        <span class="endpoint-path">/api/mcps</span>
+                        <span class="endpoint-desc">Add MCP server</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method delete">DELETE</span>
+                        <span class="endpoint-path">/api/mcps/{name}</span>
+                        <span class="endpoint-desc">Remove MCP server</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method post">POST</span>
+                        <span class="endpoint-path">/api/mcps/{name}/test</span>
+                        <span class="endpoint-desc">Test MCP server connection</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method get">GET</span>
+                        <span class="endpoint-path">/api/mcps/{name}/tools</span>
+                        <span class="endpoint-desc">List tools from MCP server</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Skills Endpoints -->
+            <section class="docs-section">
+                <h2>Skills</h2>
+                <p>Skill plugin management. Defined in <code>skills.py</code>.</p>
+
+                <div class="endpoint-list">
+                    <div class="endpoint">
+                        <span class="endpoint-method get">GET</span>
+                        <span class="endpoint-path">/api/skills</span>
+                        <span class="endpoint-desc">List available skills</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method get">GET</span>
+                        <span class="endpoint-path">/api/skills/{name}</span>
+                        <span class="endpoint-desc">Get skill details</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method post">POST</span>
+                        <span class="endpoint-path">/api/skills</span>
+                        <span class="endpoint-desc">Create skill</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method delete">DELETE</span>
+                        <span class="endpoint-path">/api/skills/{name}</span>
+                        <span class="endpoint-desc">Delete skill</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method post">POST</span>
+                        <span class="endpoint-path">/api/skills/upload</span>
+                        <span class="endpoint-desc">Upload skill file</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Context Folders -->
+            <section class="docs-section">
+                <h2>Context Folders</h2>
+                <p>Manage context folders and per-session context injection. Defined in <code>context_folders.py</code>.</p>
+
+                <div class="endpoint-list">
+                    <div class="endpoint">
+                        <span class="endpoint-method get">GET</span>
+                        <span class="endpoint-path">/api/contexts/folders</span>
+                        <span class="endpoint-desc">List available context folders</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method get">GET</span>
+                        <span class="endpoint-path">/api/contexts/chain</span>
+                        <span class="endpoint-desc">Get context resolution chain</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method get">GET</span>
+                        <span class="endpoint-path">/api/contexts/session/{session_id}</span>
+                        <span class="endpoint-desc">Get session contexts</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method put">PUT</span>
+                        <span class="endpoint-path">/api/contexts/session/{session_id}</span>
+                        <span class="endpoint-desc">Update session contexts</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method post">POST</span>
+                        <span class="endpoint-path">/api/contexts/session/{session_id}/add</span>
+                        <span class="endpoint-desc">Add context to session</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method delete">DELETE</span>
+                        <span class="endpoint-path">/api/contexts/session/{session_id}/remove</span>
+                        <span class="endpoint-desc">Remove context from session</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Claude Code -->
+            <section class="docs-section">
+                <h2>Claude Code</h2>
+                <p>Integration with local Claude Code sessions. Defined in <code>claude_code.py</code>.</p>
+
+                <div class="endpoint-list">
+                    <div class="endpoint">
+                        <span class="endpoint-method get">GET</span>
+                        <span class="endpoint-path">/api/claude-code/recent</span>
+                        <span class="endpoint-desc">Recent Claude Code sessions</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method get">GET</span>
+                        <span class="endpoint-path">/api/claude-code/projects</span>
+                        <span class="endpoint-desc">List Claude Code projects</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method get">GET</span>
+                        <span class="endpoint-path">/api/claude-code/sessions</span>
+                        <span class="endpoint-desc">List sessions for project</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method get">GET</span>
+                        <span class="endpoint-path">/api/claude-code/sessions/{session_id}</span>
+                        <span class="endpoint-desc">Get session transcript</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method post">POST</span>
+                        <span class="endpoint-path">/api/claude-code/adopt/{session_id}</span>
+                        <span class="endpoint-desc">Adopt Claude Code session</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Scheduler, Sync, Imports, FS, Health -->
+            <section class="docs-section">
+                <h2>Scheduler</h2>
+                <p>Manage scheduled daily agents. Defined in <code>scheduler.py</code>.</p>
+
+                <div class="endpoint-list">
+                    <div class="endpoint">
+                        <span class="endpoint-method get">GET</span>
+                        <span class="endpoint-path">/api/scheduler</span>
+                        <span class="endpoint-desc">List scheduled agents</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method post">POST</span>
+                        <span class="endpoint-path">/api/scheduler/reload</span>
+                        <span class="endpoint-desc">Reload agent schedules</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method post">POST</span>
+                        <span class="endpoint-path">/api/scheduler/agents/{name}/trigger</span>
+                        <span class="endpoint-desc">Trigger agent manually</span>
+                    </div>
+                </div>
+            </section>
+
+            <section class="docs-section">
+                <h2>Sync</h2>
+                <p>Cross-device journal sync. Defined in <code>sync.py</code>.</p>
+
+                <div class="endpoint-list">
+                    <div class="endpoint">
+                        <span class="endpoint-method get">GET</span>
+                        <span class="endpoint-path">/api/sync/manifest</span>
+                        <span class="endpoint-desc">Get file manifest (hashes)</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method get">GET</span>
+                        <span class="endpoint-path">/api/sync/changes</span>
+                        <span class="endpoint-desc">Get changed files since timestamp</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method post">POST</span>
+                        <span class="endpoint-path">/api/sync/push</span>
+                        <span class="endpoint-desc">Push local changes to server</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method post">POST</span>
+                        <span class="endpoint-path">/api/sync/pull</span>
+                        <span class="endpoint-desc">Pull server changes to local</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method delete">DELETE</span>
+                        <span class="endpoint-path">/api/sync/files</span>
+                        <span class="endpoint-desc">Delete synced files</span>
+                    </div>
+                </div>
+            </section>
+
+            <section class="docs-section">
+                <h2>Imports</h2>
+                <p>Import conversations from Claude, ChatGPT, or file. Defined in <code>imports.py</code>.</p>
+
+                <div class="endpoint-list">
+                    <div class="endpoint">
+                        <span class="endpoint-method post">POST</span>
+                        <span class="endpoint-path">/api/import</span>
+                        <span class="endpoint-desc">Import JSON export</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method post">POST</span>
+                        <span class="endpoint-path">/api/import/file</span>
+                        <span class="endpoint-desc">Import from uploaded file</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method post">POST</span>
+                        <span class="endpoint-path">/api/import/path</span>
+                        <span class="endpoint-desc">Import from vault path</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method post">POST</span>
+                        <span class="endpoint-path">/api/import/sync</span>
+                        <span class="endpoint-desc">Sync imported sessions</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method get">GET</span>
+                        <span class="endpoint-path">/api/import/contexts</span>
+                        <span class="endpoint-desc">Get import contexts</span>
+                    </div>
+                </div>
+            </section>
+
+            <section class="docs-section">
+                <h2>Filesystem</h2>
+                <p>File operations scoped to the vault. Defined in <code>filesystem.py</code>.</p>
+
+                <div class="endpoint-list">
+                    <div class="endpoint">
+                        <span class="endpoint-method get">GET</span>
+                        <span class="endpoint-path">/api/fs/ls</span>
+                        <span class="endpoint-desc">List directory contents</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method get">GET</span>
+                        <span class="endpoint-path">/api/fs/read</span>
+                        <span class="endpoint-desc">Read file contents</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method put">PUT</span>
+                        <span class="endpoint-path">/api/fs/write</span>
+                        <span class="endpoint-desc">Write file</span>
+                    </div>
+                </div>
+            </section>
+
+            <section class="docs-section">
+                <h2>Other Endpoints</h2>
+
+                <h3>Health</h3>
+                <div class="endpoint-list">
+                    <div class="endpoint">
+                        <span class="endpoint-method get">GET</span>
+                        <span class="endpoint-path">/api/health</span>
+                        <span class="endpoint-desc">Server health + version info</span>
+                    </div>
+                </div>
+
+                <h3>Usage</h3>
+                <div class="endpoint-list">
+                    <div class="endpoint">
+                        <span class="endpoint-method get">GET</span>
+                        <span class="endpoint-path">/api/usage</span>
+                        <span class="endpoint-desc">Claude token usage stats</span>
+                    </div>
+                </div>
+
+                <h3>Prompts</h3>
+                <div class="endpoint-list">
+                    <div class="endpoint">
+                        <span class="endpoint-method get">GET</span>
+                        <span class="endpoint-path">/api/prompts/preview</span>
+                        <span class="endpoint-desc">Preview rendered system prompt</span>
+                    </div>
+                </div>
+
+                <h3>Hooks</h3>
+                <div class="endpoint-list">
+                    <div class="endpoint">
+                        <span class="endpoint-method get">GET</span>
+                        <span class="endpoint-path">/api/hooks</span>
+                        <span class="endpoint-desc">List registered hooks</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method get">GET</span>
+                        <span class="endpoint-path">/api/hooks/errors</span>
+                        <span class="endpoint-desc">Get hook execution errors</span>
+                    </div>
+                </div>
+
+                <h3>Sandbox</h3>
+                <div class="endpoint-list">
+                    <div class="endpoint">
+                        <span class="endpoint-method get">GET</span>
+                        <span class="endpoint-path">/api/sandbox/status</span>
+                        <span class="endpoint-desc">Docker sandbox status</span>
+                    </div>
+                    <div class="endpoint">
+                        <span class="endpoint-method get">GET</span>
+                        <span class="endpoint-path">/api/sandbox/config</span>
+                        <span class="endpoint-desc">Sandbox configuration</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Error Responses -->
+            <section class="docs-section">
+                <h2>Error Responses</h2>
+
+                <div class="code-block">
+                    <div class="code-header">401 Unauthorized</div>
+                    <pre><code>{"error": "Unauthorized", "message": "Valid API key required"}</code></pre>
+                </div>
+
+                <div class="code-block">
+                    <div class="code-header">404 Not Found</div>
+                    <pre><code>{"error": "Not Found", "message": "Session not found: abc123"}</code></pre>
+                </div>
+
+                <div class="code-block">
+                    <div class="code-header">422 Validation Error (Pydantic)</div>
+                    <pre><code>{"detail": [{"loc": ["body", "message"], "msg": "field required", "type": "value_error.missing"}]}</code></pre>
+                </div>
+            </section>
+
+            <!-- Navigation -->
+            <section class="docs-section">
+                <h2>Next Steps</h2>
+                <div class="nav-cards">
+                    <a href="computer-orchestrator.html" class="nav-card">
+                        <h3>🎭 Orchestrator</h3>
+                        <p>How the orchestrator processes requests, enforces trust, and manages sessions.</p>
+                    </a>
+                    <a href="data-flow.html" class="nav-card">
+                        <h3>🔄 Data Flow</h3>
+                        <p>Follow a request from app to AI and back.</p>
+                    </a>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <footer>
+        <p>&copy; 2026 Open Parachute, PBC. A Colorado Public Benefit Corporation.</p>
+        <p><a href="/blog/">Blog</a> &middot; <a href="/architecture/">Docs</a> &middot; <a href="/roadmap/">Roadmap</a> &middot; <a href="https://github.com/OpenParachutePBC/parachute-computer" target="_blank">GitHub</a></p>
+    </footer>
+</body>
+</html>

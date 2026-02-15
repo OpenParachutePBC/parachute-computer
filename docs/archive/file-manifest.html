@@ -1,0 +1,1089 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>File Manifest | Parachute Documentation</title>
+    <link rel="stylesheet" href="../style.css">
+    <link rel="stylesheet" href="docs.css">
+</head>
+<body>
+    <header>
+        <nav>
+            <a href="../index.html" class="logo">Open Parachute</a>
+            <div class="nav-links">
+                <a href="index.html" class="active">Docs</a>
+                <a href="../roadmap.html">Roadmap</a>
+                <a href="https://github.com/OpenParachutePBC" target="_blank">GitHub</a>
+            </div>
+        </nav>
+    </header>
+    <div class="docs-layout">
+        <aside class="docs-sidebar">
+            <div class="sidebar-section">
+                <h3>Overview</h3>
+                <a href="index.html">Architecture</a>
+                <a href="data-flow.html">Data Flow</a>
+                <a href="integration.html">Integration</a>
+            </div>
+            <div class="sidebar-section">
+                <h3>App (Flutter)</h3>
+                <a href="app-overview.html">Overview</a>
+                <a href="app-chat.html">Chat Feature</a>
+                <a href="app-daily.html">Daily Feature</a>
+                <a href="app-vault.html">Vault Feature</a>
+                <a href="app-services.html">Services</a>
+            </div>
+            <div class="sidebar-section">
+                <h3>Computer (Python)</h3>
+                <a href="computer-overview.html">Overview</a>
+                <a href="computer-api.html">API Routes</a>
+                <a href="computer-orchestrator.html">Orchestrator</a>
+                <a href="computer-agents.html">Modules &amp; Agents</a>
+                <a href="computer-database.html">Database</a>
+                <a href="computer-connectors.html">Bot Connectors</a>
+            </div>
+            <div class="sidebar-section">
+                <h3>Reference</h3>
+                <a href="issues.html">Issues &amp; TODOs</a>
+                <a href="file-manifest.html" class="active">File Manifest</a>
+            </div>
+        </aside>
+        <main class="docs-content">
+            <div class="breadcrumb">
+                <a href="../index.html">Home</a> / <a href="index.html">Docs</a> / <span>File Manifest</span>
+            </div>
+            <h1>File Manifest</h1>
+            <p class="lead">Complete listing of all source files in the Parachute codebase, organized by component and feature.</p>
+
+            <!-- Summary Statistics -->
+            <section class="docs-section">
+                <h2>Summary Statistics</h2>
+                <div class="stats-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin: 1.5rem 0;">
+                    <div class="stat-card" style="background: var(--color-surface); padding: 1.5rem; border-radius: 8px; border: 1px solid var(--color-border);">
+                        <div style="font-size: 2rem; font-weight: bold; color: var(--color-primary);">247</div>
+                        <div style="color: var(--color-text-muted);">Flutter App Files</div>
+                        <div style="font-size: 0.85rem; margin-top: 0.5rem;">78,240 lines of Dart</div>
+                    </div>
+                    <div class="stat-card" style="background: var(--color-surface); padding: 1.5rem; border-radius: 8px; border: 1px solid var(--color-border);">
+                        <div style="font-size: 2rem; font-weight: bold; color: var(--color-primary);">81</div>
+                        <div style="color: var(--color-text-muted);">Python Computer Files</div>
+                        <div style="font-size: 0.85rem; margin-top: 0.5rem;">23,273 lines of Python</div>
+                    </div>
+                    <div class="stat-card" style="background: var(--color-surface); padding: 1.5rem; border-radius: 8px; border: 1px solid var(--color-border);">
+                        <div style="font-size: 2rem; font-weight: bold; color: var(--color-primary);">328</div>
+                        <div style="color: var(--color-text-muted);">Total Source Files</div>
+                        <div style="font-size: 0.85rem; margin-top: 0.5rem;">101,513 total lines</div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Flutter App -->
+            <section class="docs-section">
+                <h2>Flutter App (<code>app/lib/</code>)</h2>
+                <p>Unified mobile and desktop application built with Flutter and Riverpod.</p>
+
+                <!-- Entry Point -->
+                <h3>Entry Point</h3>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>File</th>
+                            <th>Lines</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>main.dart</code></td>
+                            <td>695</td>
+                            <td>App initialization, routing, and theme configuration</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <!-- Core Module -->
+                <h3>Core Module (14,559 lines)</h3>
+                <p>Core infrastructure and shared services.</p>
+
+                <h4>Providers</h4>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>File</th>
+                            <th>Lines</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>app_state_provider.dart</code></td>
+                            <td>464</td>
+                            <td>Global app state management</td>
+                        </tr>
+                        <tr>
+                            <td><code>sync_provider.dart</code></td>
+                            <td>614</td>
+                            <td>Vault sync orchestration</td>
+                        </tr>
+                        <tr>
+                            <td><code>feature_flags_provider.dart</code></td>
+                            <td>111</td>
+                            <td>Feature flag management</td>
+                        </tr>
+                        <tr>
+                            <td><code>server_providers.dart</code></td>
+                            <td>84</td>
+                            <td>Server connection state</td>
+                        </tr>
+                        <tr>
+                            <td><code>streaming_voice_providers.dart</code></td>
+                            <td>73</td>
+                            <td>Voice streaming state</td>
+                        </tr>
+                        <tr>
+                            <td><code>file_system_provider.dart</code></td>
+                            <td>72</td>
+                            <td>File system access state</td>
+                        </tr>
+                        <tr>
+                            <td><code>lima_vm_provider.dart</code></td>
+                            <td>67</td>
+                            <td>Lima VM state</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <h4>Services - Server & System</h4>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>File</th>
+                            <th>Lines</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>sync_service.dart</code></td>
+                            <td>1,396</td>
+                            <td>Vault synchronization engine</td>
+                        </tr>
+                        <tr>
+                            <td><code>streaming_voice_service.dart</code></td>
+                            <td>1,177</td>
+                            <td>Real-time voice streaming</td>
+                        </tr>
+                        <tr>
+                            <td><code>file_system_service.dart</code></td>
+                            <td>1,127</td>
+                            <td>File system operations</td>
+                        </tr>
+                        <tr>
+                            <td><code>bare_metal_server_service.dart</code></td>
+                            <td>989</td>
+                            <td>Bare metal server management</td>
+                        </tr>
+                        <tr>
+                            <td><code>lima_vm_service.dart</code></td>
+                            <td>808</td>
+                            <td>Lima VM management</td>
+                        </tr>
+                        <tr>
+                            <td><code>base_server_service.dart</code></td>
+                            <td>697</td>
+                            <td>Computer server communication</td>
+                        </tr>
+                        <tr>
+                            <td><code>bundled_server_service.dart</code></td>
+                            <td>478</td>
+                            <td>Bundled server operations</td>
+                        </tr>
+                        <tr>
+                            <td><code>logging_service.dart</code></td>
+                            <td>446</td>
+                            <td>Logging infrastructure</td>
+                        </tr>
+                        <tr>
+                            <td><code>model_download_service.dart</code></td>
+                            <td>418</td>
+                            <td>Model download management</td>
+                        </tr>
+                        <tr>
+                            <td><code>deep_link_service.dart</code></td>
+                            <td>361</td>
+                            <td>Deep link handling</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <h4>Services - AI/Transcription</h4>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>File</th>
+                            <th>Lines</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>sherpa_onnx_service.dart</code></td>
+                            <td>710</td>
+                            <td>Local ONNX transcription</td>
+                        </tr>
+                        <tr>
+                            <td><code>audio_service.dart</code></td>
+                            <td>685</td>
+                            <td>Audio capture/playback</td>
+                        </tr>
+                        <tr>
+                            <td><code>sherpa_onnx_isolate.dart</code></td>
+                            <td>356</td>
+                            <td>Isolate-based ONNX runner</td>
+                        </tr>
+                        <tr>
+                            <td><code>parakeet_service.dart</code></td>
+                            <td>345</td>
+                            <td>Parakeet model transcription</td>
+                        </tr>
+                        <tr>
+                            <td><code>transcription_service_adapter.dart</code></td>
+                            <td>312</td>
+                            <td>Transcription abstraction</td>
+                        </tr>
+                        <tr>
+                            <td><code>smart_chunker.dart</code></td>
+                            <td>239</td>
+                            <td>Smart audio chunking</td>
+                        </tr>
+                        <tr>
+                            <td><code>simple_vad.dart</code></td>
+                            <td>175</td>
+                            <td>Voice activity detection</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <!-- Chat Feature -->
+                <h3>Chat Feature (21,855 lines)</h3>
+                <p>Conversational AI interface and session management.</p>
+
+                <h4>Key Files</h4>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>File</th>
+                            <th>Lines</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>chat_providers.dart</code></td>
+                            <td>2,079</td>
+                            <td>Chat state management & logic</td>
+                        </tr>
+                        <tr>
+                            <td><code>chat_service.dart</code></td>
+                            <td>2,059</td>
+                            <td>Chat logic & API calls</td>
+                        </tr>
+                        <tr>
+                            <td><code>message_bubble.dart</code></td>
+                            <td>1,570</td>
+                            <td>Message display widget</td>
+                        </tr>
+                        <tr>
+                            <td><code>chat_screen.dart</code></td>
+                            <td>1,318</td>
+                            <td>Main chat interface</td>
+                        </tr>
+                        <tr>
+                            <td><code>chat_input.dart</code></td>
+                            <td>1,076</td>
+                            <td>Chat input/submission widget</td>
+                        </tr>
+                        <tr>
+                            <td><code>curator_session_viewer_sheet.dart</code></td>
+                            <td>1,042</td>
+                            <td>Curator session viewer</td>
+                        </tr>
+                        <tr>
+                            <td><code>agent_hub_screen.dart</code></td>
+                            <td>859</td>
+                            <td>Agent browser/selector</td>
+                        </tr>
+                        <tr>
+                            <td><code>claude_code_import_screen.dart</code></td>
+                            <td>776</td>
+                            <td>Claude Code integration</td>
+                        </tr>
+                        <tr>
+                            <td><code>collapsible_thinking_section.dart</code></td>
+                            <td>774</td>
+                            <td>Extended thinking display</td>
+                        </tr>
+                        <tr>
+                            <td><code>session_info_sheet.dart</code></td>
+                            <td>730</td>
+                            <td>Session info display</td>
+                        </tr>
+                        <tr>
+                            <td><code>context_file_viewer_screen.dart</code></td>
+                            <td>719</td>
+                            <td>File context viewer</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <h4>Models</h4>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>File</th>
+                            <th>Lines</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>curator_session.dart</code></td>
+                            <td>361</td>
+                            <td>Curator session metadata</td>
+                        </tr>
+                        <tr>
+                            <td><code>session_transcript.dart</code></td>
+                            <td>343</td>
+                            <td>Session transcript storage</td>
+                        </tr>
+                        <tr>
+                            <td><code>attachment.dart</code></td>
+                            <td>284</td>
+                            <td>File attachment handling</td>
+                        </tr>
+                        <tr>
+                            <td><code>typed_error.dart</code></td>
+                            <td>279</td>
+                            <td>Error type definitions</td>
+                        </tr>
+                        <tr>
+                            <td><code>chat_message.dart</code></td>
+                            <td>275</td>
+                            <td>Message data structure</td>
+                        </tr>
+                        <tr>
+                            <td><code>chat_session.dart</code></td>
+                            <td>222</td>
+                            <td>Chat session metadata</td>
+                        </tr>
+                        <tr>
+                            <td><code>prompt_metadata.dart</code></td>
+                            <td>220</td>
+                            <td>Prompt metadata storage</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <!-- Daily Feature -->
+                <h3>Daily Feature (23,101 lines)</h3>
+                <p>Journal, recording, and reflection system.</p>
+
+                <h4>Journal Core</h4>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>File</th>
+                            <th>Lines</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>journal_screen.dart</code></td>
+                            <td>2,156</td>
+                            <td>Main journal UI</td>
+                        </tr>
+                        <tr>
+                            <td><code>journal_input_bar.dart</code></td>
+                            <td>1,379</td>
+                            <td>Input bar with voice/text</td>
+                        </tr>
+                        <tr>
+                            <td><code>journal_service.dart</code></td>
+                            <td>1,261</td>
+                            <td>Journal operations</td>
+                        </tr>
+                        <tr>
+                            <td><code>journal_entry_row.dart</code></td>
+                            <td>992</td>
+                            <td>Entry row in list</td>
+                        </tr>
+                        <tr>
+                            <td><code>journal_entry_card.dart</code></td>
+                            <td>606</td>
+                            <td>Entry card display</td>
+                        </tr>
+                        <tr>
+                            <td><code>journal_providers.dart</code></td>
+                            <td>593</td>
+                            <td>Journal state & logic</td>
+                        </tr>
+                        <tr>
+                            <td><code>entry_edit_modal.dart</code></td>
+                            <td>572</td>
+                            <td>Entry editing modal</td>
+                        </tr>
+                        <tr>
+                            <td><code>curator_log_screen.dart</code></td>
+                            <td>550</td>
+                            <td>Curator log viewer</td>
+                        </tr>
+                        <tr>
+                            <td><code>agent_output_header.dart</code></td>
+                            <td>511</td>
+                            <td>Agent output header</td>
+                        </tr>
+                        <tr>
+                            <td><code>journal_merge_service.dart</code></td>
+                            <td>468</td>
+                            <td>Journal merge/sync</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <h4>Recorder Services</h4>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>File</th>
+                            <th>Lines</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>omi_capture_service.dart</code></td>
+                            <td>610</td>
+                            <td>Omi device capture</td>
+                        </tr>
+                        <tr>
+                            <td><code>live_transcription_service.dart</code></td>
+                            <td>547</td>
+                            <td>Live transcription engine</td>
+                        </tr>
+                        <tr>
+                            <td><code>omi_connection.dart</code></td>
+                            <td>409</td>
+                            <td>Omi connection management</td>
+                        </tr>
+                        <tr>
+                            <td><code>omi_bluetooth_service.dart</code></td>
+                            <td>406</td>
+                            <td>Bluetooth communication</td>
+                        </tr>
+                        <tr>
+                            <td><code>background_recording_service.dart</code></td>
+                            <td>401</td>
+                            <td>Background recording</td>
+                        </tr>
+                        <tr>
+                            <td><code>streaming_audio_recorder.dart</code></td>
+                            <td>400</td>
+                            <td>Audio recording stream</td>
+                        </tr>
+                        <tr>
+                            <td><code>transcription_queue.dart</code></td>
+                            <td>346</td>
+                            <td>Transcription queue management</td>
+                        </tr>
+                        <tr>
+                            <td><code>device_connection.dart</code></td>
+                            <td>272</td>
+                            <td>Device connection</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <!-- Vault Feature -->
+                <h3>Vault Feature (4,020 lines)</h3>
+                <p>File browser and document viewer.</p>
+
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>File</th>
+                            <th>Lines</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>markdown_viewer_screen.dart</code></td>
+                            <td>857</td>
+                            <td>Markdown file viewer</td>
+                        </tr>
+                        <tr>
+                            <td><code>remote_markdown_viewer_screen.dart</code></td>
+                            <td>547</td>
+                            <td>Remote markdown viewer</td>
+                        </tr>
+                        <tr>
+                            <td><code>remote_files_screen.dart</code></td>
+                            <td>546</td>
+                            <td>Remote file browser</td>
+                        </tr>
+                        <tr>
+                            <td><code>files_screen.dart</code></td>
+                            <td>519</td>
+                            <td>Local file browser</td>
+                        </tr>
+                        <tr>
+                            <td><code>text_viewer_screen.dart</code></td>
+                            <td>430</td>
+                            <td>Local text viewer</td>
+                        </tr>
+                        <tr>
+                            <td><code>remote_text_viewer_screen.dart</code></td>
+                            <td>382</td>
+                            <td>Remote text viewer</td>
+                        </tr>
+                        <tr>
+                            <td><code>file_browser_service.dart</code></td>
+                            <td>233</td>
+                            <td>File browsing</td>
+                        </tr>
+                        <tr>
+                            <td><code>remote_file_browser_service.dart</code></td>
+                            <td>199</td>
+                            <td>Remote file browsing</td>
+                        </tr>
+                        <tr>
+                            <td><code>file_browser_provider.dart</code></td>
+                            <td>116</td>
+                            <td>File browser state</td>
+                        </tr>
+                        <tr>
+                            <td><code>file_item.dart</code></td>
+                            <td>112</td>
+                            <td>File metadata</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <!-- Settings Feature -->
+                <h3>Settings Feature (4,573 lines)</h3>
+                <p>App configuration and setup.</p>
+
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>File</th>
+                            <th>Lines</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>settings_screen.dart</code></td>
+                            <td>1,937</td>
+                            <td>Main settings UI</td>
+                        </tr>
+                        <tr>
+                            <td><code>computer_setup_wizard.dart</code></td>
+                            <td>1,805</td>
+                            <td>Parachute Computer setup</td>
+                        </tr>
+                        <tr>
+                            <td><code>parachute_computer_section.dart</code></td>
+                            <td>653</td>
+                            <td>Computer settings</td>
+                        </tr>
+                        <tr>
+                            <td><code>api_key_section.dart</code></td>
+                            <td>631</td>
+                            <td>API key management</td>
+                        </tr>
+                        <tr>
+                            <td><code>lima_vm_section.dart</code></td>
+                            <td>606</td>
+                            <td>Lima VM settings</td>
+                        </tr>
+                        <tr>
+                            <td><code>bare_metal_section.dart</code></td>
+                            <td>572</td>
+                            <td>Bare metal configuration</td>
+                        </tr>
+                        <tr>
+                            <td><code>omi_device_section.dart</code></td>
+                            <td>477</td>
+                            <td>Omi device settings</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+
+            <!-- Python Base -->
+            <section class="docs-section">
+                <h2>Python Computer (<code>computer/parachute/</code>)</h2>
+                <p>AI orchestration server built with FastAPI.</p>
+
+                <!-- Entry Points -->
+                <h3>Entry Points & Server</h3>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>File</th>
+                            <th>Lines</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>server.py</code></td>
+                            <td>296</td>
+                            <td>FastAPI server initialization</td>
+                        </tr>
+                        <tr>
+                            <td><code>mcp_server.py</code></td>
+                            <td>694</td>
+                            <td>MCP (Model Context Protocol) server</td>
+                        </tr>
+                        <tr>
+                            <td><code>config.py</code></td>
+                            <td>99</td>
+                            <td>Configuration management</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <!-- API Routes -->
+                <h3>API Routes Module (4,810 lines)</h3>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>File</th>
+                            <th>Lines</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>api/modules.py</code></td>
+                            <td>785</td>
+                            <td>Module management endpoints</td>
+                        </tr>
+                        <tr>
+                            <td><code>api/sync.py</code></td>
+                            <td>533</td>
+                            <td>Vault synchronization endpoints</td>
+                        </tr>
+                        <tr>
+                            <td><code>api/imports.py</code></td>
+                            <td>450</td>
+                            <td>Import handling endpoints</td>
+                        </tr>
+                        <tr>
+                            <td><code>api/claude_code.py</code></td>
+                            <td>446</td>
+                            <td>Claude Code integration</td>
+                        </tr>
+                        <tr>
+                            <td><code>api/mcp.py</code></td>
+                            <td>420</td>
+                            <td>MCP server management</td>
+                        </tr>
+                        <tr>
+                            <td><code>api/sessions.py</code></td>
+                            <td>298</td>
+                            <td>Session management endpoints</td>
+                        </tr>
+                        <tr>
+                            <td><code>api/bots.py</code></td>
+                            <td>298</td>
+                            <td>Bot connector endpoints</td>
+                        </tr>
+                        <tr>
+                            <td><code>api/workspaces.py</code></td>
+                            <td>253</td>
+                            <td>Workspace management endpoints</td>
+                        </tr>
+                        <tr>
+                            <td><code>api/skills.py</code></td>
+                            <td>264</td>
+                            <td>Skills management</td>
+                        </tr>
+                        <tr>
+                            <td><code>api/context_folders.py</code></td>
+                            <td>253</td>
+                            <td>Context folder endpoints</td>
+                        </tr>
+                        <tr>
+                            <td><code>api/chat.py</code></td>
+                            <td>234</td>
+                            <td>Chat endpoints</td>
+                        </tr>
+                        <tr>
+                            <td><code>api/filesystem.py</code></td>
+                            <td>230</td>
+                            <td>File system endpoints</td>
+                        </tr>
+                        <tr>
+                            <td><code>api/auth.py</code></td>
+                            <td>173</td>
+                            <td>Authentication endpoints</td>
+                        </tr>
+                        <tr>
+                            <td><code>api/prompts.py</code></td>
+                            <td>122</td>
+                            <td>Prompt endpoints</td>
+                        </tr>
+                        <tr>
+                            <td><code>api/scheduler.py</code></td>
+                            <td>103</td>
+                            <td>Job scheduler endpoints</td>
+                        </tr>
+                        <tr>
+                            <td><code>api/health.py</code></td>
+                            <td>98</td>
+                            <td>Health check endpoints</td>
+                        </tr>
+                        <tr>
+                            <td><code>api/usage.py</code></td>
+                            <td>92</td>
+                            <td>Usage tracking endpoints</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <!-- Core Module -->
+                <h3>Core Module (9,568 lines)</h3>
+
+                <h4>Orchestration</h4>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>File</th>
+                            <th>Lines</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>core/orchestrator.py</code></td>
+                            <td>1,336</td>
+                            <td>Agent orchestration engine</td>
+                        </tr>
+                        <tr>
+                            <td><code>core/session_manager.py</code></td>
+                            <td>850</td>
+                            <td>Session lifecycle management</td>
+                        </tr>
+                        <tr>
+                            <td><code>core/permission_handler.py</code></td>
+                            <td>752</td>
+                            <td>Permission & access control</td>
+                        </tr>
+                        <tr>
+                            <td><code>core/chat_log.py</code></td>
+                            <td>424</td>
+                            <td>Chat log operations</td>
+                        </tr>
+                        <tr>
+                            <td><code>core/claude_sdk.py</code></td>
+                            <td>311</td>
+                            <td>Claude SDK integration</td>
+                        </tr>
+                        <tr>
+                            <td><code>core/orchestrator_tools.py</code></td>
+                            <td>272</td>
+                            <td>Orchestration tools</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <h4>Module System & Connectors</h4>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>File</th>
+                            <th>Lines</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>core/module_loader.py</code></td>
+                            <td>240</td>
+                            <td>Module discovery &amp; loading</td>
+                        </tr>
+                        <tr>
+                            <td><code>core/interfaces.py</code></td>
+                            <td>37</td>
+                            <td>Module interface definitions</td>
+                        </tr>
+                        <tr>
+                            <td><code>core/sandbox.py</code></td>
+                            <td>286</td>
+                            <td>Docker sandbox management</td>
+                        </tr>
+                        <tr>
+                            <td><code>connectors/base.py</code></td>
+                            <td>349</td>
+                            <td>Bot connector base class</td>
+                        </tr>
+                        <tr>
+                            <td><code>connectors/telegram.py</code></td>
+                            <td>707</td>
+                            <td>Telegram bot connector</td>
+                        </tr>
+                        <tr>
+                            <td><code>connectors/discord_bot.py</code></td>
+                            <td>441</td>
+                            <td>Discord bot connector</td>
+                        </tr>
+                        <tr>
+                            <td><code>connectors/config.py</code></td>
+                            <td>71</td>
+                            <td>Bot connector configuration</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <h4>Daily & Reflection</h4>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>File</th>
+                            <th>Lines</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>core/daily_agent.py</code></td>
+                            <td>465</td>
+                            <td>Daily reflection agent</td>
+                        </tr>
+                        <tr>
+                            <td><code>core/daily_agent_tools.py</code></td>
+                            <td>384</td>
+                            <td>Daily agent tools</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <h4>Imports & Context</h4>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>File</th>
+                            <th>Lines</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>core/import_service.py</code></td>
+                            <td>524</td>
+                            <td>Import orchestration</td>
+                        </tr>
+                        <tr>
+                            <td><code>core/scheduler.py</code></td>
+                            <td>332</td>
+                            <td>Job scheduling</td>
+                        </tr>
+                        <tr>
+                            <td><code>core/context_folders.py</code></td>
+                            <td>306</td>
+                            <td>Context folder logic</td>
+                        </tr>
+                        <tr>
+                            <td><code>core/migrate_contexts.py</code></td>
+                            <td>292</td>
+                            <td>Context migration</td>
+                        </tr>
+                        <tr>
+                            <td><code>core/skills.py</code></td>
+                            <td>291</td>
+                            <td>Skills management</td>
+                        </tr>
+                        <tr>
+                            <td><code>core/agents.py</code></td>
+                            <td>251</td>
+                            <td>Agent management</td>
+                        </tr>
+                        <tr>
+                            <td><code>core/claude_usage.py</code></td>
+                            <td>231</td>
+                            <td>Token usage tracking</td>
+                        </tr>
+                        <tr>
+                            <td><code>core/context_parser.py</code></td>
+                            <td>128</td>
+                            <td>Context parsing</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <!-- Database Module -->
+                <h3>Database Module (841 lines)</h3>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>File</th>
+                            <th>Lines</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>db/database.py</code></td>
+                            <td>834</td>
+                            <td>SQLite database operations</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <!-- Library Module -->
+                <h3>Library/Utilities Module (1,906 lines)</h3>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>File</th>
+                            <th>Lines</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>lib/mcp_loader.py</code></td>
+                            <td>448</td>
+                            <td>MCP server loader</td>
+                        </tr>
+                        <tr>
+                            <td><code>lib/typed_errors.py</code></td>
+                            <td>318</td>
+                            <td>Type-safe error definitions</td>
+                        </tr>
+                        <tr>
+                            <td><code>lib/ignore_patterns.py</code></td>
+                            <td>255</td>
+                            <td>Gitignore pattern handling</td>
+                        </tr>
+                        <tr>
+                            <td><code>lib/permissions.py</code></td>
+                            <td>234</td>
+                            <td>Permission utilities</td>
+                        </tr>
+                        <tr>
+                            <td><code>lib/vault_utils.py</code></td>
+                            <td>188</td>
+                            <td>Vault utilities</td>
+                        </tr>
+                        <tr>
+                            <td><code>lib/agent_loader.py</code></td>
+                            <td>178</td>
+                            <td>Agent loader</td>
+                        </tr>
+                        <tr>
+                            <td><code>lib/server_config.py</code></td>
+                            <td>175</td>
+                            <td>Server configuration</td>
+                        </tr>
+                        <tr>
+                            <td><code>lib/context_loader.py</code></td>
+                            <td>150</td>
+                            <td>Context loader</td>
+                        </tr>
+                        <tr>
+                            <td><code>lib/auth.py</code></td>
+                            <td>136</td>
+                            <td>Authentication utilities</td>
+                        </tr>
+                        <tr>
+                            <td><code>lib/logger.py</code></td>
+                            <td>108</td>
+                            <td>Logging setup</td>
+                        </tr>
+                        <tr>
+                            <td><code>lib/para_id.py</code></td>
+                            <td>66</td>
+                            <td>Paragraph ID utilities</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <!-- Models Module -->
+                <h3>Models Module (749 lines)</h3>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>File</th>
+                            <th>Lines</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>models/events.py</code></td>
+                            <td>316</td>
+                            <td>Event definitions</td>
+                        </tr>
+                        <tr>
+                            <td><code>models/session.py</code></td>
+                            <td>221</td>
+                            <td>Session models</td>
+                        </tr>
+                        <tr>
+                            <td><code>models/requests.py</code></td>
+                            <td>171</td>
+                            <td>Request schemas</td>
+                        </tr>
+                        <tr>
+                            <td><code>models/agent.py</code></td>
+                            <td>141</td>
+                            <td>Agent models</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <!-- Hooks Module -->
+                <h3>Hooks Module (403 lines)</h3>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>File</th>
+                            <th>Lines</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>hooks/activity_hook.py</code></td>
+                            <td>400</td>
+                            <td>Activity tracking hooks</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+
+            <!-- Navigation -->
+            <div class="nav-cards">
+                <a href="issues.html" class="nav-card">
+                    <h3>Issues & TODOs</h3>
+                    <p>Known issues and improvement opportunities.</p>
+                </a>
+                <a href="index.html" class="nav-card">
+                    <h3>Architecture</h3>
+                    <p>High-level system overview.</p>
+                </a>
+            </div>
+        </main>
+    </div>
+    <footer>
+        <p>&copy; 2026 Open Parachute, PBC. A Colorado Public Benefit Corporation.</p>
+        <p>Documentation last updated: February 9, 2026</p>
+    </footer>
+</body>
+</html>

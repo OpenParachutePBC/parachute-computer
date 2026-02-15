@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Computer Overview | Parachute Documentation</title>
+    <meta name="description" content="Deep dive into the Parachute Computer Python/FastAPI server architecture">
+    <link rel="stylesheet" href="/style.css">
+    <link rel="stylesheet" href="docs.css">
+</head>
+<body>
+    <header>
+        <nav>
+            <a href="/" class="logo">Parachute Computer</a>
+            <div class="nav-links">
+                <a href="/blog/">Blog</a>
+                <a href="/architecture/" class="active">Docs</a>
+                <a href="/roadmap/">Roadmap</a>
+                <a href="https://github.com/OpenParachutePBC/parachute-computer" target="_blank">GitHub</a>
+            </div>
+        </nav>
+    </header>
+
+    <div class="docs-layout">
+        <!-- Sidebar Navigation -->
+        <aside class="docs-sidebar">
+            <div class="sidebar-section">
+                <h3>Overview</h3>
+                <a href="index.html">Architecture</a>
+                <a href="data-flow.html">Data Flow</a>
+                <a href="integration.html">Integration</a>
+            </div>
+            <div class="sidebar-section">
+                <h3>App (Flutter)</h3>
+                <a href="app-overview.html">Overview</a>
+                <a href="app-chat.html">Chat Feature</a>
+                <a href="app-daily.html">Daily Feature</a>
+                <a href="app-vault.html">Vault Feature</a>
+                <a href="app-services.html">Services</a>
+            </div>
+            <div class="sidebar-section">
+                <h3>Computer (Python)</h3>
+                <a href="computer-overview.html" class="active">Overview</a>
+                <a href="computer-api.html">API Routes</a>
+                <a href="computer-orchestrator.html">Orchestrator</a>
+                <a href="computer-agents.html">Modules & Agents</a>
+                <a href="computer-database.html">Database</a>
+                <a href="computer-connectors.html">Bot Connectors</a>
+            </div>
+            <div class="sidebar-section">
+                <h3>Reference</h3>
+                <a href="issues.html">Issues & TODOs</a>
+                <a href="file-manifest.html">File Manifest</a>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="docs-content">
+            <div class="breadcrumb">
+                <a href="../index.html">Home</a> / <a href="../blog/">Blog</a>
+                <a href="index.html">Docs</a> / <span>Computer Overview</span>
+            </div>
+
+            <h1>Computer (Python) Overview</h1>
+            <p class="lead">AI orchestration server built with FastAPI. Manages agent execution with trust-level enforcement, session persistence, Claude SDK integration, modular architecture, and bot connectors for Telegram and Discord.</p>
+
+            <!-- Stats -->
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-number">81</div>
+                    <div class="stat-label">Python Files</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number">~90</div>
+                    <div class="stat-label">API Endpoints</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number">8</div>
+                    <div class="stat-label">DB Tables</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number">19</div>
+                    <div class="stat-label">Route Files</div>
+                </div>
+            </div>
+
+            <!-- Directory Structure -->
+            <section class="docs-section">
+                <h2>Directory Structure</h2>
+
+                <div class="architecture-visual">
+                    <pre>
+parachute/
+├── api/                       # FastAPI route handlers (19 files)
+│   ├── auth.py               # API key management
+│   ├── bots.py               # Bot connector management
+│   ├── chat.py               # Streaming chat endpoint
+│   ├── claude_code.py        # Claude Code integration
+│   ├── context_folders.py    # Context folder management
+│   ├── filesystem.py         # File operations
+│   ├── health.py             # Health check
+│   ├── hooks.py              # Event hook management
+│   ├── imports.py            # Data import endpoints
+│   ├── mcp.py                # MCP server management
+│   ├── modules.py            # Module prompts and config
+│   ├── prompts.py            # Prompt management
+│   ├── sandbox.py            # Docker sandbox management
+│   ├── scheduler.py          # Agent scheduling
+│   ├── sessions.py           # Session CRUD + config
+│   ├── skills.py             # Skill plugins
+│   ├── sync.py               # Cross-device sync
+│   ├── usage.py              # Usage tracking
+│   └── workspaces.py         # Workspace management
+├── connectors/                # Bot platform connectors
+│   ├── base.py               # Abstract BotConnector base class
+│   ├── telegram.py           # Telegram bot (streaming, voice, groups)
+│   ├── discord_bot.py        # Discord bot (slash commands, groups)
+│   ├── config.py             # Bot config from bots.yaml
+│   └── message_formatter.py  # Claude → platform formatting
+├── core/                      # Business logic
+│   ├── orchestrator.py       # Central agent controller
+│   ├── orchestrator_tools.py # Tool definitions for orchestrator
+│   ├── session_manager.py    # Session persistence
+│   ├── claude_sdk.py         # SDK wrapper
+│   ├── claude_usage.py       # Token usage tracking
+│   ├── module_loader.py      # Module discovery + hash verification
+│   ├── sandbox.py            # Docker container execution
+│   ├── agents.py             # Agent discovery
+│   ├── skills.py             # Skill plugins
+│   ├── scheduler.py          # APScheduler wrapper
+│   ├── permission_handler.py # Permission grants/denies
+│   ├── capability_filter.py  # Trust-level capability filtering
+│   ├── workspaces.py         # Workspace logic
+│   ├── context_folders.py    # Context folder logic
+│   ├── context_parser.py     # Context parsing
+│   ├── chat_log.py           # Chat log utilities
+│   ├── daily_agent.py        # Daily agent execution
+│   ├── daily_agent_tools.py  # Daily agent tool definitions
+│   ├── import_service.py     # Data import logic
+│   ├── interfaces.py         # Abstract interfaces
+│   └── hooks/                # Event hook system
+│       ├── runner.py         # Hook discovery + execution
+│       ├── events.py         # Event type definitions
+│       └── models.py         # Hook data models
+├── db/                        # SQLite database layer
+│   └── database.py           # aiosqlite + schema (8 tables)
+├── docker/                    # Sandbox infrastructure
+│   ├── Dockerfile.sandbox    # Sandbox container image
+│   └── entrypoint.py         # Container entrypoint
+├── lib/                       # Utilities
+│   ├── agent_loader.py       # Load agents from markdown
+│   ├── auth.py               # API key generation
+│   ├── context_loader.py     # Format context for prompts
+│   ├── ignore_patterns.py    # .gitignore-style filtering
+│   ├── logger.py             # Logging setup
+│   ├── mcp_loader.py         # MCP server config
+│   ├── para_id.py            # Para-ID generation
+│   ├── permissions.py        # Permission utilities
+│   ├── server_config.py      # Auth modes + config
+│   ├── typed_errors.py       # Error types
+│   └── vault_utils.py        # Vault path utilities
+├── models/                    # Pydantic models
+│   ├── session.py            # Session + SessionCreate
+│   ├── requests.py           # API request models
+│   ├── agent.py              # Agent definitions
+│   ├── events.py             # SSE event types
+│   └── workspace.py          # Workspace models
+├── hooks/                     # Built-in hooks
+│   └── activity_hook.py      # Activity tracking hook
+├── config.py                  # Settings (env > .env > YAML > defaults)
+├── server.py                  # FastAPI app + lifespan
+├── cli.py                     # CLI (install/update/server/logs/doctor/config/module)
+├── daemon.py                  # Daemon management (launchd/systemd/PID)
+└── mcp_server.py              # MCP protocol server
+                    </pre>
+                </div>
+            </section>
+
+            <!-- Architecture Flow -->
+            <section class="docs-section">
+                <h2>Request Flow</h2>
+
+                <div class="architecture-visual">
+                    <pre>
+                              ┌──────────────────────────────────────┐
+                              │           HTTP Request               │
+                              │  POST /api/chat {"message": "..."}   │
+                              └────────────────┬─────────────────────┘
+                                               │
+                              ┌────────────────▼─────────────────────┐
+                              │     Auth Middleware                   │
+                              │  - Check auth mode (remote/always)   │
+                              │  - Validate API key or localhost     │
+                              └────────────────┬─────────────────────┘
+                                               │
+                              ┌────────────────▼─────────────────────┐
+                              │          API Router                   │
+                              │       api/chat.py                     │
+                              │                                       │
+                              │  - Validate request                   │
+                              │  - Resolve session + workspace        │
+                              │  - Call orchestrator                  │
+                              └────────────────┬─────────────────────┘
+                                               │
+                              ┌────────────────▼─────────────────────┐
+                              │          Orchestrator                 │
+                              │    core/orchestrator.py               │
+                              │                                       │
+                              │  - Enforce trust level                │
+                              │  - Load module system prompt          │
+                              │  - Build context (folders, history)   │
+                              │  - Route to SDK or Docker sandbox     │
+                              └────────────────┬─────────────────────┘
+                                               │
+              ┌────────────────────────────────┼────────────────────────────┐
+              │                                │                            │
+              ▼                                ▼                            ▼
+┌──────────────────────┐    ┌───────────────────────┐    ┌──────────────────────┐
+│ Trust: full / vault  │    │   Trust: sandboxed     │    │   Session Manager    │
+│                      │    │                        │    │                      │
+│  Claude SDK          │    │  Docker Sandbox        │    │  - Create/update     │
+│  (direct execution)  │    │  (container isolation) │    │  - Query DB          │
+│  core/claude_sdk.py  │    │  core/sandbox.py       │    │  - SDK ID mapping    │
+└──────────┬───────────┘    └───────────┬────────────┘    └──────────────────────┘
+           │                            │
+           └──────────┬─────────────────┘
+                      │
+                      ▼
+           ┌────────────────────┐
+           │   Claude AI        │
+           │   (Anthropic)      │
+           └─────────┬──────────┘
+                     │
+       ┌─────────────▼───────────────────────┐
+       │        SSE Response                  │
+       │  StreamingResponse (async gen)       │
+       │                                      │
+       │  data: {"type": "text", ...}         │
+       │  data: {"type": "tool_use", ...}     │
+       │  data: {"type": "result", ...}       │
+       └──────────────────────────────────────┘
+                    </pre>
+                </div>
+            </section>
+
+            <!-- Key Components -->
+            <section class="docs-section">
+                <h2>Key Components</h2>
+
+                <div class="concept-grid">
+                    <div class="concept-card">
+                        <div class="concept-icon">🎭</div>
+                        <h3>Orchestrator</h3>
+                        <p>Central agent controller. Routes requests through trust-level enforcement, builds context, manages SDK/sandbox execution, and streams SSE events.</p>
+                        <a href="computer-orchestrator.html" class="concept-link">Learn more →</a>
+                    </div>
+
+                    <div class="concept-card">
+                        <div class="concept-icon">🧩</div>
+                        <h3>Module Loader</h3>
+                        <p>Discovers modules from vault/.modules/, verifies SHA-256 hashes, registers API routes. Modules: brain (search), chat, daily.</p>
+                        <a href="computer-agents.html" class="concept-link">Learn more →</a>
+                    </div>
+
+                    <div class="concept-card">
+                        <div class="concept-icon">🔒</div>
+                        <h3>Trust Levels</h3>
+                        <p>Three tiers: full (unrestricted), vault (directory-restricted), sandboxed (Docker). Enforced per-session with workspace-level floors.</p>
+                        <a href="computer-orchestrator.html" class="concept-link">Learn more →</a>
+                    </div>
+
+                    <div class="concept-card">
+                        <div class="concept-icon">📊</div>
+                        <h3>Session Manager</h3>
+                        <p>CRUD for SQLite session metadata. Maps SDK session IDs to database records. Handles working directory and context tracking.</p>
+                        <a href="computer-database.html" class="concept-link">Learn more →</a>
+                    </div>
+
+                    <div class="concept-card">
+                        <div class="concept-icon">🤖</div>
+                        <h3>Bot Connectors</h3>
+                        <p>Telegram and Discord bridges. Streaming responses, ack reactions, group history injection, user pairing/approval, per-chat settings.</p>
+                        <a href="computer-connectors.html" class="concept-link">Learn more →</a>
+                    </div>
+
+                    <div class="concept-card">
+                        <div class="concept-icon">🐳</div>
+                        <h3>Docker Sandbox</h3>
+                        <p>Container-based isolation for sandboxed sessions. Each execution runs in a fresh container with vault mounted read-only.</p>
+                        <a href="computer-orchestrator.html#sandbox" class="concept-link">Learn more →</a>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Server Lifecycle -->
+            <section class="docs-section">
+                <h2>Server Lifecycle</h2>
+                <p>The lifespan manager in <code>server.py</code> initializes all services on startup:</p>
+
+                <ol>
+                    <li><strong>Logging</strong> &mdash; Configure from settings</li>
+                    <li><strong>Server config</strong> &mdash; Load API keys and auth settings</li>
+                    <li><strong>Database</strong> &mdash; Initialize SQLite at <code>vault/Chat/sessions.db</code></li>
+                    <li><strong>Orchestrator</strong> &mdash; Create with vault path, DB, and settings</li>
+                    <li><strong>Scheduler</strong> &mdash; APScheduler for automated agents</li>
+                    <li><strong>Module Loader</strong> &mdash; Discover, verify hashes, register routes</li>
+                    <li><strong>Hooks</strong> &mdash; Discover hook scripts in <code>vault/.parachute/hooks/</code></li>
+                    <li><strong>Bot connectors</strong> &mdash; Auto-start enabled connectors from <code>bots.yaml</code></li>
+                </ol>
+
+                <p>On shutdown: stop bots, stop scheduler, close database.</p>
+            </section>
+
+            <!-- Authentication -->
+            <section class="docs-section">
+                <h2>Authentication</h2>
+                <p>Two layers of authentication:</p>
+
+                <h3>Claude SDK Auth</h3>
+                <p><code>CLAUDE_CODE_OAUTH_TOKEN</code> &mdash; long-lived OAuth token from <code>claude setup-token</code>. Stored at <code>vault/.parachute/.token</code>. Required for all AI chat functionality.</p>
+
+                <h3>API Key Auth</h3>
+                <p>For multi-device access to the server:</p>
+
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Mode</th>
+                            <th>Behavior</th>
+                            <th>Use Case</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>disabled</code></td>
+                            <td>No auth required</td>
+                            <td>Local-only development</td>
+                        </tr>
+                        <tr>
+                            <td><code>remote</code> (default)</td>
+                            <td>Localhost bypasses, remote requires key</td>
+                            <td>Normal usage</td>
+                        </tr>
+                        <tr>
+                            <td><code>always</code></td>
+                            <td>All requests require valid API key</td>
+                            <td>Shared server</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <p>Keys are managed via <code>POST /api/auth/keys</code>, <code>GET /api/auth/keys</code>, <code>DELETE /api/auth/keys/{key_id}</code>. Keys are SHA-256 hashed before storage in <code>server-config.json</code>.</p>
+            </section>
+
+            <!-- Configuration -->
+            <section class="docs-section">
+                <h2>Configuration</h2>
+                <p>Config precedence: env vars &gt; <code>.env</code> file &gt; <code>vault/.parachute/config.yaml</code> &gt; defaults.</p>
+
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Setting</th>
+                            <th>Env Var</th>
+                            <th>Default</th>
+                            <th>Description</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>vault_path</code></td>
+                            <td><code>VAULT_PATH</code></td>
+                            <td><code>./sample-vault</code></td>
+                            <td>Path to vault directory</td>
+                        </tr>
+                        <tr>
+                            <td><code>port</code></td>
+                            <td><code>PORT</code></td>
+                            <td><code>3333</code></td>
+                            <td>Server port</td>
+                        </tr>
+                        <tr>
+                            <td><code>host</code></td>
+                            <td><code>HOST</code></td>
+                            <td><code>0.0.0.0</code></td>
+                            <td>Bind address</td>
+                        </tr>
+                        <tr>
+                            <td><code>claude_code_oauth_token</code></td>
+                            <td><code>CLAUDE_CODE_OAUTH_TOKEN</code></td>
+                            <td>&mdash;</td>
+                            <td>OAuth token (also from <code>.token</code> file)</td>
+                        </tr>
+                        <tr>
+                            <td><code>default_model</code></td>
+                            <td><code>DEFAULT_MODEL</code></td>
+                            <td>&mdash;</td>
+                            <td>Optional model override</td>
+                        </tr>
+                        <tr>
+                            <td><code>auth_mode</code></td>
+                            <td><code>AUTH_MODE</code></td>
+                            <td><code>remote</code></td>
+                            <td>Auth mode: remote / always / disabled</td>
+                        </tr>
+                        <tr>
+                            <td><code>log_level</code></td>
+                            <td><code>LOG_LEVEL</code></td>
+                            <td><code>INFO</code></td>
+                            <td>Logging verbosity</td>
+                        </tr>
+                        <tr>
+                            <td><code>cors_origins</code></td>
+                            <td><code>CORS_ORIGINS</code></td>
+                            <td><code>*</code></td>
+                            <td>Allowed CORS origins</td>
+                        </tr>
+                        <tr>
+                            <td><code>debug</code></td>
+                            <td><code>DEBUG</code></td>
+                            <td><code>false</code></td>
+                            <td>Enable debug mode</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <p>Manage via CLI: <code>parachute config show</code>, <code>parachute config set KEY VAL</code>, <code>parachute config get KEY</code>.</p>
+            </section>
+
+            <!-- Running -->
+            <section class="docs-section">
+                <h2>Running the Server</h2>
+
+                <div class="code-block">
+                    <div class="code-header">CLI Commands</div>
+                    <pre><code># First-time install (venv + deps + config + daemon)
+cd computer && ./install.sh
+
+# Manage the daemon
+parachute server status       # Check if running
+parachute server stop         # Stop daemon
+parachute server restart      # Restart daemon
+parachute server -f           # Run in foreground (dev mode)
+
+# Logs and diagnostics
+parachute logs                # Tail daemon logs
+parachute status              # System overview
+parachute doctor              # Run diagnostics
+
+# Module management
+parachute module list          # List modules + approval status
+parachute module approve NAME  # Approve a module (record hash)
+parachute module status        # Live module status (requires running server)
+
+# Updates
+parachute update               # Pull latest + reinstall + restart
+parachute update --local       # Reinstall + restart (skip git pull)
+
+# Or run directly
+source .venv/bin/activate
+VAULT_PATH=./vault uvicorn parachute.server:app --port 3333</code></pre>
+                </div>
+            </section>
+
+            <!-- Key Dependencies -->
+            <section class="docs-section">
+                <h2>Key Dependencies</h2>
+
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Package</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>fastapi</code> / <code>uvicorn</code></td>
+                            <td>Web framework + ASGI server</td>
+                        </tr>
+                        <tr>
+                            <td><code>pydantic</code> / <code>pydantic-settings</code></td>
+                            <td>Data validation + config management</td>
+                        </tr>
+                        <tr>
+                            <td><code>aiosqlite</code></td>
+                            <td>Async SQLite driver</td>
+                        </tr>
+                        <tr>
+                            <td><code>claude-agent-sdk</code></td>
+                            <td>Claude AI integration</td>
+                        </tr>
+                        <tr>
+                            <td><code>sse-starlette</code></td>
+                            <td>Server-Sent Events streaming</td>
+                        </tr>
+                        <tr>
+                            <td><code>python-telegram-bot</code></td>
+                            <td>Telegram bot connector</td>
+                        </tr>
+                        <tr>
+                            <td><code>discord.py</code></td>
+                            <td>Discord bot connector</td>
+                        </tr>
+                        <tr>
+                            <td><code>aiodocker</code></td>
+                            <td>Docker sandbox management</td>
+                        </tr>
+                        <tr>
+                            <td><code>apscheduler</code></td>
+                            <td>Cron-based agent scheduling</td>
+                        </tr>
+                        <tr>
+                            <td><code>python-frontmatter</code></td>
+                            <td>Markdown frontmatter parsing</td>
+                        </tr>
+                        <tr>
+                            <td><code>pyyaml</code></td>
+                            <td>YAML config + module manifests</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+
+            <!-- Navigation -->
+            <section class="docs-section">
+                <h2>Next Steps</h2>
+                <div class="nav-cards">
+                    <a href="computer-api.html" class="nav-card">
+                        <h3>🔌 API Routes</h3>
+                        <p>Explore all ~90 endpoints across 19 route files: chat, sessions, bots, workspaces, and more.</p>
+                    </a>
+                    <a href="computer-orchestrator.html" class="nav-card">
+                        <h3>🎭 Orchestrator</h3>
+                        <p>Deep dive into the agent controller, trust levels, sandbox routing, and SDK integration.</p>
+                    </a>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <footer>
+        <p>&copy; 2026 Open Parachute, PBC. A Colorado Public Benefit Corporation.</p>
+        <p><a href="/blog/">Blog</a> &middot; <a href="/architecture/">Docs</a> &middot; <a href="/roadmap/">Roadmap</a> &middot; <a href="https://github.com/OpenParachutePBC/parachute-computer" target="_blank">GitHub</a></p>
+    </footer>
+</body>
+</html>

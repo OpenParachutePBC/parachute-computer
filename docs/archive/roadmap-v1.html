@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Q1 2026 Roadmap (v1) | Open Parachute</title>
+    <meta name="description" content="Parachute development roadmap for January - April 2026">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header>
+        <nav>
+            <a href="index.html" class="logo">Open Parachute</a>
+            <div class="nav-links">
+                <a href="docs/index.html">Docs</a>
+                <a href="roadmap.html">Roadmap</a>
+                <a href="https://github.com/OpenParachutePBC" target="_blank">GitHub</a>
+            </div>
+        </nav>
+    </header>
+
+    <main>
+        <div class="roadmap-header">
+            <h1>Q1 2026 Roadmap</h1>
+            <p class="dates">January - April 2026</p>
+        </div>
+
+        <!-- Vision -->
+        <section class="section">
+            <h2>Vision</h2>
+            <p>Parachute is local-first, voice-first extended mind technology. We're building two entry points into one ecosystem:</p>
+            <ul>
+                <li><strong>Parachute Daily</strong> — An accessible gateway for people new to AI. Voice journaling with reflection and personalized briefings.</li>
+                <li><strong>Parachute Pro</strong> — The full extended mind experience for those who want sovereignty over their data and deeper AI partnership.</li>
+            </ul>
+            <p>Both are powered by <strong>Parachute Computer</strong> — your personal AI server that can run on your own machine, giving you complete control.</p>
+        </section>
+
+        <!-- Architecture -->
+        <section class="section">
+            <h2>Product Architecture</h2>
+            <div class="architecture-diagram">
+┌─────────────────────────────────────────────────────────────┐
+│                    PARACHUTE COMPUTER                        │
+│           (Base server - your machine / VPS / VM)            │
+│                                                              │
+│   Full agentic capabilities: Chat, Vault, Daily, MCPs       │
+└─────────────────────────────────────────────────────────────┘
+                              ▲
+                              │ connects to
+                              │
+┌─────────────────┐    ┌─────────────────┐
+│ PARACHUTE DAILY │    │  PARACHUTE PRO  │
+│   (Mobile app)  │    │   (Mobile app)  │
+│                 │    │                 │
+│ Voice journal   │    │ Daily + Chat +  │
+│ Reflection      │    │ Vault + Full    │
+│ Daily report    │    │ experience      │
+└─────────────────┘    └─────────────────┘
+        │                      │
+        ▼                      ▼
+┌─────────────────┐    ┌─────────────────┐
+│ Parachute Cloud │    │ Parachute Cloud │
+│  (hosted, paid) │    │    OR your own  │
+│                 │    │    Parachute    │
+│                 │    │ Computer (free) │
+└─────────────────┘    └─────────────────┘</div>
+            <p style="margin-top: 1rem;">Parachute Pro connected to your own Parachute Computer is completely free. Hosted options provide convenience for those who prefer it.</p>
+        </section>
+
+        <!-- Success Metrics -->
+        <section class="section">
+            <h2>Success Metrics (April 22, 2026)</h2>
+            <table class="metrics-table">
+                <thead>
+                    <tr>
+                        <th>Track</th>
+                        <th>Metric</th>
+                        <th>Target</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>Parachute Daily (hosted)</td>
+                        <td>Monthly Recurring Revenue</td>
+                        <td>$1,000+ @ ~50% margin</td>
+                    </tr>
+                    <tr>
+                        <td>Parachute Daily (hosted)</td>
+                        <td>Paying users</td>
+                        <td>200-1000 @ $1-5/mo</td>
+                    </tr>
+                    <tr>
+                        <td>Parachute Computer</td>
+                        <td>Active users</td>
+                        <td>100+ (stretch: 1,000+)</td>
+                    </tr>
+                    <tr>
+                        <td>Both</td>
+                        <td>User satisfaction</td>
+                        <td>Users feel great using it</td>
+                    </tr>
+                </tbody>
+            </table>
+        </section>
+
+        <!-- Track 1: Daily -->
+        <section class="section">
+            <h2>Track 1: Parachute Daily (Hosted)</h2>
+            <p>Voice journaling with AI reflection and personalized daily briefings. The Flutter app connects to Parachute Cloud.</p>
+
+            <h3>Core Loop</h3>
+            <ul>
+                <li>Record voice → transcription → journal entry</li>
+                <li>Reflection agent → prompts to go deeper</li>
+                <li>Daily report → personalized news and context relevant to you</li>
+                <li>Profile builds over time → system learns who you are</li>
+            </ul>
+
+            <h3>Technical Approach</h3>
+            <p>Cloudflare stack (Workers, D1, R2) rather than per-user VMs. MCPs behave differently in hosted vs self-hosted contexts — same interface, different backends. Simpler, more cost-effective, with data isolation at the storage layer.</p>
+
+            <h3>To Build</h3>
+            <ul>
+                <li>Cloudflare infrastructure (Workers, D1, R2)</li>
+                <li>Hosted MCP implementations (journal read/write, assets, profile)</li>
+                <li>Reflection agent running in cloud</li>
+                <li>Daily report generation (news + personalization)</li>
+                <li>Profile system (building user model from journals)</li>
+                <li>Stripe billing integration</li>
+                <li>Onboarding flow for non-technical users</li>
+            </ul>
+        </section>
+
+        <!-- Track 2: Computer -->
+        <section class="section">
+            <h2>Track 2: Parachute Computer (Self-Hosted)</h2>
+            <p>Full Parachute experience — Daily + Chat + Vault. Runs on your machine (native app bundling base server), private VPS, or VM. Powers Parachute Pro for free.</p>
+
+            <h3>Current State</h3>
+            <p>Working as a daily driver. Close circle starting to test. Small bugs and inconsistencies being polished out before broader release.</p>
+
+            <h3>To Do</h3>
+            <ul>
+                <li>Bug fixes and polish (ongoing)</li>
+                <li>Documentation for self-hosting options</li>
+                <li>Onboarding experience for power users</li>
+                <li>Feature additions based on user feedback</li>
+                <li>Distribution: Regen Hub → LVB graduates → Twitter/Claude Code community</li>
+            </ul>
+        </section>
+
+        <!-- Shared Work -->
+        <section class="section">
+            <h2>Shared Work</h2>
+            <ul>
+                <li><strong>Profile system</strong> — Building user model from journals, works across hosted and self-hosted</li>
+                <li><strong>MCP architecture</strong> — Consistent interface that adapts to deployment context</li>
+                <li><strong>App polish</strong> — Flutter codebase serves Daily, Pro, and Computer variants via flavor flags</li>
+            </ul>
+        </section>
+
+        <!-- Timeline -->
+        <section class="section">
+            <h2>Timeline</h2>
+            <div class="timeline">
+                <div class="timeline-item">
+                    <h3>January (Remaining)</h3>
+                    <ul>
+                        <li>Finalize scope document</li>
+                        <li>Continue daily polish and bug fixes</li>
+                        <li>Expand close circle testing</li>
+                        <li>Begin Cloudflare architecture design</li>
+                    </ul>
+                </div>
+                <div class="timeline-item">
+                    <h3>February</h3>
+                    <ul>
+                        <li>Cloudflare infrastructure implementation</li>
+                        <li>Stripe billing integration</li>
+                        <li>Regen Hub users on Computer</li>
+                        <li>Daily hosted alpha (invite-only)</li>
+                    </ul>
+                </div>
+                <div class="timeline-item">
+                    <h3>March</h3>
+                    <ul>
+                        <li>LVB cohort graduates → Computer users</li>
+                        <li>Daily hosted beta / soft launch</li>
+                        <li>Twitter/Claude Code marketing begins</li>
+                        <li>Profile system mature</li>
+                    </ul>
+                </div>
+                <div class="timeline-item">
+                    <h3>April 1-22</h3>
+                    <ul>
+                        <li>User growth push</li>
+                        <li>Polish based on feedback</li>
+                        <li>New Venture Challenge pitch</li>
+                        <li>ATLAS final presentation</li>
+                        <li>Hit metrics or know where we stand</li>
+                    </ul>
+                </div>
+            </div>
+        </section>
+
+        <!-- Stretch Goals -->
+        <section class="section">
+            <h2>Stretch Goals</h2>
+            <ul>
+                <li><strong>Hardware pendant</strong> — Marvin leading hardware development in his ATLAS class. Prototypes by end of semester, likely something solid.</li>
+                <li><strong>Hosted Parachute Pro</strong> — TBD, depends on progress with Daily hosted</li>
+            </ul>
+        </section>
+
+        <!-- Footer CTA -->
+        <section class="cta">
+            <p>Want to follow along or get involved?</p>
+            <a href="https://github.com/OpenParachutePBC" class="button" target="_blank">GitHub</a>
+        </section>
+    </main>
+
+    <footer>
+        <p>&copy; 2026 Open Parachute, PBC. A Colorado Public Benefit Corporation.</p>
+        <p>Last updated: January 21, 2026</p>
+    </footer>
+</body>
+</html>

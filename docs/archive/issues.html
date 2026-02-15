@@ -1,0 +1,535 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Issues & TODOs | Parachute Documentation</title>
+    <meta name="description" content="Known issues, improvement opportunities, and technical debt in the Parachute codebase">
+    <link rel="stylesheet" href="../style.css">
+    <link rel="stylesheet" href="docs.css">
+</head>
+<body>
+    <header>
+        <nav>
+            <a href="../index.html" class="logo">Open Parachute</a>
+            <div class="nav-links">
+                <a href="index.html" class="active">Docs</a>
+                <a href="../roadmap.html">Roadmap</a>
+                <a href="https://github.com/OpenParachutePBC" target="_blank">GitHub</a>
+            </div>
+        </nav>
+    </header>
+
+    <div class="docs-layout">
+        <!-- Sidebar Navigation -->
+        <aside class="docs-sidebar">
+            <div class="sidebar-section">
+                <h3>Overview</h3>
+                <a href="index.html">Architecture</a>
+                <a href="data-flow.html">Data Flow</a>
+                <a href="integration.html">Integration</a>
+            </div>
+            <div class="sidebar-section">
+                <h3>App (Flutter)</h3>
+                <a href="app-overview.html">Overview</a>
+                <a href="app-chat.html">Chat Feature</a>
+                <a href="app-daily.html">Daily Feature</a>
+                <a href="app-vault.html">Vault Feature</a>
+                <a href="app-services.html">Services</a>
+            </div>
+            <div class="sidebar-section">
+                <h3>Computer (Python)</h3>
+                <a href="computer-overview.html">Overview</a>
+                <a href="computer-api.html">API Routes</a>
+                <a href="computer-orchestrator.html">Orchestrator</a>
+                <a href="computer-agents.html">Modules &amp; Agents</a>
+                <a href="computer-database.html">Database</a>
+                <a href="computer-connectors.html">Bot Connectors</a>
+            </div>
+            <div class="sidebar-section">
+                <h3>Reference</h3>
+                <a href="issues.html" class="active">Issues & TODOs</a>
+                <a href="file-manifest.html">File Manifest</a>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="docs-content">
+            <div class="breadcrumb">
+                <a href="../index.html">Home</a> / <a href="index.html">Docs</a> / <span>Issues & TODOs</span>
+            </div>
+
+            <h1>Issues & TODOs</h1>
+            <p class="lead">Known issues, improvement opportunities, and technical debt identified during the codebase audit. Prioritized by severity and impact.</p>
+
+            <!-- Summary Stats -->
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-number" style="color: #ff6b6b;">5</div>
+                    <div class="stat-label">Critical Issues</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number" style="color: #ffb347;">7</div>
+                    <div class="stat-label">High Priority</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number" style="color: var(--accent);">12</div>
+                    <div class="stat-label">Medium Priority</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number" style="color: #6bff9f;">15+</div>
+                    <div class="stat-label">Low Priority</div>
+                </div>
+            </div>
+
+            <!-- Critical Issues -->
+            <section class="docs-section">
+                <h2>🔴 Critical Issues</h2>
+                <p>Issues that could cause data loss, crashes, or security vulnerabilities.</p>
+
+                <div class="issue-list">
+                    <div class="issue-card">
+                        <div class="issue-header">
+                            <span class="issue-title">Sherpa-ONNX Native Crash on ARM Devices</span>
+                            <span class="issue-severity critical">Critical</span>
+                        </div>
+                        <div class="issue-location">app/pubspec.yaml (dependency_overrides)</div>
+                        <div class="issue-description">
+                            Version 1.12.21 has a SIGSEGV crash at 0x3f800000 on certain ARM devices (Daylight DC-1 with MediaTek chipset). Currently mitigated by pinning to 1.12.20.
+                            <br><br>
+                            <strong>Impact:</strong> App crash on affected devices.<br>
+                            <strong>Mitigation:</strong> Version pinned. Do NOT upgrade without testing on affected devices.
+                        </div>
+                    </div>
+
+                    <div class="issue-card">
+                        <div class="issue-header">
+                            <span class="issue-title">File Locking Not Implemented</span>
+                            <span class="issue-severity critical">Critical</span>
+                        </div>
+                        <div class="issue-location">app/lib/core/services/file_system_service.dart</div>
+                        <div class="issue-description">
+                            Multiple processes (app + server, or multiple app instances) could write to the same journal file simultaneously, causing data corruption.
+                            <br><br>
+                            <strong>Impact:</strong> Potential journal data corruption.<br>
+                            <strong>Fix:</strong> Implement file locking using platform-specific APIs or a lock file mechanism.
+                        </div>
+                    </div>
+
+                    <div class="issue-card">
+                        <div class="issue-header">
+                            <span class="issue-title">No Atomic Writes for Journal Entries</span>
+                            <span class="issue-severity critical">Critical</span>
+                        </div>
+                        <div class="issue-location">app/lib/features/daily/journal/services/journal_service.dart</div>
+                        <div class="issue-description">
+                            Journal files are written directly without atomic write (write to temp, then rename). A crash or power loss during write could corrupt the file.
+                            <br><br>
+                            <strong>Impact:</strong> Partial data loss on crash mid-write.<br>
+                            <strong>Fix:</strong> Write to temp file first, then atomically rename to target path.
+                        </div>
+                    </div>
+
+                    <div class="issue-card">
+                        <div class="issue-header">
+                            <span class="issue-title">HOME Override Race Condition</span>
+                            <span class="issue-severity critical">Critical</span>
+                        </div>
+                        <div class="issue-location">computer/parachute/core/claude_sdk.py:24</div>
+                        <div class="issue-description">
+                            The <code>_override_home</code> context manager sets <code>os.environ['HOME']</code> temporarily. If an exception occurs, HOME may not be properly restored, affecting subsequent operations.
+                            <br><br>
+                            <strong>Impact:</strong> Vault operations could use wrong directory.<br>
+                            <strong>Fix:</strong> Use try/finally more carefully or subprocess with explicit env.
+                        </div>
+                    </div>
+
+                    <div class="issue-card">
+                        <div class="issue-header">
+                            <span class="issue-title">.env Files in Attachment Whitelist</span>
+                            <span class="issue-severity critical">Critical</span>
+                        </div>
+                        <div class="issue-location">computer/parachute/models/requests.py:11</div>
+                        <div class="issue-description">
+                            The <code>ALLOWED_ATTACHMENT_EXTENSIONS</code> whitelist includes <code>.env</code>, <code>.ini</code>, <code>.conf</code>, and <code>.cfg</code> files. Users could accidentally upload credentials.
+                            <br><br>
+                            <strong>Impact:</strong> Credential leakage through attachments.<br>
+                            <strong>Fix:</strong> Remove sensitive config extensions from whitelist or add content scanning.
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- High Priority -->
+            <section class="docs-section">
+                <h2>🟠 High Priority</h2>
+                <p>Issues that significantly impact functionality or user experience.</p>
+
+                <div class="issue-list">
+                    <div class="issue-card">
+                        <div class="issue-header">
+                            <span class="issue-title">Chat URL Not Updating on Config Change</span>
+                            <span class="issue-severity high">High</span>
+                        </div>
+                        <div class="issue-location">app/lib/features/chat/providers/chat_providers.dart</div>
+                        <div class="issue-description">
+                            When server URL is changed in settings, existing chat sessions continue using the old URL until app restart. Comment in code acknowledges this issue.
+                            <br><br>
+                            <strong>Impact:</strong> Chat fails silently when changing servers.<br>
+                            <strong>Fix:</strong> Invalidate chatServiceProvider when serverUrlProvider changes.
+                        </div>
+                    </div>
+
+                    <div class="issue-card">
+                        <div class="issue-header">
+                            <span class="issue-title">Agent Config Caching Race Condition</span>
+                            <span class="issue-severity high">High</span>
+                        </div>
+                        <div class="issue-location">app/lib/features/daily/journal/providers/journal_providers.dart</div>
+                        <div class="issue-description">
+                            Agent configuration is cached without thread-safe access. Multiple provider updates could cause race conditions in agent selection.
+                            <br><br>
+                            <strong>Impact:</strong> Wrong agent may be selected intermittently.<br>
+                            <strong>Fix:</strong> Add proper synchronization or use immutable state patterns.
+                        </div>
+                    </div>
+
+                    <div class="issue-card">
+                        <div class="issue-header">
+                            <span class="issue-title">Attachment Save Fails Silently</span>
+                            <span class="issue-severity high">High</span>
+                        </div>
+                        <div class="issue-location">computer/parachute/core/orchestrator.py:340</div>
+                        <div class="issue-description">
+                            When attachment saving fails, error is logged but message still sent. Client doesn't know attachment failed - just sees "[Failed to attach: filename]" in message.
+                            <br><br>
+                            <strong>Impact:</strong> User confusion about missing attachments.<br>
+                            <strong>Fix:</strong> Return attachment errors in response events or reject message.
+                        </div>
+                    </div>
+
+                    <div class="issue-card">
+                        <div class="issue-header">
+                            <span class="issue-title">Permission System Desync Risk</span>
+                            <span class="issue-severity high">High</span>
+                        </div>
+                        <div class="issue-location">computer/parachute/models/session.py + core/permission_handler.py</div>
+                        <div class="issue-description">
+                            Two separate permission systems: <code>SessionPermissions</code> (for UI) and <code>PermissionHandler</code> (for enforcement). Could show different allowed vs actual permissions.
+                            <br><br>
+                            <strong>Impact:</strong> UI may show permission as allowed when actually denied.<br>
+                            <strong>Fix:</strong> Single source of truth for permission evaluation.
+                        </div>
+                    </div>
+
+                    <div class="issue-card">
+                        <div class="issue-header">
+                            <span class="issue-title">No Session Pagination</span>
+                            <span class="issue-severity high">High</span>
+                        </div>
+                        <div class="issue-location">app/lib/features/chat/providers/chat_providers.dart</div>
+                        <div class="issue-description">
+                            Session list loads all sessions at once. With hundreds of sessions, this causes noticeable delay and memory usage.
+                            <br><br>
+                            <strong>Impact:</strong> Slow app startup with many sessions.<br>
+                            <strong>Fix:</strong> Implement pagination with lazy loading.
+                        </div>
+                    </div>
+
+                    <div class="issue-card">
+                        <div class="issue-header">
+                            <span class="issue-title">Markdown Rendering Fallback to Plain Text</span>
+                            <span class="issue-severity high">High</span>
+                        </div>
+                        <div class="issue-location">app/lib/features/chat/widgets/message_bubble.dart</div>
+                        <div class="issue-description">
+                            When flutter_markdown encounters a builder error, it silently falls back to plain text without logging. Complex markdown may render incorrectly.
+                            <br><br>
+                            <strong>Impact:</strong> Code blocks and formatting may disappear.<br>
+                            <strong>Fix:</strong> Log builder errors and show placeholder for failed blocks.
+                        </div>
+                    </div>
+
+                    <div class="issue-card">
+                        <div class="issue-header">
+                            <span class="issue-title">Transcription Model Init Blocking</span>
+                            <span class="issue-severity high">High</span>
+                        </div>
+                        <div class="issue-location">app/lib/core/services/transcription/sherpa_onnx_service.dart</div>
+                        <div class="issue-description">
+                            Model initialization has no timeout. If model files are corrupted or slow to load, app could hang indefinitely on startup.
+                            <br><br>
+                            <strong>Impact:</strong> App may appear frozen on first launch.<br>
+                            <strong>Fix:</strong> Add initialization timeout and fallback behavior.
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Medium Priority -->
+            <section class="docs-section">
+                <h2>🔵 Medium Priority</h2>
+                <p>Issues that affect code quality or have workarounds.</p>
+
+                <div class="issue-list">
+                    <div class="issue-card">
+                        <div class="issue-header">
+                            <span class="issue-title">Orphaned Pending Sessions</span>
+                            <span class="issue-severity medium">Medium</span>
+                        </div>
+                        <div class="issue-location">computer/parachute/core/session_manager.py</div>
+                        <div class="issue-description">
+                            Sessions start as "pending" until SDK returns ID. If SDK error occurs, session stays pending forever. No cleanup job for old pending sessions.
+                            <br><br>
+                            <strong>Fix:</strong> Add cleanup job for pending sessions older than X minutes.
+                        </div>
+                    </div>
+
+                    <div class="issue-card">
+                        <div class="issue-header">
+                            <span class="issue-title">MCP Server Python Path Not Validated</span>
+                            <span class="issue-severity medium">Medium</span>
+                        </div>
+                        <div class="issue-location">computer/parachute/lib/mcp_loader.py:54</div>
+                        <div class="issue-description">
+                            MCP server config hardcodes Python command without validating it exists. Could fail silently if venv not activated.
+                            <br><br>
+                            <strong>Fix:</strong> Validate Python path exists; fall back to sys.executable.
+                        </div>
+                    </div>
+
+                    <div class="issue-card">
+                        <div class="issue-header">
+                            <span class="issue-title">Error Event Inconsistency</span>
+                            <span class="issue-severity medium">Medium</span>
+                        </div>
+                        <div class="issue-location">computer/parachute/api/chat.py + orchestrator.py</div>
+                        <div class="issue-description">
+                            Some errors yield ErrorEvent, some return JSONResponse with 401, some raise HTTPException. Client can't uniformly handle errors.
+                            <br><br>
+                            <strong>Fix:</strong> Standardize on one error pattern (SSE events for streaming).
+                        </div>
+                    </div>
+
+                    <div class="issue-card">
+                        <div class="issue-header">
+                            <span class="issue-title">ChatService Too Large</span>
+                            <span class="issue-severity medium">Medium</span>
+                        </div>
+                        <div class="issue-location">app/lib/features/chat/services/chat_service.dart</div>
+                        <div class="issue-description">
+                            Single file is 2,059 lines. Mixes HTTP, WebSocket, session management, and import logic. Hard to maintain and test.
+                            <br><br>
+                            <strong>Fix:</strong> Split into ChatHttpService, ChatStreamService, SessionService, ImportService.
+                        </div>
+                    </div>
+
+                    <div class="issue-card">
+                        <div class="issue-header">
+                            <span class="issue-title">ToolCall.summary Brittle</span>
+                            <span class="issue-severity medium">Medium</span>
+                        </div>
+                        <div class="issue-location">app/lib/features/chat/models/chat_message.dart</div>
+                        <div class="issue-description">
+                            ToolCall summary uses hardcoded field name checks (e.g., "command", "file_path"). New tool input fields would be missed.
+                            <br><br>
+                            <strong>Fix:</strong> Use a registry pattern or dynamic field summarization.
+                        </div>
+                    </div>
+
+                    <div class="issue-card">
+                        <div class="issue-header">
+                            <span class="issue-title">VaultPathNotifier Too Complex</span>
+                            <span class="issue-severity medium">Medium</span>
+                        </div>
+                        <div class="issue-location">app/lib/core/providers/app_state_provider.dart</div>
+                        <div class="issue-description">
+                            Single notifier handles server fetch, local cache, migration, and error recovery. Hard to understand and test.
+                            <br><br>
+                            <strong>Fix:</strong> Split into VaultPathFetcher, VaultPathCache, and VaultPathNotifier.
+                        </div>
+                    </div>
+
+                    <div class="issue-card">
+                        <div class="issue-header">
+                            <span class="issue-title">No Request Signing</span>
+                            <span class="issue-severity medium">Medium</span>
+                        </div>
+                        <div class="issue-location">app/lib/features/chat/services/chat_service.dart</div>
+                        <div class="issue-description">
+                            API key sent in plain header (x-api-key). No request signing or HTTPS enforcement in URL validation.
+                            <br><br>
+                            <strong>Fix:</strong> Implement HMAC request signing for integrity; enforce HTTPS.
+                        </div>
+                    </div>
+
+                    <div class="issue-card">
+                        <div class="issue-header">
+                            <span class="issue-title">Missing Database Indexes</span>
+                            <span class="issue-severity medium">Medium</span>
+                        </div>
+                        <div class="issue-location">computer/parachute/db/database.py</div>
+                        <div class="issue-description">
+                            No explicit indexes on frequently queried columns (e.g., session_tags.tag, sessions.archived). Could slow down as data grows.
+                            <br><br>
+                            <strong>Fix:</strong> Add CREATE INDEX statements for common query patterns.
+                        </div>
+                    </div>
+
+                    <div class="issue-card">
+                        <div class="issue-header">
+                            <span class="issue-title">Large Orchestrator Function</span>
+                            <span class="issue-severity medium">Medium</span>
+                        </div>
+                        <div class="issue-location">computer/parachute/core/orchestrator.py:189-450</div>
+                        <div class="issue-description">
+                            The run_streaming method is ~260 lines. Mixes session setup, prompt building, attachment handling, and streaming. Hard to test individual pieces.
+                            <br><br>
+                            <strong>Fix:</strong> Extract into _prepare_session, _build_prompt, _process_attachments, _run_sdk_query.
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Low Priority -->
+            <section class="docs-section">
+                <h2>🟢 Low Priority</h2>
+                <p>Minor issues, dead code, and improvement opportunities.</p>
+
+                <div class="issue-list">
+                    <div class="issue-card">
+                        <div class="issue-header">
+                            <span class="issue-title">Vision Service Stubs</span>
+                            <span class="issue-severity low">Low</span>
+                        </div>
+                        <div class="issue-location">app/lib/core/services/vision/</div>
+                        <div class="issue-description">
+                            Vision/OCR service files exist but contain only stub implementations. Never called from app code. Either implement or remove.
+                        </div>
+                    </div>
+
+                    <div class="issue-card">
+                        <div class="issue-header">
+                            <span class="issue-title">Unused Dependencies</span>
+                            <span class="issue-severity low">Low</span>
+                        </div>
+                        <div class="issue-location">app/pubspec.yaml</div>
+                        <div class="issue-description">
+                            Several dependencies appear unused: <code>dio</code> (HTTP), <code>bm25</code> (search), <code>go_router</code> (routing). Consider removal.
+                        </div>
+                    </div>
+
+                    <div class="issue-card">
+                        <div class="issue-header">
+                            <span class="issue-title">TODOs in Base Codebase</span>
+                            <span class="issue-severity low">Low</span>
+                        </div>
+                        <div class="issue-location">computer/parachute/ (multiple files)</div>
+                        <div class="issue-description">
+                            4 TODO comments found:
+                            <ul>
+                                <li><code>orchestrator.py:412</code> - Inject context from session history</li>
+                                <li><code>api/modules.py:150</code> - Implement semantic search</li>
+                                <li><code>api/modules.py:191</code> - Implement with ModuleIndexer</li>
+                                <li><code>mcp_server.py:408</code> - Add full-text search in chunks</li>
+                            </ul>
+                        </div>
+                    </div>
+
+                    <div class="issue-card">
+                        <div class="issue-header">
+                            <span class="issue-title">Limited Test Coverage</span>
+                            <span class="issue-severity low">Low</span>
+                        </div>
+                        <div class="issue-location">app/test/</div>
+                        <div class="issue-description">
+                            13 test files but mostly disposal/widget tests. No unit tests for services, no integration tests, no E2E tests, no performance benchmarks.
+                        </div>
+                    </div>
+
+                    <div class="issue-card">
+                        <div class="issue-header">
+                            <span class="issue-title">Para-ID Format Not Validated</span>
+                            <span class="issue-severity low">Low</span>
+                        </div>
+                        <div class="issue-location">app/lib/features/daily/journal/models/</div>
+                        <div class="issue-description">
+                            Para-IDs (para:abc123xyz) are accepted without regex validation. Malformed IDs could cause sync issues.
+                        </div>
+                    </div>
+
+                    <div class="issue-card">
+                        <div class="issue-header">
+                            <span class="issue-title">Settings Scattered Across Notifiers</span>
+                            <span class="issue-severity low">Low</span>
+                        </div>
+                        <div class="issue-location">app/lib/core/providers/</div>
+                        <div class="issue-description">
+                            13 different notifiers store settings in SharedPreferences. Hard to find where a setting is stored. Consider a unified SettingsService.
+                        </div>
+                    </div>
+
+                    <div class="issue-card">
+                        <div class="issue-header">
+                            <span class="issue-title">No Image Compression</span>
+                            <span class="issue-severity low">Low</span>
+                        </div>
+                        <div class="issue-location">app/lib/features/daily/capture/</div>
+                        <div class="issue-description">
+                            Captured images stored at full resolution. Could bloat vault significantly with many photos.
+                        </div>
+                    </div>
+
+                    <div class="issue-card">
+                        <div class="issue-header">
+                            <span class="issue-title">Missing Provider Documentation</span>
+                            <span class="issue-severity low">Low</span>
+                        </div>
+                        <div class="issue-location">app/lib/core/providers/, app/lib/features/*/providers/</div>
+                        <div class="issue-description">
+                            25 core providers lack comprehensive documentation. Provider invalidation cascades not clearly documented.
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Recommendations Summary -->
+            <section class="docs-section">
+                <h2>Recommendations Summary</h2>
+
+                <h3>Top Priority Fixes</h3>
+                <ol>
+                    <li><strong>Implement file locking</strong> in FileSystemService to prevent data corruption</li>
+                    <li><strong>Add atomic write support</strong> for journal entries (write to temp, then rename)</li>
+                    <li><strong>Remove sensitive extensions</strong> from attachment whitelist</li>
+                    <li><strong>Fix HOME override</strong> race condition in claude_sdk.py</li>
+                    <li><strong>Add bot connector error recovery</strong> for dropped connections</li>
+                </ol>
+
+                <h3>Top Architectural Improvements</h3>
+                <ol>
+                    <li><strong>Split ChatService</strong> into focused modules (~500 lines max)</li>
+                    <li><strong>Simplify VaultPathNotifier</strong> into separate concerns</li>
+                    <li><strong>Standardize error handling</strong> across streaming and HTTP responses</li>
+                    <li><strong>Implement session pagination</strong> for large session counts</li>
+                    <li><strong>Add comprehensive test coverage</strong> for services and providers</li>
+                </ol>
+
+                <h3>Technical Debt Summary</h3>
+                <ul>
+                    <li>78,240 lines of Dart code across 247 files</li>
+                    <li>13 state notifiers with scattered logic</li>
+                    <li>2,059-line ChatService (should be split)</li>
+                    <li>Multiple copy-paste service implementations</li>
+                    <li>4 TODOs in computer server, various stubs in app</li>
+                </ul>
+            </section>
+        </main>
+    </div>
+
+    <footer>
+        <p>&copy; 2026 Open Parachute, PBC. A Colorado Public Benefit Corporation.</p>
+        <p>Documentation last updated: February 9, 2026</p>
+    </footer>
+</body>
+</html>

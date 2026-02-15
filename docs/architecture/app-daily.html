@@ -1,0 +1,604 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Daily Feature | Parachute Documentation</title>
+    <meta name="description" content="Deep dive into Parachute's Daily feature - voice journaling with real-time transcription and AI reflection">
+    <link rel="stylesheet" href="/style.css">
+    <link rel="stylesheet" href="docs.css">
+</head>
+<body>
+    <header>
+        <nav>
+            <a href="/" class="logo">Parachute Computer</a>
+            <div class="nav-links">
+                <a href="/blog/">Blog</a>
+                <a href="/architecture/" class="active">Docs</a>
+                <a href="/roadmap/">Roadmap</a>
+                <a href="https://github.com/OpenParachutePBC/parachute-computer" target="_blank">GitHub</a>
+            </div>
+        </nav>
+    </header>
+
+    <div class="docs-layout">
+        <aside class="docs-sidebar">
+            <div class="sidebar-section">
+                <h3>Overview</h3>
+                <a href="index.html">Architecture</a>
+                <a href="data-flow.html">Data Flow</a>
+                <a href="integration.html">Integration</a>
+            </div>
+            <div class="sidebar-section">
+                <h3>App (Flutter)</h3>
+                <a href="app-overview.html">Overview</a>
+                <a href="app-chat.html">Chat Feature</a>
+                <a href="app-daily.html" class="active">Daily Feature</a>
+                <a href="app-vault.html">Vault Feature</a>
+                <a href="app-services.html">Services</a>
+            </div>
+            <div class="sidebar-section">
+                <h3>Computer (Python)</h3>
+                <a href="computer-overview.html">Overview</a>
+                <a href="computer-api.html">API Routes</a>
+                <a href="computer-orchestrator.html">Orchestrator</a>
+                <a href="computer-agents.html">Modules &amp; Agents</a>
+                <a href="computer-database.html">Database</a>
+                <a href="computer-connectors.html">Bot Connectors</a>
+            </div>
+            <div class="sidebar-section">
+                <h3>Reference</h3>
+                <a href="issues.html">Issues & TODOs</a>
+                <a href="file-manifest.html">File Manifest</a>
+            </div>
+        </aside>
+
+        <main class="docs-content">
+            <div class="breadcrumb">
+                <a href="../index.html">Home</a> / <a href="../blog/">Blog</a>
+                <a href="index.html">Docs</a> / <span>Daily Feature</span>
+            </div>
+
+            <h1>Daily Feature</h1>
+            <p class="lead">Voice-first journaling with real-time streaming transcription, Omi wearable integration, and AI-powered reflections. The most complex audio processing in the app.</p>
+
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-number">66</div>
+                    <div class="stat-label">Files</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number">~23,100</div>
+                    <div class="stat-label">Lines of Code</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number">5</div>
+                    <div class="stat-label">Entry Types</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number">12</div>
+                    <div class="stat-label">Services</div>
+                </div>
+            </div>
+
+            <!-- Module Overview -->
+            <section class="docs-section">
+                <h2>Module Structure</h2>
+
+                <div class="architecture-visual">
+                    <pre>
+daily/
+├── journal/     (31 files, ~8,300 lines)  - Core journaling
+│   ├── models/          - JournalEntry, JournalDay, AgentOutput
+│   ├── services/        - JournalService, ReflectionService
+│   ├── providers/       - Riverpod state management
+│   ├── screens/         - JournalScreen (2,156 lines)
+│   └── widgets/         - EntryCard, InputBar, AudioPlayer
+│
+├── recorder/    (32 files, ~12,500 lines) - Audio & transcription
+│   ├── models/          - OmiDevice
+│   ├── services/        - Transcription, Omi, background recording
+│   │   ├── transcription/   - LocalAgreement-2 streaming
+│   │   └── omi/             - Bluetooth device integration
+│   ├── providers/       - Recording state
+│   └── widgets/         - Audio controls, debug overlay
+│
+├── capture/     (4 files, ~750 lines)     - Photo & handwriting
+│   ├── services/        - PhotoCaptureService
+│   └── screens/         - HandwritingScreen
+│
+└── search/      (3 files, ~750 lines)     - Journal search
+    ├── services/        - Text search
+    └── screens/         - Search UI</pre>
+                </div>
+            </section>
+
+            <!-- Transcription Pipeline -->
+            <section class="docs-section">
+                <h2>Streaming Transcription Pipeline</h2>
+
+                <p>Three-stage pipeline with VAD-based auto-pause and LocalAgreement-2 text stability:</p>
+
+                <div class="architecture-visual">
+                    <pre>
+┌───────────────────────────────────────────────────────────────────────┐
+│                    STREAMING TRANSCRIPTION PIPELINE                    │
+│                                                                        │
+│  Stage 1: Audio Capture                                                │
+│  ┌─────────────────────────────────────────────────────────────────┐  │
+│  │ Microphone → SimpleNoiseFilter → SmartChunker (VAD) → Buffer    │  │
+│  │                                                                  │  │
+│  │ • 16kHz, 16-bit PCM, mono                                       │  │
+│  │ • Noise filter pre-processing                                   │  │
+│  │ • VAD detects speech vs silence                                 │  │
+│  │ • Rolling buffer (30 seconds max)                               │  │
+│  └─────────────────────────────────────────────────────────────────┘  │
+│                              │                                         │
+│                              ▼                                         │
+│  Stage 2: Transcription                                                │
+│  ┌─────────────────────────────────────────────────────────────────┐  │
+│  │ Re-transcribe every 3s during speech                            │  │
+│  │                                                                  │  │
+│  │ iOS/macOS: FluidAudio (Parakeet v3 CoreML) - faster             │  │
+│  │ Android:   Sherpa-ONNX (Parakeet v3 ONNX) - v1.12.20 pinned    │  │
+│  └─────────────────────────────────────────────────────────────────┘  │
+│                              │                                         │
+│                              ▼                                         │
+│  Stage 3: LocalAgreement-2                                             │
+│  ┌─────────────────────────────────────────────────────────────────┐  │
+│  │ Compare consecutive transcriptions                               │  │
+│  │                                                                  │  │
+│  │ ┌──────────────┐  ┌──────────────┐  ┌──────────────┐           │  │
+│  │ │  Confirmed   │  │  Tentative   │  │   Interim    │           │  │
+│  │ │ (2+ matches) │  │ (1 match)    │  │  (changing)  │           │  │
+│  │ └──────────────┘  └──────────────┘  └──────────────┘           │  │
+│  │                                                                  │  │
+│  │ Display: [confirmed] [tentative] [interim]                      │  │
+│  └─────────────────────────────────────────────────────────────────┘  │
+│                              │                                         │
+│                              ▼                                         │
+│  Finalization (on VAD silence ≥1s or stop)                            │
+│  ┌─────────────────────────────────────────────────────────────────┐  │
+│  │ Flush buffer with 2s silence → Final transcription              │  │
+│  │ Create JournalEntry with audio path + transcribed text          │  │
+│  └─────────────────────────────────────────────────────────────────┘  │
+└───────────────────────────────────────────────────────────────────────┘</pre>
+                </div>
+
+                <h3>Key Configuration</h3>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Setting</th>
+                            <th>Value</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Rolling Buffer Max</td>
+                            <td>30 seconds</td>
+                            <td>480k samples at 16kHz</td>
+                        </tr>
+                        <tr>
+                            <td>Re-transcribe Interval</td>
+                            <td>3 seconds</td>
+                            <td>During speech detection</td>
+                        </tr>
+                        <tr>
+                            <td>VAD Silence Threshold</td>
+                            <td>1 second</td>
+                            <td>Detect end of speech</td>
+                        </tr>
+                        <tr>
+                            <td>Min Chunk Duration</td>
+                            <td>500ms</td>
+                            <td>Efficiency</td>
+                        </tr>
+                        <tr>
+                            <td>Energy Threshold</td>
+                            <td>100-800</td>
+                            <td>Speech vs silence (adjustable)</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <div class="callout callout-warning">
+                    <strong>Important:</strong> Sherpa-ONNX is pinned to v1.12.20. Version v1.12.21 crashes on ARM (MediaTek chipsets).
+                </div>
+            </section>
+
+            <!-- Journal Entry Types -->
+            <section class="docs-section">
+                <h2>Journal Entry Types</h2>
+
+                <div class="concept-grid">
+                    <div class="concept-card">
+                        <h3>Voice</h3>
+                        <p>Audio recording with transcription. Stored as WAV file with text content.</p>
+                        <ul>
+                            <li>Audio path in YAML frontmatter</li>
+                            <li>Duration tracking</li>
+                            <li>Transcription status</li>
+                        </ul>
+                    </div>
+                    <div class="concept-card">
+                        <h3>Text</h3>
+                        <p>Typed journal entries. Plain markdown content.</p>
+                        <ul>
+                            <li>Direct text input</li>
+                            <li>Markdown formatting</li>
+                            <li>Created timestamp</li>
+                        </ul>
+                    </div>
+                    <div class="concept-card">
+                        <h3>Photo</h3>
+                        <p>Image capture with optional caption.</p>
+                        <ul>
+                            <li>Camera or gallery source</li>
+                            <li>Optional cropping</li>
+                            <li>Date-organized storage</li>
+                        </ul>
+                    </div>
+                    <div class="concept-card">
+                        <h3>Handwriting</h3>
+                        <p>Canvas-based handwriting/drawing.</p>
+                        <ul>
+                            <li>Lined paper background</li>
+                            <li>PNG export</li>
+                            <li>Touch/stylus input</li>
+                        </ul>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Para-ID System -->
+            <section class="docs-section">
+                <h2>Para-ID System</h2>
+
+                <p>Portable identifiers for cross-device synchronization:</p>
+
+                <div class="code-block">
+                    <pre><code># Journal file format: Daily/journals/{YYYY-MM-DD}.md
+
+---
+entries:
+  daily:abc123def456:
+    type: voice
+    audio: assets/2025-01-28/audio_abc123.wav
+    duration: 45
+    created: "10:30"
+    status: complete
+---
+
+# para:daily:abc123def456 Morning reflection
+
+This is the transcribed text from the voice recording.
+It was captured at 10:30 AM and processed through
+the streaming transcription pipeline.
+
+---
+
+# para:daily:xyz789uvw012 Follow-up thought
+
+Another entry with its own para ID and metadata.</code></pre>
+                </div>
+
+                <h3>ID Format</h3>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Component</th>
+                            <th>Value</th>
+                            <th>Description</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Prefix</td>
+                            <td><code>para:</code></td>
+                            <td>Namespace identifier</td>
+                        </tr>
+                        <tr>
+                            <td>Module</td>
+                            <td><code>daily:</code></td>
+                            <td>Source module (daily, chat)</td>
+                        </tr>
+                        <tr>
+                            <td>ID</td>
+                            <td>12 chars</td>
+                            <td>Alphanumeric (a-z, 0-9)</td>
+                        </tr>
+                        <tr>
+                            <td>Legacy ID</td>
+                            <td>6 chars</td>
+                            <td>Backward compatible</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+
+            <!-- Omi Integration -->
+            <section class="docs-section">
+                <h2>Omi Wearable Integration</h2>
+
+                <p>Bluetooth Low Energy (BLE) integration with Omi pendant device:</p>
+
+                <div class="architecture-visual">
+                    <pre>
+┌─────────────────────────────────────────────────────────────────────┐
+│                      OMI DEVICE INTEGRATION                          │
+│                                                                      │
+│  ┌───────────────┐         ┌───────────────────────────────────┐   │
+│  │  Omi Pendant  │  ◀─BLE─▶│       OmiBluetoothService         │   │
+│  │               │         │                                    │   │
+│  │  • Button     │         │  • Scan for devices               │   │
+│  │  • Microphone │         │  • Auto-reconnect                 │   │
+│  │  • SD Card    │         │  • Battery level stream           │   │
+│  │  • Battery    │         │  • Connection state               │   │
+│  └───────────────┘         └───────────────┬───────────────────┘   │
+│                                             │                       │
+│                                             ▼                       │
+│                            ┌───────────────────────────────────┐   │
+│                            │       OmiCaptureService           │   │
+│                            │                                    │   │
+│                            │  Mode Auto-Detection:             │   │
+│                            │  ┌──────────────────────────────┐ │   │
+│                            │  │ Store-and-Forward (default)  │ │   │
+│                            │  │ Records to SD card           │ │   │
+│                            │  │ Downloads when complete      │ │   │
+│                            │  └──────────────────────────────┘ │   │
+│                            │  ┌──────────────────────────────┐ │   │
+│                            │  │ Real-time Streaming (fallback)│ │   │
+│                            │  │ Audio over BLE during record │ │   │
+│                            │  └──────────────────────────────┘ │   │
+│                            └───────────────────────────────────┘   │
+│                                                                      │
+│  Supported Codecs: PCM8, PCM16, mu-law, Opus                        │
+│  Service UUID: 19b10000-e8f2-537e-4f6c-d104768a1214                 │
+└─────────────────────────────────────────────────────────────────────┘</pre>
+                </div>
+
+                <h3>Button Events</h3>
+                <ul>
+                    <li><strong>Single Tap:</strong> Start/stop recording</li>
+                    <li><strong>Double Tap:</strong> Cancel recording</li>
+                    <li><strong>Triple Tap:</strong> Custom action</li>
+                </ul>
+            </section>
+
+            <!-- Core Services -->
+            <section class="docs-section">
+                <h2>Core Services</h2>
+
+                <h3>JournalService (1,261 lines)</h3>
+                <p>Core CRUD operations for journal entries with surgical file appending.</p>
+
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Method</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>loadDay(date)</code></td>
+                            <td>Load all entries for a date</td>
+                        </tr>
+                        <tr>
+                            <td><code>addEntry(entry)</code></td>
+                            <td>Append new entry (preserves external edits)</td>
+                        </tr>
+                        <tr>
+                            <td><code>updateEntry(paraId, content)</code></td>
+                            <td>Surgical update of specific entry</td>
+                        </tr>
+                        <tr>
+                            <td><code>deleteEntry(paraId)</code></td>
+                            <td>Remove entry and metadata</td>
+                        </tr>
+                        <tr>
+                            <td><code>listRecordingIds()</code></td>
+                            <td>Get all para IDs with recordings</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <h3>LiveTranscriptionService (547 lines)</h3>
+                <p>Main transcription orchestrator with VAD-based auto-pause.</p>
+
+                <div class="code-block">
+                    <pre><code>// Public API
+bool get isRecording
+bool get isProcessing
+List&lt;TranscriptionSegment&gt; get segments
+String get interimText
+StreamingTranscriptionState get currentStreamingState
+
+Stream&lt;bool&gt; get vadActivityStream
+Stream&lt;AudioDebugMetrics&gt; get debugMetricsStream
+Stream&lt;StreamingTranscriptionState&gt; get streamingStateStream
+
+Future&lt;bool&gt; initialize()
+Future&lt;bool&gt; startRecording()
+Future&lt;String?&gt; stopRecording()  // Returns audio path
+Future&lt;void&gt; cancelRecording()</code></pre>
+                </div>
+
+                <h3>AgentOutputService (171 lines)</h3>
+                <p>Loads agent-generated outputs (reflections, content ideas).</p>
+                <ul>
+                    <li>Parses markdown with YAML frontmatter</li>
+                    <li>Extracts agent name and timestamp</li>
+                    <li>Lists outputs by date or agent</li>
+                </ul>
+            </section>
+
+            <!-- Crash Recovery -->
+            <section class="docs-section">
+                <h2>Crash Recovery</h2>
+
+                <p>Segments are persisted before transcription for recovery:</p>
+
+                <div class="code-block">
+                    <pre><code>// pending_segments.json
+{
+  "segments": [
+    {
+      "index": 0,
+      "audioFilePath": "/tmp/recording_abc123.wav",
+      "startOffsetBytes": 44,
+      "durationSamples": 160000,
+      "status": "interrupted",
+      "transcribedText": null,
+      "createdAt": "2025-01-28T10:30:00Z"
+    }
+  ]
+}</code></pre>
+                </div>
+
+                <h3>Recovery Strategy</h3>
+                <ul>
+                    <li>Segments marked <code>pending</code>, <code>processing</code>, or <code>interrupted</code> are recovered</li>
+                    <li>Audio files retained for 7 days</li>
+                    <li>On restart, re-queues interrupted segments</li>
+                </ul>
+            </section>
+
+            <!-- Agent Integration -->
+            <section class="docs-section">
+                <h2>Daily Agent Integration</h2>
+
+                <p>Server-side agents process journal entries to generate reflections:</p>
+
+                <div class="architecture-visual">
+                    <pre>
+Journal Entry
+     │
+     ├── Written to Daily/journals/{date}.md
+     │
+     ▼
+Server Scheduler (APScheduler)
+     │
+     ├── Discovers agents from Daily/.agents/*.md
+     │
+     ├── Morning Reflection Agent (configurable time)
+     │   └── Reads journal + chat logs
+     │   └── Generates morning reflection
+     │   └── Writes to Daily/reflections/{date}.md
+     │
+     └── Content Scout Agent (configurable time)
+         └── Extracts valuable insights
+         └── Writes to Daily/content-scout/{date}.md</pre>
+                </div>
+
+                <p>See <a href="computer-agents.html">Modules &amp; Agents documentation</a> for server-side details.</p>
+            </section>
+
+            <!-- File Storage -->
+            <section class="docs-section">
+                <h2>File Storage</h2>
+
+                <div class="code-block">
+                    <pre><code>~/Parachute/Daily/
+├── journals/
+│   ├── 2025-01-28.md    # Journal entries with YAML frontmatter
+│   └── 2025-01-27.md
+├── assets/
+│   └── 2025-01-28/      # Date-organized media
+│       ├── audio_abc123.wav
+│       ├── photo_xyz789.jpg
+│       └── handwriting_uvw012.png
+├── reflections/
+│   ├── 2025-01-28.md    # AI-generated morning reflection
+│   └── 2025-01-27.md
+├── chat-log/
+│   └── 2025-01-28.md    # Chat session summaries
+├── content-scout/
+│   └── 2025-01-28.md    # Content ideas extracted
+└── .agents/
+    ├── curator.md       # Daily curator agent config
+    └── content-scout.md # Content scout agent config</code></pre>
+                </div>
+            </section>
+
+            <!-- Widgets -->
+            <section class="docs-section">
+                <h2>Key Widgets</h2>
+
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Widget</th>
+                            <th>Lines</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>journal_screen.dart</code></td>
+                            <td>2,156</td>
+                            <td>Main journal UI - timeline of entries</td>
+                        </tr>
+                        <tr>
+                            <td><code>journal_input_bar.dart</code></td>
+                            <td>1,379</td>
+                            <td>Text input + voice recording controls</td>
+                        </tr>
+                        <tr>
+                            <td><code>journal_entry_row.dart</code></td>
+                            <td>992</td>
+                            <td>Row item in list view</td>
+                        </tr>
+                        <tr>
+                            <td><code>journal_entry_card.dart</code></td>
+                            <td>606</td>
+                            <td>Card displaying single entry</td>
+                        </tr>
+                        <tr>
+                            <td><code>entry_edit_modal.dart</code></td>
+                            <td>572</td>
+                            <td>Modal for editing entry</td>
+                        </tr>
+                        <tr>
+                            <td><code>agent_output_header.dart</code></td>
+                            <td>511</td>
+                            <td>Header showing agent output</td>
+                        </tr>
+                        <tr>
+                            <td><code>mini_audio_player.dart</code></td>
+                            <td>260</td>
+                            <td>Audio playback widget</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+
+            <!-- Navigation -->
+            <section class="docs-section">
+                <h2>Related Documentation</h2>
+                <div class="nav-cards">
+                    <a href="computer-agents.html" class="nav-card">
+                        <h3>Modules &amp; Agents</h3>
+                        <p>Module system and daily agents.</p>
+                    </a>
+                    <a href="app-services.html" class="nav-card">
+                        <h3>Services</h3>
+                        <p>Core services including transcription adapters.</p>
+                    </a>
+                    <a href="data-flow.html" class="nav-card">
+                        <h3>Data Flow</h3>
+                        <p>Voice transcription flow diagram.</p>
+                    </a>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <footer>
+        <p>&copy; 2026 Open Parachute, PBC. A Colorado Public Benefit Corporation.</p>
+        <p><a href="/blog/">Blog</a> &middot; <a href="/architecture/">Docs</a> &middot; <a href="/roadmap/">Roadmap</a> &middot; <a href="https://github.com/OpenParachutePBC/parachute-computer" target="_blank">GitHub</a></p>
+    </footer>
+</body>
+</html>

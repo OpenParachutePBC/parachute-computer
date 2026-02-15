@@ -1,0 +1,692 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Modules &amp; Agents | Parachute Documentation</title>
+    <link rel="stylesheet" href="/style.css">
+    <link rel="stylesheet" href="docs.css">
+</head>
+<body>
+    <header>
+        <nav>
+            <a href="/" class="logo">Parachute Computer</a>
+            <div class="nav-links">
+                <a href="/blog/">Blog</a>
+                <a href="/architecture/" class="active">Docs</a>
+                <a href="/roadmap/">Roadmap</a>
+                <a href="https://github.com/OpenParachutePBC/parachute-computer" target="_blank">GitHub</a>
+            </div>
+        </nav>
+    </header>
+    <div class="docs-layout">
+        <aside class="docs-sidebar">
+            <div class="sidebar-section">
+                <h3>Overview</h3>
+                <a href="index.html">Architecture</a>
+                <a href="data-flow.html">Data Flow</a>
+                <a href="integration.html">Integration</a>
+            </div>
+            <div class="sidebar-section">
+                <h3>App (Flutter)</h3>
+                <a href="app-overview.html">Overview</a>
+                <a href="app-chat.html">Chat Feature</a>
+                <a href="app-daily.html">Daily Feature</a>
+                <a href="app-vault.html">Vault Feature</a>
+                <a href="app-services.html">Services</a>
+            </div>
+            <div class="sidebar-section">
+                <h3>Computer (Python)</h3>
+                <a href="computer-overview.html">Overview</a>
+                <a href="computer-api.html">API Routes</a>
+                <a href="computer-orchestrator.html">Orchestrator</a>
+                <a href="computer-agents.html" class="active">Modules &amp; Agents</a>
+                <a href="computer-database.html">Database</a>
+                <a href="computer-connectors.html">Bot Connectors</a>
+            </div>
+            <div class="sidebar-section">
+                <h3>Reference</h3>
+                <a href="issues.html">Issues & TODOs</a>
+                <a href="file-manifest.html">File Manifest</a>
+            </div>
+        </aside>
+        <main class="docs-content">
+            <div class="breadcrumb">
+                <a href="../index.html">Home</a> / <a href="../blog/">Blog</a>
+                <a href="index.html">Docs</a> / <span>Modules &amp; Agents</span>
+            </div>
+            <h1>Modules &amp; Agents</h1>
+            <p class="lead">Parachute uses a modular architecture where features are loaded as modules from the vault, and custom agents provide specialized AI behaviors. Modules are hash-verified for security; agents are discovered from YAML/Markdown files.</p>
+
+            <!-- Module System -->
+            <section class="docs-section">
+                <h2>Module System</h2>
+                <p>Modules are the primary extension mechanism. Each module lives in <code>vault/.modules/</code> and provides features through a registry interface system.</p>
+
+                <h3>Architecture</h3>
+                <div class="code-block">
+                    <pre>
+┌─────────────────────────────────────────────────────────────┐
+│                      Module System                           │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  modules/ (bundled, version-controlled)                      │
+│      │                                                       │
+│      └──► Bootstrap → vault/.modules/ (on first startup)     │
+│                                                              │
+│  ModuleLoader (core/module_loader.py)                        │
+│      │                                                       │
+│      ├──► Discover modules in vault/.modules/                │
+│      │                                                       │
+│      ├──► Hash verification (SHA-256)                        │
+│      │       │                                               │
+│      │       ├── New module → auto-approve + record hash     │
+│      │       ├── Hash match → load module                    │
+│      │       └── Hash mismatch → block pending approval      │
+│      │                                                       │
+│      ├──► Load module.py via importlib                       │
+│      │                                                       │
+│      └──► Publish interfaces to registry                     │
+│                                                              │
+│  Registry (core/interfaces.py)                               │
+│      │                                                       │
+│      └──► Interface discovery for cross-module dependencies  │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘</pre>
+                </div>
+
+                <h3>Bundled Modules</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Module</th>
+                            <th>Version</th>
+                            <th>Description</th>
+                            <th>Provides</th>
+                            <th>Requires</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>brain</strong></td>
+                            <td>0.1.0</td>
+                            <td>Knowledge graph entity management</td>
+                            <td><code>BrainInterface</code></td>
+                            <td>—</td>
+                        </tr>
+                        <tr>
+                            <td><strong>chat</strong></td>
+                            <td>0.1.0</td>
+                            <td>Streaming chat with Claude Agent SDK</td>
+                            <td>—</td>
+                            <td><code>BrainInterface</code></td>
+                        </tr>
+                        <tr>
+                            <td><strong>daily</strong></td>
+                            <td>0.1.0</td>
+                            <td>Daily journal entries and agent framework</td>
+                            <td>—</td>
+                            <td><code>BrainInterface</code> (optional)</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <h3>Module Structure</h3>
+                <div class="code-block">
+                    <pre>
+vault/.modules/
+├── brain/
+│   ├── manifest.yaml      # Module metadata
+│   └── module.py          # Module class with setup() + get_router()
+├── chat/
+│   ├── manifest.yaml
+│   └── module.py
+└── daily/
+    ├── manifest.yaml
+    └── module.py</pre>
+                </div>
+
+                <h3>manifest.yaml Format</h3>
+                <div class="code-block">
+                    <pre>
+# Example: modules/brain/manifest.yaml
+name: brain
+version: "0.1.0"
+description: "Knowledge graph entity management"
+trust_level: full
+provides:
+  - BrainInterface
+
+# Example: modules/chat/manifest.yaml
+name: chat
+version: "0.1.0"
+description: "Streaming chat with Claude Agent SDK"
+trust_level: full
+requires:
+  - BrainInterface
+
+# Example: modules/daily/manifest.yaml
+name: daily
+version: "0.1.0"
+description: "Daily journal entries and agent framework"
+trust_level: full
+optional_requires:
+  - BrainInterface</pre>
+                </div>
+
+                <h3>Manifest Fields</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Field</th>
+                            <th>Type</th>
+                            <th>Required</th>
+                            <th>Description</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>name</code></td>
+                            <td>string</td>
+                            <td>Yes</td>
+                            <td>Module identifier (must match directory name)</td>
+                        </tr>
+                        <tr>
+                            <td><code>version</code></td>
+                            <td>string</td>
+                            <td>Yes</td>
+                            <td>Semantic version</td>
+                        </tr>
+                        <tr>
+                            <td><code>description</code></td>
+                            <td>string</td>
+                            <td>Yes</td>
+                            <td>Human-readable description</td>
+                        </tr>
+                        <tr>
+                            <td><code>trust_level</code></td>
+                            <td>string</td>
+                            <td>No</td>
+                            <td>Required trust: full, vault, sandboxed</td>
+                        </tr>
+                        <tr>
+                            <td><code>provides</code></td>
+                            <td>list</td>
+                            <td>No</td>
+                            <td>Interface names published to registry</td>
+                        </tr>
+                        <tr>
+                            <td><code>requires</code></td>
+                            <td>list</td>
+                            <td>No</td>
+                            <td>Required interfaces (fails if missing)</td>
+                        </tr>
+                        <tr>
+                            <td><code>optional_requires</code></td>
+                            <td>list</td>
+                            <td>No</td>
+                            <td>Optional interfaces (graceful without)</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <h3>Hash Verification</h3>
+                <div class="callout callout-info">
+                    <strong>Security:</strong> All Python files and manifest.yaml in a module directory are SHA-256 hashed. New modules are auto-approved on first load. Modified modules are blocked until explicitly approved via CLI.
+                </div>
+                <div class="code-block">
+                    <pre>
+# Module approval workflow
+parachute module list       # See all modules: new/approved/modified
+parachute module approve brain   # Record hash, allow loading
+parachute module status     # Live server module status (online)
+parachute module test       # Test module endpoints (online)
+
+# Hash storage: vault/.parachute/module_hashes.json
+{
+  "brain": "a1b2c3d4e5f6...",
+  "chat": "f6e5d4c3b2a1...",
+  "daily": "1a2b3c4d5e6f..."
+}</pre>
+                </div>
+            </section>
+
+            <!-- Custom Agents -->
+            <section class="docs-section">
+                <h2>Custom Agents</h2>
+                <p>Custom agents are user-defined AI personas discovered from the vault. They're used for Task tool delegation during chat sessions.</p>
+
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Agent Type</th>
+                            <th>Purpose</th>
+                            <th>Location</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>Custom Agents</strong></td>
+                            <td>User-defined agents for Task tool delegation</td>
+                            <td><code>.parachute/agents/</code></td>
+                        </tr>
+                        <tr>
+                            <td><strong>Daily Agents</strong></td>
+                            <td>Scheduled agents processing journal entries</td>
+                            <td><code>Daily/.agents/*.md</code></td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+
+            <!-- Agent Definition Format -->
+            <section class="docs-section">
+                <h2>Agent Definition Format</h2>
+                <p>Custom agents are discovered from three file formats:</p>
+
+                <h3>YAML Format</h3>
+                <div class="code-block">
+                    <pre>
+# .parachute/agents/reviewer.yaml
+description: Reviews code for quality and best practices
+prompt: |
+  You are a code reviewer. Focus on:
+  - Code quality
+  - Security issues
+  - Performance
+tools:
+  - Read
+  - Grep
+  - Glob
+model: sonnet  # optional: sonnet, opus, haiku</pre>
+                </div>
+
+                <h3>Markdown Format (with frontmatter)</h3>
+                <div class="code-block">
+                    <pre>
+# .parachute/agents/reviewer.md
+---
+description: Reviews code
+tools: [Read, Grep]
+model: sonnet
+---
+
+# Agent Prompt
+
+You are a code reviewer...</pre>
+                </div>
+
+                <h3>AgentConfig Fields</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Field</th>
+                            <th>Type</th>
+                            <th>Required</th>
+                            <th>Description</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>name</code></td>
+                            <td>string</td>
+                            <td>Yes</td>
+                            <td>Agent identifier (derived from filename)</td>
+                        </tr>
+                        <tr>
+                            <td><code>description</code></td>
+                            <td>string</td>
+                            <td>Yes</td>
+                            <td>Brief description shown in Task tool</td>
+                        </tr>
+                        <tr>
+                            <td><code>prompt</code></td>
+                            <td>string</td>
+                            <td>Yes</td>
+                            <td>System prompt for the agent</td>
+                        </tr>
+                        <tr>
+                            <td><code>tools</code></td>
+                            <td>list</td>
+                            <td>No</td>
+                            <td>Allowed tools (Read, Grep, Glob, etc.)</td>
+                        </tr>
+                        <tr>
+                            <td><code>model</code></td>
+                            <td>string</td>
+                            <td>No</td>
+                            <td>Model override (sonnet, opus, haiku)</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+
+            <!-- Daily Agents -->
+            <section class="docs-section">
+                <h2>Daily Agents</h2>
+                <p>Daily agents are scheduled to run automatically and process journal entries.</p>
+
+                <h3>Daily Agent Configuration</h3>
+                <div class="code-block">
+                    <pre>
+# Daily/.agents/content-scout.md
+---
+displayName: Content Scout
+description: Extracts valuable insights from daily work
+schedule:
+  enabled: true
+  time: "3:00"  # 3:00 AM UTC
+output:
+  path: "Daily/content-scout/{date}.md"
+tools:
+  - read_journal
+  - read_chat_log
+  - read_recent_journals
+---
+
+You are a content scout that discovers valuable insights...</pre>
+                </div>
+
+                <h3>DailyAgentConfig Fields</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Field</th>
+                            <th>Type</th>
+                            <th>Default</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>displayName</code></td>
+                            <td>string</td>
+                            <td>Derived from filename</td>
+                        </tr>
+                        <tr>
+                            <td><code>description</code></td>
+                            <td>string</td>
+                            <td>Required</td>
+                        </tr>
+                        <tr>
+                            <td><code>schedule.enabled</code></td>
+                            <td>boolean</td>
+                            <td>true</td>
+                        </tr>
+                        <tr>
+                            <td><code>schedule.time</code></td>
+                            <td>string</td>
+                            <td>"3:00" (UTC)</td>
+                        </tr>
+                        <tr>
+                            <td><code>output.path</code></td>
+                            <td>string</td>
+                            <td>Daily/{name}/{date}.md</td>
+                        </tr>
+                        <tr>
+                            <td><code>tools</code></td>
+                            <td>list</td>
+                            <td>All daily tools</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <h3>Daily Agent Tools</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Tool</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>read_journal(date)</code></td>
+                            <td>Read Daily/journals/{date}.md</td>
+                        </tr>
+                        <tr>
+                            <td><code>read_chat_log(date)</code></td>
+                            <td>Read Daily/chat-log/{date}.md (truncated 10K)</td>
+                        </tr>
+                        <tr>
+                            <td><code>read_recent_journals(days)</code></td>
+                            <td>Read last N days of journals (max 30)</td>
+                        </tr>
+                        <tr>
+                            <td><code>read_recent_sessions(days)</code></td>
+                            <td>Read last N days of chat logs (max 30)</td>
+                        </tr>
+                        <tr>
+                            <td><code>write_output(date, content)</code></td>
+                            <td>Write to configured output path</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+
+            <!-- Scheduler Integration -->
+            <section class="docs-section">
+                <h2>Scheduler Integration</h2>
+                <p>Daily agents are scheduled using APScheduler with cron triggers.</p>
+
+                <h3>Scheduler Lifecycle</h3>
+                <div class="code-block">
+                    <pre>
+init_scheduler(vault_path)
+        │
+        ├── Create AsyncIOScheduler
+        │
+        ├── Discover agents from Daily/.agents/*.md
+        │
+        ├── For each agent with schedule.enabled:
+        │       │
+        │       └── Add CronTrigger job
+        │
+        └── Start scheduler</pre>
+                </div>
+
+                <h3>Status Monitoring</h3>
+                <div class="code-block">
+                    <pre>
+GET /api/scheduler/status → {
+  "running": true,
+  "jobs": [
+    {
+      "id": "daily_content-scout",
+      "name": "Content Scout",
+      "next_run": "2026-01-29T03:00:00",
+      "trigger": "cron[hour='3', minute='0']"
+    }
+  ],
+  "agents": {
+    "content-scout": {
+      "enabled": true,
+      "hour": 3,
+      "minute": 0,
+      "display_name": "Content Scout"
+    }
+  }
+}</pre>
+                </div>
+            </section>
+
+            <!-- State Persistence -->
+            <section class="docs-section">
+                <h2>State Persistence</h2>
+                <p>Agent state is persisted for session continuity across runs.</p>
+
+                <h3>Daily Agent State</h3>
+                <div class="code-block">
+                    <pre>
+# Daily/.{agent_name}/state.json
+{
+  "agent": "content-scout",
+  "backend": "claude-sdk",
+  "sdk_session_id": "uuid-here",  # Resume point
+  "model": null,
+  "last_run_at": "2026-01-28T08:15:30.123456+00:00",
+  "last_processed_date": "2026-01-27",
+  "run_count": 42,
+  "created_at": "2026-01-01T12:00:00+00:00"
+}</pre>
+                </div>
+            </section>
+
+            <!-- User Context System -->
+            <section class="docs-section">
+                <h2>User Context System</h2>
+                <p>Agents can be personalized with user context loaded from the vault.</p>
+
+                <h3>Context Loading</h3>
+                <div class="code-block">
+                    <pre>
+load_user_context(vault_path) → (user_name, context_text)
+        │
+        ├── Read context/curator.md
+        │
+        ├── Resolve @ references:
+        │       @parachute/profile.md
+        │       @parachute/projects.md
+        │
+        └── Extract **Name**: field for personalization</pre>
+                </div>
+
+                <h3>@ Reference Resolution</h3>
+                <ul>
+                    <li>Supports recursive file references</li>
+                    <li>Max recursion: 3 levels to prevent loops</li>
+                    <li>Injected into agent prompts via <code>{user_name}</code>, <code>{user_context}</code></li>
+                </ul>
+            </section>
+
+            <!-- Tool Availability -->
+            <section class="docs-section">
+                <h2>Tool Availability by Agent Type</h2>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Agent Type</th>
+                            <th>Tools</th>
+                            <th>MCP Servers</th>
+                            <th>Resumable</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Custom Agent</td>
+                            <td>As defined in config</td>
+                            <td>None (SDK inline)</td>
+                            <td>No</td>
+                        </tr>
+                        <tr>
+                            <td>Daily Agent</td>
+                            <td>read_*, write_output</td>
+                            <td>daily_{name} + vault MCPs</td>
+                            <td>Yes</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+
+            <!-- Key Files -->
+            <section class="docs-section">
+                <h2>Key Files</h2>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>File</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>core/module_loader.py</code></td>
+                            <td>Module discovery, hash verification, bootstrap, loading</td>
+                        </tr>
+                        <tr>
+                            <td><code>core/interfaces.py</code></td>
+                            <td>Interface registry for cross-module dependencies</td>
+                        </tr>
+                        <tr>
+                            <td><code>core/agents.py</code></td>
+                            <td>Custom agent discovery and definition parsing</td>
+                        </tr>
+                        <tr>
+                            <td><code>core/agent_loader.py</code></td>
+                            <td>Extended agent parsing with permissions/constraints</td>
+                        </tr>
+                        <tr>
+                            <td><code>core/daily_agent.py</code></td>
+                            <td>Generic daily agent framework</td>
+                        </tr>
+                        <tr>
+                            <td><code>core/daily_agent_tools.py</code></td>
+                            <td>MCP tools for daily agents</td>
+                        </tr>
+                        <tr>
+                            <td><code>core/scheduler.py</code></td>
+                            <td>APScheduler integration with cron triggers</td>
+                        </tr>
+                        <tr>
+                            <td><code>api/modules.py</code></td>
+                            <td>Module management API endpoints</td>
+                        </tr>
+                        <tr>
+                            <td><code>api/scheduler.py</code></td>
+                            <td>Scheduler status and trigger API</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+
+            <!-- Architecture Summary -->
+            <section class="docs-section">
+                <h2>Architecture Summary</h2>
+                <div class="code-block">
+                    <pre>
+┌─────────────────────────────────────────────────────────────┐
+│                  Modules &amp; Agents                           │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  Module System (vault/.modules/)                             │
+│      │                                                       │
+│      ├──► brain → Knowledge graph, entity search             │
+│      ├──► chat  → Streaming chat via Claude SDK              │
+│      └──► daily → Journal entries, daily agent framework     │
+│                                                              │
+│  Custom Agents (.parachute/agents/)                          │
+│      │                                                       │
+│      └──► Task Tool Delegation in chat sessions              │
+│                                                              │
+│  Daily Agents (Daily/.agents/)                               │
+│      │                                                       │
+│      ├──► APScheduler (cron)                                 │
+│      │                                                       │
+│      └──► Journal Processing → Output                        │
+│                                                              │
+│  Hash Verification                                           │
+│      │                                                       │
+│      └──► SHA-256 of Python files + manifest                 │
+│           New → auto-approve, Modified → block until CLI     │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘</pre>
+                </div>
+            </section>
+
+            <div class="nav-cards">
+                <a href="computer-orchestrator.html" class="nav-card">
+                    <h3>Orchestrator</h3>
+                    <p>Agent execution, streaming, and trust enforcement.</p>
+                </a>
+                <a href="computer-database.html" class="nav-card">
+                    <h3>Database</h3>
+                    <p>SQLite schema and session storage.</p>
+                </a>
+            </div>
+        </main>
+    </div>
+    <footer>
+        <p>&copy; 2026 Open Parachute, PBC. A Colorado Public Benefit Corporation.</p>
+        <p><a href="/blog/">Blog</a> &middot; <a href="/architecture/">Docs</a> &middot; <a href="/roadmap/">Roadmap</a> &middot; <a href="https://github.com/OpenParachutePBC/parachute-computer" target="_blank">GitHub</a></p>
+    </footer>
+</body>
+</html>

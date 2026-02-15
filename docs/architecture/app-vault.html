@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vault Feature | Parachute Documentation</title>
+    <link rel="stylesheet" href="/style.css">
+    <link rel="stylesheet" href="docs.css">
+</head>
+<body>
+    <header>
+        <nav>
+            <a href="/" class="logo">Parachute Computer</a>
+            <div class="nav-links">
+                <a href="/blog/">Blog</a>
+                <a href="/architecture/" class="active">Docs</a>
+                <a href="/roadmap/">Roadmap</a>
+                <a href="https://github.com/OpenParachutePBC/parachute-computer" target="_blank">GitHub</a>
+            </div>
+        </nav>
+    </header>
+    <div class="docs-layout">
+        <aside class="docs-sidebar">
+            <div class="sidebar-section">
+                <h3>Overview</h3>
+                <a href="index.html">Architecture</a>
+                <a href="data-flow.html">Data Flow</a>
+                <a href="integration.html">Integration</a>
+            </div>
+            <div class="sidebar-section">
+                <h3>App (Flutter)</h3>
+                <a href="app-overview.html">Overview</a>
+                <a href="app-chat.html">Chat Feature</a>
+                <a href="app-daily.html">Daily Feature</a>
+                <a href="app-vault.html" class="active">Vault Feature</a>
+                <a href="app-services.html">Services</a>
+            </div>
+            <div class="sidebar-section">
+                <h3>Computer (Python)</h3>
+                <a href="computer-overview.html">Overview</a>
+                <a href="computer-api.html">API Routes</a>
+                <a href="computer-orchestrator.html">Orchestrator</a>
+                <a href="computer-agents.html">Modules &amp; Agents</a>
+                <a href="computer-database.html">Database</a>
+                <a href="computer-connectors.html">Bot Connectors</a>
+            </div>
+            <div class="sidebar-section">
+                <h3>Reference</h3>
+                <a href="issues.html">Issues & TODOs</a>
+                <a href="file-manifest.html">File Manifest</a>
+            </div>
+        </aside>
+        <main class="docs-content">
+            <div class="breadcrumb">
+                <a href="../index.html">Home</a> / <a href="../blog/">Blog</a>
+                <a href="index.html">Docs</a> / <span>Vault Feature</span>
+            </div>
+            <h1>Vault Feature</h1>
+            <p class="lead">The Vault feature provides a file browser for exploring and editing content within the user's Parachute vault, supporting both local filesystem access and remote server browsing.</p>
+
+            <section class="docs-section">
+                <h2>Architecture Overview</h2>
+                <p>The Vault feature operates in two modes: <strong>local</strong> (direct filesystem access) and <strong>remote</strong> (via Computer server API). The system automatically selects the appropriate mode based on server connectivity.</p>
+
+                <div class="code-block">
+                    <pre>
+VaultBrowserScreen (Entry Point)
+        │
+        ├── Server URL configured? ──Yes──► RemoteFilesScreen
+        │                                         │
+        └── No ──► FilesScreen (local)            ▼
+                        │                  RemoteFileBrowserService
+                        ▼                         │
+                FileBrowserService          HTTP API calls
+                        │                   /api/ls, /api/read
+                        ▼                   /api/write
+                 Local Filesystem
+                    </pre>
+                </div>
+            </section>
+
+            <section class="docs-section">
+                <h2>Key Files</h2>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>File</th>
+                            <th>Purpose</th>
+                            <th>Lines</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>vault_browser_screen.dart</code></td>
+                            <td>Entry point - routes to local or remote browser</td>
+                            <td>~80</td>
+                        </tr>
+                        <tr>
+                            <td><code>files_screen.dart</code></td>
+                            <td>Local file browser with folder navigation</td>
+                            <td>~450</td>
+                        </tr>
+                        <tr>
+                            <td><code>remote_files_screen.dart</code></td>
+                            <td>Remote file browser via server API</td>
+                            <td>~400</td>
+                        </tr>
+                        <tr>
+                            <td><code>markdown_viewer_screen.dart</code></td>
+                            <td>Local markdown viewer/editor with frontmatter</td>
+                            <td>~600</td>
+                        </tr>
+                        <tr>
+                            <td><code>remote_markdown_viewer_screen.dart</code></td>
+                            <td>Remote markdown viewer/editor</td>
+                            <td>~500</td>
+                        </tr>
+                        <tr>
+                            <td><code>text_viewer_screen.dart</code></td>
+                            <td>Text/code file viewer/editor (local)</td>
+                            <td>~350</td>
+                        </tr>
+                        <tr>
+                            <td><code>remote_text_viewer_screen.dart</code></td>
+                            <td>Text/code file viewer/editor (remote)</td>
+                            <td>~300</td>
+                        </tr>
+                        <tr>
+                            <td><code>file_browser_service.dart</code></td>
+                            <td>Local filesystem operations</td>
+                            <td>~300</td>
+                        </tr>
+                        <tr>
+                            <td><code>remote_file_browser_service.dart</code></td>
+                            <td>Remote API operations</td>
+                            <td>~250</td>
+                        </tr>
+                        <tr>
+                            <td><code>file_item.dart</code></td>
+                            <td>File/folder model with type detection</td>
+                            <td>~150</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+
+            <section class="docs-section">
+                <h2>FileItem Model</h2>
+                <p>Represents a file or folder in the vault browser with automatic type detection:</p>
+
+                <h3>File Types</h3>
+                <div class="code-block">
+                    <pre>
+enum FileItemType {
+  folder,     // Directory
+  markdown,   // .md, .markdown files
+  text,       // Code/config files
+  audio,      // .wav, .mp3, .opus, .m4a, .aac
+  other       // Unsupported types
+}</pre>
+                </div>
+
+                <h3>Supported Text Extensions</h3>
+                <div class="code-block">
+                    <pre>
+Config:  json, yaml, yml, toml, ini, cfg, conf
+Code:    dart, js, ts, jsx, tsx, py, rb, go, rs, java, kt, swift,
+         c, cpp, h, hpp, cs, php, sh, bash, zsh, fish
+Web:     html, htm, css, scss, sass, less, vue, svelte
+Data:    xml, csv, tsv, sql
+Docs:    rst, tex, bib
+Text:    txt, log, env, gitignore, dockerignore, editorconfig</pre>
+                </div>
+            </section>
+
+            <section class="docs-section">
+                <h2>Local File Browser Service</h2>
+                <p>Handles direct filesystem operations within the vault directory:</p>
+
+                <h3>Key Methods</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Method</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>getInitialPath()</code></td>
+                            <td>Returns vault root path</td>
+                        </tr>
+                        <tr>
+                            <td><code>isAtRoot(path)</code></td>
+                            <td>Checks if at vault root</td>
+                        </tr>
+                        <tr>
+                            <td><code>getParentPath(path)</code></td>
+                            <td>Navigates up directory tree</td>
+                        </tr>
+                        <tr>
+                            <td><code>getDisplayPath(path)</code></td>
+                            <td>Formats path with <code>~</code> prefix</td>
+                        </tr>
+                        <tr>
+                            <td><code>listFolder(path, includeHidden)</code></td>
+                            <td>Lists directory contents (folders first)</td>
+                        </tr>
+                        <tr>
+                            <td><code>readFileAsString(path)</code></td>
+                            <td>Reads file content</td>
+                        </tr>
+                        <tr>
+                            <td><code>writeFile(path, content)</code></td>
+                            <td>Writes/overwrites file</td>
+                        </tr>
+                        <tr>
+                            <td><code>isWithinVault(path)</code></td>
+                            <td>Security check - ensures path is in vault</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <div class="callout callout-warning">
+                    <strong>Android Permissions:</strong> The service detects permission issues when directory listing fails and directs users to grant Storage permission in Settings.
+                </div>
+            </section>
+
+            <section class="docs-section">
+                <h2>Remote File Browser Service</h2>
+                <p>Handles file operations via the Computer server API:</p>
+
+                <h3>API Endpoints</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Operation</th>
+                            <th>Endpoint</th>
+                            <th>Method</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>List folder</td>
+                            <td><code>/api/ls?path=...</code></td>
+                            <td>GET</td>
+                        </tr>
+                        <tr>
+                            <td>Read file</td>
+                            <td><code>/api/read?path=...</code></td>
+                            <td>GET</td>
+                        </tr>
+                        <tr>
+                            <td>Write file</td>
+                            <td><code>/api/write</code></td>
+                            <td>PUT</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <h3>API Response Format</h3>
+                <div class="code-block">
+                    <pre>
+{
+  "entries": [
+    {
+      "name": "filename.md",
+      "relativePath": "Daily/journals/filename.md",
+      "isDirectory": false,
+      "lastModified": "2026-01-28T10:30:00",
+      "size": 1024
+    }
+  ]
+}</pre>
+                </div>
+
+                <div class="callout callout-info">
+                    <strong>Authentication:</strong> Includes <code>X-API-Key</code> header if configured. Uses 10-second timeout on all requests.
+                </div>
+            </section>
+
+            <section class="docs-section">
+                <h2>State Management</h2>
+                <p>Uses Riverpod providers for reactive state:</p>
+
+                <h3>Core Providers</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Provider</th>
+                            <th>Type</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>fileBrowserServiceProvider</code></td>
+                            <td>Provider</td>
+                            <td>Singleton local browser service</td>
+                        </tr>
+                        <tr>
+                            <td><code>vaultRootPathProvider</code></td>
+                            <td>FutureProvider</td>
+                            <td>Vault root path with refresh trigger</td>
+                        </tr>
+                        <tr>
+                            <td><code>currentBrowsePathProvider</code></td>
+                            <td>StateProvider</td>
+                            <td>Currently browsed directory</td>
+                        </tr>
+                        <tr>
+                            <td><code>folderContentsProvider</code></td>
+                            <td>FutureProvider</td>
+                            <td>List of items in current folder</td>
+                        </tr>
+                        <tr>
+                            <td><code>isAtRootProvider</code></td>
+                            <td>FutureProvider</td>
+                            <td>Whether at vault root</td>
+                        </tr>
+                        <tr>
+                            <td><code>displayPathProvider</code></td>
+                            <td>FutureProvider</td>
+                            <td>User-friendly path display</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <h3>Remote Providers</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Provider</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>remoteFileBrowserServiceProvider</code></td>
+                            <td>Remote service (watches server URL + API key)</td>
+                        </tr>
+                        <tr>
+                            <td><code>remoteCurrentPathProvider</code></td>
+                            <td>Remote browse path state</td>
+                        </tr>
+                        <tr>
+                            <td><code>remoteShowHiddenFilesProvider</code></td>
+                            <td>Show/hide hidden files toggle</td>
+                        </tr>
+                        <tr>
+                            <td><code>remoteFolderContentsProvider</code></td>
+                            <td>Remote folder contents</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+
+            <section class="docs-section">
+                <h2>Markdown Viewer</h2>
+                <p>Full-featured markdown renderer with YAML frontmatter support:</p>
+
+                <h3>View Mode Features</h3>
+                <ul>
+                    <li><strong>Frontmatter Section:</strong> Collapsible YAML metadata display with key-value pairs</li>
+                    <li><strong>Markdown Rendering:</strong> Full markdown support via <code>flutter_markdown</code></li>
+                    <li><strong>Entry Metadata:</strong> Para-ID display (para:abc123 format)</li>
+                    <li><strong>Selectable Text:</strong> Copy any content</li>
+                </ul>
+
+                <h3>Edit Mode Features</h3>
+                <ul>
+                    <li>Full-text editor with monospace font</li>
+                    <li>Real-time change detection</li>
+                    <li>Save/Cancel buttons in app bar</li>
+                    <li>Unsaved changes warning on navigation</li>
+                </ul>
+
+                <h3>Supported Markdown Elements</h3>
+                <div class="code-block">
+                    <pre>
+- Headings (h1-h6) with cascade sizing
+- Bold, italic, strikethrough text
+- Inline code and fenced code blocks
+- Bulleted, numbered, and nested lists
+- Tables with borders and padding
+- Blockquotes with left border styling
+- Links (underlined, turquoise color)
+- Horizontal rules
+- Theme-aware colors (light/dark mode)</pre>
+                </div>
+            </section>
+
+            <section class="docs-section">
+                <h2>File Navigation Flow</h2>
+                <div class="code-block">
+                    <pre>
+VaultBrowserScreen
+        │
+        ├──► FilesScreen / RemoteFilesScreen
+        │           │
+        │           ├── Folder tap ──► Navigate into folder
+        │           │
+        │           ├── Markdown tap ──► MarkdownViewerScreen
+        │           │
+        │           ├── Text/Code tap ──► TextViewerScreen
+        │           │
+        │           ├── Audio tap ──► (TODO: Audio playback)
+        │           │
+        │           └── Other tap ──► File info dialog
+        │
+        └── Context Menu (Long Press)
+                    ├── "View as Text" (with size warning >1MB)
+                    └── "File Info"</pre>
+                </div>
+            </section>
+
+            <section class="docs-section">
+                <h2>Vault Directory Structure</h2>
+                <div class="code-block">
+                    <pre>
+~/Parachute/              (Vault Root)
+├── Daily/               (Local-first module)
+│   ├── journals/        (Journal entries)
+│   ├── assets/          (Images, audio, files)
+│   │   └── YYYY-MM-DD/  (Date-based organization)
+│   ├── reflections/     (Agent outputs)
+│   └── chat-log/        (Session activity logs)
+│
+└── Chat/                (Server-managed module)
+    ├── sessions/        (Imported session transcripts)
+    ├── assets/          (Chat-related assets)
+    ├── artifacts/       (Generated files)
+    ├── contexts/        (Context folders)
+    └── imports/         (External imports)</pre>
+                </div>
+            </section>
+
+            <section class="docs-section">
+                <h2>Local vs Remote Comparison</h2>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Aspect</th>
+                            <th>Local</th>
+                            <th>Remote</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Source</td>
+                            <td>Filesystem</td>
+                            <td>Computer server API</td>
+                        </tr>
+                        <tr>
+                            <td>Path Type</td>
+                            <td>Absolute (full paths)</td>
+                            <td>Relative (from vault root)</td>
+                        </tr>
+                        <tr>
+                            <td>Root Path</td>
+                            <td><code>~/Parachute/Daily</code></td>
+                            <td>Empty string <code>""</code></td>
+                        </tr>
+                        <tr>
+                            <td>Authentication</td>
+                            <td>File system permissions</td>
+                            <td>API key in header</td>
+                        </tr>
+                        <tr>
+                            <td>Timeout</td>
+                            <td>None (instant)</td>
+                            <td>10 seconds</td>
+                        </tr>
+                        <tr>
+                            <td>Hidden Files</td>
+                            <td>Skip by default</td>
+                            <td>API query param toggle</td>
+                        </tr>
+                        <tr>
+                            <td>Availability</td>
+                            <td>Always (offline-capable)</td>
+                            <td>Requires server connection</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+
+            <section class="docs-section">
+                <h2>Large File Handling</h2>
+                <ul>
+                    <li><strong>Files &gt; 1MB:</strong> Warning shown in context menu</li>
+                    <li><strong>Files &gt; 5MB:</strong> Confirmation dialog before opening</li>
+                    <li><strong>Very large files (100MB+):</strong> May cause UI freeze</li>
+                </ul>
+
+                <div class="callout callout-warning">
+                    <strong>Performance Note:</strong> No pagination for large folders - all contents loaded at once. Consider pagination for folders with 1000+ items.
+                </div>
+            </section>
+
+            <section class="docs-section">
+                <h2>Known Limitations</h2>
+                <ul>
+                    <li><strong>Audio Playback:</strong> TODO placeholder - not yet implemented</li>
+                    <li><strong>Binary Files:</strong> Marked as "other" type, cannot be viewed</li>
+                    <li><strong>Frontmatter:</strong> Only YAML supported (no TOML/JSON frontmatter)</li>
+                    <li><strong>Real-time Sync:</strong> No file watching - manual refresh needed</li>
+                    <li><strong>Conflict Resolution:</strong> No handling for concurrent edits on remote</li>
+                </ul>
+            </section>
+
+            <section class="docs-section">
+                <h2>Platform-Specific Notes</h2>
+
+                <h3>macOS</h3>
+                <ul>
+                    <li>Security-scoped bookmarks for sandbox compliance</li>
+                    <li>Bookmark restoration managed by FileSystemService</li>
+                </ul>
+
+                <h3>Android</h3>
+                <ul>
+                    <li>Requires <code>MANAGE_EXTERNAL_STORAGE</code> permission</li>
+                    <li>Permission detection when directory listing fails</li>
+                    <li>Directs user to Settings for manual grant</li>
+                </ul>
+
+                <h3>iOS</h3>
+                <ul>
+                    <li>App-specific documents directory</li>
+                    <li>No external storage access</li>
+                </ul>
+            </section>
+
+            <div class="nav-cards">
+                <a href="app-daily.html" class="nav-card">
+                    <h3>Daily Feature</h3>
+                    <p>Voice-first journaling with transcription.</p>
+                </a>
+                <a href="app-services.html" class="nav-card">
+                    <h3>Services</h3>
+                    <p>Core services powering the app.</p>
+                </a>
+            </div>
+        </main>
+    </div>
+    <footer>
+        <p>&copy; 2026 Open Parachute, PBC. A Colorado Public Benefit Corporation.</p>
+        <p><a href="/blog/">Blog</a> &middot; <a href="/architecture/">Docs</a> &middot; <a href="/roadmap/">Roadmap</a> &middot; <a href="https://github.com/OpenParachutePBC/parachute-computer" target="_blank">GitHub</a></p>
+    </footer>
+</body>
+</html>

@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>App Overview | Parachute Documentation</title>
+    <meta name="description" content="Deep dive into the Parachute Flutter app architecture">
+    <link rel="stylesheet" href="/style.css">
+    <link rel="stylesheet" href="docs.css">
+</head>
+<body>
+    <header>
+        <nav>
+            <a href="/" class="logo">Parachute Computer</a>
+            <div class="nav-links">
+                <a href="/blog/">Blog</a>
+                <a href="/architecture/" class="active">Docs</a>
+                <a href="/roadmap/">Roadmap</a>
+                <a href="https://github.com/OpenParachutePBC/parachute-computer" target="_blank">GitHub</a>
+            </div>
+        </nav>
+    </header>
+
+    <div class="docs-layout">
+        <!-- Sidebar Navigation -->
+        <aside class="docs-sidebar">
+            <div class="sidebar-section">
+                <h3>Overview</h3>
+                <a href="index.html">Architecture</a>
+                <a href="data-flow.html">Data Flow</a>
+                <a href="integration.html">Integration</a>
+            </div>
+            <div class="sidebar-section">
+                <h3>App (Flutter)</h3>
+                <a href="app-overview.html" class="active">Overview</a>
+                <a href="app-chat.html">Chat Feature</a>
+                <a href="app-daily.html">Daily Feature</a>
+                <a href="app-vault.html">Vault Feature</a>
+                <a href="app-services.html">Services</a>
+            </div>
+            <div class="sidebar-section">
+                <h3>Computer (Python)</h3>
+                <a href="computer-overview.html">Overview</a>
+                <a href="computer-api.html">API Routes</a>
+                <a href="computer-orchestrator.html">Orchestrator</a>
+                <a href="computer-agents.html">Modules &amp; Agents</a>
+                <a href="computer-database.html">Database</a>
+                <a href="computer-connectors.html">Bot Connectors</a>
+            </div>
+            <div class="sidebar-section">
+                <h3>Reference</h3>
+                <a href="issues.html">Issues & TODOs</a>
+                <a href="file-manifest.html">File Manifest</a>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="docs-content">
+            <div class="breadcrumb">
+                <a href="../index.html">Home</a> / <a href="../blog/">Blog</a>
+                <a href="index.html">Docs</a> / <span>App Overview</span>
+            </div>
+
+            <h1>App (Flutter) Overview</h1>
+            <p class="lead">Unified cross-platform app for voice journaling, AI chat, and knowledge management. Built with Flutter and Riverpod for iOS, Android, macOS, and Web.</p>
+
+            <!-- Stats -->
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-number">247</div>
+                    <div class="stat-label">Dart Files</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number">78K</div>
+                    <div class="stat-label">Lines of Code</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number">25</div>
+                    <div class="stat-label">Providers</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number">6</div>
+                    <div class="stat-label">Features</div>
+                </div>
+            </div>
+
+            <!-- Directory Structure -->
+            <section class="docs-section">
+                <h2>Directory Structure</h2>
+
+                <div class="architecture-visual">
+                    <pre>
+lib/
+├── main.dart                        # App entry, tab shell, global nav keys
+├── core/                            # Shared infrastructure
+│   ├── models/                      # Shared data models (speaker_segment.dart)
+│   ├── providers/                   # Core Riverpod providers (25 files)
+│   │   ├── app_state_provider.dart  # Server config, app mode, flavors
+│   │   ├── voice_input_providers.dart
+│   │   ├── streaming_voice_providers.dart
+│   │   └── ...
+│   ├── services/
+│   │   ├── file_system_service.dart # Unified for Daily/Chat (1,127 lines)
+│   │   ├── streaming_voice_service.dart
+│   │   ├── transcription/           # Audio → text (CANONICAL location)
+│   │   │   ├── audio_service.dart
+│   │   │   ├── parakeet_service.dart      # Sherpa-ONNX Parakeet
+│   │   │   ├── sherpa_onnx_service.dart   # Native transcription
+│   │   │   └── sherpa_onnx_isolate.dart   # Background processing
+│   │   ├── vad/                     # Voice Activity Detection
+│   │   │   ├── simple_vad.dart
+│   │   │   └── smart_chunker.dart
+│   │   └── audio_processing/        # Audio filters
+│   │       └── simple_noise_filter.dart
+│   ├── theme/
+│   │   ├── design_tokens.dart       # Brand colors, typography
+│   │   └── app_theme.dart           # Material theme config
+│   └── widgets/
+│       └── error_boundary.dart
+└── features/
+    ├── chat/                        # AI chat (requires server)
+    ├── daily/                       # Voice journaling (offline-capable)
+    ├── vault/                       # Knowledge browser
+    ├── settings/                    # Configuration screens
+    └── onboarding/                  # Setup flow
+                    </pre>
+                </div>
+            </section>
+
+            <!-- Features Overview -->
+            <section class="docs-section">
+                <h2>Features</h2>
+
+                <div class="feature-cards">
+                    <div class="feature-card">
+                        <h3>💬 Chat <span class="tag server">Server</span></h3>
+                        <p>Full AI chat with Claude. Streaming responses, tool calls, thinking sections, code highlighting, and session management.</p>
+                        <ul>
+                            <li>69 files total</li>
+                            <li>16 data models</li>
+                            <li>2,059-line ChatService</li>
+                            <li>WebSocket streaming</li>
+                        </ul>
+                        <a href="app-chat.html" class="concept-link">Explore Chat →</a>
+                    </div>
+
+                    <div class="feature-card">
+                        <h3>📔 Daily <span class="tag offline">Offline</span></h3>
+                        <p>Voice-first journaling with local transcription. Works completely offline with Sherpa-ONNX Parakeet models.</p>
+                        <ul>
+                            <li>92+ files total</li>
+                            <li>Live streaming transcription</li>
+                            <li>Omi BLE device support</li>
+                            <li>Photo/handwriting capture</li>
+                        </ul>
+                        <a href="app-daily.html" class="concept-link">Explore Daily →</a>
+                    </div>
+
+                    <div class="feature-card">
+                        <h3>📂 Vault <span class="tag server">Server</span></h3>
+                        <p>Browse and view your knowledge vault. Local and remote file browsing with markdown rendering.</p>
+                        <ul>
+                            <li>10 files total</li>
+                            <li>Markdown viewer</li>
+                            <li>Remote file browser</li>
+                            <li>Syntax highlighting</li>
+                        </ul>
+                        <a href="app-vault.html" class="concept-link">Explore Vault →</a>
+                    </div>
+                </div>
+            </section>
+
+            <!-- State Management -->
+            <section class="docs-section">
+                <h2>State Management</h2>
+                <p>The app uses <strong>Riverpod</strong> for state management with clear patterns for different use cases:</p>
+
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Type</th>
+                            <th>Use For</th>
+                            <th>Example</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>Provider&lt;T&gt;</code></td>
+                            <td>Singleton services</td>
+                            <td><code>fileSystemServiceProvider</code></td>
+                        </tr>
+                        <tr>
+                            <td><code>FutureProvider&lt;T&gt;.autoDispose</code></td>
+                            <td>Async data that should refresh</td>
+                            <td><code>chatSessionsProvider</code></td>
+                        </tr>
+                        <tr>
+                            <td><code>StateNotifierProvider</code></td>
+                            <td>Complex mutable state</td>
+                            <td><code>chatMessagesProvider</code></td>
+                        </tr>
+                        <tr>
+                            <td><code>StreamProvider</code></td>
+                            <td>Reactive streams</td>
+                            <td><code>streamingTranscriptionProvider</code></td>
+                        </tr>
+                        <tr>
+                            <td><code>StateProvider</code></td>
+                            <td>Simple UI state</td>
+                            <td><code>currentTabIndexProvider</code></td>
+                        </tr>
+                        <tr>
+                            <td><code>AsyncNotifierProvider</code></td>
+                            <td>Async state with mutations</td>
+                            <td><code>serverUrlProvider</code></td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <div class="callout callout-info">
+                    <strong>Important:</strong> Use <code>.autoDispose</code> for FutureProviders with dynamic/paginated content to prevent memory leaks.
+                </div>
+            </section>
+
+            <!-- Core Providers -->
+            <section class="docs-section">
+                <h2>Core Providers</h2>
+                <p>Key providers that drive the app's behavior:</p>
+
+                <div class="code-block">
+                    <div class="code-header">lib/core/providers/app_state_provider.dart</div>
+                    <pre><code>// App flavor (compile-time)
+const String appFlavor = String.fromEnvironment('FLAVOR', defaultValue: 'client');
+
+bool get isDailyOnlyFlavor => appFlavor == 'daily';
+bool get isClientFlavor => appFlavor == 'client';
+bool get isComputerFlavor => appFlavor == 'computer';
+
+// App mode (runtime)
+enum AppMode {
+  dailyOnly,  // No server configured
+  full,       // Server configured, all features
+}
+
+// Visible tabs based on mode
+final visibleTabsProvider = Provider<List<AppTab>>((ref) {
+  final mode = ref.watch(appModeProvider);
+  return switch (mode) {
+    AppMode.dailyOnly => [AppTab.daily],
+    AppMode.full => [AppTab.chat, AppTab.daily, AppTab.vault],
+  };
+});</code></pre>
+                </div>
+            </section>
+
+            <!-- Navigation Architecture -->
+            <section class="docs-section">
+                <h2>Navigation Architecture</h2>
+                <p>Three-tab layout with persistent bottom navigation. Each tab has its own Navigator for independent navigation stacks:</p>
+
+                <div class="architecture-visual">
+                    <pre>
+┌─────────────────────────────────────────────────────────────┐
+│                        TabShell                              │
+│                                                              │
+│  ┌─────────────────────────────────────────────────────┐    │
+│  │                  Current Tab View                    │    │
+│  │                                                      │    │
+│  │  ┌──────────────────────────────────────────────┐   │    │
+│  │  │                 Navigator                     │   │    │
+│  │  │     (independent stack per tab)               │   │    │
+│  │  │                                               │   │    │
+│  │  │   [Screen1] → [Screen2] → [Screen3]          │   │    │
+│  │  │                                               │   │    │
+│  │  └──────────────────────────────────────────────┘   │    │
+│  │                                                      │    │
+│  └─────────────────────────────────────────────────────┘    │
+│                                                              │
+│  ┌─────────────────────────────────────────────────────┐    │
+│  │              Bottom Navigation Bar                   │    │
+│  │                                                      │    │
+│  │     [Chat]        [Daily]        [Vault]            │    │
+│  │                      ▲                               │    │
+│  │               (center, default)                      │    │
+│  └─────────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────┘
+                    </pre>
+                </div>
+
+                <div class="callout callout-info">
+                    <strong>Key principle:</strong> Daily works offline. Chat and Vault require server connection.
+                </div>
+            </section>
+
+            <!-- Platform Support -->
+            <section class="docs-section">
+                <h2>Platform Support</h2>
+
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Feature</th>
+                            <th>Desktop (macOS)</th>
+                            <th>Mobile (Android/iOS)</th>
+                            <th>Web</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Transcription</td>
+                            <td>FluidAudio (CoreML)</td>
+                            <td>Sherpa-ONNX (Parakeet)</td>
+                            <td>Not supported</td>
+                        </tr>
+                        <tr>
+                            <td>Embeddings</td>
+                            <td>Ollama</td>
+                            <td>flutter_gemma</td>
+                            <td>Server-side</td>
+                        </tr>
+                        <tr>
+                            <td>Omi Pendant</td>
+                            <td>Supported (BLE)</td>
+                            <td>Supported (BLE)</td>
+                            <td>Not supported</td>
+                        </tr>
+                        <tr>
+                            <td>Lima VM</td>
+                            <td>Supported (Computer)</td>
+                            <td>N/A</td>
+                            <td>N/A</td>
+                        </tr>
+                        <tr>
+                            <td>File System</td>
+                            <td>Full access (sandboxed)</td>
+                            <td>App storage</td>
+                            <td>Sandboxed</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <div class="callout callout-warning">
+                    <strong>Sherpa-ONNX Version Pin:</strong> The app pins <code>sherpa_onnx</code> to version 1.12.20. Version 1.12.21 has a native library crash (SIGSEGV) on certain ARM devices like Daylight DC-1.
+                </div>
+            </section>
+
+            <!-- Theme System -->
+            <section class="docs-section">
+                <h2>Theme System</h2>
+                <p>Design tokens define the visual language:</p>
+
+                <div class="stack-comparison">
+                    <div class="stack-column">
+                        <h3>Brand Colors</h3>
+                        <ul>
+                            <li><strong>Forest:</strong> #2D5A4A (primary)</li>
+                            <li><strong>Turquoise:</strong> #40E0D0 (accent)</li>
+                            <li><strong>Cream:</strong> #FAFAF8 (light bg)</li>
+                            <li><strong>Charcoal:</strong> #1C1C1E (dark text)</li>
+                            <li><strong>Night Surface:</strong> #121212 (dark bg)</li>
+                        </ul>
+                    </div>
+                    <div class="stack-column">
+                        <h3>Typography</h3>
+                        <ul>
+                            <li><strong>Font:</strong> Inter (Google Fonts)</li>
+                            <li><strong>Display:</strong> 57px - 36px</li>
+                            <li><strong>Headline:</strong> 32px - 24px</li>
+                            <li><strong>Body:</strong> 16px - 14px</li>
+                            <li><strong>Label:</strong> 14px - 11px</li>
+                        </ul>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Key Files -->
+            <section class="docs-section">
+                <h2>Key Files</h2>
+
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Purpose</th>
+                            <th>File</th>
+                            <th>Lines</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>App entry & navigation</td>
+                            <td><code>lib/main.dart</code></td>
+                            <td>~300</td>
+                        </tr>
+                        <tr>
+                            <td>Chat state management</td>
+                            <td><code>lib/features/chat/providers/chat_providers.dart</code></td>
+                            <td>~800</td>
+                        </tr>
+                        <tr>
+                            <td>Chat API service</td>
+                            <td><code>lib/features/chat/services/chat_service.dart</code></td>
+                            <td>2,059</td>
+                        </tr>
+                        <tr>
+                            <td>Journal state</td>
+                            <td><code>lib/features/daily/journal/providers/journal_providers.dart</code></td>
+                            <td>~400</td>
+                        </tr>
+                        <tr>
+                            <td>Live transcription</td>
+                            <td><code>lib/features/daily/recorder/services/live_transcription_service_v3.dart</code></td>
+                            <td>~500</td>
+                        </tr>
+                        <tr>
+                            <td>File system operations</td>
+                            <td><code>lib/core/services/file_system_service.dart</code></td>
+                            <td>1,127</td>
+                        </tr>
+                        <tr>
+                            <td>Message rendering</td>
+                            <td><code>lib/features/chat/widgets/message_bubble.dart</code></td>
+                            <td>~600</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+
+            <!-- Dependencies -->
+            <section class="docs-section">
+                <h2>Key Dependencies</h2>
+
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Package</th>
+                            <th>Version</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>flutter_riverpod</code></td>
+                            <td>2.6.1</td>
+                            <td>State management</td>
+                        </tr>
+                        <tr>
+                            <td><code>flutter_markdown</code></td>
+                            <td>0.7.0</td>
+                            <td>Markdown rendering</td>
+                        </tr>
+                        <tr>
+                            <td><code>sherpa_onnx</code></td>
+                            <td>1.12.20 (pinned)</td>
+                            <td>Local transcription</td>
+                        </tr>
+                        <tr>
+                            <td><code>flutter_blue_plus</code></td>
+                            <td>1.33.6</td>
+                            <td>Omi BLE connection</td>
+                        </tr>
+                        <tr>
+                            <td><code>web_socket_channel</code></td>
+                            <td>3.0.0</td>
+                            <td>Chat streaming</td>
+                        </tr>
+                        <tr>
+                            <td><code>record</code></td>
+                            <td>5.0.4</td>
+                            <td>Audio recording</td>
+                        </tr>
+                        <tr>
+                            <td><code>google_fonts</code></td>
+                            <td>6.1.0</td>
+                            <td>Typography (Inter)</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+
+            <!-- Navigation -->
+            <section class="docs-section">
+                <h2>Next Steps</h2>
+                <div class="nav-cards">
+                    <a href="app-chat.html" class="nav-card">
+                        <h3>💬 Chat Feature</h3>
+                        <p>Deep dive into AI chat implementation, streaming, tool calls, and message rendering.</p>
+                    </a>
+                    <a href="app-daily.html" class="nav-card">
+                        <h3>📔 Daily Feature</h3>
+                        <p>Explore voice journaling, local transcription, and the recorder system.</p>
+                    </a>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <footer>
+        <p>&copy; 2026 Open Parachute, PBC. A Colorado Public Benefit Corporation.</p>
+        <p><a href="/blog/">Blog</a> &middot; <a href="/architecture/">Docs</a> &middot; <a href="/roadmap/">Roadmap</a> &middot; <a href="https://github.com/OpenParachutePBC/parachute-computer" target="_blank">GitHub</a></p>
+    </footer>
+</body>
+</html>

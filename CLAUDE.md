@@ -21,6 +21,7 @@
 |-----------|---------|-------|
 | **computer/** | AI orchestration server | Python/FastAPI |
 | **app/** | Unified mobile/desktop app | Flutter/Riverpod |
+| **docs/** | Website at parachute.computer | Eleventy (11ty) + GitHub Pages |
 
 ### Communication Flow
 
@@ -100,6 +101,7 @@ The app connects to the server at `localhost:3333`. Chat, Vault, and Brain featu
 |-----------|--------------|
 | **computer/** | Read [computer/CLAUDE.md](computer/CLAUDE.md) - Python server with module system |
 | **app/** | Read [app/CLAUDE.md](app/CLAUDE.md) - Flutter unified app |
+| **docs/** | Read [docs/CLAUDE.md](docs/CLAUDE.md) - Website, blog, and documentation |
 
 ---
 

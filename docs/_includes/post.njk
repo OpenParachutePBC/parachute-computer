@@ -1,0 +1,20 @@
+---
+layout: base.njk
+---
+<main>
+    <article>
+        <div class="post-header">
+            <h1>{{ title }}</h1>
+            {% if subtitle %}<p class="post-subtitle">{{ subtitle }}</p>{% endif %}
+            <p class="post-meta">{{ date | dateDisplay }}{% if author %} &middot; {{ author }}{% endif %}</p>
+        </div>
+
+        <div class="post-content">
+            {{ content | safe }}
+        </div>
+
+        <div class="post-nav">
+            <a href="/blog/">&larr; All posts</a>
+        </div>
+    </article>
+</main>

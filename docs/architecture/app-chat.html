@@ -1,0 +1,603 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat Feature | Parachute Documentation</title>
+    <meta name="description" content="Deep dive into Parachute's Chat feature - AI conversations with streaming, context management, and session persistence">
+    <link rel="stylesheet" href="/style.css">
+    <link rel="stylesheet" href="docs.css">
+</head>
+<body>
+    <header>
+        <nav>
+            <a href="/" class="logo">Parachute Computer</a>
+            <div class="nav-links">
+                <a href="/blog/">Blog</a>
+                <a href="/architecture/" class="active">Docs</a>
+                <a href="/roadmap/">Roadmap</a>
+                <a href="https://github.com/OpenParachutePBC/parachute-computer" target="_blank">GitHub</a>
+            </div>
+        </nav>
+    </header>
+
+    <div class="docs-layout">
+        <!-- Sidebar Navigation -->
+        <aside class="docs-sidebar">
+            <div class="sidebar-section">
+                <h3>Overview</h3>
+                <a href="index.html">Architecture</a>
+                <a href="data-flow.html">Data Flow</a>
+                <a href="integration.html">Integration</a>
+            </div>
+            <div class="sidebar-section">
+                <h3>App (Flutter)</h3>
+                <a href="app-overview.html">Overview</a>
+                <a href="app-chat.html" class="active">Chat Feature</a>
+                <a href="app-daily.html">Daily Feature</a>
+                <a href="app-vault.html">Vault Feature</a>
+                <a href="app-services.html">Services</a>
+            </div>
+            <div class="sidebar-section">
+                <h3>Computer (Python)</h3>
+                <a href="computer-overview.html">Overview</a>
+                <a href="computer-api.html">API Routes</a>
+                <a href="computer-orchestrator.html">Orchestrator</a>
+                <a href="computer-agents.html">Modules &amp; Agents</a>
+                <a href="computer-database.html">Database</a>
+                <a href="computer-connectors.html">Bot Connectors</a>
+            </div>
+            <div class="sidebar-section">
+                <h3>Reference</h3>
+                <a href="issues.html">Issues & TODOs</a>
+                <a href="file-manifest.html">File Manifest</a>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="docs-content">
+            <div class="breadcrumb">
+                <a href="../index.html">Home</a> / <a href="../blog/">Blog</a>
+                <a href="index.html">Docs</a> / <span>Chat Feature</span>
+            </div>
+
+            <h1>Chat Feature</h1>
+            <p class="lead">Real-time AI conversations with streaming responses, context management, session persistence, and tool transparency. The most sophisticated feature in the Parachute app.</p>
+
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-number">49</div>
+                    <div class="stat-label">Files</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number">~17,000</div>
+                    <div class="stat-label">Lines of Code</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number">21</div>
+                    <div class="stat-label">Widgets</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number">16</div>
+                    <div class="stat-label">Models</div>
+                </div>
+            </div>
+
+            <!-- Architecture Overview -->
+            <section class="docs-section">
+                <h2>Architecture Overview</h2>
+
+                <div class="architecture-visual">
+                    <pre>
+┌─────────────────────────────────────────────────────────────────────────┐
+│                           CHAT FEATURE                                  │
+│                                                                         │
+│  ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐    │
+│  │     Models      │    │    Services     │    │    Providers    │    │
+│  │   (16 files)    │    │   (6 files)     │    │   (1 file)      │    │
+│  │                 │    │                 │    │                 │    │
+│  │ ChatSession     │    │ ChatService     │    │ chatSessions    │    │
+│  │ ChatMessage     │    │ BackgroundMgr   │    │ chatMessages    │    │
+│  │ StreamEvent     │    │ LocalReader     │    │ contextFiles    │    │
+│  │ SessionTranscript│   │ ImportService   │    │ usageProvider   │    │
+│  │ SystemPromptInfo│    │ ParaIdService   │    │ currentSession  │    │
+│  │ ...             │    │                 │    │                 │    │
+│  └────────┬────────┘    └────────┬────────┘    └────────┬────────┘    │
+│           │                      │                      │              │
+│           └──────────────────────┼──────────────────────┘              │
+│                                  │                                      │
+│                                  ▼                                      │
+│  ┌─────────────────────────────────────────────────────────────────┐  │
+│  │                         SCREENS                                  │  │
+│  │                                                                  │  │
+│  │  ChatScreen → MessageBubbles + ChatInput + ConnectionBanner     │  │
+│  │  ChatHubScreen → Session list with search/filter                │  │
+│  │  AgentHubScreen → Agent selection                               │  │
+│  │  ClaudeCodeImportScreen → Session import workflow               │  │
+│  │                                                                  │  │
+│  └─────────────────────────────────────────────────────────────────┘  │
+│                                                                         │
+│  ┌─────────────────────────────────────────────────────────────────┐  │
+│  │                         WIDGETS (21)                             │  │
+│  │                                                                  │  │
+│  │  MessageBubble (1,570 lines) - Markdown rendering, tool calls   │  │
+│  │  ChatInput (1,076 lines) - Text input, attachments, agents      │  │
+│  │  SessionSelector - Bottom sheet for session switching           │  │
+│  │  CollapsibleThinkingSection - Tool call display                 │  │
+│  │  UserQuestionCard - AskUserQuestion tool UI                     │  │
+│  │  ErrorRecoveryCard - Typed error with recovery actions          │  │
+│  │  ...                                                             │  │
+│  └─────────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────────────┘</pre>
+                </div>
+            </section>
+
+            <!-- Data Flow -->
+            <section class="docs-section">
+                <h2>Streaming Data Flow</h2>
+
+                <div class="architecture-visual">
+                    <pre>
+User Input → ChatInput → chatMessagesProvider → ChatService.streamChat()
+                                                 │
+                                          POST /api/chat
+                                                 │
+                                          Server-Sent Events (SSE)
+                                                 │
+                                          StreamEvent parser
+                                                 │
+                                        ChatMessagesNotifier
+                                                 │
+                     ┌───────────────────────────┼───────────────────────────┐
+                     │                           │                           │
+                     ▼                           ▼                           ▼
+               TextEvent              ToolUseEvent              ThinkingEvent
+                     │                           │                           │
+                     └───────────────────────────┼───────────────────────────┘
+                                                 │
+                                          MessageBubble (UI)</pre>
+                </div>
+
+                <h3>Stream Event Types</h3>
+                <p>The <code>StreamEventType</code> enum defines 23 event types for comprehensive state tracking:</p>
+
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Category</th>
+                            <th>Events</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Session</td>
+                            <td><code>session</code>, <code>init</code>, <code>model</code>, <code>done</code></td>
+                            <td>Session lifecycle tracking</td>
+                        </tr>
+                        <tr>
+                            <td>Messages</td>
+                            <td><code>userMessage</code>, <code>text</code>, <code>thinking</code></td>
+                            <td>Content streaming</td>
+                        </tr>
+                        <tr>
+                            <td>Tools</td>
+                            <td><code>toolUse</code>, <code>toolResult</code></td>
+                            <td>Tool execution transparency</td>
+                        </tr>
+                        <tr>
+                            <td>Special</td>
+                            <td><code>userQuestion</code>, <code>promptMetadata</code></td>
+                            <td>Interactive and transparency features</td>
+                        </tr>
+                        <tr>
+                            <td>Errors</td>
+                            <td><code>sessionUnavailable</code>, <code>aborted</code>, <code>error</code>, <code>typedError</code></td>
+                            <td>Error handling and recovery</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+
+            <!-- Models Deep Dive -->
+            <section class="docs-section">
+                <h2>Core Models</h2>
+
+                <h3>ChatSession</h3>
+                <p>Primary session model with metadata and state tracking.</p>
+                <div class="code-block">
+                    <pre><code>class ChatSession {
+  final String id;           // SDK session ID (single ID for all operations)
+  final String? title;       // Auto-generated or user-set
+  final String module;       // 'chat', 'daily', 'build'
+  final String source;       // 'parachute', 'claude-code', 'claude', 'chatgpt'
+  final String? workingDirectory;  // For file operations
+  final String? model;       // e.g., 'claude-opus-4'
+  final int messageCount;    // Total messages
+  final bool archived;       // Soft delete flag
+  final DateTime createdAt;
+  final DateTime lastAccessed;
+  final String? continuedFrom;  // Parent session ID
+  final String? agentType;      // 'vault-agent', 'orchestrator', etc.
+}</code></pre>
+                </div>
+
+                <h3>ChatMessage</h3>
+                <p>Represents individual messages with rich content blocks.</p>
+                <div class="code-block">
+                    <pre><code>class ChatMessage {
+  final String? paraId;      // Cross-device sync ID: para:abc123def456
+  final String id;           // Local ID (may be UUID during streaming)
+  final ChatRole role;       // user, assistant, system
+  final List&lt;ContentBlock&gt; content;  // Text, thinking, tool_use, tool_result
+  final DateTime? timestamp;
+  final bool isStreaming;    // Currently being received
+  final bool isCompactSummary;  // Auto-generated summary (collapsed)
+  final List&lt;ChatAttachment&gt;? attachments;
+}</code></pre>
+                </div>
+
+                <h3>ContentBlock Types</h3>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Type</th>
+                            <th>Description</th>
+                            <th>UI Treatment</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>text</code></td>
+                            <td>Regular markdown content</td>
+                            <td>Full markdown rendering</td>
+                        </tr>
+                        <tr>
+                            <td><code>thinking</code></td>
+                            <td>Internal reasoning</td>
+                            <td>Collapsible section</td>
+                        </tr>
+                        <tr>
+                            <td><code>tool_use</code></td>
+                            <td>Tool invocation</td>
+                            <td>Collapsible with input/output</td>
+                        </tr>
+                        <tr>
+                            <td><code>tool_result</code></td>
+                            <td>Tool response</td>
+                            <td>Nested in tool_use</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+
+            <!-- Session Resumption -->
+            <section class="docs-section">
+                <h2>Session Resumption Strategy</h2>
+
+                <p>Three methods for resuming sessions, applied in order of preference:</p>
+
+                <div class="concept-grid">
+                    <div class="concept-card">
+                        <h3>1. SDK Resume</h3>
+                        <p><strong>Fastest</strong>: Native Claude SDK session resumption. SDK maintains full context internally.</p>
+                        <ul>
+                            <li>Used when SDK session file exists</li>
+                            <li>Full tool history preserved</li>
+                            <li>No token overhead</li>
+                        </ul>
+                    </div>
+                    <div class="concept-card">
+                        <h3>2. Context Injection</h3>
+                        <p><strong>Fallback</strong>: Re-send prior messages as system context when SDK session unavailable.</p>
+                        <ul>
+                            <li>Used for imported sessions</li>
+                            <li>Token-limited injection</li>
+                            <li>Tool results not included</li>
+                        </ul>
+                    </div>
+                    <div class="concept-card">
+                        <h3>3. New Session</h3>
+                        <p><strong>Fresh Start</strong>: No prior context loaded. Used when explicitly creating new conversation.</p>
+                        <ul>
+                            <li>Clean slate</li>
+                            <li>May reference <code>continuedFrom</code></li>
+                            <li>Fastest startup</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <p>Resume info is tracked via <code>SessionResumeInfo</code> and displayed in the UI with <code>SessionResumeBanner</code>.</p>
+            </section>
+
+            <!-- Context System -->
+            <section class="docs-section">
+                <h2>Context System</h2>
+
+                <h3>Context Chain</h3>
+                <p>CLAUDE.md files are loaded from the working directory upward to the vault root:</p>
+
+                <div class="architecture-visual">
+                    <pre>
+~/Parachute/                      ← Root CLAUDE.md (if exists)
+└── Projects/
+    └── myapp/                    ← Parent CLAUDE.md
+        └── src/                  ← Direct CLAUDE.md (working directory)
+            └── components/
+
+Context chain loads: root → parent → direct
+With token counting and truncation warning</pre>
+                </div>
+
+                <h3>Context Types</h3>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Type</th>
+                            <th>Location</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Context Files</td>
+                            <td><code>Chat/contexts/*.md</code></td>
+                            <td>Stored context documents for reference</td>
+                        </tr>
+                        <tr>
+                            <td>Context Folders</td>
+                            <td>Any folder with <code>CLAUDE.md</code></td>
+                            <td>Project-specific instructions</td>
+                        </tr>
+                        <tr>
+                            <td>Context Chain</td>
+                            <td>Working directory hierarchy</td>
+                            <td>Inherited context with token limits</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+
+            <!-- ChatService -->
+            <section class="docs-section">
+                <h2>ChatService (2,060 lines)</h2>
+                <p>The main HTTP client for Computer server communication.</p>
+
+                <h3>Key Methods</h3>
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>Method</th>
+                            <th>Endpoint</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>streamChat()</code></td>
+                            <td><code>POST /api/chat</code></td>
+                            <td>Primary streaming method - yields StreamEvent stream</td>
+                        </tr>
+                        <tr>
+                            <td><code>getSessions()</code></td>
+                            <td><code>GET /api/chat</code></td>
+                            <td>Fetch all sessions (limits to 500)</td>
+                        </tr>
+                        <tr>
+                            <td><code>getSession()</code></td>
+                            <td><code>GET /api/chat/:id</code></td>
+                            <td>Fetch specific session with messages</td>
+                        </tr>
+                        <tr>
+                            <td><code>abortStream()</code></td>
+                            <td><code>POST /api/chat/abort</code></td>
+                            <td>Cancel ongoing stream</td>
+                        </tr>
+                        <tr>
+                            <td><code>answerQuestion()</code></td>
+                            <td><code>POST /api/chat/answer</code></td>
+                            <td>Respond to AskUserQuestion tool</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <h3>Streaming Configuration</h3>
+                <ul>
+                    <li><strong>Connection timeout:</strong> 30 seconds</li>
+                    <li><strong>Chunk timeout:</strong> 3 minutes (detects stalled connections)</li>
+                    <li><strong>SSE Format:</strong> <code>data: {...json...}\n\n</code></li>
+                    <li><strong>UTF-8 Decoding:</strong> Handles multi-byte characters across chunks</li>
+                </ul>
+            </section>
+
+            <!-- Widgets -->
+            <section class="docs-section">
+                <h2>Key Widgets</h2>
+
+                <h3>MessageBubble (1,570 lines)</h3>
+                <p>The most complex widget - renders individual chat messages with full markdown support.</p>
+
+                <div class="callout callout-info">
+                    <strong>Performance Optimizations:</strong>
+                    <ul>
+                        <li><code>AutomaticKeepAliveClientMixin</code> - Prevents rebuild during scroll</li>
+                        <li><code>RepaintBoundary</code> - Isolates paint operations</li>
+                        <li><code>LayoutBuilder</code> instead of <code>MediaQuery</code> - Prevents unnecessary rebuilds</li>
+                    </ul>
+                </div>
+
+                <h4>Supported Markdown Features</h4>
+                <ul>
+                    <li>Headings (h1-h6) with proper sizing</li>
+                    <li>Code blocks with syntax highlighting</li>
+                    <li>Tables with borders and padding</li>
+                    <li>Blockquotes with left border styling</li>
+                    <li>Links with vault file support</li>
+                    <li>Embedded audio player for audio files</li>
+                </ul>
+
+                <h3>ChatInput (1,076 lines)</h3>
+                <p>Text input with attachment management and agent selection.</p>
+                <ul>
+                    <li>Expandable text field (grows with content)</li>
+                    <li>Multi-file attachment picker</li>
+                    <li>Agent selector dropdown</li>
+                    <li>Context folder selector</li>
+                    <li>Keyboard shortcuts (Cmd+Enter to send)</li>
+                </ul>
+
+                <h3>CollapsibleThinkingSection (774 lines)</h3>
+                <p>Groups and displays thinking blocks and tool calls.</p>
+                <ul>
+                    <li>Collapsed by default during playback</li>
+                    <li>Expanded during active streaming</li>
+                    <li>Tool result error highlighting</li>
+                </ul>
+            </section>
+
+            <!-- Post-Session Processing -->
+            <section class="docs-section">
+                <h2>Post-Session Processing</h2>
+
+                <p>After each chat exchange, a post-session hook handles background maintenance:</p>
+
+                <div class="architecture-visual">
+                    <pre>
+Chat Session Complete
+     │
+     ├── Activity Hook triggers
+     │
+     ▼
+Post-Session Tasks
+     │
+     ├── Update session title (first message)
+     ├── Summarize exchange to Daily/chat-log/
+     └── Track usage metrics</pre>
+                </div>
+
+                <h3>Background Tasks</h3>
+                <ul>
+                    <li><strong>Title Generation:</strong> Auto-generates descriptive titles from first exchange</li>
+                    <li><strong>Chat Logging:</strong> Summarizes exchange to <code>Daily/chat-log/{date}.md</code></li>
+                    <li><strong>Metrics:</strong> Tracks token usage and session statistics</li>
+                </ul>
+            </section>
+
+            <!-- Error Handling -->
+            <section class="docs-section">
+                <h2>Error Handling</h2>
+
+                <h3>TypedError System</h3>
+                <p>Structured errors with programmatic recovery suggestions:</p>
+
+                <table class="docs-table">
+                    <thead>
+                        <tr>
+                            <th>ErrorCode</th>
+                            <th>Description</th>
+                            <th>Recovery Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>auth_error</code></td>
+                            <td>API key invalid</td>
+                            <td>Settings, Reauth</td>
+                        </tr>
+                        <tr>
+                            <td><code>billing_error</code></td>
+                            <td>Usage limits exceeded</td>
+                            <td>Dismiss, Settings</td>
+                        </tr>
+                        <tr>
+                            <td><code>rate_limit</code></td>
+                            <td>Too many requests</td>
+                            <td>Retry (with delay)</td>
+                        </tr>
+                        <tr>
+                            <td><code>network_error</code></td>
+                            <td>Connection failed</td>
+                            <td>Retry</td>
+                        </tr>
+                        <tr>
+                            <td><code>session_error</code></td>
+                            <td>Session unavailable</td>
+                            <td>New Session</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <p>Each <code>RecoveryAction</code> includes a keyboard shortcut hint for power users.</p>
+            </section>
+
+            <!-- File Structure -->
+            <section class="docs-section">
+                <h2>File Structure</h2>
+
+                <div class="code-block">
+                    <pre><code>app/lib/features/chat/
+├── models/                 # 16 files, ~2,200 lines
+│   ├── chat_session.dart
+│   ├── chat_message.dart
+│   ├── stream_event.dart
+│   ├── session_transcript.dart
+│   ├── system_prompt_info.dart
+│   ├── context_file.dart
+│   ├── context_folder.dart
+│   ├── agent.dart
+│   ├── attachment.dart
+│   ├── claude_usage.dart
+│   ├── session_resume_info.dart
+│   ├── prompt_metadata.dart
+│   └── typed_error.dart
+├── providers/              # 1 file, ~2,800 lines
+│   └── chat_providers.dart
+├── services/               # 6 files, ~2,200 lines
+│   ├── chat_service.dart
+│   ├── background_stream_manager.dart
+│   ├── local_session_reader.dart
+│   ├── chat_import_service.dart
+│   └── para_id_service.dart
+├── screens/                # 5 files, ~600 lines
+│   ├── chat_screen.dart
+│   ├── chat_hub_screen.dart
+│   ├── agent_hub_screen.dart
+│   └── claude_code_import_screen.dart
+└── widgets/                # 21 files, ~9,200 lines
+    ├── message_bubble.dart
+    ├── chat_input.dart
+    ├── session_selector.dart
+    ├── collapsible_thinking_section.dart
+    ├── user_question_card.dart
+    ├── error_recovery_card.dart
+    └── ...</code></pre>
+                </div>
+            </section>
+
+            <!-- Navigation -->
+            <section class="docs-section">
+                <h2>Related Documentation</h2>
+                <div class="nav-cards">
+                    <a href="computer-orchestrator.html" class="nav-card">
+                        <h3>Orchestrator</h3>
+                        <p>Server-side streaming and session management.</p>
+                    </a>
+                    <a href="data-flow.html" class="nav-card">
+                        <h3>Data Flow</h3>
+                        <p>Complete request/response cycle.</p>
+                    </a>
+                    <a href="computer-api.html" class="nav-card">
+                        <h3>API Routes</h3>
+                        <p>All server endpoints.</p>
+                    </a>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <footer>
+        <p>&copy; 2026 Open Parachute, PBC. A Colorado Public Benefit Corporation.</p>
+        <p><a href="/blog/">Blog</a> &middot; <a href="/architecture/">Docs</a> &middot; <a href="/roadmap/">Roadmap</a> &middot; <a href="https://github.com/OpenParachutePBC/parachute-computer" target="_blank">GitHub</a></p>
+    </footer>
+</body>
+</html>

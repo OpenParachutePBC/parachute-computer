@@ -1,0 +1,26 @@
+---
+layout: base.njk
+title: Blog
+description: "Product updates and thinking from the Parachute team"
+permalink: /blog/
+---
+<main>
+    <div class="roadmap-header">
+        <h1>Blog</h1>
+        <p class="dates">Product updates and thinking from the Parachute team</p>
+    </div>
+
+    <section class="section">
+        <ul class="blog-list">
+            {%- for post in collections.posts %}
+            <li>
+                <a href="{{ post.url }}" class="blog-post-card">
+                    <h3>{{ post.data.title }}</h3>
+                    <div class="date">{{ post.date | dateDisplay }}{% if post.data.author %} &middot; {{ post.data.author }}{% endif %}</div>
+                    {% if post.data.subtitle %}<p class="excerpt">{{ post.data.subtitle }}</p>{% endif %}
+                </a>
+            </li>
+            {%- endfor %}
+        </ul>
+    </section>
+</main>
