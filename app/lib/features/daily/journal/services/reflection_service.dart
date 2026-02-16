@@ -7,7 +7,7 @@ import '../models/reflection.dart';
 /// Service for reading daily reflections.
 ///
 /// Reflections are AI-generated summaries stored in {journalPath}/reflections/{date}.md
-/// They are created by the Daily Curator running on the Base server.
+/// They are created by daily agents running on the Parachute Computer server.
 class ReflectionService {
   final String _journalPath;
   final FileSystemService _fileSystemService;

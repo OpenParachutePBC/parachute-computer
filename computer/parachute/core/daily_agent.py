@@ -125,7 +125,7 @@ class DailyAgentConfig:
             post = frontmatter.loads(agent_file.read_text())
             metadata = post.metadata
 
-            # Extract name from filename (e.g., "curator.md" -> "curator")
+            # Extract name from filename (e.g., "content-scout.md" -> "content-scout")
             name = agent_file.stem
 
             # Parse schedule
@@ -231,7 +231,7 @@ def load_user_context(vault_path: Path) -> tuple[str, str]:
     user_name = "the user"
     context_text = ""
 
-    # Try to load from context/curator.md or .parachute/profile.md
+    # Legacy path — kept for users with existing context/curator.md files
     for context_path in [
         vault_path / "context" / "curator.md",
         vault_path / ".parachute" / "profile.md",
@@ -268,7 +268,7 @@ async def run_daily_agent(
 
     Args:
         vault_path: Path to the vault
-        agent_name: Name of the agent (e.g., "curator", "content-scout")
+        agent_name: Name of the agent (e.g., "content-scout", "reflections")
         date: Date to process (YYYY-MM-DD), defaults to yesterday
         force: Run even if already processed
         create_tools_fn: Optional function to create custom tools for this agent

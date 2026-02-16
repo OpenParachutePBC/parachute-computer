@@ -4,16 +4,16 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// Service for communicating with the Parachute Base server.
+/// Service for communicating with the Parachute Computer server.
 ///
-/// The Base server provides:
-/// - AI curator functionality (daily reflections, chat summaries)
+/// Provides:
+/// - Daily agent management and transcript retrieval
 /// - Module management
 /// - Session persistence
-class BaseServerService {
-  static final BaseServerService _instance = BaseServerService._internal();
-  factory BaseServerService() => _instance;
-  BaseServerService._internal();
+class ComputerService {
+  static final ComputerService _instance = ComputerService._internal();
+  factory ComputerService() => _instance;
+  ComputerService._internal();
 
   // Use same key as app_state_provider.dart ServerUrlNotifier for consistency
   static const String _serverUrlKey = 'parachute_server_url';
@@ -56,7 +56,7 @@ class BaseServerService {
     _apiKey = prefs.getString(_apiKeyKey);
     _isInitialized = true;
     // Security: Only log presence of API key, not the key itself
-    debugPrint('[BaseServerService] Initialized with URL: $_serverUrl, hasApiKey: ${_apiKey != null && _apiKey!.isNotEmpty}');
+    debugPrint('[ComputerService] Initialized with URL: $_serverUrl, hasApiKey: ${_apiKey != null && _apiKey!.isNotEmpty}');
   }
 
   /// Set a custom server URL
@@ -64,7 +64,7 @@ class BaseServerService {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_serverUrlKey, url);
     _serverUrl = url;
-    debugPrint('[BaseServerService] Server URL updated to: $url');
+    debugPrint('[ComputerService] Server URL updated to: $url');
   }
 
   /// Reset to default server URL
@@ -72,7 +72,7 @@ class BaseServerService {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_serverUrlKey);
     _serverUrl = _defaultServerUrl;
-    debugPrint('[BaseServerService] Server URL reset to default: $_serverUrl');
+    debugPrint('[ComputerService] Server URL reset to default: $_serverUrl');
   }
 
   // ============================================================
@@ -87,7 +87,7 @@ class BaseServerService {
           .timeout(const Duration(seconds: 5));
       return response.statusCode == 200;
     } catch (e) {
-      debugPrint('[BaseServerService] Server not reachable: $e');
+      debugPrint('[ComputerService] Server not reachable: $e');
       return false;
     }
   }
@@ -104,7 +104,7 @@ class BaseServerService {
       }
       return null;
     } catch (e) {
-      debugPrint('[BaseServerService] Error getting health status: $e');
+      debugPrint('[ComputerService] Error getting health status: $e');
       return null;
     }
   }
@@ -126,121 +126,33 @@ class BaseServerService {
   }
 
   // ============================================================
-  // Daily Curator
+  // Daily Agent Transcripts
   // ============================================================
-
-  /// Get the daily curator status
-  ///
-  /// Returns information about:
-  /// - Whether curator has run today
-  /// - Last run time
-  /// - Session continuity info
-  Future<DailyCuratorStatus?> getDailyCuratorStatus() async {
-    try {
-      final response = await http
-          .get(Uri.parse('${await getServerUrl()}/api/modules/daily/curator'),
-              headers: await _getHeaders())
-          .timeout(const Duration(seconds: 10));
-
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body) as Map<String, dynamic>;
-        return DailyCuratorStatus.fromJson(data);
-      }
-      debugPrint('[BaseServerService] Curator status error: ${response.statusCode}');
-      return null;
-    } catch (e) {
-      debugPrint('[BaseServerService] Error getting curator status: $e');
-      return null;
-    }
-  }
-
-  /// Trigger the daily curator to generate a reflection
-  ///
-  /// Parameters:
-  /// - [date]: Optional date in YYYY-MM-DD format (defaults to today)
-  /// - [force]: Force run even if already processed
-  ///
-  /// Returns the result of the curator run.
-  Future<CuratorRunResult> triggerDailyCurator({
-    String? date,
-    bool force = false,
-  }) async {
-    try {
-      final body = <String, dynamic>{};
-      if (date != null) body['date'] = date;
-      if (force) body['force'] = true;
-
-      final response = await http
-          .post(
-            Uri.parse('${await getServerUrl()}/api/modules/daily/curate'),
-            headers: await _getHeaders(json: true),
-            body: json.encode(body),
-          )
-          .timeout(const Duration(seconds: 120)); // Curator can take a while
-
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body) as Map<String, dynamic>;
-        return CuratorRunResult.fromJson(data);
-      } else {
-        final error = _parseError(response);
-        return CuratorRunResult.error(error);
-      }
-    } on SocketException catch (e) {
-      return CuratorRunResult.error('Server not reachable: $e');
-    } on http.ClientException catch (e) {
-      return CuratorRunResult.error('Connection error: $e');
-    } catch (e) {
-      return CuratorRunResult.error('Error triggering curator: $e');
-    }
-  }
-
-  /// Get the curator's conversation transcript
-  ///
-  /// Returns the recent messages from the curator's long-running session,
-  /// including tool calls and responses.
-  Future<CuratorTranscript?> getCuratorTranscript({int limit = 50}) async {
-    try {
-      final response = await http
-          .get(Uri.parse('${await getServerUrl()}/api/modules/daily/curator/transcript?limit=$limit'),
-              headers: await _getHeaders())
-          .timeout(const Duration(seconds: 15));
-
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body) as Map<String, dynamic>;
-        return CuratorTranscript.fromJson(data);
-      }
-      debugPrint('[BaseServerService] Transcript error: ${response.statusCode}');
-      return null;
-    } catch (e) {
-      debugPrint('[BaseServerService] Error getting transcript: $e');
-      return null;
-    }
-  }
 
   /// Get a daily agent's conversation transcript
   ///
   /// Returns the recent messages from the agent's session,
   /// including tool calls and responses.
-  Future<CuratorTranscript?> getAgentTranscript(String agentName, {int limit = 50}) async {
+  Future<AgentTranscript?> getAgentTranscript(String agentName, {int limit = 50}) async {
     try {
       final url = '${await getServerUrl()}/api/modules/daily/agents/$agentName/transcript?limit=$limit';
-      debugPrint('[BaseServerService] Fetching agent transcript from: $url');
+      debugPrint('[ComputerService] Fetching agent transcript from: $url');
 
       final response = await http
           .get(Uri.parse(url), headers: await _getHeaders())
           .timeout(const Duration(seconds: 15));
 
-      debugPrint('[BaseServerService] Agent transcript response: ${response.statusCode}');
+      debugPrint('[ComputerService] Agent transcript response: ${response.statusCode}');
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body) as Map<String, dynamic>;
-        debugPrint('[BaseServerService] Agent transcript data: hasTranscript=${data['hasTranscript']}, messages=${(data['messages'] as List?)?.length ?? 0}');
-        return CuratorTranscript.fromJson(data);
+        debugPrint('[ComputerService] Agent transcript data: hasTranscript=${data['hasTranscript']}, messages=${(data['messages'] as List?)?.length ?? 0}');
+        return AgentTranscript.fromJson(data);
       }
-      debugPrint('[BaseServerService] Agent transcript error: ${response.statusCode} - ${response.body}');
+      debugPrint('[ComputerService] Agent transcript error: ${response.statusCode} - ${response.body}');
       return null;
     } catch (e) {
-      debugPrint('[BaseServerService] Error getting agent transcript: $e');
+      debugPrint('[ComputerService] Error getting agent transcript: $e');
       return null;
     }
   }
@@ -267,10 +179,10 @@ class BaseServerService {
             .map((a) => DailyAgentInfo.fromJson(a as Map<String, dynamic>))
             .toList();
       }
-      debugPrint('[BaseServerService] Get agents error: ${response.statusCode}');
+      debugPrint('[ComputerService] Get agents error: ${response.statusCode}');
       return null;
     } catch (e) {
-      debugPrint('[BaseServerService] Error getting daily agents: $e');
+      debugPrint('[ComputerService] Error getting daily agents: $e');
       return null;
     }
   }
@@ -287,10 +199,10 @@ class BaseServerService {
         final data = json.decode(response.body) as Map<String, dynamic>;
         return DailyAgentInfo.fromJson(data);
       }
-      debugPrint('[BaseServerService] Get agent error: ${response.statusCode}');
+      debugPrint('[ComputerService] Get agent error: ${response.statusCode}');
       return null;
     } catch (e) {
-      debugPrint('[BaseServerService] Error getting agent $agentName: $e');
+      debugPrint('[ComputerService] Error getting agent $agentName: $e');
       return null;
     }
   }
@@ -298,7 +210,7 @@ class BaseServerService {
   /// Trigger a daily agent to run
   ///
   /// Parameters:
-  /// - [agentName]: Name of the agent (e.g., "curator", "content-scout")
+  /// - [agentName]: Name of the agent (e.g., "reflections", "content-scout")
   /// - [date]: Optional date in YYYY-MM-DD format (defaults to yesterday)
   /// - [force]: Force run even if already processed
   Future<AgentRunResult> triggerDailyAgent(
@@ -358,7 +270,7 @@ class BaseServerService {
       }
       return null;
     } catch (e) {
-      debugPrint('[BaseServerService] Error getting agent status: $e');
+      debugPrint('[ComputerService] Error getting agent status: $e');
       return null;
     }
   }
@@ -377,92 +289,15 @@ class BaseServerService {
 // Models
 // ============================================================
 
-/// Status of the daily curator
-class DailyCuratorStatus {
-  final bool hasCurator;
-  final bool hasTodayReflection;
-  final String? todayReflectionPath;
-  final Map<String, dynamic>? state;
-  final String? message;
-
-  DailyCuratorStatus({
-    required this.hasCurator,
-    required this.hasTodayReflection,
-    this.todayReflectionPath,
-    this.state,
-    this.message,
-  });
-
-  factory DailyCuratorStatus.fromJson(Map<String, dynamic> json) {
-    return DailyCuratorStatus(
-      hasCurator: json['hasCurator'] as bool? ?? false,
-      hasTodayReflection: json['hasTodayReflection'] as bool? ?? false,
-      todayReflectionPath: json['todayReflectionPath'] as String?,
-      state: json['state'] as Map<String, dynamic>?,
-      message: json['message'] as String?,
-    );
-  }
-
-  /// Get the last run time from state
-  DateTime? get lastRunAt {
-    if (state == null) return null;
-    final lastRun = state!['last_run_at'] as String?;
-    if (lastRun == null) return null;
-    return DateTime.tryParse(lastRun);
-  }
-
-  /// Get the session ID for continuity
-  String? get sessionId => state?['session_id'] as String?;
-
-  /// Get the run count
-  int get runCount => state?['run_count'] as int? ?? 0;
-}
-
-/// Result of a curator run
-class CuratorRunResult {
-  final bool success;
-  final String? reflectionPath;
-  final String? message;
-  final String? error;
-  final bool skipped;
-  final String? skipReason;
-
-  CuratorRunResult({
-    required this.success,
-    this.reflectionPath,
-    this.message,
-    this.error,
-    this.skipped = false,
-    this.skipReason,
-  });
-
-  factory CuratorRunResult.fromJson(Map<String, dynamic> json) {
-    return CuratorRunResult(
-      success: json['success'] as bool? ?? false,
-      reflectionPath: json['reflection_path'] as String?,
-      message: json['message'] as String?,
-      skipped: json['skipped'] as bool? ?? false,
-      skipReason: json['skip_reason'] as String?,
-    );
-  }
-
-  factory CuratorRunResult.error(String errorMessage) {
-    return CuratorRunResult(
-      success: false,
-      error: errorMessage,
-    );
-  }
-}
-
-/// Curator conversation transcript
-class CuratorTranscript {
+/// Agent conversation transcript
+class AgentTranscript {
   final bool hasTranscript;
   final String? sessionId;
   final int totalMessages;
   final List<TranscriptMessage> messages;
   final String? message;
 
-  CuratorTranscript({
+  AgentTranscript({
     required this.hasTranscript,
     this.sessionId,
     this.totalMessages = 0,
@@ -470,9 +305,9 @@ class CuratorTranscript {
     this.message,
   });
 
-  factory CuratorTranscript.fromJson(Map<String, dynamic> json) {
+  factory AgentTranscript.fromJson(Map<String, dynamic> json) {
     final messagesList = json['messages'] as List<dynamic>? ?? [];
-    return CuratorTranscript(
+    return AgentTranscript(
       hasTranscript: json['hasTranscript'] as bool? ?? false,
       sessionId: json['sessionId'] as String?,
       totalMessages: json['totalMessages'] as int? ?? 0,
@@ -484,7 +319,7 @@ class CuratorTranscript {
   }
 }
 
-/// A single message in the curator transcript
+/// A single message in an agent transcript
 class TranscriptMessage {
   final String type;
   final String? timestamp;

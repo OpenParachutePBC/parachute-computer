@@ -142,7 +142,7 @@ enum SyncStatus {
 
 /// Service for syncing Daily files with the server.
 ///
-/// Follows the same pattern as BaseServerService - singleton with
+/// Follows the same pattern as ComputerService - singleton with
 /// server URL from SharedPreferences.
 ///
 /// Sync protocol:

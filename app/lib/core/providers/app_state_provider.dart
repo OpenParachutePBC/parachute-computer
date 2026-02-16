@@ -4,7 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
-import '../services/base_server_service.dart';
+import '../services/computer_service.dart';
 
 /// App flavor set at compile time via --dart-define=FLAVOR=daily|client|computer
 /// Defaults to 'client' if not specified
@@ -12,7 +12,7 @@ import '../services/base_server_service.dart';
 /// Flavors:
 /// - daily: Offline journal only, no server features
 /// - client: Standard app - connects to external server (default)
-/// - computer: Desktop with bundled Lima VM (Parachute Computer)
+/// - computer: Desktop Parachute Computer (server + Docker sandboxing)
 const String appFlavor = String.fromEnvironment('FLAVOR', defaultValue: 'client');
 
 /// Whether the app was built as the Daily-only flavor
@@ -21,11 +21,8 @@ bool get isDailyOnlyFlavor => appFlavor == 'daily';
 /// Whether the app was built as the Client flavor (external server)
 bool get isClientFlavor => appFlavor == 'client';
 
-/// Whether the app was built as the Computer flavor (bundled Lima VM)
+/// Whether the app was built as the Computer flavor
 bool get isComputerFlavor => appFlavor == 'computer';
-
-/// Whether the app should show Lima VM controls (Computer flavor only)
-bool get showLimaControls => isComputerFlavor;
 
 // ============================================================================
 // Server Mode (for Computer flavor)
@@ -33,16 +30,11 @@ bool get showLimaControls => isComputerFlavor;
 
 /// How the Parachute server is run (Computer flavor only)
 ///
-/// - limaVM: Server runs in isolated Lima VM (more secure, recommended for shared computers)
-/// - bareMetal: Server runs directly on macOS (better performance, for dedicated machines)
+/// Currently only bareMetal is supported. Server runs directly on macOS
+/// with Docker containers providing sandboxed execution.
 enum ServerMode {
-  /// Server runs in isolated Lima VM
-  /// Claude can only access the vault, not the host filesystem
-  limaVM,
-
   /// Server runs directly on macOS
-  /// Full performance, access to MLX, native builds
-  /// Best for dedicated Parachute machines
+  /// Full performance, Docker containers for sandboxing
   bareMetal,
 }
 
@@ -52,14 +44,12 @@ class ServerModeNotifier extends AsyncNotifier<ServerMode> {
 
   @override
   Future<ServerMode> build() async {
-    final prefs = await SharedPreferences.getInstance();
-    final value = prefs.getString(_key);
-    return value == 'bareMetal' ? ServerMode.bareMetal : ServerMode.limaVM;
+    return ServerMode.bareMetal;
   }
 
   Future<void> setServerMode(ServerMode mode) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_key, mode == ServerMode.bareMetal ? 'bareMetal' : 'limaVM');
+    await prefs.setString(_key, 'bareMetal');
     state = AsyncData(mode);
   }
 }
@@ -69,25 +59,11 @@ final serverModeProvider = AsyncNotifierProvider<ServerModeNotifier, ServerMode>
   return ServerModeNotifier();
 });
 
-/// Whether the current server mode is Lima VM
-final isLimaVMModeProvider = Provider<bool>((ref) {
-  if (!isComputerFlavor) return false;
-  final modeAsync = ref.watch(serverModeProvider);
-  return modeAsync.valueOrNull == ServerMode.limaVM;
-});
-
-/// Whether the current server mode is bare metal
-final isBareMetalModeProvider = Provider<bool>((ref) {
-  if (!isComputerFlavor) return false;
-  final modeAsync = ref.watch(serverModeProvider);
-  return modeAsync.valueOrNull == ServerMode.bareMetal;
-});
-
 // ============================================================================
-// Custom Base Server Path (for developers)
+// Custom Computer Path (for developers)
 // ============================================================================
 
-/// Notifier for custom base server path (optional, for developers)
+/// Notifier for custom computer path (optional, for developers)
 class CustomBasePathNotifier extends AsyncNotifier<String?> {
   static const _key = 'parachute_custom_base_path';
   static const _enabledKey = 'parachute_custom_base_enabled';
@@ -119,7 +95,7 @@ class CustomBasePathNotifier extends AsyncNotifier<String?> {
   }
 }
 
-/// Custom base server path provider (null if using bundled)
+/// Custom computer path provider (null if using bundled)
 final customBasePathProvider = AsyncNotifierProvider<CustomBasePathNotifier, String?>(() {
   return CustomBasePathNotifier();
 });
@@ -343,7 +319,7 @@ final onboardingCompleteProvider = AsyncNotifierProvider<OnboardingNotifier, boo
 /// - ~: Home directory as vault (for advanced users)
 /// - Custom path: User-specified location
 ///
-/// In Parachute Computer mode (bare metal or Lima VM), the vault path
+/// In Parachute Computer mode, the vault path
 /// is fetched from the server to ensure app and server use the same location.
 /// This eliminates the need for sync - both read/write the same files.
 class VaultPathNotifier extends AsyncNotifier<String?> {
@@ -369,7 +345,7 @@ class VaultPathNotifier extends AsyncNotifier<String?> {
   /// Fetch vault path from the running server
   Future<String?> _fetchServerVaultPath() async {
     try {
-      final service = BaseServerService();
+      final service = ComputerService();
       final serverVaultPath = await service.getServerVaultPath();
       if (serverVaultPath != null && serverVaultPath.isNotEmpty) {
         // Cache the server vault path for offline reference
@@ -420,8 +396,8 @@ final vaultPathProvider = AsyncNotifierProvider<VaultPathNotifier, String?>(() {
 /// because both the app and server are reading/writing the same files.
 /// Instead of syncing files with ourselves, we just use direct file access.
 final syncDisabledProvider = Provider<bool>((ref) {
-  // Sync is disabled in Parachute Computer mode (both Lima VM and bare metal)
-  // because the app and server share the same filesystem
+  // Sync is disabled in Parachute Computer mode because the app and server
+  // share the same filesystem
   return isComputerFlavor;
 });
 
@@ -518,7 +494,7 @@ final appVersionFullProvider = FutureProvider<String>((ref) async {
 ///
 /// This clears:
 /// - Server URL (puts app back in dailyOnly mode)
-/// - Server mode (Lima vs Bare Metal choice)
+/// - Server mode
 /// - Vault path selection
 /// - Onboarding completion flag
 ///

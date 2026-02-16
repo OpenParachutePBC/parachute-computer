@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
-import 'package:parachute/core/providers/base_server_provider.dart';
-import 'package:parachute/core/services/base_server_service.dart';
+import 'package:parachute/core/providers/computer_provider.dart';
+import 'package:parachute/core/services/computer_service.dart';
 import '../providers/journal_providers.dart';
 
 /// Provider for agent trigger state (per agent)
@@ -132,13 +132,13 @@ class _AgentTriggerCardState extends ConsumerState<AgentTriggerCard> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Base server not connected',
+                'Server not connected',
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                   color: isDark ? BrandColors.stone : BrandColors.charcoal,
                 ),
               ),
               Text(
-                'Start the Parachute Base server to run ${widget.agent.displayName}',
+                'Start Parachute Computer to run ${widget.agent.displayName}',
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
                   color: BrandColors.driftwood,
                 ),
@@ -360,7 +360,7 @@ class _AgentTriggerCardState extends ConsumerState<AgentTriggerCard> {
     setState(() => _isTriggering = true);
 
     try {
-      final server = BaseServerService();
+      final server = ComputerService();
       final dateStr = _formatDate(widget.date);
       final result = await server.triggerDailyAgent(widget.agent.name, date: dateStr);
 

@@ -12,8 +12,6 @@ from fastapi import APIRouter, HTTPException, Request, UploadFile, File, Query
 from pydantic import BaseModel
 
 from ..core.import_service import ImportService
-# CURATOR REMOVED - import_curator not available in modular architecture
-# from ..core.import_curator import ImportCurator
 from ..models.session import Session, SessionSource
 
 router = APIRouter()
@@ -318,11 +316,6 @@ async def sync_sdk_sessions(
         skipped=skipped,
         errors=errors
     )
-
-
-# CURATOR REMOVED - CurateExportRequest, CurateExportResponse, and /import/curate
-# endpoint removed because ImportCurator is not available in modular architecture.
-# These will be restored when curator functionality is re-implemented as a module.
 
 
 class ContextFilesResponse(BaseModel):

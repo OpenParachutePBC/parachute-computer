@@ -102,7 +102,7 @@ Each release includes:
 
 | File | Description |
 |------|-------------|
-| `ParachuteComputer-X.Y.Z.dmg` | macOS app with bundled Lima config and base server |
+| `ParachuteComputer-X.Y.Z.dmg` | macOS app with bundled Parachute Computer |
 | `checksums-sha256.txt` | SHA256 checksums for verification |
 
 ## Verification

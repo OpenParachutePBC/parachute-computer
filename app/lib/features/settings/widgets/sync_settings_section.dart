@@ -100,7 +100,7 @@ class SyncSettingsSection extends ConsumerWidget {
         ),
         SizedBox(height: Spacing.sm),
         Text(
-          'Sync your Daily journals with your Parachute Base server.',
+          'Sync your Daily journals with Parachute Computer.',
           style: TextStyle(
             fontSize: TypographyTokens.bodySmall,
             color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,

@@ -5,7 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/core/providers/app_state_provider.dart' show apiKeyProvider;
 import 'package:parachute/core/providers/feature_flags_provider.dart';
-import 'package:parachute/features/daily/journal/screens/curator_log_screen.dart';
+import 'package:parachute/features/daily/journal/screens/agent_log_screen.dart';
 
 /// Daily agents (scheduler) settings section
 class DailyAgentsSection extends ConsumerStatefulWidget {
@@ -193,11 +193,11 @@ class _DailyAgentsSectionState extends ConsumerState<DailyAgentsSection> {
   }
 
   void _viewAgentTranscript(String agentName, String displayName) {
-    // Navigate to the existing CuratorLogScreen which handles transcript display properly
+    // Navigate to the existing AgentLogScreen which handles transcript display properly
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => CuratorLogScreen(
+        builder: (context) => AgentLogScreen(
           agentName: agentName,
           displayName: displayName,
         ),

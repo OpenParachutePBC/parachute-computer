@@ -4,30 +4,18 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/core/providers/app_state_provider.dart';
-import 'package:parachute/core/providers/lima_vm_provider.dart';
 import 'package:parachute/core/providers/bare_metal_provider.dart';
-import 'package:parachute/core/services/lima_vm_service.dart';
-import 'package:parachute/core/services/base_server_service.dart';
+import 'package:parachute/core/services/computer_service.dart';
 import 'package:parachute/core/services/file_system_service.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 /// Setup wizard for Parachute Computer
 ///
-/// Guides users through setup with two paths:
-///
-/// **Lima VM Path (isolated):**
-/// 1. Choose setup mode
-/// 2. Install Homebrew (if needed)
-/// 3. Install Lima (if needed)
-/// 4. Create and start VM
-/// 5. Authenticate with Claude
-///
-/// **Bare Metal Path (direct):**
-/// 1. Choose setup mode
-/// 2. Check Python
-/// 3. Install/setup server
-/// 4. Authenticate with Claude
-/// 5. Enable auto-start
+/// Guides users through setup:
+/// 1. Check Python
+/// 2. Install/setup server
+/// 3. Authenticate with Claude
+/// 4. Enable auto-start
 class ComputerSetupWizard extends ConsumerStatefulWidget {
   final VoidCallback? onComplete;
 
@@ -51,12 +39,7 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
   bool _isLoading = false;
   String? _error;
 
-  // Lima VM path state
-  bool _homebrewInstalled = false;
-  bool _limaInstalled = false;
-  String? _vmProgressMessage;
-
-  // Bare metal path state
+  // Setup state
   bool _homebrewInstalledBareMetal = false;
   bool _pythonInstalled = false;
   String? _pythonVersion;
@@ -114,33 +97,11 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
     setState(() => _isLoading = true);
 
     try {
-      if (_selectedMode == ServerMode.limaVM) {
-        await _checkLimaPrerequisites();
-      } else {
-        await _checkBareMetalPrerequisites();
-      }
+      await _checkBareMetalPrerequisites();
     } catch (e) {
       _error = e.toString();
     } finally {
       if (mounted) setState(() => _isLoading = false);
-    }
-  }
-
-  Future<void> _checkLimaPrerequisites() async {
-    // Check Homebrew
-    _homebrewInstalled = _brewPaths.any((p) => File(p).existsSync());
-
-    // Check Lima
-    final limaService = ref.read(limaVMServiceProvider);
-    _limaInstalled = await limaService.isLimaInstalled();
-
-    // Determine starting step
-    if (!_homebrewInstalled) {
-      _currentStep = 0;
-    } else if (!_limaInstalled) {
-      _currentStep = 1;
-    } else {
-      _currentStep = 2;
     }
   }
 
@@ -197,7 +158,7 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
   }
 
   // ============================================================
-  // Lima VM Path Methods
+  // Homebrew Helper Methods
   // ============================================================
 
   static const List<String> _brewPaths = [
@@ -277,89 +238,6 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
         ),
       );
     }
-  }
-
-  Future<void> _installLima() async {
-    setState(() {
-      _isLoading = true;
-      _error = null;
-    });
-
-    try {
-      final brewPath = _brewPath;
-      if (brewPath == null) {
-        _error = 'Homebrew not found. Please install Homebrew first.';
-        return;
-      }
-
-      final result = await Process.run(brewPath, ['install', 'lima']);
-
-      if (result.exitCode == 0) {
-        setState(() => _limaInstalled = true);
-        _currentStep = 2;
-      } else {
-        _error = 'Failed to install Lima: ${result.stderr}';
-      }
-    } catch (e) {
-      _error = 'Error installing Lima: $e';
-    } finally {
-      if (mounted) setState(() => _isLoading = false);
-    }
-  }
-
-  Future<void> _createAndStartVM() async {
-    setState(() {
-      _isLoading = true;
-      _error = null;
-      _vmProgressMessage = 'Preparing...';
-    });
-
-    try {
-      final service = await ref.read(limaVMServiceInitializedProvider.future);
-
-      // Install base server if needed
-      if (!await service.isBaseServerInstalled()) {
-        if (mounted) {
-          setState(() => _vmProgressMessage = 'Installing base server...');
-        }
-        final installed = await service.installBaseServer();
-        if (!installed) {
-          _error = service.lastError ?? 'Failed to install base server';
-          return;
-        }
-      }
-
-      // Create/start the VM
-      if (mounted) {
-        setState(() => _vmProgressMessage = 'Downloading Ubuntu & creating VM...');
-      }
-      final success = await service.start();
-
-      if (success) {
-        if (mounted) {
-          setState(() => _vmProgressMessage = 'Starting server...');
-        }
-        await service.startServer();
-        _currentStep = 3;
-      } else {
-        _error = service.lastError ?? 'Failed to create VM';
-      }
-    } catch (e) {
-      _error = 'Error creating VM: $e';
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-          _vmProgressMessage = null;
-        });
-      }
-    }
-  }
-
-  Future<void> _authenticateClaudeLima() async {
-    final service = ref.read(limaVMServiceProvider);
-    await service.runClaudeLogin();
-    setState(() => _currentStep = 4);
   }
 
   // ============================================================
@@ -472,13 +350,13 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
     try {
       final service = ref.read(bareMetalServiceProvider);
 
-      // Step 1: Install base server from bundle
+      // Step 1: Install Parachute Computer from bundle
       currentStep = 'copying server files';
       if (!await service.isServerInstalled()) {
         if (mounted) {
           setState(() => _setupProgressMessage = 'Copying server files...');
         }
-        final installed = await service.installBaseServer();
+        final installed = await service.installComputer();
         if (!installed) {
           _error = 'Failed while $currentStep: ${service.lastError ?? 'Unknown error'}';
           return;
@@ -555,7 +433,7 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
 
   Future<void> _complete() async {
     // Set the server URL so the app switches to full mode (Chat + Vault tabs)
-    // Both Lima VM and Bare Metal run on localhost:3333
+    // Server runs on localhost:3333
     const serverUrl = 'http://localhost:3333';
 
     debugPrint('[ComputerSetupWizard] Setting server URL to $serverUrl');
@@ -580,7 +458,7 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
     // In Parachute Computer mode, fetch vault path from server and configure FileSystemService
     // This ensures app and server use the same vault - no sync needed
     try {
-      final serverService = BaseServerService();
+      final serverService = ComputerService();
       final serverVaultPath = await serverService.getServerVaultPath();
       if (serverVaultPath != null) {
         debugPrint('[ComputerSetupWizard] Server vault path: $serverVaultPath');
@@ -683,8 +561,6 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
           _buildVaultSelection(isDark)
         else if (_selectedMode == null)
           _buildModeSelection(isDark)
-        else if (_selectedMode == ServerMode.limaVM)
-          _buildLimaVMStep(isDark)
         else
           _buildBareMetalStep(isDark),
       ],
@@ -692,9 +568,7 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
   }
 
   Widget _buildProgressIndicator(bool isDark) {
-    final steps = _selectedMode == ServerMode.limaVM
-        ? ['Homebrew', 'Lima', 'VM', 'Claude', 'Ready']
-        : ['Homebrew', 'Python', 'Server', 'CLI', 'Login', 'Auto-start', 'Ready'];
+    final steps = ['Homebrew', 'Python', 'Server', 'CLI', 'Login', 'Auto-start', 'Ready'];
 
     return Row(
       children: List.generate(steps.length, (index) {
@@ -897,25 +771,7 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
         ),
         SizedBox(height: Spacing.lg),
 
-        // Lima VM Option
-        _ModeCard(
-          isDark: isDark,
-          icon: Icons.security,
-          title: 'Isolated VM',
-          subtitle: 'Recommended for shared computers',
-          description: 'Runs in a Linux virtual machine. Claude can only access your vault, nothing else on your computer.',
-          features: const [
-            'Complete filesystem isolation',
-            'Requires ~8GB RAM, ~30GB disk',
-            'Slightly slower startup',
-          ],
-          isSelected: _selectedMode == ServerMode.limaVM,
-          onTap: () => _selectMode(ServerMode.limaVM),
-        ),
-
-        SizedBox(height: Spacing.md),
-
-        // Bare Metal Option
+        // Direct Installation Option
         _ModeCard(
           isDark: isDark,
           icon: Icons.speed,
@@ -940,131 +796,6 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
           label: const Text('Change vault location'),
         ),
       ],
-    );
-  }
-
-  // Lima VM step builders
-  Widget _buildLimaVMStep(bool isDark) {
-    switch (_currentStep) {
-      case 0:
-        return _buildHomebrewStep(isDark);
-      case 1:
-        return _buildLimaStep(isDark);
-      case 2:
-        return _buildVMStep(isDark);
-      case 3:
-        return _buildClaudeStepLima(isDark);
-      case 4:
-        return _buildCompleteStepLima(isDark);
-      default:
-        return const SizedBox.shrink();
-    }
-  }
-
-  Widget _buildHomebrewStep(bool isDark) {
-    return _StepCard(
-      isDark: isDark,
-      icon: Icons.local_drink,
-      title: 'Install Homebrew',
-      description: 'Homebrew is a package manager for macOS. We\'ll use it to install the tools needed for Parachute Computer.',
-      action: FilledButton.icon(
-        onPressed: _isLoading ? null : _installHomebrew,
-        icon: const Icon(Icons.open_in_new, size: 18),
-        label: const Text('Install Homebrew'),
-      ),
-      checkAction: OutlinedButton(
-        onPressed: _checkPrerequisites,
-        child: const Text('Check Again'),
-      ),
-      backAction: TextButton(
-        onPressed: () => setState(() => _selectedMode = null),
-        child: const Text('← Back'),
-      ),
-    );
-  }
-
-  Widget _buildLimaStep(bool isDark) {
-    return _StepCard(
-      isDark: isDark,
-      icon: Icons.computer,
-      title: 'Install Lima',
-      description: 'Lima runs Linux virtual machines on macOS. This provides complete isolation for Claude.',
-      action: FilledButton.icon(
-        onPressed: _isLoading ? null : _installLima,
-        icon: _isLoading
-            ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-            : const Icon(Icons.download, size: 18),
-        label: Text(_isLoading ? 'Installing...' : 'Install Lima'),
-      ),
-    );
-  }
-
-  Widget _buildVMStep(bool isDark) {
-    final vmStatus = ref.watch(limaVMStatusProvider);
-
-    return vmStatus.when(
-      data: (status) {
-        if (status == LimaVMStatus.running) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted && _currentStep == 2) {
-              setState(() => _currentStep = 3);
-            }
-          });
-        }
-
-        final description = _isLoading && _vmProgressMessage != null
-            ? _vmProgressMessage!
-            : 'This will download Ubuntu and set up an isolated environment. First-time setup typically takes 3-5 minutes.';
-
-        return _StepCard(
-          isDark: isDark,
-          icon: Icons.dns,
-          title: 'Create Parachute VM',
-          description: description,
-          action: FilledButton.icon(
-            onPressed: _isLoading ? null : _createAndStartVM,
-            icon: _isLoading
-                ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                : const Icon(Icons.play_arrow, size: 18),
-            label: Text(_isLoading ? 'Creating...' : 'Create & Start VM'),
-          ),
-        );
-      },
-      loading: () => const Center(child: CircularProgressIndicator()),
-      error: (e, _) => Text('Error: $e'),
-    );
-  }
-
-  Widget _buildClaudeStepLima(bool isDark) {
-    return _StepCard(
-      isDark: isDark,
-      icon: Icons.key,
-      title: 'Authenticate with Claude',
-      description: 'This opens Terminal with an auth URL. Copy the URL to your browser to sign in with your Anthropic account.',
-      action: FilledButton.icon(
-        onPressed: _authenticateClaudeLima,
-        icon: const Icon(Icons.login, size: 18),
-        label: const Text('Run claude login'),
-      ),
-      skipAction: TextButton(
-        onPressed: () => setState(() => _currentStep = 4),
-        child: const Text('Skip for now'),
-      ),
-    );
-  }
-
-  Widget _buildCompleteStepLima(bool isDark) {
-    return _StepCard(
-      isDark: isDark,
-      icon: Icons.check_circle,
-      iconColor: BrandColors.success,
-      title: 'Setup Complete!',
-      description: 'Parachute Computer is ready. Claude runs in an isolated VM and can only access your vault.',
-      action: FilledButton.icon(
-        onPressed: _complete,
-        icon: const Icon(Icons.arrow_forward, size: 18),
-        label: const Text('Get Started'),
-      ),
     );
   }
 

@@ -126,8 +126,8 @@ class _ServerSettingsSectionState extends ConsumerState<ServerSettingsSection> {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(status.serverVersion != null
-                  ? 'Connected to Parachute Base v${status.serverVersion}'
-                  : 'Connected to Parachute Base'),
+                  ? 'Connected to Parachute Computer v${status.serverVersion}'
+                  : 'Connected to Parachute Computer'),
               backgroundColor: BrandColors.success,
             ),
           );
@@ -170,7 +170,7 @@ class _ServerSettingsSectionState extends ConsumerState<ServerSettingsSection> {
             ),
             SizedBox(width: Spacing.sm),
             Text(
-              'Parachute Base Server',
+              'Parachute Computer',
               style: TextStyle(
                 fontWeight: FontWeight.bold,
                 fontSize: TypographyTokens.bodyLarge,
@@ -181,7 +181,7 @@ class _ServerSettingsSectionState extends ConsumerState<ServerSettingsSection> {
         ),
         SizedBox(height: Spacing.sm),
         Text(
-          'Connect to a Parachute Base server to enable AI Chat and Vault features. '
+          'Connect to Parachute Computer to enable AI Chat and Vault features. '
           'Leave empty for offline Daily-only mode.',
           style: TextStyle(
             fontSize: TypographyTokens.bodySmall,

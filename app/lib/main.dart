@@ -94,21 +94,13 @@ void main() async {
   };
 
   // Initialize bundled server on desktop platforms
-  // This checks if the app has a bundled server binary and starts it
-  // EXCEPT for "computer" flavor which uses Lima VM for the server
-  // In "full" flavor, we also skip if Lima VM is running (dev testing VM mode)
+  // Computer flavor manages the server separately (Docker containers)
   if (Platform.isMacOS || Platform.isLinux || Platform.isWindows) {
     if (isComputerFlavor) {
-      debugPrint('[Parachute] Computer flavor - server managed by Lima VM');
+      debugPrint('[Parachute] Computer flavor - server managed externally');
     } else {
-      // Check if Lima VM is running (for dev testing with VM)
-      final limaRunning = await _isLimaVMRunning();
-      if (limaRunning) {
-        debugPrint('[Parachute] Lima VM detected - skipping bundled server');
-      } else {
-        debugPrint('[Parachute] Checking for bundled server...');
-        await initializeBundledServer(container);
-      }
+      debugPrint('[Parachute] Checking for bundled server...');
+      await initializeBundledServer(container);
     }
   }
 
@@ -151,26 +143,6 @@ Future<void> _initializeServices() async {
 
   // Initialize transcription service in background (don't await)
   _initializeTranscription();
-}
-
-/// Check if Lima VM "parachute" is running
-Future<bool> _isLimaVMRunning() async {
-  if (!Platform.isMacOS) return false;
-
-  try {
-    final result = await Process.run('limactl', ['list', '--format', '{{.Name}}:{{.Status}}']);
-    if (result.exitCode == 0) {
-      final output = result.stdout.toString();
-      for (final line in output.split('\n')) {
-        if (line.startsWith('parachute:') && line.contains('Running')) {
-          return true;
-        }
-      }
-    }
-  } catch (e) {
-    debugPrint('[Parachute] Error checking Lima VM: $e');
-  }
-  return false;
 }
 
 /// Initialize transcription model download in background
@@ -705,53 +677,6 @@ class _TabShellState extends ConsumerState<_TabShell> with WidgetsBindingObserve
               destinations: destinations,
             )
           : null,
-    );
-  }
-}
-
-/// Placeholder screen for development
-class _PlaceholderScreen extends StatelessWidget {
-  final String title;
-  final IconData icon;
-
-  const _PlaceholderScreen({required this.title, required this.icon});
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(title),
-        backgroundColor: isDark ? BrandColors.nightSurface : BrandColors.softWhite,
-      ),
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              icon,
-              size: 64,
-              color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
-            ),
-            const SizedBox(height: 16),
-            Text(
-              '$title Screen',
-              style: theme.textTheme.headlineSmall?.copyWith(
-                color: isDark ? BrandColors.nightText : BrandColors.ink,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Coming soon...',
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: BrandColors.driftwood,
-              ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }

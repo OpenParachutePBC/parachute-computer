@@ -255,8 +255,8 @@ class ChatLogService:
         """
         Replace the entire content of an entry (everything after the header).
 
-        The curator uses this to rewrite the session's log entry as the
-        conversation evolves throughout the day.
+        Used to rewrite the session's log entry as the conversation
+        evolves throughout the day.
         """
         log_path = self.get_today_path()
         if not log_path.exists():
@@ -305,7 +305,7 @@ class ChatLogService:
         """
         Get the current content of an entry (everything after the header).
 
-        Used by curator to read what it previously wrote before updating.
+        Read what was previously written before updating.
         """
         log_path = self.get_today_path()
         if not log_path.exists():
