@@ -951,6 +951,7 @@ extension ChatSessionService on ChatService {
       final response = await client.post(
         Uri.parse('$baseUrl/api/bots/pairing/${Uri.encodeComponent(requestId)}/approve'),
         headers: defaultHeaders,
+        body: jsonEncode({}),
       ).timeout(ChatService.requestTimeout);
 
       if (response.statusCode != 200) {

@@ -135,7 +135,7 @@ final pendingPairingCountProvider = StreamProvider.autoDispose<int>((ref) {
   final service = ref.watch(chatServiceProvider);
 
   late final StreamController<int> controller;
-  late final Timer timer;
+  Timer? timer;
 
   controller = StreamController<int>(
     onListen: () async {
@@ -160,7 +160,7 @@ final pendingPairingCountProvider = StreamProvider.autoDispose<int>((ref) {
   );
 
   ref.onDispose(() {
-    timer.cancel();
+    timer?.cancel();
     controller.close();
   });
 

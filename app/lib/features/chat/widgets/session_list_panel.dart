@@ -428,6 +428,7 @@ class _SessionListPanelState extends ConsumerState<SessionListPanel> {
       final service = ref.read(chatServiceProvider);
       await service.approvePairing(session.pairingRequestId!);
       ref.invalidate(chatSessionsProvider);
+      ref.invalidate(pendingPairingCountProvider);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -443,7 +444,7 @@ class _SessionListPanelState extends ConsumerState<SessionListPanel> {
       builder: (context) => AlertDialog(
         title: const Text('Deny this user?'),
         content: const Text(
-          'They will not be notified and the session will be archived.',
+          'They will be notified and the session will be archived.',
         ),
         actions: [
           TextButton(
@@ -464,6 +465,7 @@ class _SessionListPanelState extends ConsumerState<SessionListPanel> {
       final service = ref.read(chatServiceProvider);
       await service.denyPairing(session.pairingRequestId!);
       ref.invalidate(chatSessionsProvider);
+      ref.invalidate(pendingPairingCountProvider);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

@@ -7,6 +7,7 @@ import 'package:parachute/core/providers/app_state_provider.dart' show apiKeyPro
 import 'package:parachute/core/providers/feature_flags_provider.dart';
 import '../models/chat_session.dart';
 import '../models/workspace.dart';
+import '../providers/chat_session_providers.dart';
 import '../providers/workspace_providers.dart';
 import '../../settings/models/trust_level.dart';
 
@@ -75,26 +76,13 @@ class _SessionConfigSheetState extends ConsumerState<SessionConfigSheet> {
     });
 
     try {
-      final featureFlags = ref.read(featureFlagsServiceProvider);
-      final serverUrl = await featureFlags.getAiServerUrl();
-      final apiKey = await ref.read(apiKeyProvider.future);
-
-      final headers = <String, String>{
-        'Content-Type': 'application/json',
-        if (apiKey != null && apiKey.isNotEmpty) 'Authorization': 'Bearer $apiKey',
-      };
-
-      final response = await http.post(
-        Uri.parse('$serverUrl/api/bots/pairing/${widget.session.pairingRequestId}/deny'),
-        headers: headers,
-      );
+      final service = ref.read(chatServiceProvider);
+      await service.denyPairing(widget.session.pairingRequestId!);
+      ref.invalidate(chatSessionsProvider);
+      ref.invalidate(pendingPairingCountProvider);
 
       if (mounted) {
-        if (response.statusCode == 200) {
-          Navigator.of(context).pop(true);
-        } else {
-          setState(() => _error = 'Deny failed (${response.statusCode})');
-        }
+        Navigator.of(context).pop(true);
       }
     } catch (e) {
       if (mounted) {
