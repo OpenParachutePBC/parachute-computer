@@ -88,6 +88,14 @@ async def delete_workspace(request: Request, slug: str):
         except (RuntimeError, OSError) as e:
             logger.warning(f"Failed to stop container for workspace {slug}: {e}")
 
+        # Clean up persistent sandbox data (SDK transcripts on host mount)
+        try:
+            sandbox = getattr(orchestrator, "_sandbox", None)
+            if sandbox:
+                sandbox.cleanup_workspace_data(slug)
+        except (ValueError, OSError) as e:
+            logger.warning(f"Failed to clean sandbox data for workspace {slug}: {e}")
+
     # Unlink sessions from this workspace
     db = await get_database()
     await db.connection.execute(

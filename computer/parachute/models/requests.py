@@ -139,6 +139,7 @@ class ChatRequest(BaseModel):
     workspace_id: Optional[str] = Field(
         alias="workspaceId",
         default=None,
+        pattern=r"^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$",
         description="Workspace slug to use for this session's capabilities and defaults.",
     )
 
