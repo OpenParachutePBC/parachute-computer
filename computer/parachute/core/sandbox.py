@@ -188,9 +188,14 @@ class DockerSandbox:
             "docker", "run",
             "--rm",
             "-i",  # Interactive mode: accept stdin for message passing
+            "--init",  # tini as PID 1 — reaps zombies, forwards signals
             "--name", f"parachute-sandbox-{config.session_id[:8]}",
             "--memory", CONTAINER_MEMORY_LIMIT,
             "--cpus", CONTAINER_CPU_LIMIT,
+            # Security hardening (match persistent container flags)
+            "--cap-drop", "ALL",
+            "--security-opt", "no-new-privileges",
+            "--pids-limit", "100",
         ]
 
         # Network isolation
@@ -389,6 +394,12 @@ class DockerSandbox:
 
     # --- Persistent container methods ---
 
+    @staticmethod
+    def _validate_slug(slug: str) -> None:
+        """Validate workspace slug is safe for Docker container names."""
+        if not re.match(r'^[a-zA-Z0-9][a-zA-Z0-9_-]*$', slug):
+            raise ValueError(f"Invalid workspace_slug format: {slug[:20]}")
+
     async def ensure_container(
         self, workspace_slug: str, config: AgentSandboxConfig
     ) -> str:
@@ -397,6 +408,7 @@ class DockerSandbox:
         Returns the container name. Creates the container lazily on first call.
         Uses per-slug asyncio.Lock to prevent race conditions.
         """
+        self._validate_slug(workspace_slug)
         container_name = f"parachute-ws-{workspace_slug}"
 
         async with self._slug_locks[workspace_slug]:
@@ -635,6 +647,7 @@ class DockerSandbox:
 
     async def stop_container(self, workspace_slug: str) -> None:
         """Stop and remove a workspace's persistent container."""
+        self._validate_slug(workspace_slug)
         container_name = f"parachute-ws-{workspace_slug}"
         await self._stop_container(container_name)
         await self._remove_container(container_name)

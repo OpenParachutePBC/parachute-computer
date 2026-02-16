@@ -694,6 +694,11 @@ class Orchestrator:
 
             # effective_trust was determined earlier (before capability filtering)
 
+            # Determine if this is a full custom prompt or append content
+            # Custom agents and explicit custom_prompt return full prompts (override preset)
+            # vault-agent returns append content only (uses preset + CLAUDE.md hierarchy)
+            is_full_prompt = prompt_metadata.get("prompt_source") in ("custom", "agent")
+
             if effective_trust == "untrusted":
                 if await self._sandbox.is_available():
                     # Use a real session ID for sandbox — "pending" would cause the SDK
@@ -842,11 +847,6 @@ class Orchestrator:
                               "Either install Docker (brew install orbstack) or change trust level to 'full'.",
                     ).model_dump(by_alias=True)
                     return
-
-            # Determine if this is a full custom prompt or append content
-            # Custom agents and explicit custom_prompt return full prompts (override preset)
-            # vault-agent returns append content only (uses preset + CLAUDE.md hierarchy)
-            is_full_prompt = prompt_metadata.get("prompt_source") in ("custom", "agent")
 
             async for event in query_streaming(
                 prompt=actual_message,
