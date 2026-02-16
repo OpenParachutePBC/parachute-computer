@@ -705,3 +705,14 @@ class TelegramConnector(BotConnector):
                 chat_id=int(chat_id),
                 text="You've been approved! Send me a message to start chatting.",
             )
+
+    async def send_denial_message(self, chat_id: str) -> None:
+        """Send denial notification to user via Telegram."""
+        try:
+            if self._app and self._app.bot:
+                await self._app.bot.send_message(
+                    chat_id=int(chat_id),
+                    text="Your request was not approved.",
+                )
+        except Exception as e:
+            logger.warning(f"Failed to send denial message to {chat_id}: {e}")

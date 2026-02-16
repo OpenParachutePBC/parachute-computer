@@ -297,8 +297,6 @@ This command takes a work document (plan, specification, or todo file) and execu
 
 For complex plans with multiple independent workstreams, use Claude Code's agent teams for parallel execution with coordinated teammates.
 
-**Prerequisite:** Agent teams are enabled via `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` in `.claude/settings.json`.
-
 ### When to Use Agent Teams
 
 | Use Agent Teams when... | Use Standard Mode when... |
@@ -320,45 +318,91 @@ Or explicitly request: "Use agent team mode for this work"
 
 ### Agent Team Workflow
 
-When agent team mode is enabled:
+When agent team mode is requested:
 
-1. **Claude creates a team** with a shared task list
-   - Lead parses the plan into tasks with dependency relationships
-   - Independent tasks can be claimed in parallel
-   - Blocked tasks wait for dependencies to complete
+#### Step 1: Create Team and Define Tasks
 
-2. **Lead spawns specialized teammates:**
+```
+TeamCreate(team_name: "work-{branch-name}", description: "Implementing {feature}")
+```
 
-   **For monorepo work (computer/ + app/):**
-   - **Python teammate**: Claims `computer/` tasks, follows FastAPI/Pydantic patterns
-   - **Flutter teammate**: Claims `app/` tasks, follows Riverpod/widget patterns
-   - **Test teammate**: Runs tests continuously as code lands
+Parse the plan into tasks with dependency relationships:
 
-   **For single-module work:**
-   - **Implementer(s)**: Claim independent implementation tasks
-   - **Tester**: Claims test tasks, validates implementations
+```
+TaskCreate(subject: "Implement API endpoint for X", description: "Create POST /api/x endpoint. Read computer/CLAUDE.md for patterns. Files: computer/src/modules/...", status: "pending")
 
-3. **Teammates self-coordinate:**
-   - Shared task list with file-locking prevents double-claiming
-   - Teammates message each other directly (not just through the lead)
-   - Tasks move through: pending → in_progress → completed
+TaskCreate(subject: "Create Flutter screen for X", description: "Build the X screen with Riverpod provider. Read app/CLAUDE.md for patterns. Files: app/lib/...", status: "pending", addBlockedBy: [api-task-id])
 
-4. **Lead monitors and steers:**
-   - Watches task completion, spawns additional workers if needed
-   - Uses delegate mode (Shift+Tab) to stay focused on coordination
-   - Synthesizes results when all tasks complete
+TaskCreate(subject: "Write integration tests", description: "Test the full flow end-to-end.", status: "pending", addBlockedBy: [api-task-id, flutter-task-id])
+```
 
-5. **Cleanup:**
-   - Lead asks teammates to shut down
-   - Lead runs cleanup to remove team resources
+**Task sizing:** Each task should produce a clear, testable deliverable. Aim for 5-6 tasks per teammate. Use `addBlockedBy` for tasks that depend on others — they auto-unblock when dependencies complete.
+
+#### Step 2: Spawn Specialized Teammates
+
+**For monorepo work (computer/ + app/):**
+
+```
+Task(subagent_type: "general-purpose", team_name: "work-{branch}", name: "python-dev",
+     prompt: "You are implementing Python/FastAPI code for {feature}.
+     Read computer/CLAUDE.md first for conventions.
+     Check TaskList for available tasks involving computer/ files.
+     Claim tasks with TaskUpdate, implement, mark complete, then check TaskList for more work.
+     Message the lead via SendMessage when you finish all your tasks or hit a blocker.")
+
+Task(subagent_type: "general-purpose", team_name: "work-{branch}", name: "flutter-dev",
+     prompt: "You are implementing Flutter/Riverpod code for {feature}.
+     Read app/CLAUDE.md first for conventions.
+     Check TaskList for available tasks involving app/ files.
+     Claim tasks with TaskUpdate, implement, mark complete, then check TaskList for more work.
+     Message the lead via SendMessage when you finish all your tasks or hit a blocker.")
+
+Task(subagent_type: "general-purpose", team_name: "work-{branch}", name: "test-runner",
+     prompt: "You run tests and validate implementations.
+     Watch TaskList for completed implementation tasks.
+     Run relevant tests (pytest for computer/, flutter test for app/).
+     Report failures via SendMessage to the implementer who owns the task.
+     Create new tasks with TaskCreate if you find bugs that need fixing.")
+```
+
+**For single-module work:**
+
+```
+Task(subagent_type: "general-purpose", team_name: "work-{branch}", name: "implementer-1",
+     prompt: "Implement {feature subset A}. Claim tasks from TaskList, implement, mark complete.")
+
+Task(subagent_type: "general-purpose", team_name: "work-{branch}", name: "implementer-2",
+     prompt: "Implement {feature subset B}. Claim tasks from TaskList, implement, mark complete.")
+
+Task(subagent_type: "general-purpose", team_name: "work-{branch}", name: "tester",
+     prompt: "Run tests continuously as implementations land. Report failures to the responsible implementer.")
+```
+
+#### Step 3: Lead Monitors and Steers
+
+- Check TaskList periodically to see progress
+- SendMessage to teammates if they seem stuck or need redirection
+- Spawn additional teammates if a bottleneck emerges
+- Use delegate mode (Shift+Tab) to stay focused on coordination rather than coding
+
+#### Step 4: Cleanup When All Tasks Complete
+
+```
+SendMessage(type: "shutdown_request", recipient: "python-dev", content: "All tasks complete, shutting down team")
+SendMessage(type: "shutdown_request", recipient: "flutter-dev", content: "All tasks complete, shutting down team")
+SendMessage(type: "shutdown_request", recipient: "test-runner", content: "All tasks complete, shutting down team")
+# Wait for all shutdown_response approvals, then:
+TeamDelete()
+```
 
 ### Agent Team Best Practices
 
 - **Size tasks appropriately**: Too small = coordination overhead exceeds benefit. Too large = wasted effort risk. Each task should produce a clear deliverable.
 - **Avoid file conflicts**: Break work so each teammate owns different files. The monorepo's `computer/` / `app/` split naturally avoids this.
 - **Give teammates context**: They read CLAUDE.md but don't inherit the lead's conversation. Include task-specific details in spawn prompts.
-- **Require plan approval for risky tasks**: The lead can approve/reject teammate plans before they implement.
-- **Monitor progress**: Check in on teammates periodically. Let the team run unattended too long and you risk wasted effort.
+- **Prefer lowest-ID tasks first**: When teammates claim from the task list, prefer lower IDs — earlier tasks often set up context for later ones.
+- **Require plan approval for risky tasks**: Spawn teammates with plan mode required so the lead can approve/reject before they implement.
+- **Monitor progress**: Check in on teammates periodically. If a teammate goes idle after sending a message, that's normal — send them a message to wake them up with new work.
 
 ---
 

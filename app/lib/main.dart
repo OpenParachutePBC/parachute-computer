@@ -283,6 +283,23 @@ class _TabShellState extends ConsumerState<_TabShell> with WidgetsBindingObserve
     });
   }
 
+  Widget _buildChatTabIcon(bool isDark, bool selected) {
+    final pendingCount = ref.watch(pendingPairingCountProvider).valueOrNull ?? 0;
+    final icon = Icon(
+      selected ? Icons.chat_bubble : Icons.chat_bubble_outline,
+      color: selected
+          ? (isDark ? BrandColors.nightTurquoise : BrandColors.turquoise)
+          : (isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood),
+    );
+    if (pendingCount > 0) {
+      return Badge(
+        label: Text('$pendingCount'),
+        child: icon,
+      );
+    }
+    return icon;
+  }
+
   /// Handle a pending chat prompt by navigating to ChatScreen
   void _handlePendingChatPrompt(PendingChatPrompt prompt) {
     // Security: Only log message preview (first 50 chars) to avoid leaking sensitive content
@@ -566,14 +583,8 @@ class _TabShellState extends ConsumerState<_TabShell> with WidgetsBindingObserve
     final destinations = <NavigationDestination>[
       if (showAllTabs)
         NavigationDestination(
-          icon: Icon(
-            Icons.chat_bubble_outline,
-            color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
-          ),
-          selectedIcon: Icon(
-            Icons.chat_bubble,
-            color: isDark ? BrandColors.nightTurquoise : BrandColors.turquoise,
-          ),
+          icon: _buildChatTabIcon(isDark, false),
+          selectedIcon: _buildChatTabIcon(isDark, true),
           label: 'Chat',
         ),
       NavigationDestination(

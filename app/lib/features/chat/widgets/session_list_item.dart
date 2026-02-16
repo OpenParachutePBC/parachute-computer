@@ -15,6 +15,8 @@ class SessionListItem extends StatelessWidget {
   final Future<void> Function()? onDelete;
   final Future<void> Function()? onArchive;
   final Future<void> Function()? onUnarchive;
+  final Future<void> Function()? onApprove;
+  final Future<void> Function()? onDeny;
   final bool isDark;
 
   const SessionListItem({
@@ -24,6 +26,8 @@ class SessionListItem extends StatelessWidget {
     this.onDelete,
     this.onArchive,
     this.onUnarchive,
+    this.onApprove,
+    this.onDeny,
     this.isDark = false,
   });
 
@@ -155,6 +159,48 @@ class SessionListItem extends StatelessWidget {
                         ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                    // Inline approve/deny buttons for pending approval sessions
+                    if (session.isPendingApproval && onApprove != null && onDeny != null) ...[
+                      const SizedBox(height: Spacing.xs),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          SizedBox(
+                            height: 28,
+                            child: TextButton.icon(
+                              onPressed: () => onApprove!(),
+                              icon: Icon(Icons.check_circle_outline, size: 14,
+                                color: themeDark ? BrandColors.nightForest : BrandColors.forest),
+                              label: Text('Approve', style: TextStyle(
+                                fontSize: TypographyTokens.labelSmall,
+                                color: themeDark ? BrandColors.nightForest : BrandColors.forest)),
+                              style: TextButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(horizontal: Spacing.sm),
+                                minimumSize: Size.zero,
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: Spacing.sm),
+                          SizedBox(
+                            height: 28,
+                            child: TextButton.icon(
+                              onPressed: () => onDeny!(),
+                              icon: Icon(Icons.cancel_outlined, size: 14,
+                                color: BrandColors.error),
+                              label: Text('Deny', style: TextStyle(
+                                fontSize: TypographyTokens.labelSmall,
+                                color: BrandColors.error)),
+                              style: TextButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(horizontal: Spacing.sm),
+                                minimumSize: Size.zero,
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                     const SizedBox(height: Spacing.xxs),
