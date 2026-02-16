@@ -276,7 +276,7 @@ extension ChatSessionService on ChatService {
             'request_id': requestId,
             'answers': answers,
           }),
-        ).timeout(const Duration(seconds: 30));
+        ).timeout(const Duration(seconds: 10));
 
         if (response.statusCode == 200) {
           debugPrint('[ChatService] Answer submitted successfully');

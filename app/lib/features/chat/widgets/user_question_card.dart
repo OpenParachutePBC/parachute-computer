@@ -180,6 +180,8 @@ class _UserQuestionCardState extends State<UserQuestionCard> {
 
     final success = await widget.onAnswer(answers);
 
+    if (!mounted) return;
+
     setState(() {
       _isSubmitting = false;
       if (success) {

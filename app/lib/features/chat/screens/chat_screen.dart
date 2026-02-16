@@ -1713,6 +1713,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         return await ref.read(chatMessagesProvider.notifier).answerQuestion(answers);
       },
       onDismiss: () {
+        // Send empty answers to unblock the server-side Future, then clear UI
+        ref.read(chatMessagesProvider.notifier).answerQuestion({});
         ref.read(chatMessagesProvider.notifier).dismissPendingQuestion();
       },
     );
