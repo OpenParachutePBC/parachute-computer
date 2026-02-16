@@ -1333,7 +1333,7 @@ class Orchestrator:
             if not wd_path.is_absolute():
                 wd_path = self.vault_path / working_directory
             try:
-                display_path = wd_path.relative_to(self.vault_path)
+                display_path = str(wd_path.relative_to(self.vault_path))
             except ValueError:
                 # Outside vault — use leaf name only, never expose absolute paths
                 display_path = wd_path.name
@@ -1341,7 +1341,7 @@ class Orchestrator:
             append_parts.append(
                 f"## Working Directory\n\n"
                 f"You are operating in: `{display_path}/` "
-                f"(within the Parachute vault at {self.vault_path})\n"
+                f"(within the Parachute vault)\n"
                 f"File operations, code changes, and commands execute here by default."
             )
 
