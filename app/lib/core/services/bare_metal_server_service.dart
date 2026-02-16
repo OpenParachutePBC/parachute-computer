@@ -37,7 +37,7 @@ enum BareMetalServerStatus {
 class BareMetalServerService {
   static const int serverPort = 3333;
 
-  /// Version of base server bundled with this app
+  /// Version of Parachute Computer bundled with this app
   /// This should match the version in base/parachute/__init__.py
   static const String bundledBaseVersion = '0.1.0';
 
@@ -71,15 +71,15 @@ class BareMetalServerService {
     _customBasePath = path;
   }
 
-  /// Standard base server path in Application Support
+  /// Standard computer path in Application Support
   static String get _standardBasePath {
     final home = Platform.environment['HOME'] ?? '';
     return '$home/Library/Application Support/Parachute/base';
   }
 
-  /// Get the active base server path
+  /// Get the active computer path
   /// Returns custom path if set, otherwise standard path
-  String get baseServerPath {
+  String get computerPath {
     return _customBasePath ?? _standardBasePath;
   }
 
@@ -194,21 +194,21 @@ class BareMetalServerService {
     }
   }
 
-  /// Check if base server is installed (has parachute.sh)
+  /// Check if Parachute Computer is installed (has parachute.sh)
   Future<bool> isServerInstalled() async {
-    final scriptPath = path.join(baseServerPath, 'parachute.sh');
+    final scriptPath = path.join(computerPath, 'parachute.sh');
     return File(scriptPath).exists();
   }
 
   /// Check if venv is set up (python exists)
   Future<bool> isVenvSetup() async {
-    final venvPython = path.join(baseServerPath, 'venv', 'bin', 'python');
+    final venvPython = path.join(computerPath, 'venv', 'bin', 'python');
     return File(venvPython).exists();
   }
 
   /// Check if dependencies are installed (uvicorn exists in venv)
   Future<bool> areDependenciesInstalled() async {
-    final uvicornPath = path.join(baseServerPath, 'venv', 'bin', 'uvicorn');
+    final uvicornPath = path.join(computerPath, 'venv', 'bin', 'uvicorn');
     return File(uvicornPath).exists();
   }
 
@@ -245,7 +245,7 @@ class BareMetalServerService {
 
   /// Run parachute.sh with given command
   Future<ProcessResult?> _runParachuteScript(String command, {String? vaultPath}) async {
-    final scriptPath = path.join(baseServerPath, 'parachute.sh');
+    final scriptPath = path.join(computerPath, 'parachute.sh');
     if (!await File(scriptPath).exists()) {
       _lastError = 'parachute.sh not found at $scriptPath';
       return null;
@@ -270,7 +270,7 @@ class BareMetalServerService {
       return await Process.run(
         'bash',
         [scriptPath, command],
-        workingDirectory: baseServerPath,
+        workingDirectory: computerPath,
         environment: env,
       );
     } catch (e) {
@@ -286,14 +286,14 @@ class BareMetalServerService {
     try {
       // Check if server is installed first
       if (!await isServerInstalled()) {
-        _lastError = 'Server not installed. Please install the base server first.';
+        _lastError = 'Server not installed. Please install Parachute Computer first.';
         debugPrint('[BareMetalServerService] $_lastError');
         _updateStatus(BareMetalServerStatus.notInstalled);
         return false;
       }
 
       debugPrint('[BareMetalServerService] Running setup...');
-      debugPrint('[BareMetalServerService] Base path: $baseServerPath');
+      debugPrint('[BareMetalServerService] Base path: $computerPath');
 
       final result = await _runParachuteScript('setup');
       if (result == null) {
@@ -807,7 +807,7 @@ class BareMetalServerService {
   Future<void> openShell() async {
     try {
       if (Platform.isMacOS) {
-        final script = 'tell application "Terminal" to do script "cd \'$baseServerPath\' && source venv/bin/activate"';
+        final script = 'tell application "Terminal" to do script "cd \'$computerPath\' && source venv/bin/activate"';
         await Process.run('osascript', ['-e', script]);
       }
     } catch (e) {
@@ -879,7 +879,7 @@ class BareMetalServerService {
   /// Generate launchd plist content
   String _generateLaunchdPlist() {
     final home = Platform.environment['HOME'] ?? '';
-    final scriptPath = path.join(baseServerPath, 'parachute.sh');
+    final scriptPath = path.join(computerPath, 'parachute.sh');
 
     return '''<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -895,7 +895,7 @@ class BareMetalServerService {
     </array>
 
     <key>WorkingDirectory</key>
-    <string>$baseServerPath</string>
+    <string>$computerPath</string>
 
     <key>EnvironmentVariables</key>
     <dict>
@@ -922,11 +922,11 @@ class BareMetalServerService {
   }
 
   // ============================================================
-  // Base server installation
+  // Parachute Computer installation
   // ============================================================
 
-  /// Install base server from app bundle
-  Future<bool> installBaseServer() async {
+  /// Install Parachute Computer from app bundle
+  Future<bool> installComputer() async {
     // Don't install if using custom path
     if (isUsingCustomPath) {
       debugPrint('[BareMetalServerService] Using custom path, skipping install');
@@ -938,7 +938,7 @@ class BareMetalServerService {
 
       // Check if already installed
       if (await Directory(destPath).exists()) {
-        debugPrint('[BareMetalServerService] Base server already installed');
+        debugPrint('[BareMetalServerService] Parachute Computer already installed');
         return true;
       }
 
@@ -950,24 +950,24 @@ class BareMetalServerService {
       );
 
       if (!await Directory(resourcesPath).exists()) {
-        _lastError = 'Base server not found in app bundle';
+        _lastError = 'Parachute Computer not found in app bundle';
         return false;
       }
 
       // Create destination directory
       await Directory(path.dirname(destPath)).create(recursive: true);
 
-      // Copy base server
+      // Copy Parachute Computer
       final result = await Process.run('cp', ['-R', resourcesPath, destPath]);
       if (result.exitCode != 0) {
-        _lastError = 'Failed to copy base server: ${result.stderr}';
+        _lastError = 'Failed to copy Parachute Computer: ${result.stderr}';
         return false;
       }
 
-      debugPrint('[BareMetalServerService] Base server installed to $destPath');
+      debugPrint('[BareMetalServerService] Parachute Computer installed to $destPath');
       return true;
     } catch (e) {
-      debugPrint('[BareMetalServerService] Error installing base server: $e');
+      debugPrint('[BareMetalServerService] Error installing Parachute Computer: $e');
       _lastError = e.toString();
       return false;
     }

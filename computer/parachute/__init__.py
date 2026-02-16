@@ -1,5 +1,5 @@
 """
-Parachute Base Server
+Parachute Computer
 
 Backend server for the Parachute ecosystem - AI agents, session management, and vault operations.
 """

@@ -44,7 +44,7 @@ class ServerHealthStatus {
     isHealthy: false,
     connectionState: ServerConnectionState.serverOffline,
     message: 'Server offline',
-    helpText: 'The Parachute Base server is not responding.',
+    helpText: 'Parachute Computer is not responding.',
   );
 
   factory ServerHealthStatus.networkError(String error) => ServerHealthStatus(

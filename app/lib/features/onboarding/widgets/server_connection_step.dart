@@ -134,7 +134,7 @@ class _ServerConnectionStepState extends ConsumerState<ServerConnectionStep> {
           Text(
             _connectionSuccess
                 ? 'Your device is connected to the Parachute server.'
-                : 'Connect to a Parachute Base server for AI Chat features.',
+                : 'Connect to Parachute Computer for AI Chat features.',
             style: TextStyle(
               fontSize: TypographyTokens.bodyMedium,
               color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,

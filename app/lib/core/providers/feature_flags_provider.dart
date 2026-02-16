@@ -22,7 +22,7 @@ final aiChatEnabledProvider = FutureProvider<bool>((ref) async {
 ///
 /// Base implementation: returns configured URL from FeatureFlagsService.
 /// Consuming apps can override this provider to add platform-specific
-/// logic (e.g., Lima VM URL when running on macOS).
+/// logic (e.g., different URL per platform).
 final aiServerUrlProvider = FutureProvider<String>((ref) async {
   final service = ref.watch(featureFlagsServiceProvider);
   return service.getAiServerUrl();

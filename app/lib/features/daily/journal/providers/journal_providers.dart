@@ -2,8 +2,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/providers/file_system_provider.dart';
 import 'package:parachute/core/providers/sync_provider.dart';
-import 'package:parachute/core/providers/base_server_provider.dart';
-import 'package:parachute/core/services/base_server_service.dart';
+import 'package:parachute/core/providers/computer_provider.dart';
+import 'package:parachute/core/services/computer_service.dart';
 import '../models/chat_log.dart';
 import '../models/journal_day.dart';
 import '../models/journal_entry.dart';
@@ -295,7 +295,7 @@ final agentLoadingStatusProvider = FutureProvider.autoDispose.family<List<AgentL
 
   // Check server for available outputs
   final dateStr = '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
-  final server = BaseServerService();
+  final server = ComputerService();
   final serverStatus = await server.getDailyAgentsStatus(date: dateStr);
 
   if (serverStatus == null) {
@@ -366,7 +366,7 @@ class AgentTriggerNotifier extends StateNotifier<AsyncValue<AgentRunResult?>> {
     state = const AsyncValue.loading();
 
     try {
-      final server = BaseServerService();
+      final server = ComputerService();
       final result = await server.triggerDailyAgent(agentName, date: date, force: force);
       state = AsyncValue.data(result);
 

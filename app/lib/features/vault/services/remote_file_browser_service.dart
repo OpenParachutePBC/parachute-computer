@@ -3,7 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:parachute/features/vault/models/file_item.dart';
 
-/// Service for browsing the vault folder structure via the remote Base server API
+/// Service for browsing the vault folder structure via the Parachute Computer API
 class RemoteFileBrowserService {
   final String baseUrl;
   final String? apiKey;

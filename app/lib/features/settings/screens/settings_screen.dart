@@ -3,10 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/core/providers/app_state_provider.dart'
-    show AppMode, appModeProvider, isDailyOnlyFlavor, showLimaControls, isComputerFlavor;
+    show AppMode, appModeProvider, isDailyOnlyFlavor, isComputerFlavor;
 import 'package:parachute/core/providers/file_system_provider.dart';
 import 'package:parachute/core/providers/server_providers.dart' show isBundledAppProvider;
-import 'package:parachute/core/providers/lima_vm_provider.dart' show isLimaVMRunningProvider;
 import 'package:parachute/core/providers/bare_metal_provider.dart' show isBareMetalServerRunningProvider;
 import '../widgets/omi_device_section.dart';
 import '../widgets/api_key_section.dart';
@@ -86,14 +85,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final isBundled = ref.watch(isBundledAppProvider);
 
     // Check if local server is running (auto-configured to localhost:3333)
-    final limaVMRunning = ref.watch(isLimaVMRunningProvider);
     final bareMetalRunning = ref.watch(isBareMetalServerRunningProvider);
-    final localServerRunning = limaVMRunning || bareMetalRunning;
+    final localServerRunning = bareMetalRunning;
 
     // Visibility flags for settings sections
     final showServerSettings = !isDailyOnlyFlavor;
     final showFullModeSettings = showServerSettings && showChatFolder;
-    final showComputerControls = showServerSettings && (showLimaControls || isComputerFlavor) && (Platform.isMacOS || Platform.isLinux);
+    final showComputerControls = showServerSettings && isComputerFlavor && (Platform.isMacOS || Platform.isLinux);
 
     if (_isLoading) {
       return Scaffold(

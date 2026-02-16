@@ -4,7 +4,7 @@
 # This creates a distributable .dmg with:
 # - Parachute.app (Flutter app built with FLAVOR=computer)
 # - Bundled Lima config
-# - Bundled base server (raw Python, runs in Lima VM)
+# - Bundled Parachute Computer (raw Python, runs in Lima VM)
 #
 # Prerequisites:
 # - Flutter SDK
@@ -101,9 +101,9 @@ else
 fi
 cp "$LIMA_DIR/setup.sh" "$RESOURCES_DIR/lima/" 2>/dev/null || true
 
-# Bundle base server (excluding venv, __pycache__, etc.)
+# Bundle Parachute Computer (excluding venv, __pycache__, etc.)
 # In developer mode, we still bundle base for reference but the VM uses the mounted path
-echo "→ Bundling base server..."
+echo "→ Bundling Parachute Computer..."
 rsync -av --exclude='venv' --exclude='__pycache__' --exclude='*.pyc' \
   --exclude='.pytest_cache' --exclude='*.egg-info' --exclude='.git' \
   "$BASE_DIR/" "$RESOURCES_DIR/base/"
@@ -112,19 +112,19 @@ rsync -av --exclude='venv' --exclude='__pycache__' --exclude='*.pyc' \
 echo "→ Creating install helper..."
 cat > "$RESOURCES_DIR/install-base.sh" << 'EOF'
 #!/bin/bash
-# Installs the base server to the vault if not present
+# Installs Parachute Computer to the vault if not present
 # Called by the app on first run
 
 VAULT_PATH="${1:-$HOME/Parachute}"
 BASE_DEST="$VAULT_PATH/projects/parachute/base"
 
 if [ ! -d "$BASE_DEST" ]; then
-  echo "Installing Parachute base server to $BASE_DEST..."
+  echo "Installing Parachute Computer to $BASE_DEST..."
   mkdir -p "$(dirname "$BASE_DEST")"
   cp -R "$(dirname "$0")/base" "$BASE_DEST"
-  echo "Base server installed."
+  echo "Parachute Computer installed."
 else
-  echo "Base server already exists at $BASE_DEST"
+  echo "Parachute Computer already exists at $BASE_DEST"
 fi
 EOF
 chmod +x "$RESOURCES_DIR/install-base.sh"

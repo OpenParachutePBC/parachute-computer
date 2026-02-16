@@ -464,7 +464,7 @@ class _ChatHubScreenState extends ConsumerState<ChatHubScreen> {
             ),
             SizedBox(height: Spacing.md),
             Text(
-              'Configure a Parachute Base server in Settings to enable AI Chat.',
+              'Configure Parachute Computer in Settings to enable AI Chat.',
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                     color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
                   ),
@@ -656,7 +656,7 @@ class _ChatHubScreenState extends ConsumerState<ChatHubScreen> {
             ),
             SizedBox(height: Spacing.md),
             Text(
-              'Could not connect to the server.\nMake sure Parachute Base is running.',
+              'Could not connect to the server.\nMake sure Parachute Computer is running.',
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                     color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
                   ),
