@@ -196,6 +196,19 @@ class Orchestrator:
         # Pending permission requests
         self.pending_permissions: dict[str, PermissionHandler] = {}
 
+    @property
+    def sandbox(self) -> DockerSandbox:
+        """Public access to the Docker sandbox instance."""
+        return self._sandbox
+
+    async def stop_workspace_container(self, workspace_slug: str) -> None:
+        """Stop and remove a workspace's persistent container."""
+        await self._sandbox.stop_container(workspace_slug)
+
+    async def reconcile_containers(self) -> None:
+        """Discover existing workspace containers on startup."""
+        await self._sandbox.reconcile()
+
     async def run_streaming(
         self,
         message: str,
@@ -786,7 +799,7 @@ class Orchestrator:
                     async for event in sandbox_stream:
                         event_type = event.get("type", "")
                         if event_type == "error":
-                            sandbox_err = event.get("error") or event.get("message") or "Unknown sandbox error"
+                            sandbox_err = event.get("error") or "Unknown sandbox error"
                             logger.error(f"Sandbox error: {sandbox_err}")
                             yield ErrorEvent(
                                 error=f"Sandbox: {sandbox_err}",

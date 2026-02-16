@@ -81,12 +81,12 @@ async def delete_workspace(request: Request, slug: str):
         raise HTTPException(status_code=404, detail=f"Workspace not found: {slug}")
 
     # Stop persistent container before deleting workspace files
-    sandbox = getattr(request.app.state, "sandbox", None)
-    if sandbox:
+    orchestrator = getattr(request.app.state, "orchestrator", None)
+    if orchestrator:
         try:
-            await sandbox.stop_container(slug)
-        except Exception:
-            logger.warning(f"Failed to stop container for workspace {slug}")
+            await orchestrator.stop_workspace_container(slug)
+        except (RuntimeError, OSError) as e:
+            logger.warning(f"Failed to stop container for workspace {slug}: {e}")
 
     # Unlink sessions from this workspace
     db = await get_database()

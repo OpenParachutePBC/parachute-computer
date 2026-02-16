@@ -288,6 +288,66 @@ class DockerSandbox:
 
         return args, temp_files
 
+    async def _stream_process(
+        self,
+        proc: asyncio.subprocess.Process,
+        stdin_payload: dict,
+        config: AgentSandboxConfig,
+        label: str = "sandbox",
+    ) -> AsyncGenerator[dict, None]:
+        """Stream JSONL events from a subprocess, handling timeouts and errors.
+
+        Shared by run_agent (ephemeral) and run_persistent (persistent).
+        Caller is responsible for creating the subprocess and any post-cleanup.
+        """
+        if proc.stdin is None or proc.stdout is None:
+            yield {"type": "error", "error": f"Failed to open pipes to {label} container"}
+            return
+
+        proc.stdin.write(json.dumps(stdin_payload).encode() + b"\n")
+        await proc.stdin.drain()
+        proc.stdin.close()
+
+        deadline = time.time() + config.timeout_seconds
+        timed_out = False
+        while True:
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                timed_out = True
+                break
+            try:
+                line = await asyncio.wait_for(
+                    proc.stdout.readline(),
+                    timeout=min(remaining, 180),
+                )
+            except asyncio.TimeoutError:
+                timed_out = True
+                break
+            if not line:
+                break
+            try:
+                yield json.loads(line.decode().strip())
+            except json.JSONDecodeError:
+                logger.debug(f"Non-JSON from {label}: {line.decode().strip()}")
+
+        if timed_out:
+            logger.error(f"{label.capitalize()} timed out for session {config.session_id}")
+            proc.kill()
+            yield {"type": "error", "error": "Sandbox execution timed out"}
+            return
+
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=10)
+        except asyncio.TimeoutError:
+            proc.kill()
+
+        if proc.returncode and proc.returncode != 0:
+            stderr_data = b""
+            if proc.stderr:
+                stderr_data = await proc.stderr.read()
+            logger.error(f"{label.capitalize()} exited {proc.returncode}: {stderr_data.decode()}")
+            yield {"type": "exit_error", "returncode": proc.returncode}
+
     async def run_agent(
         self,
         config: AgentSandboxConfig,
@@ -317,68 +377,18 @@ class DockerSandbox:
                 stderr=asyncio.subprocess.PIPE,
             )
 
-            # Note: env file cleanup is deferred to the finally block.
-            # Docker needs time to read the --env-file after process start.
-
-            # Guard against None pipes (subprocess failed to start fully)
-            if proc.stdin is None or proc.stdout is None:
-                yield {"type": "error", "message": "Failed to open pipes to sandbox container"}
-                return
-
-            # Pass message via stdin (Docker -i flag enables this)
-            proc.stdin.write(json.dumps({"message": message}).encode() + b"\n")
-            await proc.stdin.drain()
-            proc.stdin.close()
-
-            # Stream stdout line by line (JSONL events) with timeout enforcement
-            # Each readline has a per-chunk timeout, plus overall deadline
-            deadline = time.time() + config.timeout_seconds
-            timed_out = False
-            while True:
-                remaining = deadline - time.time()
-                if remaining <= 0:
-                    timed_out = True
-                    break
-                try:
-                    line = await asyncio.wait_for(
-                        proc.stdout.readline(),
-                        timeout=min(remaining, 180),  # Per-chunk cap of 3 min
-                    )
-                except asyncio.TimeoutError:
-                    timed_out = True
-                    break
-                if not line:
-                    break
-                try:
-                    event = json.loads(line.decode().strip())
+            async for event in self._stream_process(
+                proc, {"message": message}, config, label="sandbox"
+            ):
+                if event.get("type") == "exit_error":
+                    yield {"type": "error", "error": f"Sandbox error (exit {event['returncode']})"}
+                else:
                     yield event
-                except json.JSONDecodeError:
-                    logger.debug(f"Non-JSON output from sandbox: {line.decode().strip()}")
-
-            if timed_out:
-                logger.error(f"Sandbox timed out for session {config.session_id}")
-                proc.kill()
-                yield {"type": "error", "message": "Sandbox execution timed out"}
-                return
-
-            # Wait for process exit
-            try:
-                await asyncio.wait_for(proc.wait(), timeout=10)
-            except asyncio.TimeoutError:
-                proc.kill()
-
-            if proc.returncode and proc.returncode != 0:
-                stderr_data = b""
-                if proc.stderr:
-                    stderr_data = await proc.stderr.read()
-                logger.error(f"Sandbox exited with code {proc.returncode}: {stderr_data.decode()}")
-                yield {"type": "error", "message": f"Sandbox error (exit {proc.returncode})"}
 
         except OSError as e:
             logger.error(f"Failed to start sandbox: {e}")
-            yield {"type": "error", "message": f"Failed to start sandbox: {e}"}
+            yield {"type": "error", "error": f"Failed to start sandbox: {e}"}
         finally:
-            # Ensure temp files are cleaned up even on error
             for tmp_file in temp_files:
                 try:
                     os.unlink(tmp_file)
@@ -536,10 +546,6 @@ class DockerSandbox:
         )
 
         try:
-            if proc.stdin is None or proc.stdout is None:
-                yield {"type": "error", "message": "Failed to open pipes to container"}
-                return
-
             # Build enriched stdin payload — includes secrets and per-session data
             # that can't be passed via docker exec volume mounts
             stdin_payload: dict = {"message": message}
@@ -562,82 +568,35 @@ class DockerSandbox:
             if capabilities:
                 stdin_payload["capabilities"] = capabilities
 
-            proc.stdin.write(json.dumps(stdin_payload).encode() + b"\n")
-            await proc.stdin.drain()
-            proc.stdin.close()
-
-            # Stream JSONL from stdout with timeout (same pattern as run_agent)
-            deadline = time.time() + config.timeout_seconds
-            timed_out = False
-            while True:
-                remaining = deadline - time.time()
-                if remaining <= 0:
-                    timed_out = True
-                    break
-                try:
-                    line = await asyncio.wait_for(
-                        proc.stdout.readline(),
-                        timeout=min(remaining, 180),
-                    )
-                except asyncio.TimeoutError:
-                    timed_out = True
-                    break
-                if not line:
-                    break
-                try:
-                    yield json.loads(line.decode().strip())
-                except json.JSONDecodeError:
-                    logger.debug(
-                        f"Non-JSON from persistent sandbox: "
-                        f"{line.decode().strip()}"
-                    )
-
-            if timed_out:
-                logger.error(
-                    f"Persistent sandbox timed out for session "
-                    f"{config.session_id}"
-                )
-                proc.kill()
-                yield {"type": "error", "message": "Sandbox execution timed out"}
-                return
-
-            try:
-                await asyncio.wait_for(proc.wait(), timeout=10)
-            except asyncio.TimeoutError:
-                proc.kill()
-
-            if proc.returncode and proc.returncode != 0:
-                stderr_data = b""
-                if proc.stderr:
-                    stderr_data = await proc.stderr.read()
-                logger.error(
-                    f"Persistent sandbox exited {proc.returncode}: "
-                    f"{stderr_data.decode()}"
-                )
-
-                # Exit code 137 = OOM killed — remove so next use recreates
-                if proc.returncode == 137:
-                    logger.warning(
-                        f"Container {container_name} OOM killed, "
-                        f"will recreate on next use"
-                    )
-                    await self._remove_container(container_name)
-                    yield {
-                        "type": "error",
-                        "message": "Container ran out of memory. "
-                                   "It will be recreated on next use.",
-                    }
+            async for event in self._stream_process(
+                proc, stdin_payload, config, label="persistent sandbox"
+            ):
+                if event.get("type") == "exit_error":
+                    returncode = event["returncode"]
+                    # Exit code 137 = OOM killed — remove so next use recreates
+                    if returncode == 137:
+                        logger.warning(
+                            f"Container {container_name} OOM killed, "
+                            f"will recreate on next use"
+                        )
+                        await self._remove_container(container_name)
+                        yield {
+                            "type": "error",
+                            "error": "Container ran out of memory. "
+                                     "It will be recreated on next use.",
+                        }
+                    else:
+                        yield {
+                            "type": "error",
+                            "error": f"Sandbox error (exit {returncode})",
+                        }
                 else:
-                    yield {
-                        "type": "error",
-                        "message": f"Sandbox error (exit {proc.returncode})",
-                    }
+                    yield event
 
         except OSError as e:
             logger.error(f"Failed to exec in persistent sandbox: {e}")
-            yield {"type": "error", "message": f"Failed to exec in sandbox: {e}"}
+            yield {"type": "error", "error": f"Failed to exec in sandbox: {e}"}
         finally:
-            # Ensure exec process is terminated if still running
             if proc.returncode is None:
                 try:
                     proc.kill()
@@ -651,6 +610,7 @@ class DockerSandbox:
         container_name = f"parachute-ws-{workspace_slug}"
         await self._stop_container(container_name)
         await self._remove_container(container_name)
+        self._slug_locks.pop(workspace_slug, None)
 
     async def _start_container(self, container_name: str) -> None:
         """Start a stopped container."""
