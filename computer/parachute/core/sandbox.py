@@ -20,6 +20,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import AsyncGenerator, Optional
 
+from parachute.core.validation import validate_workspace_slug
+
+SANDBOX_DATA_DIR = ".parachute/sandbox"
+
 logger = logging.getLogger(__name__)
 
 # Default sandbox image (pre-built with Claude SDK + Python)
@@ -404,11 +408,41 @@ class DockerSandbox:
 
     # --- Persistent container methods ---
 
-    @staticmethod
-    def _validate_slug(slug: str) -> None:
-        """Validate workspace slug is safe for Docker container names."""
-        if not re.match(r'^[a-zA-Z0-9][a-zA-Z0-9_-]*$', slug):
-            raise ValueError(f"Invalid workspace_slug format: {slug[:20]}")
+    def get_sandbox_claude_dir(self, workspace_slug: str) -> Path:
+        """Host-side .claude/ directory for a workspace's sandbox."""
+        validate_workspace_slug(workspace_slug)
+        return self.vault_path / SANDBOX_DATA_DIR / workspace_slug / ".claude"
+
+    def has_sdk_transcript(self, workspace_slug: str, session_id: str) -> bool:
+        """Check if an SDK transcript exists on the host mount for a workspace session.
+
+        Skips symlinks to defend against container-created symlink escapes.
+        Safe for use in asyncio.to_thread() — all I/O is synchronous.
+        """
+        if not session_id or not re.match(r'^[a-zA-Z0-9_-]+$', session_id):
+            return False
+        claude_dir = self.get_sandbox_claude_dir(workspace_slug)
+        projects_dir = claude_dir / "projects"
+        if not projects_dir.exists():
+            return False
+        filename = f"{session_id}.jsonl"
+        for project_dir in projects_dir.iterdir():
+            if project_dir.is_symlink():
+                continue
+            candidate = project_dir / filename
+            if candidate.exists() and not candidate.is_symlink():
+                return True
+        return False
+
+    def cleanup_workspace_data(self, workspace_slug: str) -> None:
+        """Remove persistent sandbox data for a workspace."""
+        validate_workspace_slug(workspace_slug)
+        sandbox_dir = self.vault_path / SANDBOX_DATA_DIR / workspace_slug
+        if sandbox_dir.is_symlink():
+            logger.warning(f"Sandbox dir is a symlink, removing link only: {sandbox_dir}")
+            sandbox_dir.unlink()
+        elif sandbox_dir.exists():
+            shutil.rmtree(sandbox_dir)
 
     async def ensure_container(
         self, workspace_slug: str, config: AgentSandboxConfig
@@ -418,7 +452,7 @@ class DockerSandbox:
         Returns the container name. Creates the container lazily on first call.
         Uses per-slug asyncio.Lock to prevent race conditions.
         """
-        self._validate_slug(workspace_slug)
+        validate_workspace_slug(workspace_slug)
         container_name = f"parachute-ws-{workspace_slug}"
 
         async with self._slug_locks[workspace_slug]:
@@ -477,6 +511,12 @@ class DockerSandbox:
         # Volume mounts (reuse existing _build_mounts)
         args.extend(self._build_mounts(config))
 
+        # Mount host .claude/ directory for SDK session persistence
+        sandbox_claude_dir = self.get_sandbox_claude_dir(workspace_slug)
+        sandbox_claude_dir.mkdir(parents=True, exist_ok=True)
+        sandbox_claude_dir.chmod(0o700)
+        args.extend(["-v", f"{sandbox_claude_dir}:/home/sandbox/.claude:rw"])
+
         # Image + keep-alive command
         args.extend([SANDBOX_IMAGE, "sleep", "infinity"])
 
@@ -500,12 +540,16 @@ class DockerSandbox:
         workspace_slug: str,
         config: AgentSandboxConfig,
         message: str,
+        resume_session_id: str | None = None,
     ) -> AsyncGenerator[dict, None]:
         """Run an agent session in a persistent workspace container.
 
         Uses docker exec to spawn a process in the running container.
         Per-session data (capabilities, system_prompt, token) is passed
         via enriched stdin JSON payload since docker exec cannot mount volumes.
+
+        If resume_session_id is set, the entrypoint will attempt SDK resume
+        from the persisted transcript on the mounted .claude/ directory.
         """
         if not await self.is_available():
             raise RuntimeError("Docker not available for sandboxed execution")
@@ -553,6 +597,8 @@ class DockerSandbox:
                 stdin_payload["claude_token"] = self.claude_token
             if config.system_prompt:
                 stdin_payload["system_prompt"] = config.system_prompt
+            if resume_session_id:
+                stdin_payload["resume_session_id"] = resume_session_id
 
             # Capabilities
             capabilities: dict = {}
@@ -606,7 +652,7 @@ class DockerSandbox:
 
     async def stop_container(self, workspace_slug: str) -> None:
         """Stop and remove a workspace's persistent container."""
-        self._validate_slug(workspace_slug)
+        validate_workspace_slug(workspace_slug)
         container_name = f"parachute-ws-{workspace_slug}"
         await self._stop_container(container_name)
         await self._remove_container(container_name)

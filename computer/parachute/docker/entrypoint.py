@@ -13,12 +13,68 @@ SDK event types:
 import asyncio
 import json
 import os
+import re
 import sys
 
 
 def emit(event: dict):
     """Write a JSON event line to stdout."""
     print(json.dumps(event, default=str), flush=True)
+
+
+async def run_query_and_emit(message: str, options) -> str | None:
+    """Run SDK query, emit JSONL events to stdout. Returns captured session ID."""
+    from claude_agent_sdk import query
+
+    current_text = ""
+    captured_session_id = None
+    captured_model = None
+
+    async for event in query(prompt=message, options=options):
+        event_type = type(event).__name__
+
+        if event_type == "SystemMessage":
+            # Extract session_id from init data
+            data = getattr(event, "data", {}) or {}
+            if isinstance(data, dict) and data.get("session_id"):
+                captured_session_id = data["session_id"]
+                emit({"type": "session", "sessionId": captured_session_id})
+
+        elif event_type == "AssistantMessage":
+            # Capture model
+            model = getattr(event, "model", None)
+            if model and not captured_model:
+                captured_model = model
+                emit({"type": "model", "model": captured_model})
+
+            # Process content blocks — these are objects with .type and .text attrs
+            content = getattr(event, "content", []) or []
+            for block in content:
+                block_type = getattr(block, "type", None)
+                if block_type == "text":
+                    new_text = getattr(block, "text", "")
+                    if new_text and new_text != current_text:
+                        delta = new_text[len(current_text):]
+                        emit({"type": "text", "content": new_text, "delta": delta})
+                        current_text = new_text
+
+            # Check for error
+            error = getattr(event, "error", None)
+            if error:
+                emit({"type": "error", "error": str(error)})
+
+        elif event_type == "ResultMessage":
+            # Final result text
+            result_text = getattr(event, "result", "") or ""
+            if result_text and result_text != current_text:
+                delta = result_text[len(current_text):]
+                emit({"type": "text", "content": result_text, "delta": delta})
+                current_text = result_text
+            sid = getattr(event, "session_id", None)
+            if sid:
+                captured_session_id = sid
+
+    return captured_session_id
 
 
 async def run():
@@ -69,7 +125,7 @@ async def run():
                 emit({"type": "warning", "message": f"Failed to load capabilities: {e}"})
 
     try:
-        from claude_agent_sdk import query, ClaudeAgentOptions
+        from claude_agent_sdk import ClaudeAgentOptions
 
         # Use the resolved CWD (either PARACHUTE_CWD or process default)
         effective_cwd = os.getcwd()
@@ -77,7 +133,7 @@ async def run():
         # Note: No setting_sources — Parachute explicitly constructs all parameters.
         # The host passes system prompt, capabilities, model, etc. via mounted files
         # and environment variables. No SDK auto-discovery.
-        options_kwargs = {
+        options_kwargs: dict = {
             "permission_mode": "bypassPermissions",
             "env": {"CLAUDE_CODE_OAUTH_TOKEN": oauth_token},
             "cwd": effective_cwd,
@@ -123,63 +179,32 @@ async def run():
         if parachute_model:
             options_kwargs["model"] = parachute_model
 
-        # Note: We intentionally do NOT use "resume" here. The container has no
-        # access to SDK session transcripts (stored in host's .claude/ directory),
-        # so --resume would always fail. Each sandbox invocation is a fresh query.
-        # The session_id is used only for tracking/logging purposes.
+        # Tell SDK to use our session ID so transcript filenames match our DB
+        if session_id:
+            options_kwargs.setdefault("extra_args", {})["session-id"] = session_id
+
+        # Resume from prior transcript if requested by orchestrator
+        resume_id = request.get("resume_session_id")
+        if resume_id and re.match(r'^[a-zA-Z0-9_-]+$', resume_id):
+            options_kwargs["resume"] = resume_id
+        elif resume_id:
+            emit({"type": "warning", "message": f"Invalid resume_session_id format, ignoring"})
+            resume_id = None
 
         options = ClaudeAgentOptions(**options_kwargs)
 
-        current_text = ""
-        captured_session_id = None
-        captured_model = None
-
-        async for event in query(prompt=message, options=options):
-            event_type = type(event).__name__
-
-            if event_type == "SystemMessage":
-                # Extract session_id from init data
-                data = getattr(event, "data", {}) or {}
-                if isinstance(data, dict) and data.get("session_id"):
-                    captured_session_id = data["session_id"]
-                    emit({"type": "session", "sessionId": captured_session_id})
-
-            elif event_type == "AssistantMessage":
-                # Capture model
-                model = getattr(event, "model", None)
-                if model and not captured_model:
-                    captured_model = model
-                    emit({"type": "model", "model": captured_model})
-
-                # Process content blocks — these are objects with .type and .text attrs
-                content = getattr(event, "content", []) or []
-                for block in content:
-                    block_type = getattr(block, "type", None)
-                    if block_type == "text":
-                        new_text = getattr(block, "text", "")
-                        if new_text and new_text != current_text:
-                            delta = new_text[len(current_text):]
-                            emit({"type": "text", "content": new_text, "delta": delta})
-                            current_text = new_text
-
-                # Check for error
-                error = getattr(event, "error", None)
-                if error:
-                    emit({"type": "error", "error": str(error)})
-
-            elif event_type == "ResultMessage":
-                # Final result text
-                result_text = getattr(event, "result", "") or ""
-                if result_text and result_text != current_text:
-                    delta = result_text[len(current_text):]
-                    emit({"type": "text", "content": result_text, "delta": delta})
-                    current_text = result_text
-                sid = getattr(event, "session_id", None)
-                if sid:
-                    captured_session_id = sid
-
-        # Emit completion
-        emit({"type": "done", "sessionId": captured_session_id})
+        try:
+            captured_session_id = await run_query_and_emit(message, options)
+            emit({"type": "done", "sessionId": captured_session_id or ""})
+        except Exception as e:
+            if resume_id:
+                # Resume failed — emit structured event so orchestrator can retry
+                # with history injection instead of dropping to zero context
+                emit({"type": "resume_failed", "error": str(e), "session_id": resume_id})
+                emit({"type": "done", "sessionId": session_id or ""})
+                sys.exit(0)  # Clean exit — orchestrator handles retry
+            else:
+                raise
 
     except ImportError:
         emit({"type": "error", "error": "claude-agent-sdk not installed in sandbox"})

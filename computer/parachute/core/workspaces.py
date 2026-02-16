@@ -15,6 +15,7 @@ from typing import Optional
 
 import yaml
 
+from parachute.core.validation import validate_workspace_slug
 from parachute.models.workspace import (
     WorkspaceCapabilities,
     WorkspaceConfig,
@@ -25,17 +26,6 @@ from parachute.models.workspace import (
 logger = logging.getLogger(__name__)
 
 WORKSPACES_DIR = ".parachute/workspaces"
-
-# Valid slug: lowercase alphanumeric with hyphens, no leading/trailing hyphens
-_SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$")
-
-
-def _validate_slug(slug: str) -> None:
-    """Validate a workspace slug to prevent path traversal."""
-    if not slug or "/" in slug or "\\" in slug or ".." in slug:
-        raise ValueError(f"Invalid workspace slug: {slug!r}")
-    if not _SLUG_PATTERN.match(slug):
-        raise ValueError(f"Invalid workspace slug: {slug!r}")
 
 
 def _workspaces_path(vault_path: Path) -> Path:
@@ -91,7 +81,7 @@ def list_workspaces(vault_path: Path) -> list[WorkspaceConfig]:
 
 def get_workspace(vault_path: Path, slug: str) -> Optional[WorkspaceConfig]:
     """Load a single workspace by slug."""
-    _validate_slug(slug)
+    validate_workspace_slug(slug)
     config_file = _workspaces_path(vault_path) / slug / "config.yaml"
     if not config_file.exists():
         return None
@@ -136,7 +126,7 @@ def update_workspace(
     vault_path: Path, slug: str, update: WorkspaceUpdate
 ) -> Optional[WorkspaceConfig]:
     """Update an existing workspace. Returns updated config or None if not found."""
-    _validate_slug(slug)
+    validate_workspace_slug(slug)
     existing = get_workspace(vault_path, slug)
     if existing is None:
         return None
@@ -157,7 +147,7 @@ def update_workspace(
 
 def delete_workspace(vault_path: Path, slug: str) -> bool:
     """Delete a workspace directory. Returns True if deleted."""
-    _validate_slug(slug)
+    validate_workspace_slug(slug)
     workspace_dir = _workspaces_path(vault_path) / slug
     if not workspace_dir.exists():
         return False

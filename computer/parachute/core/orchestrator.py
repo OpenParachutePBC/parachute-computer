@@ -750,10 +750,23 @@ class Orchestrator:
                         model=sandbox_model,
                         system_prompt=sandbox_system_prompt,
                     )
-                    # For continuing sandbox sessions, inject prior conversation
-                    # as context. Each container is fresh and can't resume from transcripts.
+                    # For continuing sandbox sessions, try SDK resume first
+                    # (full-fidelity), fall back to history injection (text-only)
                     sandbox_message = actual_message
-                    if not is_new:
+                    resume_session_id: str | None = None
+                    if not is_new and workspace_id:
+                        has_transcript = await asyncio.to_thread(
+                            self._sandbox.has_sdk_transcript, workspace_id, sandbox_sid
+                        )
+                        if has_transcript:
+                            resume_session_id = sandbox_sid
+                            logger.info(
+                                f"Will resume sandbox session {sandbox_sid[:8]} "
+                                f"from SDK transcript"
+                            )
+
+                    if not resume_session_id and not is_new:
+                        # Fallback: inject prior messages as text context
                         prior_messages = await self.session_manager._load_sdk_messages(session)
                         if prior_messages:
                             history_lines = []
@@ -790,13 +803,23 @@ class Orchestrator:
                             workspace_slug=workspace_id,
                             config=sandbox_config,
                             message=sandbox_message,
+                            resume_session_id=resume_session_id,
                         )
                     else:
                         sandbox_stream = self._sandbox.run_agent(
                             sandbox_config, sandbox_message,
                         )
 
-                    async for event in sandbox_stream:
+                    # Mutable state container for sandbox event processing
+                    sbx = {
+                        "had_text": False,
+                        "response_text": "",
+                        "finalized": False,
+                        "session": session,
+                    }
+
+                    async def _process_sandbox_event(event: dict) -> AsyncGenerator[dict, None]:
+                        """Process a single sandbox event — shared by primary and retry streams."""
                         event_type = event.get("type", "")
                         if event_type == "error":
                             sandbox_err = event.get("error") or "Unknown sandbox error"
@@ -804,43 +827,84 @@ class Orchestrator:
                             yield ErrorEvent(
                                 error=f"Sandbox: {sandbox_err}",
                             ).model_dump(by_alias=True)
-                        else:
-                            # Rewrite session IDs in sandbox events to use our canonical
-                            # sandbox_sid (the one saved to DB), not the container's
-                            # internal SDK session ID which the client can't resume
-                            if event_type in ("session", "done") and "sessionId" in event:
-                                event = {**event, "sessionId": sandbox_sid, "trustLevel": effective_trust}
-                            if event_type == "text":
-                                had_text = True
-                                # Track full response text for synthetic transcript
-                                sandbox_response_text = event.get("content", sandbox_response_text)
+                            return
 
-                            # Finalize BEFORE yielding "done" to prevent race condition:
-                            # client receives "done", sends next message, but server
-                            # hasn't written the transcript yet
-                            if event_type == "done":
-                                if is_new and not session_finalized:
-                                    try:
-                                        title = generate_title_from_message(message) if message.strip() else None
-                                        session = await self.session_manager.finalize_session(
-                                            session, sandbox_sid, captured_model, title=title,
-                                            agent_type=agent_type,
-                                            workspace_id=workspace_id,
-                                        )
-                                        session_finalized = True
-                                        logger.info(f"Finalized sandbox session: {sandbox_sid[:8]} trust={effective_trust}")
-                                    except Exception as e:
-                                        logger.error(f"Failed to finalize sandbox session {sandbox_sid[:8]}: {e}")
+                        # Rewrite session IDs to our canonical sandbox_sid
+                        if event_type in ("session", "done") and "sessionId" in event:
+                            event = {**event, "sessionId": sandbox_sid, "trustLevel": effective_trust}
+                        if event_type == "text":
+                            sbx["had_text"] = True
+                            sbx["response_text"] = event.get("content", sbx["response_text"])
 
-                                # Write synthetic transcript to host so messages persist
-                                # Docker container transcripts are lost when container exits
-                                if had_text:
-                                    self.session_manager.write_sandbox_transcript(
-                                        sandbox_sid, actual_message, sandbox_response_text,
-                                        working_directory=effective_working_dir,
+                        # Finalize BEFORE yielding "done" to prevent race condition
+                        if event_type == "done":
+                            if is_new and not sbx["finalized"]:
+                                try:
+                                    title = generate_title_from_message(message) if message.strip() else None
+                                    sbx["session"] = await self.session_manager.finalize_session(
+                                        sbx["session"], sandbox_sid, captured_model, title=title,
+                                        agent_type=agent_type,
+                                        workspace_id=workspace_id,
                                     )
+                                    sbx["finalized"] = True
+                                    logger.info(f"Finalized sandbox session: {sandbox_sid[:8]} trust={effective_trust}")
+                                except Exception as e:
+                                    logger.error(f"Failed to finalize sandbox session {sandbox_sid[:8]}: {e}")
 
-                            yield event
+                            # Write synthetic transcript (fallback for host-side session search/list)
+                            if sbx["had_text"]:
+                                self.session_manager.write_sandbox_transcript(
+                                    sandbox_sid, actual_message, sbx["response_text"],
+                                    working_directory=effective_working_dir,
+                                )
+
+                        yield event
+
+                    # Process sandbox events. If resume fails, retry with
+                    # history injection (three-tier: resume → history → fresh).
+                    retry_with_history = False
+                    async for event in sandbox_stream:
+                        event_type = event.get("type", "")
+                        if event_type == "resume_failed":
+                            logger.warning(
+                                f"SDK resume failed for {sandbox_sid[:8]}: "
+                                f"{event.get('error', 'unknown')}, "
+                                f"will retry with history injection"
+                            )
+                            retry_with_history = True
+                        elif event_type == "done" and retry_with_history:
+                            pass  # Suppress done from failed resume stream
+                        else:
+                            async for yielded in _process_sandbox_event(event):
+                                yield yielded
+
+                    # Retry with history injection if resume failed
+                    if retry_with_history and workspace_id:
+                        retry_message = actual_message
+                        prior_messages = await self.session_manager._load_sdk_messages(sbx["session"])
+                        if prior_messages:
+                            history_lines = []
+                            for msg in prior_messages:
+                                role = msg["role"].upper()
+                                history_lines.append(f"[{role}]: {msg['content']}")
+                            history_block = "\n".join(history_lines)
+                            retry_message = (
+                                f"<conversation_history>\n{history_block}\n"
+                                f"</conversation_history>\n\n{actual_message}"
+                            )
+                        retry_stream = self._sandbox.run_persistent(
+                            workspace_slug=workspace_id,
+                            config=sandbox_config,
+                            message=retry_message,
+                        )
+                        async for event in retry_stream:
+                            async for yielded in _process_sandbox_event(event):
+                                yield yielded
+
+                    session = sbx["session"]
+                    session_finalized = sbx["finalized"]
+                    had_text = sbx["had_text"]
+                    sandbox_response_text = sbx["response_text"]
 
                     if not had_text:
                         logger.warning("Sandbox produced no text output")
