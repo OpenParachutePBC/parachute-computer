@@ -1021,6 +1021,7 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
     String? agentType,
     String? agentPath,
     String? trustLevel,
+    String? workspaceId,
   }) async {
     if (state.isStreaming) return;
 
@@ -1147,8 +1148,8 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
       final modelPref = _ref.read(modelPreferenceProvider).valueOrNull;
       final modelApiValue = modelPref?.apiValue;
 
-      // Read active workspace
-      final activeWorkspace = _ref.read(activeWorkspaceProvider);
+      // Read active workspace - prefer explicit param, fall back to sidebar filter
+      final activeWorkspace = workspaceId ?? _ref.read(activeWorkspaceProvider);
 
       await for (final event in _service.streamChat(
         sessionId: existingSessionId,  // null for new sessions, real ID for existing

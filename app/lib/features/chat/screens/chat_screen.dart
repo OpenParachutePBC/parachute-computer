@@ -259,6 +259,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           agentType: _pendingAgentType,
           agentPath: _pendingAgentPath,
           trustLevel: _pendingTrustLevel,
+          workspaceId: ref.read(activeWorkspaceProvider),
         );
 
     // Clear pending context, agentType, agentPath, and trustLevel after first message
