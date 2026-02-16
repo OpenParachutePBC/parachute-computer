@@ -346,6 +346,17 @@ async def list_pairing_requests():
     return {"requests": [r.model_dump(by_alias=True) for r in requests]}
 
 
+@router.get("/pairing/count")
+async def get_pending_pairing_count():
+    """Get count of pending pairing requests. Lightweight endpoint for polling."""
+    if not _server_ref or not hasattr(_server_ref, "database"):
+        raise HTTPException(status_code=500, detail="Database not available")
+
+    db = _server_ref.database
+    count = await db.get_pending_pairing_count()
+    return {"pending": count}
+
+
 @router.post("/pairing/{request_id}/approve")
 async def approve_pairing(request_id: str, body: PairingApproval):
     """Approve a pairing request. Adds user to platform allowlist."""
@@ -417,6 +428,14 @@ async def deny_pairing(request_id: str):
     if linked_session and linked_session.metadata and linked_session.metadata.get("pending_approval"):
         await db.archive_session(linked_session.id)
         logger.info(f"Archived pending session {linked_session.id[:8]} for denied user")
+
+    # Send denial notification to the user if connector is running
+    connector = _connectors.get(pr.platform)
+    if connector:
+        try:
+            await connector.send_denial_message(pr.platform_chat_id)
+        except Exception as e:
+            logger.warning(f"Failed to send denial notification: {e}")
 
     return {"success": True}
 

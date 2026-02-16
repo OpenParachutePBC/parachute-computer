@@ -207,6 +207,10 @@ class BotConnector(ABC):
         """Send approval confirmation to user. Override in subclasses."""
         logger.info(f"{self.platform}: approval message not implemented for chat {chat_id}")
 
+    async def send_denial_message(self, chat_id: str) -> None:
+        """Send denial notification to user. Override in subclasses."""
+        logger.info(f"{self.platform}: denial message not implemented for chat {chat_id}")
+
     async def get_trust_level(self, chat_type: str, user_id: str | None = None) -> str:
         """Get trust level with per-user override, falling back to platform defaults."""
         if user_id:

@@ -68,6 +68,43 @@ class _SessionConfigSheetState extends ConsumerState<SessionConfigSheet> {
     super.dispose();
   }
 
+  Future<void> _deny() async {
+    setState(() {
+      _isSaving = true;
+      _error = null;
+    });
+
+    try {
+      final featureFlags = ref.read(featureFlagsServiceProvider);
+      final serverUrl = await featureFlags.getAiServerUrl();
+      final apiKey = await ref.read(apiKeyProvider.future);
+
+      final headers = <String, String>{
+        'Content-Type': 'application/json',
+        if (apiKey != null && apiKey.isNotEmpty) 'Authorization': 'Bearer $apiKey',
+      };
+
+      final response = await http.post(
+        Uri.parse('$serverUrl/api/bots/pairing/${widget.session.pairingRequestId}/deny'),
+        headers: headers,
+      );
+
+      if (mounted) {
+        if (response.statusCode == 200) {
+          Navigator.of(context).pop(true);
+        } else {
+          setState(() => _error = 'Deny failed (${response.statusCode})');
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _error = 'Deny failed: $e');
+      }
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
+  }
+
   Future<void> _save() async {
     setState(() {
       _isSaving = true;
@@ -401,6 +438,32 @@ class _SessionConfigSheetState extends ConsumerState<SessionConfigSheet> {
                 ),
               ),
             ),
+
+            // Deny button (only for pending approval sessions)
+            if (session.isPendingApproval && session.pairingRequestId != null) ...[
+              SizedBox(height: Spacing.lg),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton(
+                  onPressed: _isSaving ? null : _deny,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: BrandColors.error,
+                    side: BorderSide(color: BrandColors.error),
+                    padding: EdgeInsets.symmetric(vertical: Spacing.sm),
+                  ),
+                  child: _isSaving
+                      ? SizedBox(
+                          height: 18,
+                          width: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: BrandColors.error,
+                          ),
+                        )
+                      : const Text('Deny Request'),
+                ),
+              ),
+            ],
 
             // Save / Activate button
             SizedBox(height: Spacing.lg),

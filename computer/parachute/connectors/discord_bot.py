@@ -439,3 +439,13 @@ class DiscordConnector(BotConnector):
             channel = self._client.get_channel(int(chat_id))
             if channel:
                 await channel.send("You've been approved! Send me a message to start chatting.")
+
+    async def send_denial_message(self, chat_id: str) -> None:
+        """Send denial notification to user via Discord."""
+        try:
+            if self._client:
+                channel = self._client.get_channel(int(chat_id))
+                if channel:
+                    await channel.send("Your request was not approved.")
+        except Exception as e:
+            logger.warning(f"Failed to send denial message to {chat_id}: {e}")

@@ -938,6 +938,85 @@ extension ChatSessionService on ChatService {
       return [];
     }
   }
+
+  // ============================================================
+  // Bot Pairing Request Actions
+  // ============================================================
+
+  /// Approve a bot pairing request.
+  ///
+  /// Adds user to allowlist, clears pending_approval, sends approval message.
+  Future<void> approvePairing(String requestId) async {
+    try {
+      final response = await client.post(
+        Uri.parse('$baseUrl/api/bots/pairing/${Uri.encodeComponent(requestId)}/approve'),
+        headers: defaultHeaders,
+      ).timeout(ChatService.requestTimeout);
+
+      if (response.statusCode != 200) {
+        throw NetworkError(
+          'Failed to approve pairing',
+          statusCode: response.statusCode,
+        );
+      }
+    } on SocketException catch (e) {
+      debugPrint('[ChatService] Socket error approving pairing: $e');
+      throw ServerUnreachableError(cause: e);
+    } on http.ClientException catch (e) {
+      debugPrint('[ChatService] HTTP client error approving pairing: $e');
+      throw NetworkError('Network error approving pairing', cause: e);
+    } on TimeoutException catch (e) {
+      debugPrint('[ChatService] Timeout approving pairing: $e');
+      throw ServerUnreachableError(cause: e);
+    }
+  }
+
+  /// Deny a bot pairing request.
+  ///
+  /// Archives the session and marks request as denied.
+  Future<void> denyPairing(String requestId) async {
+    try {
+      final response = await client.post(
+        Uri.parse('$baseUrl/api/bots/pairing/${Uri.encodeComponent(requestId)}/deny'),
+        headers: defaultHeaders,
+      ).timeout(ChatService.requestTimeout);
+
+      if (response.statusCode != 200) {
+        throw NetworkError(
+          'Failed to deny pairing',
+          statusCode: response.statusCode,
+        );
+      }
+    } on SocketException catch (e) {
+      debugPrint('[ChatService] Socket error denying pairing: $e');
+      throw ServerUnreachableError(cause: e);
+    } on http.ClientException catch (e) {
+      debugPrint('[ChatService] HTTP client error denying pairing: $e');
+      throw NetworkError('Network error denying pairing', cause: e);
+    } on TimeoutException catch (e) {
+      debugPrint('[ChatService] Timeout denying pairing: $e');
+      throw ServerUnreachableError(cause: e);
+    }
+  }
+
+  /// Get count of pending pairing requests.
+  Future<int> getPendingPairingCount() async {
+    try {
+      final response = await client.get(
+        Uri.parse('$baseUrl/api/bots/pairing/count'),
+        headers: defaultHeaders,
+      ).timeout(const Duration(seconds: 5));
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        return data['pending'] as int? ?? 0;
+      }
+      return 0;
+    } catch (e) {
+      debugPrint('[ChatService] Error getting pending pairing count: $e');
+      return 0;
+    }
+  }
 }
 
 /// A session with its messages

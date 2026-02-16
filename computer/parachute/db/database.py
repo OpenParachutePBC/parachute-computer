@@ -815,6 +815,14 @@ class Database:
             rows = await cursor.fetchall()
             return [self._row_to_pairing_request(row) for row in rows]
 
+    async def get_pending_pairing_count(self) -> int:
+        """Get count of pending pairing requests."""
+        async with self.connection.execute(
+            "SELECT COUNT(*) FROM pairing_requests WHERE status = 'pending'"
+        ) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else 0
+
     async def get_pairing_request(self, request_id: str) -> Optional[PairingRequest]:
         """Get a pairing request by ID."""
         async with self.connection.execute(

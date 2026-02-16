@@ -204,6 +204,12 @@ class _SessionListPanelState extends ConsumerState<SessionListPanel> {
                 child: SessionListItem(
                   session: session,
                   onTap: () => _selectSession(session, isPanelMode),
+                  onApprove: session.isPendingApproval && session.pairingRequestId != null
+                    ? () => _approvePairing(session)
+                    : null,
+                  onDeny: session.isPendingApproval && session.pairingRequestId != null
+                    ? () => _denyPairing(session)
+                    : null,
                 ),
               );
             },
@@ -415,6 +421,56 @@ class _SessionListPanelState extends ConsumerState<SessionListPanel> {
         );
       },
     );
+  }
+
+  Future<void> _approvePairing(ChatSession session) async {
+    try {
+      final service = ref.read(chatServiceProvider);
+      await service.approvePairing(session.pairingRequestId!);
+      ref.invalidate(chatSessionsProvider);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to approve: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _denyPairing(ChatSession session) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Deny this user?'),
+        content: const Text(
+          'They will not be notified and the session will be archived.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: TextButton.styleFrom(foregroundColor: BrandColors.error),
+            child: const Text('Deny'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    try {
+      final service = ref.read(chatServiceProvider);
+      await service.denyPairing(session.pairingRequestId!);
+      ref.invalidate(chatSessionsProvider);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to deny: $e')),
+        );
+      }
+    }
   }
 
   void _selectSession(ChatSession session, bool isPanelMode) {

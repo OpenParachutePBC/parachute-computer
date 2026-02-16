@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/chat_session.dart';
@@ -55,6 +57,14 @@ final chatSessionsProvider = FutureProvider.autoDispose<List<ChatSession>>((ref)
     // Try server first - gets non-archived sessions by default
     final serverSessions = await service.getSessions();
     debugPrint('[ChatProviders] Loaded ${serverSessions.length} sessions from server');
+    // Sort: pending approval first, then by updatedAt descending
+    serverSessions.sort((a, b) {
+      if (a.isPendingApproval && !b.isPendingApproval) return -1;
+      if (!a.isPendingApproval && b.isPendingApproval) return 1;
+      final aTime = a.updatedAt ?? a.createdAt;
+      final bTime = b.updatedAt ?? b.createdAt;
+      return bTime.compareTo(aTime);
+    });
     return serverSessions;
   } catch (e) {
     debugPrint('[ChatProviders] Server unavailable, falling back to local sessions: $e');
@@ -113,6 +123,48 @@ final sessionWithMessagesProvider =
     FutureProvider.autoDispose.family<ChatSessionWithMessages?, String>((ref, sessionId) async {
   final service = ref.watch(chatServiceProvider);
   return await service.getSession(sessionId);
+});
+
+// ============================================================
+// Pending Pairing Count (Polling)
+// ============================================================
+
+/// Polls for pending pairing request count every 30 seconds.
+/// Returns 0 if server is unreachable. Auto-disposes when no widget watches it.
+final pendingPairingCountProvider = StreamProvider.autoDispose<int>((ref) {
+  final service = ref.watch(chatServiceProvider);
+
+  late final StreamController<int> controller;
+  late final Timer timer;
+
+  controller = StreamController<int>(
+    onListen: () async {
+      // Initial fetch
+      try {
+        final count = await service.getPendingPairingCount();
+        if (!controller.isClosed) controller.add(count);
+      } catch (_) {
+        if (!controller.isClosed) controller.add(0);
+      }
+
+      // Periodic polling
+      timer = Timer.periodic(const Duration(seconds: 30), (_) async {
+        try {
+          final count = await service.getPendingPairingCount();
+          if (!controller.isClosed) controller.add(count);
+        } catch (_) {
+          if (!controller.isClosed) controller.add(0);
+        }
+      });
+    },
+  );
+
+  ref.onDispose(() {
+    timer.cancel();
+    controller.close();
+  });
+
+  return controller.stream;
 });
 
 // Session CRUD and navigation actions are in chat_session_actions.dart
