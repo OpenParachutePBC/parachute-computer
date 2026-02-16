@@ -239,36 +239,40 @@ class ContextFolderService:
         return chain
 
     def format_chain_for_prompt(
-        self, chain: ContextChain, selected_folders: list[str] | None = None
+        self, chain: ContextChain, working_directory: str | None = None
     ) -> str:
         """
         Format the context chain for inclusion in a system prompt.
 
         Returns markdown-formatted context with section headers.
-        Optionally includes which folders were explicitly selected.
+        When working_directory is set, labels the section as reference context.
         """
         if not chain.files:
             return ""
 
+        valid_files = [f for f in chain.files if f.exists and f.content]
+        if not valid_files:
+            return ""
+
         parts = []
-        file_count = len([f for f in chain.files if f.exists and f.content])
+        file_count = len(valid_files)
         token_count = chain.total_tokens
 
-        parts.append(f"## Project Knowledge")
-        parts.append(f"The following context has been loaded for your reference ({file_count} files, ~{token_count} tokens):\n")
+        if working_directory:
+            parts.append("## Reference Context")
+            parts.append(
+                f"The following context has been loaded as supplementary reference "
+                f"({file_count} files, ~{token_count} tokens):\n"
+            )
+        else:
+            parts.append("## Project Knowledge")
+            parts.append(
+                f"The following context has been loaded for your reference "
+                f"({file_count} files, ~{token_count} tokens):\n"
+            )
 
-        for ctx_file in chain.files:
-            if not ctx_file.exists or not ctx_file.content:
-                continue
-
-            # Create section header based on level
-            if ctx_file.level == "root":
-                header = f"## {ctx_file.path}"
-            else:
-                folder_name = ctx_file.folder_path.split("/")[-1] if ctx_file.folder_path else "Root"
-                header = f"## {ctx_file.path}"
-
-            parts.append(header)
+        for ctx_file in valid_files:
+            parts.append(f"## {ctx_file.path}")
             parts.append("")
             parts.append(ctx_file.content)
             parts.append("")
@@ -276,30 +280,6 @@ class ContextFolderService:
             parts.append("")
 
         return "\n".join(parts)
-
-    def format_context_folders_section(self, selected_folders: list[str]) -> str:
-        """
-        Format selected context folders for the Environment section.
-
-        This tells the AI which context folders are active for this session.
-        """
-        if not selected_folders:
-            return ""
-
-        # Filter out empty string (root) for display, but mention it
-        non_root = [f for f in selected_folders if f]
-        has_root = "" in selected_folders or not selected_folders
-
-        parts = []
-        if has_root and non_root:
-            parts.append(f"Context: Root + {', '.join(non_root)}")
-        elif has_root:
-            parts.append("Context: Root (vault-wide)")
-        elif non_root:
-            parts.append(f"Context: {', '.join(non_root)}")
-
-        return "\n".join(parts)
-
 
 def get_context_folder_service(vault_path: Path) -> ContextFolderService:
     """Get a ContextFolderService instance."""
