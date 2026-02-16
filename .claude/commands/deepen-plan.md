@@ -55,6 +55,83 @@ Section 2: [Title] - [Brief description of what to research]
 ...
 ```
 
+### 1.5. Choose Execution Mode
+
+<thinking>
+Decide whether to use standard parallel subagents or an agent team based on the plan's scope. Agent teams are better when we'll be spawning many agents (10+) because teammates can self-claim from a shared task list instead of requiring the lead to manage 20-40 individual subagent results.
+</thinking>
+
+**Team mode (recommended — plans with 3+ sections or 10+ research/review tasks):**
+
+1. Create the team:
+   ```
+   TeamCreate(team_name: "deepen-{plan-slug}", description: "Deepening plan: {plan title}")
+   ```
+
+2. As you discover skills, learnings, and review agents in Steps 2-5 below, create a task for each:
+   ```
+   TaskCreate(subject: "Apply skill: agent-native-architecture", description: "Read .claude/skills/agent-native-architecture/SKILL.md and apply to plan sections about agents/tools.", status: "pending")
+   TaskCreate(subject: "Check learning: n-plus-one-queries.md", description: "Read docs/solutions/performance-issues/n-plus-one-queries.md and check if relevant to plan.", status: "pending")
+   TaskCreate(subject: "Run security-sentinel review", description: "Review full plan content for security concerns.", status: "pending")
+   # ... one task per skill, learning, research topic, and review agent
+   ```
+
+3. Spawn 3-5 teammates (each claims multiple tasks from the shared list):
+   ```
+   Task(subagent_type: "general-purpose", team_name: "deepen-{slug}", name: "skill-applier",
+        prompt: "You are applying skills to enhance a plan.
+        Plan content: {full plan}
+        Check TaskList for tasks about applying skills. Claim them with TaskUpdate.
+        For each: read the skill's SKILL.md, follow its instructions, apply to the plan.
+        Send results to the lead via SendMessage when done with each task.
+        Then check TaskList for more unclaimed tasks.")
+
+   Task(subagent_type: "general-purpose", team_name: "deepen-{slug}", name: "researcher",
+        prompt: "You are researching best practices for plan sections.
+        Plan content: {full plan}
+        Check TaskList for research and learnings tasks. Claim them with TaskUpdate.
+        For research tasks: find best practices, patterns, real-world examples.
+        For learnings tasks: read the learning file and check if it applies.
+        Send results to the lead via SendMessage when done with each task.
+        Then check TaskList for more unclaimed tasks.")
+
+   Task(subagent_type: "general-purpose", team_name: "deepen-{slug}", name: "reviewer-1",
+        prompt: "You are reviewing a plan from multiple angles.
+        Plan content: {full plan}
+        Check TaskList for review agent tasks. Claim them with TaskUpdate.
+        Run each assigned review agent against the plan content.
+        Send findings to the lead via SendMessage when done with each task.
+        Then check TaskList for more unclaimed tasks.")
+
+   Task(subagent_type: "general-purpose", team_name: "deepen-{slug}", name: "reviewer-2",
+        prompt: "You are reviewing a plan from multiple angles.
+        Plan content: {full plan}
+        Check TaskList for review agent tasks. Claim them with TaskUpdate.
+        Run each assigned review agent against the plan content.
+        Send findings to the lead via SendMessage when done with each task.
+        Then check TaskList for more unclaimed tasks.")
+   ```
+
+   Spawn additional teammates if the task list exceeds 20 items.
+
+4. Lead monitors TaskList and collects SendMessage findings as they arrive.
+
+5. When all tasks complete, proceed to Step 6 (Synthesize Everything).
+
+6. Cleanup:
+   ```
+   SendMessage(type: "shutdown_request", recipient: "skill-applier", content: "All tasks complete")
+   SendMessage(type: "shutdown_request", recipient: "researcher", content: "All tasks complete")
+   SendMessage(type: "shutdown_request", recipient: "reviewer-1", content: "All tasks complete")
+   SendMessage(type: "shutdown_request", recipient: "reviewer-2", content: "All tasks complete")
+   # After all approve: TeamDelete()
+   ```
+
+**Standard mode (small plans with 1-2 sections):**
+Skip team creation. Run agents as parallel Task subagent calls in Steps 2-5 below (current behavior).
+
+---
+
 ### 2. Discover and Apply Available Skills
 
 <thinking>
@@ -119,6 +196,8 @@ The skill tells you what to do - follow it. Execute the skill completely."
 - Each sub-agent reads and uses its assigned skill
 - All run simultaneously
 - 10, 20, 30 skill sub-agents is fine
+
+**In team mode:** Instead of spawning sub-agents directly, use TaskCreate for each matched skill. The `skill-applier` teammate will claim and execute them from the shared task list.
 
 **Each sub-agent:**
 1. Reads its skill's SKILL.md
@@ -260,6 +339,8 @@ docs/solutions/authentication-issues/jwt-expiry.md           # plan has no auth
 
 **Spawn sub-agents in PARALLEL for all filtered learnings.**
 
+**In team mode:** Instead of spawning sub-agents directly, use TaskCreate for each filtered learning. The `researcher` teammate will claim and execute them from the shared task list.
+
 **These learnings are institutional knowledge - applying them prevents repeating past mistakes.**
 
 ### 4. Launch Per-Section Research Agents
@@ -332,10 +413,12 @@ Task [agent-name]: "Review this plan using your expertise. Apply all your checks
 **CRITICAL RULES:**
 - Do NOT filter agents by "relevance" - run them ALL
 - Do NOT skip agents because they "might not apply" - let them decide
-- Launch ALL agents in a SINGLE message with multiple Task tool calls
+- Launch ALL agents in a SINGLE message with multiple Task tool calls (standard mode) or create tasks for each (team mode)
 - 20, 30, 40 parallel agents is fine - use everything
 - Each agent may catch something others miss
 - The goal is MAXIMUM coverage, not efficiency
+
+**In team mode:** Instead of launching Task calls directly, use TaskCreate for each review agent. The `reviewer-1` and `reviewer-2` teammates will claim and execute them from the shared task list, naturally load-balancing the work.
 
 **Step 4: Also discover and run research agents**
 
@@ -355,6 +438,8 @@ Wait for ALL parallel agents to complete - skills, research agents, review agent
 4. **Review agents** - All feedback from every reviewer (architecture, security, performance, simplicity, etc.)
 5. **Context7 queries** - Framework documentation and patterns
 6. **Web searches** - Current best practices and articles
+
+**In team mode:** Findings arrive as SendMessage from teammates rather than as subagent return values. Collect all messages, then shut down teammates with `shutdown_request` before synthesizing. Run `TeamDelete()` after all teammates approve shutdown.
 
 **For each agent's findings, extract:**
 - [ ] Concrete recommendations (actionable items)
