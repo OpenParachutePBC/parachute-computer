@@ -9,6 +9,7 @@ import '../models/chat_session.dart';
 import '../models/workspace.dart';
 import '../providers/chat_session_providers.dart';
 import '../providers/workspace_providers.dart';
+import '../services/chat_service.dart';
 import '../../settings/models/trust_level.dart';
 
 /// Bottom sheet for editing per-session configuration.

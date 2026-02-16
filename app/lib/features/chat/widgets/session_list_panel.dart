@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
 import '../models/chat_session.dart';
 import '../providers/chat_providers.dart';
+import '../services/chat_service.dart';
 import '../providers/chat_layout_provider.dart';
 import '../providers/session_search_provider.dart';
 import '../providers/workspace_providers.dart';
