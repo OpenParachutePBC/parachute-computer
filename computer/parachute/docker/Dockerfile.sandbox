@@ -28,4 +28,7 @@ COPY entrypoint.py /workspace/entrypoint.py
 
 USER sandbox
 
-ENTRYPOINT ["python", "/workspace/entrypoint.py"]
+# Persistent containers use sleep infinity as default (PID 1 via --init/tini).
+# Sessions arrive via: docker exec -i <container> python /workspace/entrypoint.py
+# Ephemeral containers pass entrypoint explicitly in docker run args.
+CMD ["sleep", "infinity"]

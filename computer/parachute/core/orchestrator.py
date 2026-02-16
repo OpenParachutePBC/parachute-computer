@@ -196,6 +196,19 @@ class Orchestrator:
         # Pending permission requests
         self.pending_permissions: dict[str, PermissionHandler] = {}
 
+    @property
+    def sandbox(self) -> DockerSandbox:
+        """Public access to the Docker sandbox instance."""
+        return self._sandbox
+
+    async def stop_workspace_container(self, workspace_slug: str) -> None:
+        """Stop and remove a workspace's persistent container."""
+        await self._sandbox.stop_container(workspace_slug)
+
+    async def reconcile_containers(self) -> None:
+        """Discover existing workspace containers on startup."""
+        await self._sandbox.reconcile()
+
     async def run_streaming(
         self,
         message: str,
@@ -694,6 +707,11 @@ class Orchestrator:
 
             # effective_trust was determined earlier (before capability filtering)
 
+            # Determine if this is a full custom prompt or append content
+            # Custom agents and explicit custom_prompt return full prompts (override preset)
+            # vault-agent returns append content only (uses preset + CLAUDE.md hierarchy)
+            is_full_prompt = prompt_metadata.get("prompt_source") in ("custom", "agent")
+
             if effective_trust == "untrusted":
                 if await self._sandbox.is_available():
                     # Use a real session ID for sandbox — "pending" would cause the SDK
@@ -764,10 +782,24 @@ class Orchestrator:
 
                     had_text = False
                     sandbox_response_text = ""
-                    async for event in self._sandbox.run_agent(sandbox_config, sandbox_message):
+
+                    # Use persistent container for workspace sessions,
+                    # ephemeral for workspace-less sessions
+                    if workspace_id:
+                        sandbox_stream = self._sandbox.run_persistent(
+                            workspace_slug=workspace_id,
+                            config=sandbox_config,
+                            message=sandbox_message,
+                        )
+                    else:
+                        sandbox_stream = self._sandbox.run_agent(
+                            sandbox_config, sandbox_message,
+                        )
+
+                    async for event in sandbox_stream:
                         event_type = event.get("type", "")
                         if event_type == "error":
-                            sandbox_err = event.get("error") or event.get("message") or "Unknown sandbox error"
+                            sandbox_err = event.get("error") or "Unknown sandbox error"
                             logger.error(f"Sandbox error: {sandbox_err}")
                             yield ErrorEvent(
                                 error=f"Sandbox: {sandbox_err}",
@@ -828,11 +860,6 @@ class Orchestrator:
                               "Either install Docker (brew install orbstack) or change trust level to 'full'.",
                     ).model_dump(by_alias=True)
                     return
-
-            # Determine if this is a full custom prompt or append content
-            # Custom agents and explicit custom_prompt return full prompts (override preset)
-            # vault-agent returns append content only (uses preset + CLAUDE.md hierarchy)
-            is_full_prompt = prompt_metadata.get("prompt_source") in ("custom", "agent")
 
             async for event in query_streaming(
                 prompt=actual_message,

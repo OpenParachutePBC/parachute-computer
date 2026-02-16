@@ -68,6 +68,7 @@ async def delete_workspace(request: Request, slug: str):
     """Delete a workspace.
 
     Sessions linked to this workspace will have their workspace_id set to NULL.
+    Persistent Docker container for this workspace will be stopped and removed.
     """
     vault_path = _get_vault_path(request)
 
@@ -78,6 +79,14 @@ async def delete_workspace(request: Request, slug: str):
         raise HTTPException(status_code=400, detail=str(e))
     if workspace is None:
         raise HTTPException(status_code=404, detail=f"Workspace not found: {slug}")
+
+    # Stop persistent container before deleting workspace files
+    orchestrator = getattr(request.app.state, "orchestrator", None)
+    if orchestrator:
+        try:
+            await orchestrator.stop_workspace_container(slug)
+        except (RuntimeError, OSError) as e:
+            logger.warning(f"Failed to stop container for workspace {slug}: {e}")
 
     # Unlink sessions from this workspace
     db = await get_database()

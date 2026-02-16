@@ -40,7 +40,9 @@ async def run():
 
     # Get environment configuration
     session_id = os.environ.get("PARACHUTE_SESSION_ID", "")
-    oauth_token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
+
+    # Token: prefer stdin payload (persistent mode), fall back to env var (ephemeral mode)
+    oauth_token = request.get("claude_token") or os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
 
     # Set working directory if provided
     cwd = os.environ.get("PARACHUTE_CWD")
@@ -54,15 +56,17 @@ async def run():
         emit({"type": "error", "error": "CLAUDE_CODE_OAUTH_TOKEN not set"})
         sys.exit(1)
 
-    # Load capabilities config if mounted by the host
-    capabilities = {}
-    caps_path = "/tmp/capabilities.json"
-    if os.path.exists(caps_path):
-        try:
-            with open(caps_path) as f:
-                capabilities = json.load(f)
-        except (json.JSONDecodeError, OSError) as e:
-            emit({"type": "warning", "message": f"Failed to load capabilities: {e}"})
+    # Capabilities: prefer stdin payload (persistent mode),
+    # fall back to mounted file (ephemeral mode)
+    capabilities = request.get("capabilities") or {}
+    if not capabilities:
+        caps_path = "/tmp/capabilities.json"
+        if os.path.exists(caps_path):
+            try:
+                with open(caps_path) as f:
+                    capabilities = json.load(f)
+            except (json.JSONDecodeError, OSError) as e:
+                emit({"type": "warning", "message": f"Failed to load capabilities: {e}"})
 
     try:
         from claude_agent_sdk import query, ClaudeAgentOptions
@@ -79,21 +83,24 @@ async def run():
             "cwd": effective_cwd,
         }
 
-        # Load system prompt if mounted by the host
-        prompt_path = "/tmp/system_prompt.txt"
-        if os.path.exists(prompt_path):
-            try:
-                with open(prompt_path) as f:
-                    system_prompt = f.read().strip()
-                if system_prompt:
-                    # Use Claude Code preset with appended content
-                    options_kwargs["system_prompt"] = {
-                        "type": "preset",
-                        "preset": "claude_code",
-                        "append": system_prompt,
-                    }
-            except OSError as e:
-                emit({"type": "warning", "message": f"Failed to load system prompt: {e}"})
+        # System prompt: prefer stdin payload (persistent mode),
+        # fall back to mounted file (ephemeral mode)
+        system_prompt = request.get("system_prompt") or ""
+        if not system_prompt:
+            prompt_path = "/tmp/system_prompt.txt"
+            if os.path.exists(prompt_path):
+                try:
+                    with open(prompt_path) as f:
+                        system_prompt = f.read().strip()
+                except OSError as e:
+                    emit({"type": "warning", "message": f"Failed to load system prompt: {e}"})
+        if system_prompt:
+            # Use Claude Code preset with appended content
+            options_kwargs["system_prompt"] = {
+                "type": "preset",
+                "preset": "claude_code",
+                "append": system_prompt,
+            }
 
         # Pass capabilities to SDK if available
         if capabilities.get("mcp_servers"):
