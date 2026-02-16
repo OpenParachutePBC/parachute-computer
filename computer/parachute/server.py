@@ -78,6 +78,9 @@ async def lifespan(app: FastAPI):
     app.state.sandbox = orchestrator._sandbox  # Shared DockerSandbox for health checks
     app.state.database = db
 
+    # Discover existing persistent workspace containers
+    await orchestrator._sandbox.reconcile()
+
     # CURATOR REMOVED - curator service excluded from modular architecture
 
     # Initialize scheduler for automated tasks

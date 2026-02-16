@@ -15,6 +15,7 @@ import re
 import shutil
 import tempfile
 import time
+from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import AsyncGenerator, Optional
@@ -57,6 +58,8 @@ class DockerSandbox:
         self.claude_token = claude_token
         self._docker_available: Optional[bool] = None
         self._checked_at: float = 0
+        # Per-workspace locks to prevent race conditions in ensure_container
+        self._slug_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 
     async def is_available(self) -> bool:
         """Check if Docker is installed and running (cached with TTL)."""
@@ -275,8 +278,8 @@ class DockerSandbox:
                 os.unlink(prompt_file)
                 logger.warning("Failed to write system prompt for sandbox")
 
-        # Image
-        args.append(SANDBOX_IMAGE)
+        # Image + explicit entrypoint (Dockerfile uses CMD sleep infinity for persistent mode)
+        args.extend([SANDBOX_IMAGE, "python", "/workspace/entrypoint.py"])
 
         return args, temp_files
 
@@ -383,3 +386,322 @@ class DockerSandbox:
             "docker_available": self._docker_available,
             "sandbox_image": SANDBOX_IMAGE,
         }
+
+    # --- Persistent container methods ---
+
+    async def ensure_container(
+        self, workspace_slug: str, config: AgentSandboxConfig
+    ) -> str:
+        """Ensure a persistent container is running for this workspace.
+
+        Returns the container name. Creates the container lazily on first call.
+        Uses per-slug asyncio.Lock to prevent race conditions.
+        """
+        container_name = f"parachute-ws-{workspace_slug}"
+
+        async with self._slug_locks[workspace_slug]:
+            status = await self._inspect_status(container_name)
+
+            if status == "running":
+                return container_name
+            elif status in ("exited", "created"):
+                await self._start_container(container_name)
+                return container_name
+            elif status is not None:
+                # Bad state (dead, removing, etc.) — force remove and recreate
+                await self._remove_container(container_name)
+
+            # Create new container
+            await self._create_persistent_container(
+                container_name, workspace_slug, config
+            )
+            return container_name
+
+    async def _inspect_status(self, container_name: str) -> Optional[str]:
+        """Get container status via docker inspect. Returns None if not found."""
+        proc = await asyncio.create_subprocess_exec(
+            "docker", "inspect", "-f", "{{.State.Status}}", container_name,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        stdout, _ = await proc.communicate()
+        if proc.returncode != 0:
+            return None
+        return stdout.decode().strip()
+
+    async def _create_persistent_container(
+        self, container_name: str, workspace_slug: str, config: AgentSandboxConfig
+    ) -> None:
+        """Create and start a persistent container for a workspace."""
+        args = [
+            "docker", "run", "-d",
+            "--init",  # tini as PID 1 — reaps zombies, forwards signals
+            "--name", container_name,
+            "--memory", CONTAINER_MEMORY_LIMIT,
+            "--cpus", CONTAINER_CPU_LIMIT,
+            # Security hardening
+            "--cap-drop", "ALL",
+            "--security-opt", "no-new-privileges",
+            "--pids-limit", "100",
+            # Labels for discovery
+            "--label", "app=parachute",
+            "--label", f"workspace={workspace_slug}",
+        ]
+
+        # Network — persistent containers need network for SDK API calls
+        if not config.network_enabled:
+            args.extend(["--network", "none"])
+
+        # Volume mounts (reuse existing _build_mounts)
+        args.extend(self._build_mounts(config))
+
+        # Image + keep-alive command
+        args.extend([SANDBOX_IMAGE, "sleep", "infinity"])
+
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"Failed to create container {container_name}: {stderr.decode()}"
+            )
+        logger.info(
+            f"Created persistent container {container_name} "
+            f"for workspace {workspace_slug}"
+        )
+
+    async def run_persistent(
+        self,
+        workspace_slug: str,
+        config: AgentSandboxConfig,
+        message: str,
+    ) -> AsyncGenerator[dict, None]:
+        """Run an agent session in a persistent workspace container.
+
+        Uses docker exec to spawn a process in the running container.
+        Per-session data (capabilities, system_prompt, token) is passed
+        via enriched stdin JSON payload since docker exec cannot mount volumes.
+        """
+        if not await self.is_available():
+            raise RuntimeError("Docker not available for sandboxed execution")
+
+        if not await self.image_exists():
+            raise RuntimeError(
+                f"Sandbox image '{SANDBOX_IMAGE}' not found. "
+                "Build it from Settings > Capabilities or run: "
+                "docker build -t parachute-sandbox:latest parachute-computer/parachute/docker/"
+            )
+
+        container_name = await self.ensure_container(workspace_slug, config)
+
+        # Build exec args — env vars for non-sensitive config only
+        exec_args = [
+            "docker", "exec", "-i",
+            "-e", f"PARACHUTE_SESSION_ID={config.session_id}",
+            "-e", f"PARACHUTE_AGENT_TYPE={config.agent_type}",
+        ]
+        if config.working_directory:
+            exec_args.extend(["-e", f"PARACHUTE_CWD={config.working_directory}"])
+        if config.model:
+            exec_args.extend(["-e", f"PARACHUTE_MODEL={config.model}"])
+        if config.mcp_servers is not None:
+            mcp_names = ",".join(config.mcp_servers.keys())
+            exec_args.extend(["-e", f"PARACHUTE_MCP_SERVERS={mcp_names}"])
+
+        exec_args.extend([
+            container_name,
+            "python", "/workspace/entrypoint.py",
+        ])
+
+        proc = await asyncio.create_subprocess_exec(
+            *exec_args,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+
+        try:
+            if proc.stdin is None or proc.stdout is None:
+                yield {"type": "error", "message": "Failed to open pipes to container"}
+                return
+
+            # Build enriched stdin payload — includes secrets and per-session data
+            # that can't be passed via docker exec volume mounts
+            stdin_payload: dict = {"message": message}
+            if self.claude_token:
+                stdin_payload["claude_token"] = self.claude_token
+            if config.system_prompt:
+                stdin_payload["system_prompt"] = config.system_prompt
+
+            # Capabilities
+            capabilities: dict = {}
+            if config.plugin_dirs:
+                capabilities["plugin_dirs"] = [
+                    f"/plugins/plugin-{i}" for i in range(len(config.plugin_dirs))
+                    if config.plugin_dirs[i].is_dir()
+                ]
+            if config.mcp_servers:
+                capabilities["mcp_servers"] = config.mcp_servers
+            if config.agents:
+                capabilities["agents"] = config.agents
+            if capabilities:
+                stdin_payload["capabilities"] = capabilities
+
+            proc.stdin.write(json.dumps(stdin_payload).encode() + b"\n")
+            await proc.stdin.drain()
+            proc.stdin.close()
+
+            # Stream JSONL from stdout with timeout (same pattern as run_agent)
+            deadline = time.time() + config.timeout_seconds
+            timed_out = False
+            while True:
+                remaining = deadline - time.time()
+                if remaining <= 0:
+                    timed_out = True
+                    break
+                try:
+                    line = await asyncio.wait_for(
+                        proc.stdout.readline(),
+                        timeout=min(remaining, 180),
+                    )
+                except asyncio.TimeoutError:
+                    timed_out = True
+                    break
+                if not line:
+                    break
+                try:
+                    yield json.loads(line.decode().strip())
+                except json.JSONDecodeError:
+                    logger.debug(
+                        f"Non-JSON from persistent sandbox: "
+                        f"{line.decode().strip()}"
+                    )
+
+            if timed_out:
+                logger.error(
+                    f"Persistent sandbox timed out for session "
+                    f"{config.session_id}"
+                )
+                proc.kill()
+                yield {"type": "error", "message": "Sandbox execution timed out"}
+                return
+
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=10)
+            except asyncio.TimeoutError:
+                proc.kill()
+
+            if proc.returncode and proc.returncode != 0:
+                stderr_data = b""
+                if proc.stderr:
+                    stderr_data = await proc.stderr.read()
+                logger.error(
+                    f"Persistent sandbox exited {proc.returncode}: "
+                    f"{stderr_data.decode()}"
+                )
+
+                # Exit code 137 = OOM killed — remove so next use recreates
+                if proc.returncode == 137:
+                    logger.warning(
+                        f"Container {container_name} OOM killed, "
+                        f"will recreate on next use"
+                    )
+                    await self._remove_container(container_name)
+                    yield {
+                        "type": "error",
+                        "message": "Container ran out of memory. "
+                                   "It will be recreated on next use.",
+                    }
+                else:
+                    yield {
+                        "type": "error",
+                        "message": f"Sandbox error (exit {proc.returncode})",
+                    }
+
+        except OSError as e:
+            logger.error(f"Failed to exec in persistent sandbox: {e}")
+            yield {"type": "error", "message": f"Failed to exec in sandbox: {e}"}
+        finally:
+            # Ensure exec process is terminated if still running
+            if proc.returncode is None:
+                try:
+                    proc.kill()
+                    await proc.wait()
+                except ProcessLookupError:
+                    pass
+
+    async def stop_container(self, workspace_slug: str) -> None:
+        """Stop and remove a workspace's persistent container."""
+        container_name = f"parachute-ws-{workspace_slug}"
+        await self._stop_container(container_name)
+        await self._remove_container(container_name)
+
+    async def _start_container(self, container_name: str) -> None:
+        """Start a stopped container."""
+        proc = await asyncio.create_subprocess_exec(
+            "docker", "start", container_name,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"Failed to start {container_name}: {stderr.decode()}"
+            )
+
+    async def _stop_container(self, container_name: str) -> None:
+        """Stop a running container with 10s grace period."""
+        proc = await asyncio.create_subprocess_exec(
+            "docker", "stop", "-t", "10", container_name,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=15)
+        except asyncio.TimeoutError:
+            pass
+
+    async def _remove_container(self, container_name: str) -> None:
+        """Force-remove a container."""
+        proc = await asyncio.create_subprocess_exec(
+            "docker", "rm", "-f", container_name,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        await proc.wait()
+
+    async def reconcile(self) -> None:
+        """Discover existing parachute-ws-* containers on server startup.
+
+        Logs the count of existing workspace containers. Does not remove
+        orphans — that's deferred to a future cleanup task.
+        """
+        if not await self.is_available():
+            return
+
+        proc = await asyncio.create_subprocess_exec(
+            "docker", "ps", "-a",
+            "--filter", "label=app=parachute",
+            "--format", "{{.Names}}\t{{.Status}}",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        stdout, _ = await proc.communicate()
+        if proc.returncode != 0:
+            logger.warning("Failed to discover existing workspace containers")
+            return
+
+        count = 0
+        for line in stdout.decode().strip().split("\n"):
+            if not line:
+                continue
+            parts = line.split("\t")
+            if len(parts) >= 1 and parts[0].startswith("parachute-ws-"):
+                count += 1
+        if count:
+            logger.info(
+                f"Reconciled {count} existing workspace container(s)"
+            )

@@ -764,7 +764,21 @@ class Orchestrator:
 
                     had_text = False
                     sandbox_response_text = ""
-                    async for event in self._sandbox.run_agent(sandbox_config, sandbox_message):
+
+                    # Use persistent container for workspace sessions,
+                    # ephemeral for workspace-less sessions
+                    if workspace_id:
+                        sandbox_stream = self._sandbox.run_persistent(
+                            workspace_slug=workspace_id,
+                            config=sandbox_config,
+                            message=sandbox_message,
+                        )
+                    else:
+                        sandbox_stream = self._sandbox.run_agent(
+                            sandbox_config, sandbox_message,
+                        )
+
+                    async for event in sandbox_stream:
                         event_type = event.get("type", "")
                         if event_type == "error":
                             sandbox_err = event.get("error") or event.get("message") or "Unknown sandbox error"
