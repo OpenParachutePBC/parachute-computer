@@ -80,7 +80,7 @@ Create a review team with specialist teammates for coordinated parallel review. 
 Run ALL or most of these agents at the same time. Select agents based on what the PR touches:
 
 **Always run:**
-1. Task git-history-analyzer(PR content)
+1. Task git-history-analyzer(PR content) — built-in subagent type, not a custom agent file
 2. Task pattern-recognition-specialist(PR content)
 3. Task architecture-strategist(PR content)
 4. Task security-sentinel(PR content)
@@ -181,7 +181,7 @@ SendMessage(type: "shutdown_request", recipient: "performance-reviewer", content
 # After all approve: TeamDelete()
 ```
 
-### 4. Ultra-Thinking Deep Dive Phases
+### 2. Ultra-Thinking Deep Dive Phases
 
 <ultrathink_instruction> For each phase below, spend maximum cognitive effort. Think step by step. Consider all angles. Question assumptions. And bring all reviews in a synthesis to the user.</ultrathink_instruction>
 
@@ -246,7 +246,7 @@ Complete system context map with component interactions
 - [ ] **Data Corruption**: Partial writes, inconsistency
 - [ ] **Cascading Failures**: Downstream service issues </scenario_checklist>
 
-### 6. Multi-Angle Review Perspectives
+### 3. Multi-Angle Review Perspectives
 
 #### Technical Excellence Angle
 
@@ -276,7 +276,7 @@ Complete system context map with component interactions
 - Collaboration patterns
 - Mentoring opportunities
 
-### 4. Simplification and Minimalism Review
+### 4. Simplification Review
 
 Run the Task code-simplicity-reviewer() to see if we can simplify the code.
 
@@ -294,10 +294,14 @@ Remove duplicates, prioritize by severity and impact.
 <synthesis_tasks>
 
 - [ ] Collect findings from all parallel agents
+- [ ] **Filter by confidence:** Only include findings scoring 80+ (agents should have already filtered, but verify)
 - [ ] Discard any findings that recommend deleting or gitignoring files in `docs/plans/` or `docs/solutions/` (see Protected Artifacts above)
-- [ ] Categorize by type: security, performance, architecture, quality, etc.
+- [ ] **Deduplicate:** When multiple agents flag the same issue (same file:line, similar description), merge into one finding with the highest severity and list all contributing agents
 - [ ] Assign severity levels: 🔴 CRITICAL (P1), 🟡 IMPORTANT (P2), 🔵 NICE-TO-HAVE (P3)
-- [ ] Remove duplicate or overlapping findings
+- [ ] **Group into stages** for the summary report:
+  - **Stage 1 — Spec Compliance:** Compare diff against linked issue/plan acceptance criteria. Flag missing scope and extra scope. Advisory only — never blocks.
+  - **Stage 2 — Framework Conventions:** Findings from python-reviewer, flutter-reviewer, parachute-conventions-reviewer
+  - **Stage 3 — Cross-Cutting Quality:** Findings from security-sentinel, performance-oracle, architecture-strategist, code-simplicity-reviewer, pattern-recognition-specialist, agent-native-reviewer
 - [ ] Estimate effort for each finding (Small/Medium/Large)
 
 </synthesis_tasks>
@@ -419,39 +423,74 @@ Examples:
 - `p2` - Important (should fix, architectural/performance)
 - `p3` - Nice-to-have (enhancements, cleanup)
 
-**Tagging:** Always add `code-review` tag, plus: `security`, `performance`, `architecture`, `rails`, `quality`, etc.
+**Tagging:** Always add `code-review` tag, plus: `security`, `performance`, `architecture`, `python`, `flutter`, `quality`, etc.
 
 #### Step 3: Summary Report
 
 After creating all todo files, present comprehensive summary:
 
 ````markdown
-## ✅ Code Review Complete
+## Code Review Complete
 
 **Review Target:** PR #XXXX - [PR Title] **Branch:** [branch-name]
 
 ### Findings Summary:
 
 - **Total Findings:** [X]
-- **🔴 CRITICAL (P1):** [count] - BLOCKS MERGE
-- **🟡 IMPORTANT (P2):** [count] - Should Fix
-- **🔵 NICE-TO-HAVE (P3):** [count] - Enhancements
+- **P1 Critical:** [count] - BLOCKS MERGE
+- **P2 Important:** [count] - Should Fix
+- **P3 Nice-to-Have:** [count] - Enhancements
+
+---
+
+### Stage 1: Spec Compliance
+
+[If PR links to an issue or plan, compare the diff against acceptance criteria]
+- **Missing scope:** [Acceptance criteria not addressed, if any]
+- **Extra scope:** [Changes not in the spec, if any]
+- [Or: "No formal spec linked — reviewed against PR title/description"]
+
+*This stage is advisory — it does not block the review.*
+
+---
+
+### Stage 2: Framework Conventions ([X] findings)
+
+*Sources: python-reviewer, flutter-reviewer, parachute-conventions-reviewer*
+
+**P1 Critical:**
+- [finding] — file:line — confidence: [score] — [agent]
+
+**P2 Important:**
+- [finding] — file:line — confidence: [score] — [agent]
+
+---
+
+### Stage 3: Cross-Cutting Quality ([Y] findings)
+
+*Sources: security-sentinel, performance-oracle, architecture-strategist, code-simplicity-reviewer, pattern-recognition-specialist, agent-native-reviewer*
+
+**P1 Critical:**
+- [finding] — file:line — confidence: [score] — [agent]
+
+**P2 Important:**
+- [finding] — file:line — confidence: [score] — [agent]
+
+---
 
 ### Created Todo Files:
 
 **P1 - Critical (BLOCKS MERGE):**
 
 - `001-pending-p1-{finding}.md` - {description}
-- `002-pending-p1-{finding}.md` - {description}
 
 **P2 - Important:**
 
-- `003-pending-p2-{finding}.md` - {description}
-- `004-pending-p2-{finding}.md` - {description}
+- `002-pending-p2-{finding}.md` - {description}
 
 **P3 - Nice-to-Have:**
 
-- `005-pending-p3-{finding}.md` - {description}
+- `003-pending-p3-{finding}.md` - {description}
 
 ### Review Agents Used:
 
@@ -515,7 +554,7 @@ After creating all todo files, present comprehensive summary:
 
 ```
 
-### 7. End-to-End Testing (Optional)
+### 6. End-to-End Testing (Optional)
 
 <detect_project_type>
 
