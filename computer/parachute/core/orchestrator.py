@@ -1326,6 +1326,25 @@ class Orchestrator:
             except OSError as e:
                 logger.warning(f"Failed to read vault CLAUDE.md: {e}")
 
+        # Working directory framing — tell the AI where it's operating
+        # (SDK loads the actual CLAUDE.md via setting_sources=["project"] + cwd)
+        if working_directory:
+            wd_path = Path(working_directory)
+            if not wd_path.is_absolute():
+                wd_path = self.vault_path / working_directory
+            try:
+                display_path = str(wd_path.relative_to(self.vault_path))
+            except ValueError:
+                # Outside vault — use leaf name only, never expose absolute paths
+                display_path = wd_path.name
+
+            append_parts.append(
+                f"## Working Directory\n\n"
+                f"You are operating in: `{display_path}/` "
+                f"(within the Parachute vault)\n"
+                f"File operations, code changes, and commands execute here by default."
+            )
+
         # Handle explicitly selected context files (beyond automatic hierarchy)
         # These are files the user explicitly selected in the UI
         if contexts:
@@ -1346,7 +1365,7 @@ class Orchestrator:
                 try:
                     chain = context_folder_service.build_chain(folder_paths, max_tokens=40000)
                     if chain.files:
-                        folder_context = context_folder_service.format_chain_for_prompt(chain)
+                        folder_context = context_folder_service.format_chain_for_prompt(chain, working_directory=working_directory)
                         append_parts.append(folder_context)
                         metadata["context_files"].extend(chain.file_paths)
                         metadata["context_tokens"] += chain.total_tokens
@@ -1383,7 +1402,8 @@ class Orchestrator:
                         relative_path = md_path.relative_to(self.vault_path)
                         metadata["working_directory_claude_md"] = str(relative_path)
                     except ValueError:
-                        metadata["working_directory_claude_md"] = str(md_path)
+                        # Outside vault — use leaf name only, never expose absolute paths
+                        metadata["working_directory_claude_md"] = md_path.name
                     break
 
         # Prior conversation (MUST be runtime - can't be in static files)
