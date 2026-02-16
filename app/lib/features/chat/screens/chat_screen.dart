@@ -770,7 +770,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         mainAxisSize: MainAxisSize.min,
         children: [
           Row(
-            mainAxisSize: MainAxisSize.min,
             children: [
               Icon(
                 Icons.chat_bubble_outline,
@@ -833,6 +832,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
   Widget _appBarBadge(String label, Color color) {
     return Container(
+      constraints: const BoxConstraints(maxWidth: 120),
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.15),
@@ -845,6 +845,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           fontWeight: FontWeight.w600,
           color: color,
         ),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
       ),
     );
   }
@@ -1709,6 +1711,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       questions: questions,
       onAnswer: (answers) async {
         return await ref.read(chatMessagesProvider.notifier).answerQuestion(answers);
+      },
+      onDismiss: () {
+        ref.read(chatMessagesProvider.notifier).dismissPendingQuestion();
       },
     );
   }

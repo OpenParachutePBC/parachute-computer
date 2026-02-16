@@ -54,6 +54,7 @@ class UserQuestionCard extends StatefulWidget {
   final String sessionId;
   final List<UserQuestion> questions;
   final Future<bool> Function(Map<String, dynamic> answers) onAnswer;
+  final VoidCallback? onDismiss;
   final bool isAnswered;
 
   const UserQuestionCard({
@@ -62,6 +63,7 @@ class UserQuestionCard extends StatefulWidget {
     required this.sessionId,
     required this.questions,
     required this.onAnswer,
+    this.onDismiss,
     this.isAnswered = false,
   });
 
@@ -78,6 +80,7 @@ class _UserQuestionCardState extends State<UserQuestionCard> {
   final Map<String, bool> _otherSelected = {};
   bool _isSubmitting = false;
   bool _isAnswered = false;
+  String? _errorMessage;
 
   @override
   void initState() {
@@ -181,6 +184,9 @@ class _UserQuestionCardState extends State<UserQuestionCard> {
       _isSubmitting = false;
       if (success) {
         _isAnswered = true;
+        _errorMessage = null;
+      } else {
+        _errorMessage = 'Failed to submit. Tap to retry.';
       }
     });
   }
@@ -224,12 +230,32 @@ class _UserQuestionCardState extends State<UserQuestionCard> {
                       fontSize: 12,
                     ),
                   ),
+                if (widget.onDismiss != null)
+                  IconButton(
+                    icon: Icon(Icons.close, size: 16, color: colorScheme.onSurfaceVariant),
+                    onPressed: widget.onDismiss,
+                    tooltip: 'Dismiss',
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                  ),
               ],
             ),
             const SizedBox(height: 12),
 
             // Questions
             ...widget.questions.map((q) => _buildQuestion(context, q)),
+
+            // Error message
+            if (_errorMessage != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                _errorMessage!,
+                style: TextStyle(
+                  color: colorScheme.error,
+                  fontSize: 12,
+                ),
+              ),
+            ],
 
             // Submit button
             if (!_isAnswered) ...[
@@ -247,8 +273,17 @@ class _UserQuestionCardState extends State<UserQuestionCard> {
                             color: Colors.white,
                           ),
                         )
-                      : const Icon(Icons.send, size: 18),
-                  label: Text(_isSubmitting ? 'Sending...' : 'Submit Answer'),
+                      : Icon(
+                          _errorMessage != null ? Icons.refresh : Icons.send,
+                          size: 18,
+                        ),
+                  label: Text(
+                    _isSubmitting
+                        ? 'Sending...'
+                        : _errorMessage != null
+                            ? 'Retry'
+                            : 'Submit Answer',
+                  ),
                 ),
               ),
             ],

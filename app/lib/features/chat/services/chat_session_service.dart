@@ -257,30 +257,52 @@ extension ChatSessionService on ChatService {
     required String requestId,
     required Map<String, dynamic> answers,
   }) async {
-    try {
-      debugPrint('[ChatService] Answering question $requestId for session $sessionId');
-      final response = await client.post(
-        Uri.parse('$baseUrl/api/chat/${Uri.encodeComponent(sessionId)}/answer'),
-        headers: defaultHeaders,
-        body: jsonEncode({
-          'request_id': requestId,
-          'answers': answers,
-        }),
-      ).timeout(const Duration(seconds: 10));
+    // Retry with backoff — handles race condition where the server's permission
+    // handler hasn't registered the pending question yet when the SSE event
+    // reaches the app.
+    const retryDelays = [
+      Duration(milliseconds: 500),
+      Duration(seconds: 1),
+      Duration(seconds: 2),
+    ];
 
-      if (response.statusCode == 200) {
-        debugPrint('[ChatService] Answer submitted successfully');
-        return true;
-      } else if (response.statusCode == 404) {
-        debugPrint('[ChatService] No pending question found: ${response.body}');
+    for (var attempt = 0; attempt <= retryDelays.length; attempt++) {
+      try {
+        debugPrint('[ChatService] Answering question $requestId (attempt ${attempt + 1})');
+        final response = await client.post(
+          Uri.parse('$baseUrl/api/chat/${Uri.encodeComponent(sessionId)}/answer'),
+          headers: defaultHeaders,
+          body: jsonEncode({
+            'request_id': requestId,
+            'answers': answers,
+          }),
+        ).timeout(const Duration(seconds: 30));
+
+        if (response.statusCode == 200) {
+          debugPrint('[ChatService] Answer submitted successfully');
+          return true;
+        } else if (response.statusCode == 404) {
+          // No pending question — may be a timing issue, retry
+          debugPrint('[ChatService] No pending question found (attempt ${attempt + 1}): ${response.body}');
+          if (attempt < retryDelays.length) {
+            await Future.delayed(retryDelays[attempt]);
+            continue;
+          }
+          return false;
+        } else {
+          debugPrint('[ChatService] Failed to submit answer: ${response.statusCode}');
+          return false;
+        }
+      } catch (e) {
+        debugPrint('[ChatService] Error submitting answer (attempt ${attempt + 1}): $e');
+        if (attempt < retryDelays.length) {
+          await Future.delayed(retryDelays[attempt]);
+          continue;
+        }
         return false;
-      } else {
-        throw Exception('Failed to submit answer: ${response.statusCode}');
       }
-    } catch (e) {
-      debugPrint('[ChatService] Error submitting answer: $e');
-      return false;
     }
+    return false;
   }
 
   /// Abort an active streaming session
