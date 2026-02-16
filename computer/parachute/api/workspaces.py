@@ -2,6 +2,7 @@
 Workspace management API endpoints.
 """
 
+import asyncio
 import logging
 from typing import Optional
 
@@ -90,9 +91,7 @@ async def delete_workspace(request: Request, slug: str):
 
         # Clean up persistent sandbox data (SDK transcripts on host mount)
         try:
-            sandbox = getattr(orchestrator, "_sandbox", None)
-            if sandbox:
-                sandbox.cleanup_workspace_data(slug)
+            await asyncio.to_thread(orchestrator.sandbox.cleanup_workspace_data, slug)
         except (ValueError, OSError) as e:
             logger.warning(f"Failed to clean sandbox data for workspace {slug}: {e}")
 

@@ -13,6 +13,7 @@ SDK event types:
 import asyncio
 import json
 import os
+import re
 import sys
 
 
@@ -184,8 +185,11 @@ async def run():
 
         # Resume from prior transcript if requested by orchestrator
         resume_id = request.get("resume_session_id")
-        if resume_id:
+        if resume_id and re.match(r'^[a-zA-Z0-9_-]+$', resume_id):
             options_kwargs["resume"] = resume_id
+        elif resume_id:
+            emit({"type": "warning", "message": f"Invalid resume_session_id format, ignoring"})
+            resume_id = None
 
         options = ClaudeAgentOptions(**options_kwargs)
 

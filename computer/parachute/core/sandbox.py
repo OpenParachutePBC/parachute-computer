@@ -20,7 +20,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import AsyncGenerator, Optional
 
-from parachute.core.validation import SANDBOX_DATA_DIR, validate_workspace_slug
+from parachute.core.validation import validate_workspace_slug
+
+SANDBOX_DATA_DIR = ".parachute/sandbox"
 
 logger = logging.getLogger(__name__)
 
@@ -406,11 +408,6 @@ class DockerSandbox:
 
     # --- Persistent container methods ---
 
-    @staticmethod
-    def _validate_slug(slug: str) -> None:
-        """Validate workspace slug is safe for Docker container names."""
-        validate_workspace_slug(slug)
-
     def get_sandbox_claude_dir(self, workspace_slug: str) -> Path:
         """Host-side .claude/ directory for a workspace's sandbox."""
         validate_workspace_slug(workspace_slug)
@@ -422,6 +419,8 @@ class DockerSandbox:
         Skips symlinks to defend against container-created symlink escapes.
         Safe for use in asyncio.to_thread() — all I/O is synchronous.
         """
+        if not session_id or not re.match(r'^[a-zA-Z0-9_-]+$', session_id):
+            return False
         claude_dir = self.get_sandbox_claude_dir(workspace_slug)
         projects_dir = claude_dir / "projects"
         if not projects_dir.exists():
@@ -453,7 +452,7 @@ class DockerSandbox:
         Returns the container name. Creates the container lazily on first call.
         Uses per-slug asyncio.Lock to prevent race conditions.
         """
-        self._validate_slug(workspace_slug)
+        validate_workspace_slug(workspace_slug)
         container_name = f"parachute-ws-{workspace_slug}"
 
         async with self._slug_locks[workspace_slug]:
@@ -653,7 +652,7 @@ class DockerSandbox:
 
     async def stop_container(self, workspace_slug: str) -> None:
         """Stop and remove a workspace's persistent container."""
-        self._validate_slug(workspace_slug)
+        validate_workspace_slug(workspace_slug)
         container_name = f"parachute-ws-{workspace_slug}"
         await self._stop_container(container_name)
         await self._remove_container(container_name)

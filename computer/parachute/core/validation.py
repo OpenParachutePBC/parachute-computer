@@ -9,8 +9,6 @@ import re
 
 _SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$")
 
-SANDBOX_DATA_DIR = ".parachute/sandbox"
-
 
 def validate_workspace_slug(slug: str) -> None:
     """Validate a workspace slug. Raises ValueError on invalid input."""
