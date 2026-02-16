@@ -81,8 +81,8 @@ async def query_streaming(
         system_prompt: Full custom system prompt (overrides preset if provided)
         system_prompt_append: Text to append to Claude Code preset (ignored if system_prompt is set)
         use_claude_code_preset: If True (default), use Claude Code's system prompt as base
-        setting_sources: List of setting sources for SDK config loading (optional).
-                        Parachute loads CLAUDE.md explicitly — this is not used by default.
+        setting_sources: List of setting sources for SDK config loading.
+                        Pass ["project"] to enable project-level .claude/ discovery.
         cwd: Working directory for the agent session
         resume: Session ID to resume
         tools: List of allowed tools
@@ -97,8 +97,9 @@ async def query_streaming(
         SDK events as dictionaries
 
     Note:
-        Parachute loads CLAUDE.md files explicitly and passes them via system_prompt_append.
-        setting_sources is not used — all SDK parameters are explicitly constructed.
+        Parachute passes setting_sources=["project"] for project-level discovery
+        (CLAUDE.md, .claude/ commands/skills/agents). Vault-level CLAUDE.md is
+        appended separately via system_prompt_append.
     """
     # Import the SDK
     from claude_agent_sdk import query as sdk_query, ClaudeAgentOptions, ClaudeSDKError
