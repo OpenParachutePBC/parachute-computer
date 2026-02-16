@@ -491,7 +491,7 @@ class SessionManager:
         Search all SDK project directories for a transcript file.
 
         This is a fallback when we don't know the working directory that was
-        used when the session was created (e.g., curator sessions).
+        used when the session was created (e.g., daily agent sessions).
 
         Searches in two locations:
         1. {vault}/.claude/projects/ - new vault-based location (bare metal)
@@ -557,7 +557,7 @@ class SessionManager:
         Load messages from SDK JSONL file by session ID.
 
         This is a public method that can be used to load messages for any SDK
-        session, including curator sessions that don't have a corresponding
+        session, including daily agent sessions that don't have a corresponding
         database entry.
 
         Args:
@@ -931,7 +931,7 @@ class SessionManager:
         """
         Get messages from a session, optionally after a certain index.
 
-        Used by the curator to get only new messages since last curation.
+        Get messages from a session, optionally filtering by index.
 
         Args:
             session_id: The session to get messages from

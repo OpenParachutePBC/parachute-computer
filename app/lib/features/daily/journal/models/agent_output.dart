@@ -1,4 +1,4 @@
-/// Output from a daily agent (curator, content-scout, etc.)
+/// Output from a daily agent (reflections, content-scout, etc.)
 ///
 /// Agent outputs are markdown files with YAML frontmatter stored in
 /// configurable paths like Daily/reflections/{date}.md or Daily/content-ideas/{date}.md

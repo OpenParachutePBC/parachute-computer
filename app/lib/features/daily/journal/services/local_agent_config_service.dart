@@ -66,7 +66,7 @@ class LocalAgentConfigService {
   Future<DailyAgentConfig?> _parseAgentFile(File file) async {
     final content = await file.readAsString();
 
-    // Extract name from filename (e.g., "curator.md" -> "curator")
+    // Extract name from filename (e.g., "content-scout.md" -> "content-scout")
     final filename = file.uri.pathSegments.last;
     final name = filename.replaceAll('.md', '');
 

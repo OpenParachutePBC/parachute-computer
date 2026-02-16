@@ -5,7 +5,7 @@ import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
 import '../models/agent_output.dart';
-import '../screens/curator_log_screen.dart';
+import '../screens/agent_log_screen.dart';
 import '../../../chat/widgets/inline_audio_player.dart';
 
 /// Expandable header showing output from a daily agent
@@ -153,7 +153,7 @@ class _AgentOutputHeaderState extends State<AgentOutputHeader>
                     onPressed: () {
                       Navigator.of(context).push(
                         MaterialPageRoute(
-                          builder: (context) => CuratorLogScreen(
+                          builder: (context) => AgentLogScreen(
                             agentName: widget.agentConfig.name,
                             displayName: widget.agentConfig.displayName,
                           ),

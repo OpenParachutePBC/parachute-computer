@@ -11,25 +11,25 @@ import 'package:parachute/core/providers/base_server_provider.dart';
 /// - Highlight agent responses prominently
 /// - Tool calls shown with expandable details
 /// - Clean preview for collapsed content
-class CuratorLogScreen extends ConsumerStatefulWidget {
-  /// The agent name. If null, shows the curator log (for backwards compatibility).
+class AgentLogScreen extends ConsumerStatefulWidget {
+  /// The agent name.
   final String? agentName;
 
   /// Display name for the agent (used in title).
   final String? displayName;
 
-  const CuratorLogScreen({
+  const AgentLogScreen({
     super.key,
     this.agentName,
     this.displayName,
   });
 
   @override
-  ConsumerState<CuratorLogScreen> createState() => _CuratorLogScreenState();
+  ConsumerState<AgentLogScreen> createState() => _AgentLogScreenState();
 }
 
-class _CuratorLogScreenState extends ConsumerState<CuratorLogScreen> {
-  CuratorTranscript? _transcript;
+class _AgentLogScreenState extends ConsumerState<AgentLogScreen> {
+  AgentTranscript? _transcript;
   bool _isLoading = true;
   String? _error;
 
@@ -37,7 +37,7 @@ class _CuratorLogScreenState extends ConsumerState<CuratorLogScreen> {
       ? '${widget.displayName} Log'
       : widget.agentName != null
           ? '${_formatAgentName(widget.agentName!)} Log'
-          : 'Curator Log';
+          : 'Agent Log';
 
   String _formatAgentName(String name) {
     return name
@@ -53,7 +53,7 @@ class _CuratorLogScreenState extends ConsumerState<CuratorLogScreen> {
   }
 
   Future<void> _loadTranscript() async {
-    debugPrint('[CuratorLogScreen] Loading transcript for agent: ${widget.agentName}');
+    debugPrint('[AgentLogScreen] Loading transcript for agent: ${widget.agentName}');
     setState(() {
       _isLoading = true;
       _error = null;
@@ -61,23 +61,22 @@ class _CuratorLogScreenState extends ConsumerState<CuratorLogScreen> {
 
     try {
       final service = ref.read(baseServerServiceProvider);
-      final CuratorTranscript? transcript;
+      final AgentTranscript? transcript;
 
       if (widget.agentName != null) {
         transcript = await service.getAgentTranscript(widget.agentName!, limit: 100);
       } else {
-        // Legacy path for when no agent name specified
-        transcript = await service.getCuratorTranscript(limit: 100);
+        transcript = null;
       }
 
-      debugPrint('[CuratorLogScreen] Got transcript: hasTranscript=${transcript?.hasTranscript}, messages=${transcript?.messages.length}');
+      debugPrint('[AgentLogScreen] Got transcript: hasTranscript=${transcript?.hasTranscript}, messages=${transcript?.messages.length}');
 
       setState(() {
         _transcript = transcript;
         _isLoading = false;
       });
     } catch (e) {
-      debugPrint('[CuratorLogScreen] Error: $e');
+      debugPrint('[AgentLogScreen] Error: $e');
       setState(() {
         _error = e.toString();
         _isLoading = false;
@@ -172,7 +171,7 @@ class _CuratorLogScreenState extends ConsumerState<CuratorLogScreen> {
         const SizedBox(height: 16),
 
         // Messages
-        ..._transcript!.messages.map((msg) => _CuratorMessageBubble(
+        ..._transcript!.messages.map((msg) => _AgentMessageBubble(
               message: msg,
               colorScheme: colorScheme,
               theme: theme,
@@ -184,7 +183,7 @@ class _CuratorLogScreenState extends ConsumerState<CuratorLogScreen> {
 
 /// Header showing session info
 class _SessionHeader extends StatelessWidget {
-  final CuratorTranscript transcript;
+  final AgentTranscript transcript;
   final String? agentDisplayName;
   final ColorScheme colorScheme;
   final ThemeData theme;
@@ -236,29 +235,29 @@ class _SessionHeader extends StatelessWidget {
   }
 }
 
-/// A single message bubble - user messages collapsed, curator expanded
-class _CuratorMessageBubble extends StatefulWidget {
+/// A single message bubble - user messages collapsed, agent expanded
+class _AgentMessageBubble extends StatefulWidget {
   final TranscriptMessage message;
   final ColorScheme colorScheme;
   final ThemeData theme;
 
-  const _CuratorMessageBubble({
+  const _AgentMessageBubble({
     required this.message,
     required this.colorScheme,
     required this.theme,
   });
 
   @override
-  State<_CuratorMessageBubble> createState() => _CuratorMessageBubbleState();
+  State<_AgentMessageBubble> createState() => _AgentMessageBubbleState();
 }
 
-class _CuratorMessageBubbleState extends State<_CuratorMessageBubble> {
+class _AgentMessageBubbleState extends State<_AgentMessageBubble> {
   late bool _isExpanded;
 
   @override
   void initState() {
     super.initState();
-    // Curator messages start expanded, tool results start collapsed
+    // Agent messages start expanded, tool results start collapsed
     _isExpanded = widget.message.isAssistant;
   }
 
@@ -314,7 +313,7 @@ class _CuratorMessageBubbleState extends State<_CuratorMessageBubble> {
                   ),
                   const SizedBox(width: 4),
                   Text(
-                    isAssistant ? 'Curator' : 'Tool Result',
+                    isAssistant ? 'Agent' : 'Tool Result',
                     style: theme.textTheme.labelSmall?.copyWith(
                       fontWeight: FontWeight.w500,
                       color: isAssistant ? colorScheme.primary : colorScheme.outline,

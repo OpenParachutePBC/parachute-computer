@@ -5,7 +5,7 @@ This module handles:
 1. Discovering folders with AGENTS.md or CLAUDE.md files
 2. Building parent chains for selected folders
 3. Loading context content from the chain
-4. Providing context info to the curator
+4. Providing context info to agents
 
 See docs/AGENTS_CONTEXT_ARCHITECTURE.md for full design.
 """

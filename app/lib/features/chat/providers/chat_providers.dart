@@ -12,7 +12,6 @@
 // - chat_context_providers.dart: Context folders and context files
 // - chat_streaming_providers.dart: SSE streaming state
 // - chat_ui_providers.dart: UI state (scroll, input, vault browsing)
-// - chat_curator_providers.dart: Session curation, chat log, titles
 // - chat_import_providers.dart: Import service
 //
 // ============================================================
@@ -34,9 +33,6 @@ export 'chat_streaming_providers.dart';
 
 // UI providers
 export 'chat_ui_providers.dart';
-
-// Curator providers
-export 'chat_curator_providers.dart';
 
 // Import providers
 export 'chat_import_providers.dart';

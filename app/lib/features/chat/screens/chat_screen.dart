@@ -395,7 +395,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                 icon: const Icon(Icons.folder_outlined, size: 20),
                 tooltip: 'Set working directory',
               ),
-            // Unified session settings (replaces config, context, info, curator)
+            // Unified session settings
             if (chatState.sessionId != null)
               IconButton(
                 onPressed: () => _showUnifiedSettings(context),
