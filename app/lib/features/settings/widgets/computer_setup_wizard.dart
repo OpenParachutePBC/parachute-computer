@@ -39,8 +39,7 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
   bool _isLoading = false;
   String? _error;
 
-
-  // Bare metal path state
+  // Setup state
   bool _homebrewInstalledBareMetal = false;
   bool _pythonInstalled = false;
   String? _pythonVersion;

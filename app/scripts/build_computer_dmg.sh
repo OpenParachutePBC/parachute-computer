@@ -3,8 +3,7 @@
 #
 # This creates a distributable .dmg with:
 # - Parachute.app (Flutter app built with FLAVOR=computer)
-# - Bundled Lima config
-# - Bundled Parachute Computer (raw Python, runs in Lima VM)
+# - Bundled Parachute Computer (Python server)
 #
 # Prerequisites:
 # - Flutter SDK
@@ -12,35 +11,13 @@
 #
 # Usage:
 #   cd app && ./scripts/build_computer_dmg.sh
-#
-# Developer usage (custom base path for Lima to mount):
-#   cd app && ./scripts/build_computer_dmg.sh --dev-base-path ~/Parachute/projects/parachute/base
-#
-# The --dev-base-path option creates a Lima config that mounts your local base
-# instead of ~/Library/Application Support/Parachute/base
 
 set -e
-
-# Parse arguments
-DEV_BASE_PATH=""
-while [[ $# -gt 0 ]]; do
-  case $1 in
-    --dev-base-path)
-      DEV_BASE_PATH="$2"
-      shift 2
-      ;;
-    *)
-      echo "Unknown option: $1"
-      exit 1
-      ;;
-  esac
-done
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_DIR="$(dirname "$SCRIPT_DIR")"
 PROJECT_ROOT="$(dirname "$APP_DIR")"
-BASE_DIR="$PROJECT_ROOT/base"
-LIMA_DIR="$APP_DIR/lima"
+COMPUTER_DIR="$PROJECT_ROOT/computer"
 DIST_DIR="$APP_DIR/dist"
 BUILD_DIR="$DIST_DIR/computer-build"
 
@@ -54,11 +31,6 @@ fi
 
 APP_NAME="Parachute"
 DMG_NAME="ParachuteComputer-$VERSION"
-
-if [ -n "$DEV_BASE_PATH" ]; then
-  echo "Developer mode: using custom base path: $DEV_BASE_PATH"
-  DMG_NAME="ParachuteComputer-$VERSION-dev"
-fi
 
 echo "╔══════════════════════════════════════════════════════╗"
 echo "║        Building Parachute Computer                   ║"
@@ -86,48 +58,34 @@ cp -R "$APP_BUILD_PATH" "$BUILD_DIR/"
 
 # Create Resources directory structure
 RESOURCES_DIR="$BUILD_DIR/$APP_NAME.app/Contents/Resources"
-mkdir -p "$RESOURCES_DIR/lima"
-mkdir -p "$RESOURCES_DIR/base"
-
-# Bundle Lima config
-echo "→ Bundling Lima configuration..."
-if [ -n "$DEV_BASE_PATH" ]; then
-  # Developer mode: modify Lima config to mount custom base path
-  echo "  Configuring Lima for developer base path: $DEV_BASE_PATH"
-  sed "s|~/Library/Application Support/Parachute/base|$DEV_BASE_PATH|g" \
-    "$LIMA_DIR/parachute.yaml" > "$RESOURCES_DIR/lima/parachute.yaml"
-else
-  cp "$LIMA_DIR/parachute.yaml" "$RESOURCES_DIR/lima/"
-fi
-cp "$LIMA_DIR/setup.sh" "$RESOURCES_DIR/lima/" 2>/dev/null || true
+mkdir -p "$RESOURCES_DIR/computer"
 
 # Bundle Parachute Computer (excluding venv, __pycache__, etc.)
-# In developer mode, we still bundle base for reference but the VM uses the mounted path
 echo "→ Bundling Parachute Computer..."
 rsync -av --exclude='venv' --exclude='__pycache__' --exclude='*.pyc' \
   --exclude='.pytest_cache' --exclude='*.egg-info' --exclude='.git' \
-  "$BASE_DIR/" "$RESOURCES_DIR/base/"
+  "$COMPUTER_DIR/" "$RESOURCES_DIR/computer/"
 
 # Create install helper script
 echo "→ Creating install helper..."
-cat > "$RESOURCES_DIR/install-base.sh" << 'EOF'
+cat > "$RESOURCES_DIR/install-computer.sh" << 'EOF'
 #!/bin/bash
 # Installs Parachute Computer to the vault if not present
 # Called by the app on first run
 
 VAULT_PATH="${1:-$HOME/Parachute}"
-BASE_DEST="$VAULT_PATH/projects/parachute/base"
+COMPUTER_DEST="$VAULT_PATH/projects/parachute/computer"
 
-if [ ! -d "$BASE_DEST" ]; then
-  echo "Installing Parachute Computer to $BASE_DEST..."
-  mkdir -p "$(dirname "$BASE_DEST")"
-  cp -R "$(dirname "$0")/base" "$BASE_DEST"
+if [ ! -d "$COMPUTER_DEST" ]; then
+  echo "Installing Parachute Computer to $COMPUTER_DEST..."
+  mkdir -p "$(dirname "$COMPUTER_DEST")"
+  cp -R "$(dirname "$0")/computer" "$COMPUTER_DEST"
   echo "Parachute Computer installed."
 else
-  echo "Parachute Computer already exists at $BASE_DEST"
+  echo "Parachute Computer already exists at $COMPUTER_DEST"
 fi
 EOF
-chmod +x "$RESOURCES_DIR/install-base.sh"
+chmod +x "$RESOURCES_DIR/install-computer.sh"
 
 # Code signing (if CODESIGN_IDENTITY is set)
 if [ -n "$CODESIGN_IDENTITY" ]; then
