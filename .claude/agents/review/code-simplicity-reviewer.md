@@ -33,7 +33,7 @@ When reviewing code, you will:
    - Eliminate extensibility points without clear use cases
    - Question generic solutions for specific problems
    - Remove "just in case" code
-   - Never flag `docs/plans/*.md` or `docs/solutions/*.md` for removal — these are engineering pipeline artifacts created by `/para:plan` and used as living documents by `/para:work`
+   - Never flag `docs/plans/*.md` or `docs/solutions/*.md` for removal — these are engineering pipeline artifacts created by `/para-plan` and used as living documents by `/para-work`
 
 6. **Optimize for Readability**:
    - Prefer self-documenting code over comments
