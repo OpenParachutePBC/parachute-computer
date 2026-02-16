@@ -92,38 +92,6 @@ CREATE TABLE IF NOT EXISTS metadata (
     updated_at TEXT NOT NULL
 );
 
--- CURATOR REMOVED: curator_sessions table
--- CREATE TABLE IF NOT EXISTS curator_sessions (
---     id TEXT PRIMARY KEY,
---     parent_session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
---     sdk_session_id TEXT,
---     last_run_at TEXT,
---     last_message_index INTEGER DEFAULT 0,
---     context_files TEXT,
---     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
--- );
---
--- CREATE INDEX IF NOT EXISTS idx_curator_sessions_parent ON curator_sessions(parent_session_id);
-
--- CURATOR REMOVED: curator_queue table
--- CREATE TABLE IF NOT EXISTS curator_queue (
---     id INTEGER PRIMARY KEY AUTOINCREMENT,
---     parent_session_id TEXT NOT NULL,
---     curator_session_id TEXT REFERENCES curator_sessions(id),
---     trigger_type TEXT NOT NULL,
---     message_count INTEGER,
---     queued_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
---     started_at TEXT,
---     completed_at TEXT,
---     status TEXT DEFAULT 'pending',
---     result TEXT,
---     error TEXT,
---     tool_calls TEXT
--- );
---
--- CREATE INDEX IF NOT EXISTS idx_curator_queue_status ON curator_queue(status);
--- CREATE INDEX IF NOT EXISTS idx_curator_queue_parent ON curator_queue(parent_session_id);
-
 -- Session context folders (folder-based context system)
 -- Each row is a folder path that provides context for a session
 -- The full parent chain is computed at runtime
@@ -194,20 +162,6 @@ class Database:
 
     async def _run_migrations(self) -> None:
         """Run any needed migrations for existing databases."""
-        # CURATOR REMOVED: Migration for tool_calls column on curator_queue
-        # try:
-        #     async with self._connection.execute(
-        #         "SELECT tool_calls FROM curator_queue LIMIT 1"
-        #     ):
-        #         pass  # Column exists
-        # except Exception:
-        #     # Column doesn't exist, add it
-        #     await self._connection.execute(
-        #         "ALTER TABLE curator_queue ADD COLUMN tool_calls TEXT"
-        #     )
-        #     await self._connection.commit()
-        #     logger.info("Added tool_calls column to curator_queue")
-
         # Migration: Add vault_root column to sessions if missing (v9)
         try:
             async with self._connection.execute(

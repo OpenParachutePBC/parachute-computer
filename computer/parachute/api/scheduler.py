@@ -56,11 +56,6 @@ async def reload_scheduler_config() -> dict[str, Any]:
     return result
 
 
-# DAILY_AGENT REMOVED - trigger_daily_curator_now endpoint removed
-# This endpoint depended on daily_curator which is excluded from modular architecture.
-# Use POST /scheduler/agents/{agent_name}/trigger instead when daily_agent is available.
-
-
 @router.post("/scheduler/agents/{agent_name}/trigger")
 async def trigger_agent(agent_name: str) -> dict[str, Any]:
     """
@@ -73,13 +68,6 @@ async def trigger_agent(agent_name: str) -> dict[str, Any]:
     This endpoint will return an error until then.
     """
     settings = get_settings()
-
-    # DAILY_AGENT REMOVED - cannot verify agent config without daily_agent module
-    # When daily_agent is available in Phase 3, restore the config check:
-    # from parachute.core.daily_agent import get_daily_agent_config
-    # config = get_daily_agent_config(settings.vault_path, agent_name)
-    # if not config:
-    #     raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found")
 
     result = await trigger_agent_now(
         agent_name=agent_name,

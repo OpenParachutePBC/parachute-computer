@@ -1128,15 +1128,6 @@ class Orchestrator:
 
             duration_ms = int((time.time() - start_time) * 1000)
 
-            # CURATOR REMOVED - curator task queuing disabled for modular architecture
-            # logger.info(f"About to queue curator: final_session_id={final_session_id}, is_pending={final_session_id == 'pending'}")
-            # if final_session_id and final_session_id != "pending":
-            #     await self._queue_curator_task(
-            #         session_id=final_session_id,
-            #         message_count=session.message_count + 2,
-            #         tool_calls=tool_calls if tool_calls else None,
-            #     )
-
             # Yield done event
             yield DoneEvent(
                 response=result_text,
@@ -1717,46 +1708,6 @@ The user is now continuing this conversation with you. Respond naturally as if y
         if len(text) > max_length:
             return text[:max_length - 3] + "..."
         return text
-
-    # =========================================================================
-    # CURATOR REMOVED - curator integration disabled for modular architecture
-    # =========================================================================
-
-    # async def _queue_curator_task(
-    #     self,
-    #     session_id: str,
-    #     message_count: int,
-    #     tool_calls: Optional[list[dict]] = None,
-    # ) -> None:
-    #     """
-    #     Queue a curator task to run in the background.
-    #
-    #     Called after a message completes. The curator will:
-    #     - Update session title if needed
-    #     - Log commits to Daily/chat-log/
-    #
-    #     This is non-blocking - the task is queued and processed asynchronously.
-    #     """
-    #     logger.info(f"_queue_curator_task called for session {session_id[:8]}...")
-    #     try:
-    #         from parachute.core.curator_service import get_curator_service
-    #
-    #         curator = await get_curator_service()
-    #         logger.info(f"Got curator service, queuing task...")
-    #         task_id = await curator.queue_task(
-    #             parent_session_id=session_id,
-    #             trigger_type="message_done",
-    #             message_count=message_count,
-    #             tool_calls=tool_calls,
-    #         )
-    #         logger.info(f"Auto-queued curator task {task_id} for session {session_id[:8]}...")
-    #
-    #     except RuntimeError as e:
-    #         # Curator service not initialized - skip silently
-    #         logger.info(f"Curator service not available: {e}")
-    #     except Exception as e:
-    #         # Don't fail the main request if curator fails
-    #         logger.warning(f"Failed to queue curator task: {e}", exc_info=True)
 
     # Note: Vault migration is now handled by the standalone script:
     # python -m scripts.migrate_vault --from /old/vault --to /new/vault

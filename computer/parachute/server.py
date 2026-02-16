@@ -29,7 +29,6 @@ from parachute.api import api_router
 from parachute.config import get_settings, Settings
 from parachute.core.module_loader import ModuleLoader
 from parachute.core.orchestrator import Orchestrator
-# CURATOR REMOVED - curator service excluded from modular architecture
 from parachute.core.scheduler import init_scheduler, stop_scheduler
 from parachute.db.database import Database, init_database, close_database
 from parachute.lib.logger import setup_logging, get_logger
@@ -80,8 +79,6 @@ async def lifespan(app: FastAPI):
 
     # Discover existing persistent workspace containers
     await orchestrator.reconcile_containers()
-
-    # CURATOR REMOVED - curator service excluded from modular architecture
 
     # Initialize scheduler for automated tasks
     scheduler = await init_scheduler(settings.vault_path)
@@ -172,7 +169,6 @@ async def lifespan(app: FastAPI):
     bot_connectors.clear()
 
     await stop_scheduler()
-    # CURATOR REMOVED - no curator to stop
     await close_database()
     app.state.orchestrator = None
     app.state.sandbox = None
