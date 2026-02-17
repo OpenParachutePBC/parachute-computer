@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
+import 'package:parachute/features/settings/screens/settings_screen.dart';
 import '../models/chat_session.dart';
 import '../providers/chat_providers.dart';
 import '../services/chat_service.dart';
@@ -83,6 +84,17 @@ class _SessionListPanelState extends ConsumerState<SessionListPanel> {
             _buildWorkspaceChip(isDark, activeSlug, workspacesAsync),
           ],
           const Spacer(),
+          IconButton(
+            icon: Icon(
+              Icons.settings_outlined,
+              size: 20,
+              color: isDark ? BrandColors.nightTextSecondary : BrandColors.stone,
+            ),
+            onPressed: () => Navigator.of(context, rootNavigator: true).push(
+              MaterialPageRoute(builder: (_) => const SettingsScreen()),
+            ),
+            tooltip: 'Settings',
+          ),
           IconButton(
             icon: Icon(
               _showSearch ? Icons.search_off : Icons.search,

@@ -663,18 +663,23 @@ class _TabShellState extends ConsumerState<_TabShell> with WidgetsBindingObserve
         ],
       ),
       bottomNavigationBar: showNavBar
-          ? NavigationBar(
-              selectedIndex: safeIndex,
-              onDestinationSelected: (index) {
-                // Map visual index back to actual tab index
-                final newActualIndex = showAllTabs ? index : 1;
-                ref.read(currentTabIndexProvider.notifier).state = newActualIndex;
-              },
-              backgroundColor: isDark ? BrandColors.nightSurfaceElevated : BrandColors.softWhite,
-              indicatorColor: isDark
-                  ? BrandColors.nightTurquoise.withValues(alpha: 0.2)
-                  : BrandColors.turquoise.withValues(alpha: 0.2),
-              destinations: destinations,
+          ? Padding(
+              padding: EdgeInsets.only(
+                bottom: MediaQuery.viewInsetsOf(context).bottom,
+              ),
+              child: NavigationBar(
+                selectedIndex: safeIndex,
+                onDestinationSelected: (index) {
+                  // Map visual index back to actual tab index
+                  final newActualIndex = showAllTabs ? index : 1;
+                  ref.read(currentTabIndexProvider.notifier).state = newActualIndex;
+                },
+                backgroundColor: isDark ? BrandColors.nightSurfaceElevated : BrandColors.softWhite,
+                indicatorColor: isDark
+                    ? BrandColors.nightTurquoise.withValues(alpha: 0.2)
+                    : BrandColors.turquoise.withValues(alpha: 0.2),
+                destinations: destinations,
+              ),
             )
           : null,
     );

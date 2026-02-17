@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
+import 'package:parachute/features/settings/screens/settings_screen.dart';
 import '../providers/brain_providers.dart';
 import '../widgets/brain_entity_card.dart';
 import 'brain_entity_screen.dart';
@@ -78,6 +79,16 @@ class _BrainScreenState extends ConsumerState<BrainScreen> {
         backgroundColor: isDark ? BrandColors.nightSurface : BrandColors.softWhite,
         elevation: 0,
         actions: [
+          IconButton(
+            icon: Icon(
+              Icons.settings_outlined,
+              color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+            ),
+            tooltip: 'Settings',
+            onPressed: () => Navigator.of(context, rootNavigator: true).push(
+              MaterialPageRoute(builder: (_) => const SettingsScreen()),
+            ),
+          ),
           IconButton(
             icon: Icon(
               Icons.refresh,

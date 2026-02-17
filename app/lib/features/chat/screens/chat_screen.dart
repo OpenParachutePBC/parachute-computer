@@ -814,32 +814,35 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             ],
           ),
           if (hasBadges)
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (chatState.model != null) ...[
-                    _appBarBadge(
-                      _getModelBadge(chatState.model!),
-                      _getModelColor(chatState.model!),
-                    ),
-                    const SizedBox(width: Spacing.xs),
+            SizedBox(
+              height: 16,
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (chatState.model != null) ...[
+                      _appBarBadge(
+                        _getModelBadge(chatState.model!),
+                        _getModelColor(chatState.model!),
+                      ),
+                      const SizedBox(width: Spacing.xs),
+                    ],
+                    if (chatState.promptMetadata?.agentName != null &&
+                        chatState.promptMetadata!.agentName != 'Vault Agent') ...[
+                      _appBarBadge(
+                        _getAgentBadge(chatState.promptMetadata!.agentName!),
+                        BrandColors.turquoise,
+                      ),
+                      const SizedBox(width: Spacing.xs),
+                    ],
+                    if (chatState.workingDirectory != null)
+                      _appBarBadge(
+                        chatState.workingDirectory!.split('/').last,
+                        isDark ? BrandColors.nightForest : BrandColors.forest,
+                      ),
                   ],
-                  if (chatState.promptMetadata?.agentName != null &&
-                      chatState.promptMetadata!.agentName != 'Vault Agent') ...[
-                    _appBarBadge(
-                      _getAgentBadge(chatState.promptMetadata!.agentName!),
-                      BrandColors.turquoise,
-                    ),
-                    const SizedBox(width: Spacing.xs),
-                  ],
-                  if (chatState.workingDirectory != null)
-                    _appBarBadge(
-                      chatState.workingDirectory!.split('/').last,
-                      isDark ? BrandColors.nightForest : BrandColors.forest,
-                    ),
-                ],
+                ),
               ),
             ),
         ],
