@@ -297,6 +297,7 @@ class _SessionListPanelState extends ConsumerState<SessionListPanel> {
 
     showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (sheetContext) {
         return ConstrainedBox(
