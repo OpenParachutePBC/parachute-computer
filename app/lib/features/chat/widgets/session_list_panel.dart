@@ -297,128 +297,138 @@ class _SessionListPanelState extends ConsumerState<SessionListPanel> {
 
     showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (sheetContext) {
-        return Container(
-          decoration: BoxDecoration(
-            color: isDark ? BrandColors.nightSurface : Colors.white,
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+        return ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.sizeOf(sheetContext).height * 0.85,
           ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // Drag handle
-              Padding(
-                padding: EdgeInsets.only(top: Spacing.sm),
-                child: Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: isDark ? BrandColors.nightTextSecondary : BrandColors.stone,
-                    borderRadius: BorderRadius.circular(2),
+          child: Container(
+            decoration: BoxDecoration(
+              color: isDark ? BrandColors.nightSurface : Colors.white,
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Drag handle
+                Padding(
+                  padding: EdgeInsets.only(top: Spacing.sm),
+                  child: Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: isDark ? BrandColors.nightTextSecondary : BrandColors.stone,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
                   ),
                 ),
-              ),
-              Padding(
-                padding: EdgeInsets.all(Spacing.md),
-                child: Text(
-                  'Filter by Workspace',
-                  style: TextStyle(
-                    fontSize: TypographyTokens.titleSmall,
-                    fontWeight: FontWeight.w600,
-                    color: isDark ? BrandColors.nightText : BrandColors.ink,
+                Padding(
+                  padding: EdgeInsets.all(Spacing.md),
+                  child: Text(
+                    'Filter by Workspace',
+                    style: TextStyle(
+                      fontSize: TypographyTokens.titleSmall,
+                      fontWeight: FontWeight.w600,
+                      color: isDark ? BrandColors.nightText : BrandColors.ink,
+                    ),
                   ),
                 ),
-              ),
-              // "All Chats" option
-              ListTile(
-                leading: Icon(
-                  Icons.chat_bubble_outline,
-                  color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
-                ),
-                title: Text(
-                  'All Chats',
-                  style: TextStyle(
-                    color: isDark ? BrandColors.nightText : BrandColors.ink,
-                    fontWeight: activeSlug == null ? FontWeight.w600 : FontWeight.w400,
+                // "All Chats" option
+                ListTile(
+                  leading: Icon(
+                    Icons.chat_bubble_outline,
+                    color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
                   ),
+                  title: Text(
+                    'All Chats',
+                    style: TextStyle(
+                      color: isDark ? BrandColors.nightText : BrandColors.ink,
+                      fontWeight: activeSlug == null ? FontWeight.w600 : FontWeight.w400,
+                    ),
+                  ),
+                  trailing: activeSlug == null
+                      ? Icon(Icons.check, color: isDark ? BrandColors.nightForest : BrandColors.forest)
+                      : null,
+                  onTap: () {
+                    ref.read(activeWorkspaceProvider.notifier).state = null;
+                    Navigator.pop(sheetContext);
+                  },
                 ),
-                trailing: activeSlug == null
-                    ? Icon(Icons.check, color: isDark ? BrandColors.nightForest : BrandColors.forest)
-                    : null,
-                onTap: () {
-                  ref.read(activeWorkspaceProvider.notifier).state = null;
-                  Navigator.pop(sheetContext);
-                },
-              ),
-              // Workspace list
-              workspacesAsync.when(
-                data: (workspaces) {
-                  if (workspaces.isEmpty) {
-                    return Padding(
-                      padding: EdgeInsets.all(Spacing.lg),
-                      child: Text(
-                        'No workspaces configured',
-                        style: TextStyle(
-                          color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+                // Scrollable workspace list
+                Flexible(
+                  child: SingleChildScrollView(
+                    child: workspacesAsync.when(
+                      data: (workspaces) {
+                        if (workspaces.isEmpty) {
+                          return Padding(
+                            padding: EdgeInsets.all(Spacing.lg),
+                            child: Text(
+                              'No workspaces configured',
+                              style: TextStyle(
+                                color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+                              ),
+                            ),
+                          );
+                        }
+                        return Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: workspaces.map((ws) {
+                            final isActive = ws.slug == activeSlug;
+                            return ListTile(
+                              leading: Icon(
+                                Icons.workspaces,
+                                color: isActive
+                                    ? (isDark ? BrandColors.nightForest : BrandColors.forest)
+                                    : (isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood),
+                              ),
+                              title: Text(
+                                ws.name,
+                                style: TextStyle(
+                                  color: isDark ? BrandColors.nightText : BrandColors.ink,
+                                  fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
+                                ),
+                              ),
+                              subtitle: ws.description.isNotEmpty
+                                  ? Text(
+                                      ws.description,
+                                      style: TextStyle(
+                                        fontSize: TypographyTokens.labelSmall,
+                                        color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+                                      ),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    )
+                                  : null,
+                              trailing: isActive
+                                  ? Icon(Icons.check, color: isDark ? BrandColors.nightForest : BrandColors.forest)
+                                  : null,
+                              onTap: () {
+                                ref.read(activeWorkspaceProvider.notifier).state = ws.slug;
+                                Navigator.pop(sheetContext);
+                              },
+                            );
+                          }).toList(),
+                        );
+                      },
+                      loading: () => Padding(
+                        padding: EdgeInsets.all(Spacing.lg),
+                        child: const CircularProgressIndicator(),
+                      ),
+                      error: (_, _) => Padding(
+                        padding: EdgeInsets.all(Spacing.lg),
+                        child: Text(
+                          'Failed to load workspaces',
+                          style: TextStyle(color: BrandColors.error),
                         ),
                       ),
-                    );
-                  }
-                  return Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: workspaces.map((ws) {
-                      final isActive = ws.slug == activeSlug;
-                      return ListTile(
-                        leading: Icon(
-                          Icons.workspaces,
-                          color: isActive
-                              ? (isDark ? BrandColors.nightForest : BrandColors.forest)
-                              : (isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood),
-                        ),
-                        title: Text(
-                          ws.name,
-                          style: TextStyle(
-                            color: isDark ? BrandColors.nightText : BrandColors.ink,
-                            fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
-                          ),
-                        ),
-                        subtitle: ws.description.isNotEmpty
-                            ? Text(
-                                ws.description,
-                                style: TextStyle(
-                                  fontSize: TypographyTokens.labelSmall,
-                                  color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
-                                ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              )
-                            : null,
-                        trailing: isActive
-                            ? Icon(Icons.check, color: isDark ? BrandColors.nightForest : BrandColors.forest)
-                            : null,
-                        onTap: () {
-                          ref.read(activeWorkspaceProvider.notifier).state = ws.slug;
-                          Navigator.pop(sheetContext);
-                        },
-                      );
-                    }).toList(),
-                  );
-                },
-                loading: () => Padding(
-                  padding: EdgeInsets.all(Spacing.lg),
-                  child: const CircularProgressIndicator(),
-                ),
-                error: (_, _) => Padding(
-                  padding: EdgeInsets.all(Spacing.lg),
-                  child: Text(
-                    'Failed to load workspaces',
-                    style: TextStyle(color: BrandColors.error),
+                    ),
                   ),
                 ),
-              ),
-              SizedBox(height: Spacing.md),
-            ],
+                SizedBox(height: Spacing.md),
+              ],
+            ),
           ),
         );
       },

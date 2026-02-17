@@ -501,83 +501,97 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                 // Agent badge
                 if (chatState.promptMetadata?.agentName != null &&
                     chatState.promptMetadata!.agentName != 'Vault Agent')
-                  Container(
-                    margin: const EdgeInsets.only(right: Spacing.xs),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: Spacing.sm,
-                      vertical: Spacing.xxs,
-                    ),
-                    decoration: BoxDecoration(
-                      color: BrandColors.turquoise.withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.smart_toy, size: 12, color: BrandColors.turquoise),
-                        const SizedBox(width: 4),
-                        Text(
-                          _getAgentBadge(chatState.promptMetadata!.agentName!),
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.bold,
-                            color: BrandColors.turquoise,
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 120),
+                    child: Container(
+                      margin: const EdgeInsets.only(right: Spacing.xs),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: Spacing.sm,
+                        vertical: Spacing.xxs,
+                      ),
+                      decoration: BoxDecoration(
+                        color: BrandColors.turquoise.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.smart_toy, size: 12, color: BrandColors.turquoise),
+                          const SizedBox(width: 4),
+                          Flexible(
+                            child: Text(
+                              _getAgentBadge(chatState.promptMetadata!.agentName!),
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                                color: BrandColors.turquoise,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
                           ),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
 
                 // Model badge
                 if (chatState.model != null)
-                  Container(
-                    margin: const EdgeInsets.only(right: Spacing.xs),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: Spacing.sm,
-                      vertical: Spacing.xxs,
-                    ),
-                    decoration: BoxDecoration(
-                      color: _getModelColor(chatState.model!).withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(
-                      _getModelBadge(chatState.model!),
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
-                        color: _getModelColor(chatState.model!),
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 120),
+                    child: Container(
+                      margin: const EdgeInsets.only(right: Spacing.xs),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: Spacing.sm,
+                        vertical: Spacing.xxs,
+                      ),
+                      decoration: BoxDecoration(
+                        color: _getModelColor(chatState.model!).withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        _getModelBadge(chatState.model!),
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                          color: _getModelColor(chatState.model!),
+                        ),
+                        overflow: TextOverflow.ellipsis,
                       ),
                     ),
                   ),
 
                 // Working directory indicator
                 if (chatState.workingDirectory != null)
-                  Tooltip(
-                    message: chatState.workingDirectory!,
-                    child: InkWell(
-                      onTap: chatState.messages.isEmpty ? _showDirectoryPicker : null,
-                      borderRadius: BorderRadius.circular(4),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              Icons.folder_outlined,
-                              size: 16,
-                              color: isDark ? BrandColors.nightForest : BrandColors.forest,
-                            ),
-                            const SizedBox(width: 2),
-                            Text(
-                              chatState.workingDirectory!.split('/').last,
-                              style: TextStyle(
-                                fontSize: 11,
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 120),
+                    child: Tooltip(
+                      message: chatState.workingDirectory!,
+                      child: InkWell(
+                        onTap: chatState.messages.isEmpty ? _showDirectoryPicker : null,
+                        borderRadius: BorderRadius.circular(4),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.folder_outlined,
+                                size: 16,
                                 color: isDark ? BrandColors.nightForest : BrandColors.forest,
                               ),
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ],
+                              const SizedBox(width: 2),
+                              Flexible(
+                                child: Text(
+                                  chatState.workingDirectory!.split('/').last,
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: isDark ? BrandColors.nightForest : BrandColors.forest,
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                     ),
@@ -1661,6 +1675,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     if (widget.embeddedMode) {
       ref.read(currentSessionIdProvider.notifier).state = null;
       ref.read(newChatModeProvider.notifier).state = false;
+      ref.read(chatMessagesProvider.notifier).clearSession();
     } else {
       Navigator.of(context).pop();
     }
@@ -1725,26 +1740,22 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
   /// Resume an archived session - unarchive and enable input
   Future<void> _resumeSession(ChatSession session) async {
-    // Unarchive the session on the server
     try {
       await ref.read(unarchiveSessionProvider)(session.id);
+      // Only enable input on successful unarchive
+      ref.read(chatMessagesProvider.notifier).enableSessionInput(session);
     } on AppError catch (e) {
       debugPrint('[ChatScreen] Failed to unarchive session: $e');
-      if (mounted) {
-        showAppError(context, e);
-      }
-      // Continue anyway - the local state change is more important
+      if (mounted) showAppError(context, e);
+      // Session stays in read-only state
     } catch (e) {
       debugPrint('[ChatScreen] Unexpected error unarchiving session: $e');
-      // Continue anyway - the local state change is more important
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to resume session: $e')),
+        );
+      }
     }
-
-    // Clear the "viewing archived" state so the input becomes enabled
-    // The user can now type and send messages to resume the conversation
-    ref.read(chatMessagesProvider.notifier).enableSessionInput(session);
-
-    // Refresh sessions list to reflect the unarchived state
-    ref.invalidate(chatSessionsProvider);
   }
 }
 
