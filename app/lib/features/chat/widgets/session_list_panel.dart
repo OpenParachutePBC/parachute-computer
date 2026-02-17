@@ -301,7 +301,7 @@ class _SessionListPanelState extends ConsumerState<SessionListPanel> {
       builder: (sheetContext) {
         return ConstrainedBox(
           constraints: BoxConstraints(
-            maxHeight: MediaQuery.of(sheetContext).size.height * 0.85,
+            maxHeight: MediaQuery.sizeOf(sheetContext).height * 0.85,
           ),
           child: Container(
             decoration: BoxDecoration(
