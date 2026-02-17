@@ -59,21 +59,7 @@ The following paths are engineering pipeline artifacts and must never be flagged
 If a review agent flags any file in these directories for cleanup or removal, discard that finding during synthesis. Do not create a todo for it.
 </protected_artifacts>
 
-#### Choose Execution Mode
-
-<thinking>
-Decide whether to use standard parallel agents or agent team mode based on PR size and scope.
-</thinking>
-
-**Standard mode** (default — PRs touching < 15 files, single module):
-Run all review agents as parallel Task calls (fast, lower cost).
-
-**Agent Team mode** (PRs touching 15+ files, or spanning both `computer/` and `app/`):
-Create a review team with specialist teammates for coordinated parallel review. Better for large PRs where findings need cross-referencing and synthesis.
-
----
-
-#### Standard Mode: Parallel Agents
+#### Parallel Review Agents
 
 <parallel_tasks>
 
@@ -98,88 +84,6 @@ Run ALL or most of these agents at the same time. Select agents based on what th
 10. Task parachute-conventions-reviewer(PR content) - Module boundaries, trust levels, MCP design
 
 </parallel_tasks>
-
----
-
-#### Agent Team Mode: Coordinated Review Team
-
-For large PRs, use an agent team so reviewers can cross-reference findings and the lead can synthesize without context overflow.
-
-**Step 1: Create the review team**
-
-```
-TeamCreate(team_name: "review-pr-{number}", description: "Code review for PR #{number}: {title}")
-```
-
-**Step 2: Create review tasks (one per dimension)**
-
-```
-TaskCreate(subject: "Security review", description: "Run security-sentinel. Check for OWASP top 10, input validation, auth issues. PR diff: {diff summary}", status: "pending")
-TaskCreate(subject: "Architecture review", description: "Run architecture-strategist + agent-native-reviewer. Check component boundaries, patterns, agent accessibility.", status: "pending")
-TaskCreate(subject: "Performance review", description: "Run performance-oracle. Check for N+1 queries, memory leaks, unnecessary computation.", status: "pending")
-TaskCreate(subject: "Code quality review", description: "Run code-simplicity-reviewer + pattern-recognition-specialist. Check for complexity, duplication, anti-patterns.", status: "pending")
-TaskCreate(subject: "History & context review", description: "Run git-history-analyzer. Understand evolution of changed files, identify risky patterns.", status: "pending")
-TaskCreate(subject: "Conventions review", description: "Run parachute-conventions-reviewer. Check module boundaries, trust levels, MCP patterns.", status: "pending")
-
-# Conditional:
-TaskCreate(subject: "Python review", description: "Run python-reviewer on computer/ changes. FastAPI, Pydantic, async, type hints.", status: "pending")
-TaskCreate(subject: "Flutter review", description: "Run flutter-reviewer on app/ changes. Riverpod, widget composition, Dart 3.", status: "pending")
-```
-
-**Step 3: Spawn 3-4 specialist teammates**
-
-Each teammate claims related review tasks from the shared task list:
-
-```
-Task(subagent_type: "general-purpose", team_name: "review-pr-{number}", name: "security-reviewer",
-     prompt: "You are reviewing PR #{number} for security and conventions.
-     PR title: {title}. Branch: {branch}.
-     Fetch the PR diff with: gh pr diff {number}
-     Claim tasks from TaskList related to security and conventions.
-     Run the specified review agents (security-sentinel, parachute-conventions-reviewer).
-     Send your findings to the lead via SendMessage when done.
-     Format: severity (P1/P2/P3), file:line, description, recommendation.")
-
-Task(subagent_type: "general-purpose", team_name: "review-pr-{number}", name: "quality-reviewer",
-     prompt: "You are reviewing PR #{number} for code quality and patterns.
-     PR title: {title}. Branch: {branch}.
-     Fetch the PR diff with: gh pr diff {number}
-     Claim tasks from TaskList related to code quality, patterns, and language-specific review.
-     Run: code-simplicity-reviewer, pattern-recognition-specialist, plus python-reviewer or flutter-reviewer as applicable.
-     Send your findings to the lead via SendMessage when done.")
-
-Task(subagent_type: "general-purpose", team_name: "review-pr-{number}", name: "architecture-reviewer",
-     prompt: "You are reviewing PR #{number} for architecture, history, and agent-native design.
-     PR title: {title}. Branch: {branch}.
-     Fetch the PR diff with: gh pr diff {number}
-     Claim tasks from TaskList related to architecture, history, and agent-native review.
-     Run: architecture-strategist, agent-native-reviewer, git-history-analyzer.
-     Send your findings to the lead via SendMessage when done.")
-
-Task(subagent_type: "general-purpose", team_name: "review-pr-{number}", name: "performance-reviewer",
-     prompt: "You are reviewing PR #{number} for performance.
-     PR title: {title}. Branch: {branch}.
-     Fetch the PR diff with: gh pr diff {number}
-     Claim the performance review task from TaskList.
-     Run: performance-oracle.
-     Send your findings to the lead via SendMessage when done.")
-```
-
-**Step 4: Lead waits for findings, then synthesizes**
-
-- Monitor TaskList for completion
-- Collect SendMessage findings from each teammate
-- Proceed to "Findings Synthesis and Todo Creation" section below
-
-**Step 5: Cleanup**
-
-```
-SendMessage(type: "shutdown_request", recipient: "security-reviewer", content: "Review complete")
-SendMessage(type: "shutdown_request", recipient: "quality-reviewer", content: "Review complete")
-SendMessage(type: "shutdown_request", recipient: "architecture-reviewer", content: "Review complete")
-SendMessage(type: "shutdown_request", recipient: "performance-reviewer", content: "Review complete")
-# After all approve: TeamDelete()
-```
 
 ### 2. Ultra-Thinking Deep Dive Phases
 

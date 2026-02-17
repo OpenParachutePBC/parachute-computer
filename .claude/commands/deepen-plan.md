@@ -55,36 +55,9 @@ Section 2: [Title] - [Brief description of what to research]
 ...
 ```
 
-### 1.5. Choose Execution Mode
+### 1.5. Parallel Execution
 
-<thinking>
-Decide whether to use standard parallel subagents or an agent team based on the plan's scope. Agent teams are better when we'll be spawning many agents (10+) because teammates can self-claim from a shared task list instead of requiring the lead to manage 20-40 individual subagent results.
-</thinking>
-
-**Team mode (recommended — plans with 3+ sections or 10+ research/review tasks):**
-
-1. Create the team:
-   ```
-   TeamCreate(team_name: "deepen-{plan-slug}", description: "Deepening plan: {plan title}")
-   ```
-
-2. As you discover skills, learnings, and review agents in Steps 2-5 below, create a task for each:
-   ```
-   TaskCreate(subject: "Apply skill: agent-native-architecture", description: "Read .claude/skills/agent-native-architecture/SKILL.md and apply to plan sections about agents/tools.", status: "pending")
-   TaskCreate(subject: "Check learning: n-plus-one-queries.md", description: "Read docs/solutions/performance-issues/n-plus-one-queries.md and check if relevant to plan.", status: "pending")
-   TaskCreate(subject: "Run security-sentinel review", description: "Review full plan content for security concerns.", status: "pending")
-   # ... one task per skill, learning, research topic, and review agent
-   ```
-
-3. Spawn 3-5 teammates (each claims multiple tasks from the shared list):
-   ```
-   Task(subagent_type: "general-purpose", team_name: "deepen-{slug}", name: "skill-applier",
-        prompt: "You are applying skills to enhance a plan.
-        Plan content: {full plan}
-        Check TaskList for tasks about applying skills. Claim them with TaskUpdate.
-        For each: read the skill's SKILL.md, follow its instructions, apply to the plan.
-        Send results to the lead via SendMessage when done with each task.
-        Then check TaskList for more unclaimed tasks.")
+All research agents in Steps 2-5 will run as parallel `Task` subagent calls. Results return directly as tool outputs.
 
    Task(subagent_type: "general-purpose", team_name: "deepen-{slug}", name: "researcher",
         prompt: "You are researching best practices for plan sections.
@@ -197,7 +170,6 @@ The skill tells you what to do - follow it. Execute the skill completely."
 - All run simultaneously
 - 10, 20, 30 skill sub-agents is fine
 
-**In team mode:** Instead of spawning sub-agents directly, use TaskCreate for each matched skill. The `skill-applier` teammate will claim and execute them from the shared task list.
 
 **Each sub-agent:**
 1. Reads its skill's SKILL.md
@@ -339,7 +311,6 @@ docs/solutions/authentication-issues/jwt-expiry.md           # plan has no auth
 
 **Spawn sub-agents in PARALLEL for all filtered learnings.**
 
-**In team mode:** Instead of spawning sub-agents directly, use TaskCreate for each filtered learning. The `researcher` teammate will claim and execute them from the shared task list.
 
 **These learnings are institutional knowledge - applying them prevents repeating past mistakes.**
 
@@ -418,7 +389,6 @@ Task [agent-name]: "Review this plan using your expertise. Apply all your checks
 - Each agent may catch something others miss
 - The goal is MAXIMUM coverage, not efficiency
 
-**In team mode:** Instead of launching Task calls directly, use TaskCreate for each review agent. The `reviewer-1` and `reviewer-2` teammates will claim and execute them from the shared task list, naturally load-balancing the work.
 
 **Step 4: Also discover and run research agents**
 
@@ -439,7 +409,6 @@ Wait for ALL parallel agents to complete - skills, research agents, review agent
 5. **Context7 queries** - Framework documentation and patterns
 6. **Web searches** - Current best practices and articles
 
-**In team mode:** Findings arrive as SendMessage from teammates rather than as subagent return values. Collect all messages, then shut down teammates with `shutdown_request` before synthesizing. Run `TeamDelete()` after all teammates approve shutdown.
 
 **For each agent's findings, extract:**
 - [ ] Concrete recommendations (actionable items)
