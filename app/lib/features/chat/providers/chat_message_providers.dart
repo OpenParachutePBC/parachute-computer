@@ -606,7 +606,7 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
       _isPolling = true;
       try {
         final stillActive = await _service.hasActiveStream(sessionId);
-        if (!mounted) return; // Guard after await
+        if (!mounted) { timer.cancel(); return; } // Guard after await
         debugPrint('[ChatMessagesNotifier] Polling stream status for $sessionId: active=$stillActive (tick $tickCount/$maxTicks)');
 
         if (!stillActive) {
@@ -622,7 +622,7 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
         } else {
           // Still streaming - reload to get latest content
           final transcript = await _service.getSessionTranscript(sessionId);
-          if (!mounted) return; // Guard after await
+          if (!mounted) { timer.cancel(); return; } // Guard after await
           if (transcript != null && transcript.events.isNotEmpty) {
             final messages = transcript.toMessages();
             if (messages.length > state.messages.length) {
@@ -1768,11 +1768,5 @@ final chatMessagesProvider =
   final service = ref.watch(chatServiceProvider);
   final streamManager = ref.watch(backgroundStreamManagerProvider);
   final notifier = ChatMessagesNotifier(service, streamManager, ref);
-
-  // Ensure proper cleanup when provider is disposed
-  ref.onDispose(() {
-    notifier.dispose();
-  });
-
   return notifier;
 });
