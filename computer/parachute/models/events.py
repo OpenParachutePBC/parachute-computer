@@ -323,6 +323,7 @@ SSEEvent = Union[
     SessionUnavailableEvent,
     ErrorEvent,
     TypedErrorEvent,
+    UserMessageEvent,
     PermissionRequestEvent,
     UserQuestionEvent,
     PermissionDeniedEvent,

@@ -12,8 +12,10 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 
 from parachute.config import get_settings
+from parachute.core.orchestrator import InjectResult
 from parachute.models.requests import ChatRequest
 
 router = APIRouter()
@@ -258,3 +260,45 @@ async def answer_questions(
         status_code=404,
         detail=f"No pending question with request_id: {request_id}",
     )
+
+
+class InjectMessageRequest(BaseModel):
+    message: str = Field(..., min_length=1, max_length=32000)
+
+
+class InjectMessageResponse(BaseModel):
+    success: bool
+
+
+@router.post("/chat/{session_id}/inject", response_model=InjectMessageResponse)
+async def inject_message(
+    request: Request,
+    session_id: str,
+    body: InjectMessageRequest,
+) -> InjectMessageResponse:
+    """
+    Inject a user message into an active streaming session.
+
+    Allows sending messages while Claude is streaming a response.
+    The message is queued and fed to the SDK's stream_input mechanism.
+
+    Returns:
+        - 200 with {"success": true} if queued
+        - 404 if no active stream for this session
+        - 429 if the injection queue is full
+    """
+    orchestrator = get_orchestrator(request)
+    result = orchestrator.inject_message(session_id, body.message)
+
+    if result == InjectResult.NO_STREAM:
+        raise HTTPException(
+            status_code=404,
+            detail="No active stream for this session",
+        )
+    if result == InjectResult.QUEUE_FULL:
+        raise HTTPException(
+            status_code=429,
+            detail="Message injection queue is full",
+        )
+
+    return InjectMessageResponse(success=True)

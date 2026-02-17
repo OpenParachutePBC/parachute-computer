@@ -733,7 +733,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           ChatInput(
             onSend: _handleSend,
             onStop: _handleStop,
-            enabled: !chatState.isStreaming && !chatState.isViewingArchived,
+            enabled: !chatState.isViewingArchived,
             isStreaming: chatState.isStreaming,
             initialText: widget.initialMessage,
             hintText: _pendingInitialContext != null

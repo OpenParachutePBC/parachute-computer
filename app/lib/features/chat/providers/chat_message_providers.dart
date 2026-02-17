@@ -246,6 +246,9 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
   /// Current stream subscription (for cleanup when navigating away)
   StreamSubscription<StreamEvent>? _currentStreamSubscription;
 
+  /// Message that failed mid-stream inject and needs to be re-sent as a new turn
+  String? _pendingResendMessage;
+
   ChatMessagesNotifier(this._service, this._streamManager, this._ref) : super(const ChatMessagesState());
 
   /// Enable input for an archived session so the user can resume it
@@ -791,11 +794,21 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
       debugPrint('[ChatMessagesNotifier] _updateOrAddAssistantMessage: first.role=${messages.first.role}, last.role=${messages.last.role}');
     }
 
-    // Check if the last message is an assistant message that's streaming
-    if (messages.isNotEmpty &&
-        messages.last.role == MessageRole.assistant) {
+    // Find the last assistant message that is still streaming.
+    // If none is streaming, fall back to the very last assistant message.
+    // This prevents overwriting a completed response when the server sends
+    // a second response to an injected mid-stream message.
+    var targetIndex = messages.lastIndexWhere(
+      (m) => m.role == MessageRole.assistant && m.isStreaming,
+    );
+    if (targetIndex == -1) {
+      targetIndex = messages.lastIndexWhere(
+        (m) => m.role == MessageRole.assistant,
+      );
+    }
+    if (targetIndex != -1) {
       // Update existing assistant message
-      messages[messages.length - 1] = messages.last.copyWith(
+      messages[targetIndex] = messages[targetIndex].copyWith(
         content: List.from(content),
         isStreaming: isStreaming,
       );
@@ -860,6 +873,7 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
     _currentStreamSubscription?.cancel();
     _currentStreamSubscription = null;
     _activeStreamSessionId = null;
+    _pendingResendMessage = null;
 
     if (preserveWorkingDirectory && state.workingDirectory != null) {
       state = ChatMessagesState(workingDirectory: state.workingDirectory);
@@ -1001,6 +1015,41 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
     return buffer.toString().trim();
   }
 
+  /// Inject a message into an active streaming session.
+  ///
+  /// Adds the user message optimistically to the UI, then POSTs to the inject
+  /// endpoint. On failure (stream ended), queues the message for re-send as
+  /// a new turn when the done event arrives.
+  Future<void> _injectMessage(String message) async {
+    final sessionId = state.sessionId;
+    if (sessionId == null) return;
+
+    // Optimistic UI: add user message to list
+    final userMessage = ChatMessage(
+      id: _uuid.v4(),
+      sessionId: sessionId,
+      role: MessageRole.user,
+      content: [MessageContent.text(message)],
+      timestamp: DateTime.now(),
+    );
+    state = state.copyWith(
+      messages: [...state.messages, userMessage],
+    );
+
+    // POST to inject endpoint
+    final success = await _service.injectMessage(sessionId, message);
+
+    if (!success) {
+      // Stream likely ended between isStreaming check and inject call.
+      // Queue the message for re-send when the done event fires.
+      // Remove the optimistic message — it will be re-added by sendMessage.
+      final msgs = List<ChatMessage>.from(state.messages);
+      msgs.removeWhere((m) => m.id == userMessage.id);
+      state = state.copyWith(messages: msgs);
+      _pendingResendMessage = message;
+    }
+  }
+
   /// Send a message and handle streaming response
   ///
   /// [systemPrompt] - Custom system prompt for this session
@@ -1023,7 +1072,10 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
     String? trustLevel,
     String? workspaceId,
   }) async {
-    if (state.isStreaming) return;
+    if (state.isStreaming) {
+      await _injectMessage(message);
+      return;
+    }
 
     // Use existing session ID if we have one, otherwise let the server assign one
     // DON'T generate our own UUID - the SDK session ID is the source of truth
@@ -1382,6 +1434,15 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
             // Always refresh sessions list to get updated title
             _ref.invalidate(chatSessionsProvider);
             // Search indexing is handled by the agent server via MCP
+
+            // Re-send any message that failed mid-stream inject,
+            // but only if this is still the foreground session
+            if (_pendingResendMessage != null && !isBackgroundStream) {
+              final resendMsg = _pendingResendMessage!;
+              _pendingResendMessage = null;
+              // Use a microtask to avoid re-entrancy issues
+              Future.microtask(() => sendMessage(message: resendMsg));
+            }
             break;
 
           case StreamEventType.error:
@@ -1547,14 +1608,23 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
       return;
     }
 
-    // Find the last assistant message (should be the streaming one)
-    final lastIndex = messages.length - 1;
-    if (messages[lastIndex].role != MessageRole.assistant) {
+    // Find the last streaming assistant message first, then fall back to
+    // the last assistant message by role. This prevents overwriting a
+    // completed response when mid-stream injection triggers a second response.
+    var targetIndex = messages.lastIndexWhere(
+      (m) => m.role == MessageRole.assistant && m.isStreaming,
+    );
+    if (targetIndex == -1) {
+      targetIndex = messages.lastIndexWhere(
+        (m) => m.role == MessageRole.assistant,
+      );
+    }
+    if (targetIndex == -1) {
       trace.end();
       return;
     }
 
-    messages[lastIndex] = messages[lastIndex].copyWith(
+    messages[targetIndex] = messages[targetIndex].copyWith(
       content: List.from(content),
       isStreaming: isStreaming,
     );

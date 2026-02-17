@@ -124,6 +124,8 @@ class _ChatInputState extends ConsumerState<ChatInput>
 
   Future<void> _handleAttachment() async {
     if (_isLoadingAttachment) return;
+    // v1: text-only injection during streaming, no attachments
+    if (widget.isStreaming) return;
 
     setState(() {
       _isLoadingAttachment = true;
@@ -406,10 +408,13 @@ class _ChatInputState extends ConsumerState<ChatInput>
                 const SizedBox(width: Spacing.sm),
 
                 // Send or Stop button
+                // When streaming AND user has typed text, show Send (for mid-stream inject).
+                // When streaming with no text, show Stop.
+                // When not streaming, show Send (enabled when there's text).
                 AnimatedContainer(
                   duration: Motion.quick,
                   curve: Motion.settling,
-                  child: widget.isStreaming
+                  child: (widget.isStreaming && !_hasText)
                       ? IconButton(
                           onPressed: widget.onStop,
                           style: IconButton.styleFrom(
