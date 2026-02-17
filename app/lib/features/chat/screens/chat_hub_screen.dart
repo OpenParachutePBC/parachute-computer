@@ -207,153 +207,168 @@ class _ChatHubScreenState extends ConsumerState<ChatHubScreen> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
       builder: (sheetContext) => StatefulBuilder(
-        builder: (context, setSheetState) => Padding(
-          padding: EdgeInsets.only(
-            left: Spacing.lg,
-            right: Spacing.lg,
-            top: Spacing.lg,
-            bottom: MediaQuery.of(context).viewInsets.bottom + Spacing.lg,
+        builder: (context, setSheetState) => ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(context).size.height * 0.85,
           ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Header
-              Row(
-                children: [
-                  Icon(
-                    session.source == ChatSource.telegram
-                        ? Icons.send
-                        : Icons.gamepad,
-                    color: session.source == ChatSource.telegram
-                        ? const Color(0xFF0088CC)
-                        : const Color(0xFF5865F2),
-                  ),
-                  const SizedBox(width: Spacing.sm),
-                  Expanded(
-                    child: Text(
-                      'Approve ${session.displayTitle}?',
-                      style: TextStyle(
-                        fontSize: TypographyTokens.titleMedium,
-                        fontWeight: FontWeight.w600,
-                        color: isDark
-                            ? BrandColors.nightText
-                            : BrandColors.charcoal,
+          child: Padding(
+            padding: EdgeInsets.only(
+              left: Spacing.lg,
+              right: Spacing.lg,
+              top: Spacing.lg,
+              bottom: MediaQuery.of(context).viewInsets.bottom + Spacing.lg,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Header
+                Row(
+                  children: [
+                    Icon(
+                      session.source == ChatSource.telegram
+                          ? Icons.send
+                          : Icons.gamepad,
+                      color: session.source == ChatSource.telegram
+                          ? const Color(0xFF0088CC)
+                          : const Color(0xFF5865F2),
+                    ),
+                    const SizedBox(width: Spacing.sm),
+                    Expanded(
+                      child: Text(
+                        'Approve ${session.displayTitle}?',
+                        style: TextStyle(
+                          fontSize: TypographyTokens.titleMedium,
+                          fontWeight: FontWeight.w600,
+                          color: isDark
+                              ? BrandColors.nightText
+                              : BrandColors.charcoal,
+                        ),
                       ),
                     ),
-                  ),
-                ],
-              ),
+                  ],
+                ),
 
-              // First message preview
-              if (session.firstMessage != null) ...[
-                const SizedBox(height: Spacing.md),
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(Spacing.md),
-                  decoration: BoxDecoration(
-                    color: isDark
-                        ? BrandColors.nightSurface
-                        : BrandColors.cream,
-                    borderRadius: Radii.card,
-                  ),
-                  child: Text(
-                    session.firstMessage!,
-                    style: TextStyle(
-                      fontSize: TypographyTokens.bodyMedium,
-                      fontStyle: FontStyle.italic,
-                      color: isDark
-                          ? BrandColors.nightTextSecondary
-                          : BrandColors.driftwood,
+                // Scrollable content (message preview + trust level picker)
+                Flexible(
+                  child: SingleChildScrollView(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // First message preview
+                        if (session.firstMessage != null) ...[
+                          const SizedBox(height: Spacing.md),
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(Spacing.md),
+                            decoration: BoxDecoration(
+                              color: isDark
+                                  ? BrandColors.nightSurface
+                                  : BrandColors.cream,
+                              borderRadius: Radii.card,
+                            ),
+                            child: Text(
+                              session.firstMessage!,
+                              style: TextStyle(
+                                fontSize: TypographyTokens.bodyMedium,
+                                fontStyle: FontStyle.italic,
+                                color: isDark
+                                    ? BrandColors.nightTextSecondary
+                                    : BrandColors.driftwood,
+                              ),
+                              maxLines: 4,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+
+                        // Trust level picker
+                        const SizedBox(height: Spacing.lg),
+                        Text(
+                          'Trust Level',
+                          style: TextStyle(
+                            fontSize: TypographyTokens.labelMedium,
+                            fontWeight: FontWeight.w500,
+                            color: isDark
+                                ? BrandColors.nightTextSecondary
+                                : BrandColors.driftwood,
+                          ),
+                        ),
+                        const SizedBox(height: Spacing.sm),
+                        ...TrustLevel.values.map((tl) => RadioListTile<TrustLevel>(
+                              title: Text(
+                                tl.displayName,
+                                style: TextStyle(
+                                  color: isDark
+                                      ? BrandColors.nightText
+                                      : BrandColors.charcoal,
+                                ),
+                              ),
+                              subtitle: Text(
+                                tl.description,
+                                style: TextStyle(
+                                  fontSize: TypographyTokens.labelSmall,
+                                  color: isDark
+                                      ? BrandColors.nightTextSecondary
+                                      : BrandColors.driftwood,
+                                ),
+                              ),
+                              value: tl,
+                              groupValue: selectedTrust,
+                              dense: true,
+                              activeColor: isDark
+                                  ? BrandColors.nightTurquoise
+                                  : BrandColors.turquoise,
+                              onChanged: (val) {
+                                if (val != null) {
+                                  setSheetState(() => selectedTrust = val);
+                                }
+                              },
+                            )),
+                      ],
                     ),
-                    maxLines: 4,
-                    overflow: TextOverflow.ellipsis,
                   ),
+                ),
+
+                // Action buttons (outside scroll)
+                const SizedBox(height: Spacing.lg),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () {
+                          Navigator.pop(sheetContext);
+                          _denyPairing(session.pairingRequestId!);
+                        },
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: BrandColors.error,
+                          side: BorderSide(color: BrandColors.error),
+                        ),
+                        child: const Text('Deny'),
+                      ),
+                    ),
+                    const SizedBox(width: Spacing.md),
+                    Expanded(
+                      child: FilledButton(
+                        onPressed: () {
+                          Navigator.pop(sheetContext);
+                          _approvePairing(
+                            session.pairingRequestId!,
+                            selectedTrust.name,
+                          );
+                        },
+                        style: FilledButton.styleFrom(
+                          backgroundColor: isDark
+                              ? BrandColors.nightForest
+                              : BrandColors.forest,
+                        ),
+                        child: const Text('Approve'),
+                      ),
+                    ),
+                  ],
                 ),
               ],
-
-              // Trust level picker
-              const SizedBox(height: Spacing.lg),
-              Text(
-                'Trust Level',
-                style: TextStyle(
-                  fontSize: TypographyTokens.labelMedium,
-                  fontWeight: FontWeight.w500,
-                  color: isDark
-                      ? BrandColors.nightTextSecondary
-                      : BrandColors.driftwood,
-                ),
-              ),
-              const SizedBox(height: Spacing.sm),
-              ...TrustLevel.values.map((tl) => RadioListTile<TrustLevel>(
-                    title: Text(
-                      tl.displayName,
-                      style: TextStyle(
-                        color: isDark
-                            ? BrandColors.nightText
-                            : BrandColors.charcoal,
-                      ),
-                    ),
-                    subtitle: Text(
-                      tl.description,
-                      style: TextStyle(
-                        fontSize: TypographyTokens.labelSmall,
-                        color: isDark
-                            ? BrandColors.nightTextSecondary
-                            : BrandColors.driftwood,
-                      ),
-                    ),
-                    value: tl,
-                    groupValue: selectedTrust,
-                    dense: true,
-                    activeColor: isDark
-                        ? BrandColors.nightTurquoise
-                        : BrandColors.turquoise,
-                    onChanged: (val) {
-                      if (val != null) {
-                        setSheetState(() => selectedTrust = val);
-                      }
-                    },
-                  )),
-
-              // Action buttons
-              const SizedBox(height: Spacing.lg),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: () {
-                        Navigator.pop(sheetContext);
-                        _denyPairing(session.pairingRequestId!);
-                      },
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: BrandColors.error,
-                        side: BorderSide(color: BrandColors.error),
-                      ),
-                      child: const Text('Deny'),
-                    ),
-                  ),
-                  const SizedBox(width: Spacing.md),
-                  Expanded(
-                    child: FilledButton(
-                      onPressed: () {
-                        Navigator.pop(sheetContext);
-                        _approvePairing(
-                          session.pairingRequestId!,
-                          selectedTrust.name,
-                        );
-                      },
-                      style: FilledButton.styleFrom(
-                        backgroundColor: isDark
-                            ? BrandColors.nightForest
-                            : BrandColors.forest,
-                      ),
-                      child: const Text('Approve'),
-                    ),
-                  ),
-                ],
-              ),
-            ],
+            ),
           ),
         ),
       ),

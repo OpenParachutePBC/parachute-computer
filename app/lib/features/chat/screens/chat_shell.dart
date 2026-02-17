@@ -24,10 +24,14 @@ class ChatShell extends ConsumerWidget {
       builder: (context, constraints) {
         final mode = ChatLayoutBreakpoints.fromWidth(constraints.maxWidth);
 
-        // Update the layout mode provider so child widgets can read it
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          ref.read(chatLayoutModeProvider.notifier).state = mode;
-        });
+        // Update the layout mode provider only when the mode actually changes
+        // to avoid redundant invalidations and rebuild cascades on resize
+        final currentMode = ref.read(chatLayoutModeProvider);
+        if (currentMode != mode) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            ref.read(chatLayoutModeProvider.notifier).state = mode;
+          });
+        }
 
         switch (mode) {
           case ChatLayoutMode.mobile:

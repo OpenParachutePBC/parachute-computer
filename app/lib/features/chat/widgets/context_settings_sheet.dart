@@ -47,60 +47,66 @@ class ContextSettingsSheet extends ConsumerWidget {
     final metadata = promptMetadata;
     final claudeMdPath = metadata?.workingDirectoryClaudeMd ?? metadata?.promptSourcePath;
 
-    return Container(
-      decoration: BoxDecoration(
-        color: isDark ? BrandColors.nightSurface : BrandColors.softWhite,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(Radii.xl)),
+    return ConstrainedBox(
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.of(context).size.height * 0.85,
       ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // Handle bar
-          Container(
-            margin: const EdgeInsets.only(top: Spacing.sm),
-            width: 40,
-            height: 4,
-            decoration: BoxDecoration(
-              color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
-              borderRadius: Radii.pill,
+      child: Container(
+        decoration: BoxDecoration(
+          color: isDark ? BrandColors.nightSurface : BrandColors.softWhite,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(Radii.xl)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Handle bar
+            Container(
+              margin: const EdgeInsets.only(top: Spacing.sm),
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+                borderRadius: Radii.pill,
+              ),
             ),
-          ),
 
-          // Header
-          Padding(
-            padding: const EdgeInsets.all(Spacing.lg),
-            child: Row(
-              children: [
-                Icon(
-                  Icons.tune,
-                  size: 24,
-                  color: isDark ? BrandColors.nightForest : BrandColors.forest,
-                ),
-                const SizedBox(width: Spacing.sm),
-                Text(
-                  'Context Settings',
-                  style: TextStyle(
-                    fontSize: TypographyTokens.titleLarge,
-                    fontWeight: FontWeight.w600,
-                    color: isDark ? BrandColors.nightText : BrandColors.charcoal,
+            // Header
+            Padding(
+              padding: const EdgeInsets.all(Spacing.lg),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.tune,
+                    size: 24,
+                    color: isDark ? BrandColors.nightForest : BrandColors.forest,
                   ),
-                ),
-                const Spacer(),
-                IconButton(
-                  onPressed: () => Navigator.pop(context),
-                  icon: Icon(
-                    Icons.close,
-                    color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+                  const SizedBox(width: Spacing.sm),
+                  Text(
+                    'Context Settings',
+                    style: TextStyle(
+                      fontSize: TypographyTokens.titleLarge,
+                      fontWeight: FontWeight.w600,
+                      color: isDark ? BrandColors.nightText : BrandColors.charcoal,
+                    ),
                   ),
-                ),
-              ],
+                  const Spacer(),
+                  IconButton(
+                    onPressed: () => Navigator.pop(context),
+                    icon: Icon(
+                      Icons.close,
+                      color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
 
-          const Divider(height: 1),
+            const Divider(height: 1),
 
-          // Content
-          Padding(
+            // Scrollable content
+            Flexible(
+              child: SingleChildScrollView(
+                child: Padding(
             padding: const EdgeInsets.all(Spacing.lg),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -268,13 +274,16 @@ class ContextSettingsSheet extends ConsumerWidget {
               ],
             ),
           ),
+              ),
+            ),
 
-          // Bottom safe area
-          SafeArea(
-            top: false,
-            child: const SizedBox(height: Spacing.sm),
-          ),
-        ],
+            // Bottom safe area
+            SafeArea(
+              top: false,
+              child: const SizedBox(height: Spacing.sm),
+            ),
+          ],
+        ),
       ),
     );
   }
