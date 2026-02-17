@@ -45,7 +45,7 @@ class ContextSettingsSheet extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final metadata = promptMetadata;
-    final claudeMdPath = metadata?.workingDirectoryClaudeMd;
+    final claudeMdPath = metadata?.workingDirectoryClaudeMd ?? metadata?.promptSourcePath;
 
     return Container(
       decoration: BoxDecoration(

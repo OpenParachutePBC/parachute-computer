@@ -26,7 +26,7 @@ CONFIG_KEYS = {
 
 
 def _resolve_vault_path() -> Path:
-    """Resolve vault path from env or default, before Settings init."""
+    """Resolve vault path from env, .env, ~/Parachute config, or default."""
     raw = os.environ.get("VAULT_PATH", "")
     if raw:
         return Path(raw).expanduser().resolve()
@@ -38,6 +38,18 @@ def _resolve_vault_path() -> Path:
             if line.startswith("VAULT_PATH="):
                 val = line.split("=", 1)[1].strip()
                 return Path(val).expanduser().resolve()
+    # Check ~/Parachute config.yaml (matches CLI resolution)
+    home_vault = Path.home() / "Parachute"
+    home_config = home_vault / ".parachute" / "config.yaml"
+    if home_config.exists():
+        try:
+            with open(home_config) as f:
+                data = yaml.safe_load(f) or {}
+            if isinstance(data, dict) and "vault_path" in data:
+                return Path(data["vault_path"]).expanduser().resolve()
+        except Exception:
+            pass
+        return home_vault.resolve()
     return Path("./sample-vault").resolve()
 
 
@@ -227,17 +239,20 @@ class Settings(BaseSettings):
         return self.config_dir / "logs"
 
 
-# Global settings instance
-settings = Settings()
+# Global settings instance (lazy-initialized so CLI can set env vars first)
+_settings: Optional[Settings] = None
 
 
 def get_settings() -> Settings:
-    """Get the global settings instance."""
-    return settings
+    """Get the global settings instance (lazy-initialized on first call)."""
+    global _settings
+    if _settings is None:
+        _settings = Settings()
+    return _settings
 
 
 def reload_settings() -> Settings:
     """Reload settings from environment."""
-    global settings
-    settings = Settings()
-    return settings
+    global _settings
+    _settings = Settings()
+    return _settings

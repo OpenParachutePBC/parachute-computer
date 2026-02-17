@@ -9,9 +9,17 @@ from pathlib import Path
 from typing import Literal, Optional
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 TrustLevelStr = Literal["trusted", "untrusted"]
+
+# Legacy 3-tier → binary mapping (matches rest of codebase)
+_LEGACY_TRUST_MAP = {"full": "trusted", "vault": "trusted", "sandboxed": "untrusted"}
+
+
+def _normalize_trust_level(v: str) -> str:
+    """Map legacy trust level values to binary trusted/untrusted."""
+    return _LEGACY_TRUST_MAP.get(v, v)
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +36,11 @@ class TelegramConfig(BaseModel):
     group_mention_mode: Literal["mention_only", "all_messages"] = "mention_only"
     ack_emoji: Optional[str] = "👀"
 
+    @field_validator("default_trust_level", "dm_trust_level", "group_trust_level", mode="before")
+    @classmethod
+    def normalize_trust(cls, v: str) -> str:
+        return _normalize_trust_level(v)
+
 
 class DiscordConfig(BaseModel):
     """Discord bot configuration."""
@@ -40,6 +53,11 @@ class DiscordConfig(BaseModel):
     group_trust_level: TrustLevelStr = "untrusted"
     group_mention_mode: Literal["mention_only", "all_messages"] = "mention_only"
     ack_emoji: Optional[str] = "👀"
+
+    @field_validator("default_trust_level", "dm_trust_level", "group_trust_level", mode="before")
+    @classmethod
+    def normalize_trust(cls, v: str) -> str:
+        return _normalize_trust_level(v)
 
 
 class BotsConfig(BaseModel):

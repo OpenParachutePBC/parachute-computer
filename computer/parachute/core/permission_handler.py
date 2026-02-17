@@ -154,6 +154,12 @@ class PermissionHandler:
         # Pending user questions (from AskUserQuestion tool)
         self.pending_questions: dict[str, UserQuestionRequest] = {}
 
+        # Stash for AskUserQuestion tool_use_id — the orchestrator sets this
+        # when it sees the tool_use block in the assistant message, before the
+        # SDK calls can_use_tool.  This lets us build the same request_id that
+        # the SSE event uses (the SDK doesn't expose tool_use_id in the callback).
+        self.next_question_tool_use_id: Optional[str] = None
+
         # Limits
         self.max_pending = 100
         self.timeout_seconds = 120
@@ -195,7 +201,9 @@ class PermissionHandler:
 
             # Special handling for AskUserQuestion - needs interactive response
             if tool_name == "AskUserQuestion":
+                logger.info(f"AskUserQuestion intercepted, awaiting user answer...")
                 result = await self._handle_ask_user_question(input_data, context)
+                logger.info(f"AskUserQuestion resolved")
                 if PermissionResultAllow is None:
                     return {"behavior": "allow", "updated_input": result}
                 return PermissionResultAllow(updated_input=result)
@@ -203,7 +211,7 @@ class PermissionHandler:
             # Check our permission handler
             decision = await self.check_permission(tool_name, input_data)
 
-            logger.info(f"Permission decision for {tool_name}: {decision.behavior}")
+            logger.debug(f"Permission decision for {tool_name}: {decision.behavior}")
 
             if PermissionResultAllow is None or PermissionResultDeny is None:
                 # SDK types not available - return simple dict
@@ -693,8 +701,11 @@ class PermissionHandler:
             logger.warning("AskUserQuestion called with no questions")
             return input_data
 
-        # Generate request ID
-        tool_use_id = getattr(context, "tool_use_id", None) or uuid4().hex[:8]
+        # Generate request ID — prefer the tool_use_id stashed by the
+        # orchestrator (from the assistant message block) so it matches the
+        # request_id sent to the client in the SSE user_question event.
+        tool_use_id = self.next_question_tool_use_id or uuid4().hex[:8]
+        self.next_question_tool_use_id = None  # consume it
         request_id = f"{self.session.id}-q-{tool_use_id}"
 
         logger.info(f"AskUserQuestion: {len(questions)} questions, request_id={request_id}")

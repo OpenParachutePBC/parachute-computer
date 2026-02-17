@@ -130,7 +130,7 @@ class _UnifiedSessionSettingsState
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final session = widget.session;
     final metadata = widget.promptMetadata;
-    final claudeMdPath = metadata?.workingDirectoryClaudeMd;
+    final claudeMdPath = metadata?.workingDirectoryClaudeMd ?? metadata?.promptSourcePath;
 
     return Container(
       constraints: BoxConstraints(

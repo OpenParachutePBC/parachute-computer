@@ -5,6 +5,7 @@ Streams directly from the orchestrator - client reconnection uses
 SDK session resumption rather than event buffering.
 """
 
+import asyncio
 import json
 import logging
 from typing import Any
@@ -214,25 +215,46 @@ async def answer_questions(
     if not request_id:
         raise HTTPException(status_code=400, detail="request_id is required")
 
-    # Try to find the permission handler for this session
+    # Poll for the question to be registered. The SSE event reaches the client
+    # before can_use_tool fires (which registers the question in pending_questions).
+    # Server-side polling is more reliable than client-side retries since we can
+    # use tight intervals without network overhead.
+    max_attempts = 20  # 2 seconds total
+    for attempt in range(max_attempts):
+        handler = orchestrator.pending_permissions.get(session_id)
+        if handler:
+            success = handler.answer_questions(request_id, answers)
+            if success:
+                return {
+                    "success": True,
+                    "message": "Answers submitted",
+                    "session_id": session_id,
+                    "request_id": request_id,
+                }
+
+        # Wait briefly before next attempt
+        if attempt < max_attempts - 1:
+            await asyncio.sleep(0.1)
+
+    # All attempts failed — log details for debugging
     handler = orchestrator.pending_permissions.get(session_id)
     if not handler:
+        logger.warning(
+            f"Answer failed: no handler for session {session_id[:12]}... "
+            f"(active sessions: {list(orchestrator.pending_permissions.keys())})"
+        )
         raise HTTPException(
             status_code=404,
             detail=f"No active session found: {session_id}",
         )
 
-    # Submit the answers
-    success = handler.answer_questions(request_id, answers)
-    if not success:
-        raise HTTPException(
-            status_code=404,
-            detail=f"No pending question with request_id: {request_id}",
-        )
-
-    return {
-        "success": True,
-        "message": "Answers submitted",
-        "session_id": session_id,
-        "request_id": request_id,
-    }
+    pending = handler.get_pending_questions()
+    pending_ids = [q.id for q in pending]
+    logger.warning(
+        f"Answer failed: request_id {request_id} not in pending questions {pending_ids} "
+        f"after {max_attempts} attempts"
+    )
+    raise HTTPException(
+        status_code=404,
+        detail=f"No pending question with request_id: {request_id}",
+    )

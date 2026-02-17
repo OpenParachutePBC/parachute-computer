@@ -644,17 +644,10 @@ class Orchestrator:
                 """Track permission denials for reporting in done event."""
                 permission_denials.append(denial)
 
-            # Track pending user question for SSE events
-            pending_user_question: dict | None = None
-
+            # Track pending user questions for SSE events
             def on_user_question(request) -> None:
-                """Handle AskUserQuestion - store for SSE event emission."""
-                nonlocal pending_user_question
-                pending_user_question = {
-                    "request_id": request.id,
-                    "questions": request.questions,
-                }
-                logger.info(f"User question pending: {request.id} with {len(request.questions)} questions")
+                """Handle AskUserQuestion - log when question is registered."""
+                logger.info(f"User question registered: {request.id} with {len(request.questions)} questions")
 
             permission_handler = PermissionHandler(
                 session=session,
@@ -937,8 +930,13 @@ class Orchestrator:
                 resume=resume_id,
                 tools=agent.tools if agent.tools else None,
                 mcp_servers=resolved_mcps,
-                permission_mode="bypassPermissions",
-                can_use_tool=sdk_can_use_tool,  # Enable interactive tool permission checks (AskUserQuestion)
+                # Use "default" mode so the CLI calls can_use_tool for every tool.
+                # bypassPermissions skips can_use_tool entirely, which prevents
+                # AskUserQuestion from being intercepted for interactive user input.
+                # Our callback approves all tools instantly (mimicking bypass) except
+                # AskUserQuestion which blocks until the user answers.
+                permission_mode="default",
+                can_use_tool=sdk_can_use_tool,
                 plugin_dirs=plugin_dirs if plugin_dirs else None,
                 agents=agents_dict,
                 claude_token=claude_token,
@@ -1036,13 +1034,19 @@ class Orchestrator:
                             tool_calls.append(tool_call)
                             yield ToolUseEvent(tool=tool_call).model_dump(by_alias=True)
 
-                            # Special handling for AskUserQuestion - emit user_question event
+                            # Emit user_question event for AskUserQuestion tool calls.
+                            # Note: this fires when the assistant message arrives, before
+                            # can_use_tool registers the question. The answer endpoint
+                            # polls for registration to handle this race.
                             if block.get("name") == "AskUserQuestion":
                                 questions = block.get("input", {}).get("questions", [])
                                 if questions and captured_session_id:
-                                    # Generate request ID for answer submission
                                     tool_use_id = block.get("id", "")
                                     request_id = f"{captured_session_id}-q-{tool_use_id}"
+                                    # Store the tool_use_id so the permission handler
+                                    # uses the same request_id (the SDK doesn't expose
+                                    # tool_use_id in the can_use_tool callback context).
+                                    permission_handler.next_question_tool_use_id = tool_use_id
                                     yield UserQuestionEvent(
                                         request_id=request_id,
                                         session_id=captured_session_id,
@@ -1314,6 +1318,7 @@ class Orchestrator:
                 if content:
                     append_parts.append(content)
                     metadata["claude_md_loaded"] = True
+                    metadata["prompt_source_path"] = "CLAUDE.md"
             except OSError as e:
                 logger.warning(f"Failed to read vault CLAUDE.md: {e}")
 
