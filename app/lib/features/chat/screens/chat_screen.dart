@@ -189,11 +189,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   void _scrollToBottom() {
     if (_scrollController.hasClients) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        _scrollController.animateTo(
-          _scrollController.position.maxScrollExtent,
-          duration: Motion.standard,
-          curve: Motion.settling,
-        );
+        if (_scrollController.hasClients) {
+          _scrollController.animateTo(
+            _scrollController.position.maxScrollExtent,
+            duration: Motion.standard,
+            curve: Motion.settling,
+          );
+        }
       });
     }
   }
@@ -731,7 +733,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           ChatInput(
             onSend: _handleSend,
             onStop: _handleStop,
-            enabled: !chatState.isStreaming && !chatState.isViewingArchived,
+            enabled: !chatState.isViewingArchived,
             isStreaming: chatState.isStreaming,
             initialText: widget.initialMessage,
             hintText: _pendingInitialContext != null

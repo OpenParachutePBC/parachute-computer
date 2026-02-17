@@ -368,6 +368,39 @@ extension ChatSessionService on ChatService {
     }
   }
 
+  /// Inject a message into an active streaming session.
+  ///
+  /// Returns true if the message was queued, false if no active stream
+  /// (404) or other error. Throws on unexpected errors.
+  Future<bool> injectMessage(String sessionId, String message) async {
+    try {
+      final response = await client.post(
+        Uri.parse('$baseUrl/api/chat/${Uri.encodeComponent(sessionId)}/inject'),
+        headers: defaultHeaders,
+        body: jsonEncode({'message': message}),
+      ).timeout(const Duration(seconds: 5));
+
+      if (response.statusCode == 200) {
+        return true;
+      }
+      // 404 = no active stream (ended), 429 = queue full
+      debugPrint('[ChatService] Inject failed: ${response.statusCode}');
+      return false;
+    } on SocketException catch (e) {
+      debugPrint('[ChatService] Socket error injecting message: $e');
+      return false;
+    } on http.ClientException catch (e) {
+      debugPrint('[ChatService] HTTP client error injecting message: $e');
+      return false;
+    } on TimeoutException catch (e) {
+      debugPrint('[ChatService] Timeout injecting message: $e');
+      return false;
+    } catch (e) {
+      debugPrint('[ChatService] Error injecting message: $e');
+      return false;
+    }
+  }
+
   /// Fetch all available agents from the server.
   Future<List<AgentInfo>> getAgents() async {
     try {

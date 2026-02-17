@@ -13,6 +13,7 @@ import asyncio
 import logging
 import time
 import uuid
+from enum import StrEnum
 from pathlib import Path
 from typing import Any, AsyncGenerator, Optional
 
@@ -168,6 +169,14 @@ Skills can also be single files at `.skills/skill-name.md`.
 """
 
 
+class InjectResult(StrEnum):
+    """Result of a mid-stream message injection attempt."""
+
+    OK = "ok"
+    NO_STREAM = "no_stream"
+    QUEUE_FULL = "queue_full"
+
+
 class Orchestrator:
     """
     Central agent execution controller.
@@ -192,6 +201,9 @@ class Orchestrator:
 
         # Active streams for abort functionality
         self.active_streams: dict[str, QueryInterrupt] = {}
+
+        # Message queues for mid-stream message injection
+        self.active_stream_queues: dict[str, asyncio.Queue[str]] = {}
 
         # Pending permission requests
         self.pending_permissions: dict[str, PermissionHandler] = {}
@@ -464,11 +476,15 @@ class Orchestrator:
         elif recovery_mode == "fresh_start":
             force_new = True
 
-        # Set up interrupt handler
+        # Set up interrupt handler and message injection queue
         interrupt = QueryInterrupt()
+        message_queue: asyncio.Queue[str] = asyncio.Queue(maxsize=20)
+        inject_count = 0
+        initial_user_echo_seen = False
         stream_session_id = session.id if session.id != "pending" else None
         if stream_session_id:
             self.active_streams[stream_session_id] = interrupt
+            self.active_stream_queues[stream_session_id] = message_queue
 
         # Track results
         result_text = ""
@@ -644,17 +660,10 @@ class Orchestrator:
                 """Track permission denials for reporting in done event."""
                 permission_denials.append(denial)
 
-            # Track pending user question for SSE events
-            pending_user_question: dict | None = None
-
+            # Track pending user questions for SSE events
             def on_user_question(request) -> None:
-                """Handle AskUserQuestion - store for SSE event emission."""
-                nonlocal pending_user_question
-                pending_user_question = {
-                    "request_id": request.id,
-                    "questions": request.questions,
-                }
-                logger.info(f"User question pending: {request.id} with {len(request.questions)} questions")
+                """Handle AskUserQuestion - log when question is registered."""
+                logger.info(f"User question registered: {request.id} with {len(request.questions)} questions")
 
             permission_handler = PermissionHandler(
                 session=session,
@@ -937,11 +946,17 @@ class Orchestrator:
                 resume=resume_id,
                 tools=agent.tools if agent.tools else None,
                 mcp_servers=resolved_mcps,
-                permission_mode="bypassPermissions",
-                can_use_tool=sdk_can_use_tool,  # Enable interactive tool permission checks (AskUserQuestion)
+                # Use "default" mode so the CLI calls can_use_tool for every tool.
+                # bypassPermissions skips can_use_tool entirely, which prevents
+                # AskUserQuestion from being intercepted for interactive user input.
+                # Our callback approves all tools instantly (mimicking bypass) except
+                # AskUserQuestion which blocks until the user answers.
+                permission_mode="default",
+                can_use_tool=sdk_can_use_tool,
                 plugin_dirs=plugin_dirs if plugin_dirs else None,
                 agents=agents_dict,
                 claude_token=claude_token,
+                message_queue=message_queue,
                 **({"model": model or self.settings.default_model} if (model or self.settings.default_model) else {}),
             ):
                 # Check for interrupt
@@ -957,6 +972,7 @@ class Orchestrator:
                     if stream_session_id is None:
                         stream_session_id = captured_session_id
                         self.active_streams[stream_session_id] = interrupt
+                        self.active_stream_queues[stream_session_id] = message_queue
 
                     # Immediately finalize new sessions so they appear in the chat list
                     # even if the user navigates away before the response completes
@@ -1036,13 +1052,19 @@ class Orchestrator:
                             tool_calls.append(tool_call)
                             yield ToolUseEvent(tool=tool_call).model_dump(by_alias=True)
 
-                            # Special handling for AskUserQuestion - emit user_question event
+                            # Emit user_question event for AskUserQuestion tool calls.
+                            # Note: this fires when the assistant message arrives, before
+                            # can_use_tool registers the question. The answer endpoint
+                            # polls for registration to handle this race.
                             if block.get("name") == "AskUserQuestion":
                                 questions = block.get("input", {}).get("questions", [])
                                 if questions and captured_session_id:
-                                    # Generate request ID for answer submission
                                     tool_use_id = block.get("id", "")
                                     request_id = f"{captured_session_id}-q-{tool_use_id}"
+                                    # Store the tool_use_id so the permission handler
+                                    # uses the same request_id (the SDK doesn't expose
+                                    # tool_use_id in the can_use_tool callback context).
+                                    permission_handler.next_question_tool_use_id = tool_use_id
                                     yield UserQuestionEvent(
                                         request_id=request_id,
                                         session_id=captured_session_id,
@@ -1054,19 +1076,32 @@ class Orchestrator:
                             current_text = ""
 
                 elif event_type == "user":
-                    # Tool results come in user messages
-                    for block in event.get("message", {}).get("content", []):
-                        if block.get("type") == "tool_result":
-                            content = block.get("content", "")
-                            if isinstance(content, list):
-                                content = "\n".join(
-                                    c.get("text", str(c)) for c in content
-                                )
-                            yield ToolResultEvent(
-                                tool_use_id=block.get("tool_use_id", ""),
-                                content=str(content),
-                                is_error=block.get("is_error", False),
+                    msg_content = event.get("message", {}).get("content", "")
+                    # Injected user messages arrive as plain text content.
+                    # The SDK echoes the initial prompt back as the first user
+                    # event with string content — skip that echo.
+                    if isinstance(msg_content, str) and msg_content:
+                        if not initial_user_echo_seen:
+                            initial_user_echo_seen = True
+                        else:
+                            inject_count += 1
+                            yield UserMessageEvent(
+                                content=msg_content,
                             ).model_dump(by_alias=True)
+                    else:
+                        # Tool results come in user messages as list of blocks
+                        for block in (msg_content if isinstance(msg_content, list) else []):
+                            if block.get("type") == "tool_result":
+                                content = block.get("content", "")
+                                if isinstance(content, list):
+                                    content = "\n".join(
+                                        c.get("text", str(c)) for c in content
+                                    )
+                                yield ToolResultEvent(
+                                    tool_use_id=block.get("tool_use_id", ""),
+                                    content=str(content),
+                                    is_error=block.get("is_error", False),
+                                ).model_dump(by_alias=True)
 
                 elif event_type == "result":
                     if event.get("result"):
@@ -1122,9 +1157,10 @@ class Orchestrator:
 
             # Update message count - use captured_session_id for new sessions
             # (session.id is "pending" for new sessions until finalized)
+            # Count: 1 (initial user) + inject_count (mid-stream) + 1 (assistant)
             final_session_id = captured_session_id or session.id
             if final_session_id and final_session_id != "pending":
-                await self.session_manager.increment_message_count(final_session_id, 2)
+                await self.session_manager.increment_message_count(final_session_id, 2 + inject_count)
 
             duration_ms = int((time.time() - start_time) * 1000)
 
@@ -1133,7 +1169,7 @@ class Orchestrator:
                 response=result_text,
                 session_id=captured_session_id or session.id,
                 working_directory=working_directory,
-                message_count=session.message_count + 2,
+                message_count=session.message_count + 2 + inject_count,
                 model=captured_model,
                 duration_ms=duration_ms,
                 tool_calls=tool_calls if tool_calls else None,
@@ -1170,6 +1206,8 @@ class Orchestrator:
             # Clean up
             if stream_session_id and stream_session_id in self.active_streams:
                 del self.active_streams[stream_session_id]
+            if stream_session_id and stream_session_id in self.active_stream_queues:
+                del self.active_stream_queues[stream_session_id]
             if session.id in self.pending_permissions:
                 del self.pending_permissions[session.id]
 
@@ -1181,6 +1219,18 @@ class Orchestrator:
             interrupt.interrupt()
             return True
         return False
+
+    def inject_message(self, session_id: str, message: str) -> InjectResult:
+        """Inject a user message into an active stream."""
+        queue = self.active_stream_queues.get(session_id)
+        if queue is None:
+            return InjectResult.NO_STREAM
+        try:
+            queue.put_nowait(message)
+            logger.info(f"Injected message into stream: {session_id[:8]}...")
+            return InjectResult.OK
+        except asyncio.QueueFull:
+            return InjectResult.QUEUE_FULL
 
     def has_active_stream(self, session_id: str) -> bool:
         """Check if a session has an active stream."""
@@ -1314,6 +1364,7 @@ class Orchestrator:
                 if content:
                     append_parts.append(content)
                     metadata["claude_md_loaded"] = True
+                    metadata["prompt_source_path"] = "CLAUDE.md"
             except OSError as e:
                 logger.warning(f"Failed to read vault CLAUDE.md: {e}")
 

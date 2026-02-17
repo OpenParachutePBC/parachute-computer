@@ -10,6 +10,7 @@ Authentication:
 """
 
 import asyncio
+import contextlib
 import logging
 from pathlib import Path
 from typing import Any, AsyncGenerator, Awaitable, Callable, Optional
@@ -45,8 +46,23 @@ CanUseToolCallback = Optional[
 ]
 
 
-async def _string_to_async_iterable(s: str) -> AsyncGenerator[dict[str, Any], None]:
-    """Convert a string to an async iterable that yields a user message."""
+async def _string_to_async_iterable(
+    s: str,
+    done_event: asyncio.Event | None = None,
+    message_queue: asyncio.Queue[str] | None = None,
+) -> AsyncGenerator[dict[str, Any], None]:
+    """Convert a string to an async iterable that yields a user message.
+
+    When done_event is provided, the generator stays alive after yielding the
+    message (blocking on the event).  This keeps stdin open so the SDK can send
+    control-protocol responses (e.g. can_use_tool permission decisions) back to
+    the CLI subprocess.  Without this, stream_input() closes stdin as soon as
+    the iterable is exhausted, which breaks bidirectional communication.
+
+    When message_queue is provided, the generator also monitors the queue for
+    additional user messages to inject mid-stream. Uses asyncio.wait() for
+    zero-latency response to either new messages or stream completion.
+    """
     yield {
         "type": "user",
         "message": {
@@ -54,6 +70,41 @@ async def _string_to_async_iterable(s: str) -> AsyncGenerator[dict[str, Any], No
             "content": s,
         }
     }
+    if done_event is None:
+        return
+
+    if message_queue is None:
+        await done_event.wait()
+        return
+
+    # Use asyncio.wait() to respond immediately to either a new message
+    # or the done_event, avoiding polling latency.
+    done_task = asyncio.create_task(done_event.wait())
+    try:
+        while not done_event.is_set():
+            get_task = asyncio.create_task(message_queue.get())
+            done_set, _ = await asyncio.wait(
+                {done_task, get_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if get_task in done_set:
+                msg = get_task.result()
+                yield {"type": "user", "message": {"role": "user", "content": msg}}
+            else:
+                get_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await get_task
+                break
+
+        # Drain any messages queued right as done_event fired
+        while not message_queue.empty():
+            try:
+                msg = message_queue.get_nowait()
+                yield {"type": "user", "message": {"role": "user", "content": msg}}
+            except asyncio.QueueEmpty:
+                break
+    finally:
+        done_task.cancel()
 
 
 async def query_streaming(
@@ -72,6 +123,7 @@ async def query_streaming(
     agents: Optional[dict[str, Any]] = None,
     claude_token: Optional[str] = None,
     model: Optional[str] = None,
+    message_queue: asyncio.Queue[str] | None = None,
 ) -> AsyncGenerator[dict[str, Any], None]:
     """
     Run a Claude SDK query with streaming response.
@@ -92,6 +144,7 @@ async def query_streaming(
         plugin_dirs: List of plugin directories to load (for skills)
         agents: Dict of agent definitions for subagents
         claude_token: OAuth token from `claude setup-token` (CLAUDE_CODE_OAUTH_TOKEN)
+        message_queue: Queue for injecting user messages mid-stream
 
     Yields:
         SDK events as dictionaries
@@ -170,14 +223,31 @@ async def query_streaming(
     options = ClaudeAgentOptions(**options_kwargs)
 
     # Run query and stream events
-    # When using can_use_tool callback, SDK requires prompt as AsyncIterable
+    # When using can_use_tool callback, SDK requires prompt as AsyncIterable.
+    # We also need to keep the iterable alive (stdin open) so the SDK can
+    # send control-protocol responses back to the CLI subprocess.
+    #
+    # Lifecycle: the iterable blocks on done_event after yielding the user
+    # message.  We set done_event when we see the "result" event (conversation
+    # turn complete).  This lets stream_input() call end_input() → stdin
+    # closes → CLI exits → stdout closes → receive_messages() finishes.
+    #
+    # When message_queue is provided, the iterable also monitors it for
+    # injected user messages (mid-stream messaging).
+    done_event: Optional[asyncio.Event] = None
     try:
         effective_prompt: Any = prompt
-        if can_use_tool:
-            effective_prompt = _string_to_async_iterable(prompt)
+        if can_use_tool or message_queue:
+            done_event = asyncio.Event()
+            effective_prompt = _string_to_async_iterable(prompt, done_event, message_queue)
 
         async for event in sdk_query(prompt=effective_prompt, options=options):
-            yield _event_to_dict(event)
+            event_dict = _event_to_dict(event)
+            # Signal the iterable to finish once the turn is complete so
+            # stream_input can close stdin and the CLI process can exit.
+            if done_event is not None and event_dict.get("type") == "result":
+                done_event.set()
+            yield event_dict
     except ClaudeSDKError as e:
         logger.error(f"Claude SDK error: {e}")
         yield {"type": "error", "error": str(e)}
@@ -185,6 +255,10 @@ async def query_streaming(
         error_msg = str(e)
         logger.error(f"SDK query error: {error_msg}")
         yield {"type": "error", "error": error_msg}
+    finally:
+        # Safety net: always release the iterable on exit
+        if done_event is not None:
+            done_event.set()
 
 
 def _event_to_dict(event: Any) -> dict[str, Any]:

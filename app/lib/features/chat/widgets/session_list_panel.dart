@@ -8,6 +8,7 @@ import '../providers/chat_layout_provider.dart';
 import '../providers/session_search_provider.dart';
 import '../providers/workspace_providers.dart';
 import '../models/workspace.dart';
+import '../widgets/session_config_sheet.dart';
 import '../widgets/session_list_item.dart';
 import '../screens/chat_screen.dart';
 
@@ -477,6 +478,19 @@ class _SessionListPanelState extends ConsumerState<SessionListPanel> {
   }
 
   void _selectSession(ChatSession session, bool isPanelMode) {
+    // Pending approval — use inline buttons, don't navigate into chat
+    if (session.isPendingApproval) return;
+
+    // Pending initialization sessions show the config sheet for activation
+    if (session.isPendingInitialization) {
+      SessionConfigSheet.show(context, session).then((saved) {
+        if (saved == true) {
+          ref.invalidate(chatSessionsProvider);
+        }
+      });
+      return;
+    }
+
     ref.read(switchSessionProvider)(session.id);
 
     if (!isPanelMode) {
