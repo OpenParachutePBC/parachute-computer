@@ -813,9 +813,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               ),
             ],
           ),
-          if (hasBadges)
+          if (hasBadges) ...[
+            const SizedBox(height: 2), // Small gap to prevent overflow
             // Constrain badge row to fit within default 56px AppBar
-            // (title row ~24px + badges 16px + internal padding ≈ 56px)
+            // (title row ~24px + gap 2px + badges 16px + internal padding ≈ 56px)
             SizedBox(
               height: 16,
               child: SingleChildScrollView(
@@ -847,6 +848,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                 ),
               ),
             ),
+          ],
         ],
       ),
     );
