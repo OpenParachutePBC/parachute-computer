@@ -46,21 +46,22 @@ When analyzing code, you systematically evaluate:
 - Check for unnecessary data fetching
 - Optimize for mobile and low-bandwidth scenarios
 
-### 6. Frontend Performance
-- Analyze bundle size impact of new code
-- Check for render-blocking resources
-- Identify opportunities for lazy loading
-- Verify efficient DOM manipulation
-- Monitor JavaScript execution time
+### 6. Flutter UI Performance
+- **`ListView.builder`** for long/unbounded lists — never `ListView(children: [...])`
+- **`const` widgets** for static subtrees to skip rebuild
+- **`MediaQuery.sizeOf(context)`** instead of `MediaQuery.of(context)` — targeted subscriptions
+- **Widget rebuild analysis** — watch for providers causing unnecessary subtree rebuilds
+- **`select()`** on providers when only one field is needed from a complex state object
+- **Image loading** — use `cacheWidth`/`cacheHeight` for downsized display, lazy load off-screen images
 
 ## Performance Benchmarks
 
 You enforce these standards:
 - No algorithms worse than O(n log n) without explicit justification
-- All database queries must use appropriate indexes
+- All SQLite queries must use appropriate indexes
 - Memory usage must be bounded and predictable
 - API response times must stay under 200ms for standard operations
-- Bundle size increases should remain under 5KB per feature
+- SSE streaming should start emitting within 500ms
 - Background jobs should process items in batches when dealing with collections
 
 ## Analysis Output Format
@@ -99,11 +100,45 @@ When reviewing code:
 
 Always provide specific code examples for recommended optimizations. Include benchmarking suggestions where appropriate.
 
-## Special Considerations
+## Confidence Scoring
 
-- For Rails applications, pay special attention to ActiveRecord query optimization
+Score every finding 0-100. Only report findings scoring 80+.
+
+**90-100 — Certain:** Clear evidence in code. Definite performance issue.
+  Example: `ListView(children: items.map(...).toList())` for unbounded data → 95
+  Example: N+1 SQLite query in a loop → 92
+
+**80-89 — High confidence:** Strong signal, pattern clearly matches a known issue.
+  Example: Missing `asyncio.to_thread()` for sync file I/O in async route → 85
+  Example: Provider rebuild triggered by unrelated state change → 82
+
+**70-79 — Moderate:** Possibly intentional or context-dependent. DO NOT REPORT.
+  Example: Eager loading of data that might be needed → 72
+
+**Below 70 — Low:** Likely noise. DO NOT REPORT.
+
+**Always exclude:**
+- Pre-existing issues not introduced in this change
+- Issues that `ruff` or `dart analyze` would catch
+- Nitpicks on unmodified code
+
+## Stack-Specific Patterns
+
+### Python/FastAPI Performance
+- **SSE streaming throughput** — ensure async generators yield without blocking the event loop
+- **`asyncio.to_thread()`** for wrapping blocking operations (file I/O, subprocess, SQLite)
+- **SQLite query patterns** — use indexes, avoid full table scans, use `EXPLAIN QUERY PLAN` for complex queries
+- **Docker container startup latency** — minimize image size, use multi-stage builds, cache layers
+- **Session cleanup** — long-running sessions accumulate JSONL transcript data; verify cleanup/rotation
+
+### Flutter UI Performance
+- **Widget rebuild optimization** — `const` widgets, `select()` for granular provider subscriptions
+- **`ListView.builder`** for any list that could grow beyond ~20 items
+- **Isolate usage** — CPU-heavy work (transcription, audio processing) runs in isolates, not on UI thread
+- **Sherpa-ONNX** — model loading is expensive; verify it happens once and result is cached in a provider
+
+### General
 - Consider background job processing for expensive operations
-- Recommend progressive enhancement for frontend features
 - Always balance performance optimization with code maintainability
 - Provide migration strategies for optimizing existing code
 
