@@ -663,11 +663,19 @@ class _TabShellState extends ConsumerState<_TabShell> with WidgetsBindingObserve
         ],
       ),
       bottomNavigationBar: showNavBar
-          ? Padding(
-              padding: EdgeInsets.only(
-                bottom: MediaQuery.viewInsetsOf(context).bottom,
-              ),
-              child: NavigationBar(
+          ? Builder(builder: (context) {
+              // Account for hardware keyboard IME suggestion bar on Android.
+              // The IME bar is typically 48-56dp; a full software keyboard is 250+dp.
+              // Only add padding for IME-bar-sized insets to avoid double-compensation
+              // when a full software keyboard is open (Scaffold handles that via
+              // resizeToAvoidBottomInset).
+              final viewInsetsBottom = MediaQuery.viewInsetsOf(context).bottom;
+              final imeBarPadding = viewInsetsBottom > 0 && viewInsetsBottom < 100
+                  ? viewInsetsBottom
+                  : 0.0;
+              return Padding(
+                padding: EdgeInsets.only(bottom: imeBarPadding),
+                child: NavigationBar(
                 selectedIndex: safeIndex,
                 onDestinationSelected: (index) {
                   // Map visual index back to actual tab index
@@ -680,7 +688,8 @@ class _TabShellState extends ConsumerState<_TabShell> with WidgetsBindingObserve
                     : BrandColors.turquoise.withValues(alpha: 0.2),
                 destinations: destinations,
               ),
-            )
+            );
+          })
           : null,
     );
   }
