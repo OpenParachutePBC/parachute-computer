@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
-import 'package:parachute/features/settings/screens/settings_screen.dart';
 import '../models/chat_session.dart';
 import '../providers/chat_providers.dart';
 import '../services/chat_service.dart';
@@ -84,65 +83,40 @@ class _SessionListPanelState extends ConsumerState<SessionListPanel> {
             _buildWorkspaceChip(isDark, activeSlug, workspacesAsync),
           ],
           const Spacer(),
-          // Compact button row to avoid overflow on narrow screens
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              IconButton(
-                icon: Icon(
-                  Icons.settings_outlined,
-                  size: 20,
-                  color: isDark ? BrandColors.nightTextSecondary : BrandColors.stone,
-                ),
-                padding: EdgeInsets.all(8),
-                constraints: BoxConstraints(minWidth: 36, minHeight: 36),
-                onPressed: () => Navigator.of(context, rootNavigator: true).push(
-                  MaterialPageRoute(builder: (_) => const SettingsScreen()),
-                ),
-                tooltip: 'Settings',
-              ),
-              IconButton(
-                icon: Icon(
-                  _showSearch ? Icons.search_off : Icons.search,
-                  size: 20,
-                  color: isDark ? BrandColors.nightTextSecondary : BrandColors.stone,
-                ),
-                padding: EdgeInsets.all(8),
-                constraints: BoxConstraints(minWidth: 36, minHeight: 36),
-                onPressed: () {
-                  setState(() {
-                    _showSearch = !_showSearch;
-                    if (!_showSearch) {
-                      _searchController.clear();
-                      ref.read(sessionSearchQueryProvider.notifier).state = '';
-                    }
-                  });
-                },
-                tooltip: 'Search',
-              ),
-              IconButton(
-                icon: Icon(
-                  _showArchived ? Icons.inbox : Icons.archive_outlined,
-                  size: 20,
-                  color: isDark ? BrandColors.nightTextSecondary : BrandColors.stone,
-                ),
-                padding: EdgeInsets.all(8),
-                constraints: BoxConstraints(minWidth: 36, minHeight: 36),
-                onPressed: () => setState(() => _showArchived = !_showArchived),
-                tooltip: _showArchived ? 'Show active' : 'Show archived',
-              ),
-              IconButton(
-                icon: Icon(
-                  Icons.add,
-                  size: 20,
-                  color: isDark ? BrandColors.nightForest : BrandColors.forest,
-                ),
-                padding: EdgeInsets.all(8),
-                constraints: BoxConstraints(minWidth: 36, minHeight: 36),
-                onPressed: _startNewChat,
-                tooltip: 'New Chat',
-              ),
-            ],
+          IconButton(
+            icon: Icon(
+              _showSearch ? Icons.search_off : Icons.search,
+              size: 20,
+              color: isDark ? BrandColors.nightTextSecondary : BrandColors.stone,
+            ),
+            onPressed: () {
+              setState(() {
+                _showSearch = !_showSearch;
+                if (!_showSearch) {
+                  _searchController.clear();
+                  ref.read(sessionSearchQueryProvider.notifier).state = '';
+                }
+              });
+            },
+            tooltip: 'Search',
+          ),
+          IconButton(
+            icon: Icon(
+              _showArchived ? Icons.inbox : Icons.archive_outlined,
+              size: 20,
+              color: isDark ? BrandColors.nightTextSecondary : BrandColors.stone,
+            ),
+            onPressed: () => setState(() => _showArchived = !_showArchived),
+            tooltip: _showArchived ? 'Show active' : 'Show archived',
+          ),
+          IconButton(
+            icon: Icon(
+              Icons.add,
+              size: 20,
+              color: isDark ? BrandColors.nightForest : BrandColors.forest,
+            ),
+            onPressed: _startNewChat,
+            tooltip: 'New Chat',
           ),
         ],
       ),

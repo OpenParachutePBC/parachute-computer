@@ -774,106 +774,39 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       titleText = 'Parachute Chat';
     }
 
-    // Build subtitle badges
-    final hasBadges = chatState.model != null ||
-        (chatState.promptMetadata?.agentName != null &&
-            chatState.promptMetadata!.agentName != 'Vault Agent') ||
-        chatState.workingDirectory != null;
-
     return GestureDetector(
       onTap: () => SessionSelector.show(context),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Row(
-            children: [
-              Icon(
-                Icons.chat_bubble_outline,
-                size: 20,
-                color: isDark ? BrandColors.nightForest : BrandColors.forest,
-              ),
-              const SizedBox(width: Spacing.sm),
-              Flexible(
-                child: Text(
-                  titleText,
-                  style: TextStyle(
-                    fontSize: TypographyTokens.titleMedium,
-                    fontWeight: FontWeight.w600,
-                    color: isDark ? BrandColors.nightText : BrandColors.charcoal,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              Icon(
-                Icons.arrow_drop_down,
-                size: 20,
-                color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
-              ),
-            ],
+          Icon(
+            Icons.chat_bubble_outline,
+            size: 20,
+            color: isDark ? BrandColors.nightForest : BrandColors.forest,
           ),
-          if (hasBadges) ...[
-            const SizedBox(height: 2), // Small gap to prevent overflow
-            // Constrain badge row to fit within default 56px AppBar
-            // (title row ~24px + gap 2px + badges 16px + internal padding ≈ 56px)
-            SizedBox(
-              height: 16,
-              child: SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (chatState.model != null) ...[
-                      _appBarBadge(
-                        _getModelBadge(chatState.model!),
-                        _getModelColor(chatState.model!),
-                      ),
-                      const SizedBox(width: Spacing.xs),
-                    ],
-                    if (chatState.promptMetadata?.agentName != null &&
-                        chatState.promptMetadata!.agentName != 'Vault Agent') ...[
-                      _appBarBadge(
-                        _getAgentBadge(chatState.promptMetadata!.agentName!),
-                        BrandColors.turquoise,
-                      ),
-                      const SizedBox(width: Spacing.xs),
-                    ],
-                    if (chatState.workingDirectory != null)
-                      _appBarBadge(
-                        chatState.workingDirectory!.split('/').last,
-                        isDark ? BrandColors.nightForest : BrandColors.forest,
-                      ),
-                  ],
-                ),
+          const SizedBox(width: Spacing.sm),
+          Flexible(
+            child: Text(
+              titleText,
+              style: TextStyle(
+                fontSize: TypographyTokens.titleMedium,
+                fontWeight: FontWeight.w600,
+                color: isDark ? BrandColors.nightText : BrandColors.charcoal,
               ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
             ),
-          ],
+          ),
+          Icon(
+            Icons.arrow_drop_down,
+            size: 20,
+            color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+          ),
         ],
       ),
     );
   }
 
-  Widget _appBarBadge(String label, Color color) {
-    return Container(
-      constraints: const BoxConstraints(maxWidth: 120),
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.15),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Text(
-        label,
-        style: TextStyle(
-          fontSize: 10,
-          fontWeight: FontWeight.w600,
-          color: color,
-        ),
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-      ),
-    );
-  }
 
   /// Build loading state shown during session switch
   Widget _buildLoadingState(bool isDark) {
