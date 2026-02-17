@@ -249,7 +249,25 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
   /// Message that failed mid-stream inject and needs to be re-sent as a new turn
   String? _pendingResendMessage;
 
+  /// Prevents overlapping async poll callbacks when HTTP takes >2s
+  bool _isPolling = false;
+
   ChatMessagesNotifier(this._service, this._streamManager, this._ref) : super(const ChatMessagesState());
+
+  /// Reset all mutable transient state that should not persist across sessions.
+  /// Called from prepareForSessionSwitch, clearSession, and dispose.
+  void _resetTransientState() {
+    _currentStreamSubscription?.cancel();
+    _currentStreamSubscription = null;
+    _activeStreamSessionId = null;
+    _pollTimer?.cancel();
+    _pollTimer = null;
+    _isPolling = false;
+    _streamingThrottle.reset();
+    _reattachStreamContent.clear();
+    _pendingContent = null;
+    _pendingResendMessage = null;
+  }
 
   /// Enable input for an archived session so the user can resume it
   ///
@@ -271,14 +289,7 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
   /// Clears old messages immediately and shows loading state to prevent
   /// stale content from being displayed during async session load.
   void prepareForSessionSwitch(String newSessionId) {
-    // Cancel subscription to current stream
-    _currentStreamSubscription?.cancel();
-    _currentStreamSubscription = null;
-    _activeStreamSessionId = null;
-
-    // Cancel any polling timer
-    _pollTimer?.cancel();
-    _pollTimer = null;
+    _resetTransientState();
 
     // Check if the new session has an active background stream
     final hasActiveStream = _streamManager.hasActiveStream(newSessionId);
@@ -288,7 +299,6 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
       sessionId: newSessionId,
       isLoading: true,
       isStreaming: hasActiveStream,
-      // Clear all other fields to prevent showing stale content
     );
   }
 
@@ -419,6 +429,12 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
         // Fall back to current state contexts
       }
 
+      // Guard: session may have switched while we were loading async data
+      if (state.sessionId != sessionId) {
+        debugPrint('[ChatMessagesNotifier] loadSession skipped — session switched to ${state.sessionId}');
+        return;
+      }
+
       state = ChatMessagesState(
         messages: loadedMessages,
         sessionId: sessionId,
@@ -523,6 +539,7 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
 
   /// Reattach to a background stream to continue receiving updates
   void _reattachToBackgroundStream(String sessionId) {
+    _reattachStreamContent.clear(); // Prevent stale content from previous session
     _currentStreamSubscription = _streamManager.reattachCallback(
       sessionId: sessionId,
       onEvent: (event) => _handleStreamEvent(event, sessionId),
@@ -547,24 +564,50 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
   /// Poll the server for stream completion when we don't have a local stream
   ///
   /// Polls until the server reports the stream is done, then reloads the
-  /// session to get the final content.
+  /// session to get the final content. Caps at 30 ticks (60s) to prevent
+  /// indefinite resource drain if server is unreachable.
   void _startPollingForStreamCompletion(String sessionId) {
     debugPrint('[ChatMessagesNotifier] >>> Starting polling for session: $sessionId');
     _pollTimer?.cancel();
+    _isPolling = false;
+    var tickCount = 0;
+    const maxTicks = 30; // 60 seconds at 2s intervals
 
-    // Poll every 2 seconds
     _pollTimer = Timer.periodic(const Duration(seconds: 2), (timer) async {
-      debugPrint('[ChatMessagesNotifier] >>> Poll tick for session: $sessionId');
-      // Stop if we switched sessions
+      // Guard: notifier disposed
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+
+      // Guard: prevent overlapping async callbacks
+      if (_isPolling) return;
+
+      tickCount++;
+
+      // Guard: session changed
       if (state.sessionId != sessionId) {
         timer.cancel();
         _pollTimer = null;
         return;
       }
 
+      // Guard: max timeout reached
+      if (tickCount >= maxTicks) {
+        debugPrint('[ChatMessagesNotifier] Poll timeout after ${maxTicks * 2}s for session: $sessionId');
+        timer.cancel();
+        _pollTimer = null;
+        if (mounted) {
+          state = state.copyWith(isStreaming: false);
+        }
+        return;
+      }
+
+      _isPolling = true;
       try {
         final stillActive = await _service.hasActiveStream(sessionId);
-        debugPrint('[ChatMessagesNotifier] Polling stream status for $sessionId: active=$stillActive');
+        if (!mounted) { timer.cancel(); return; } // Guard after await
+        debugPrint('[ChatMessagesNotifier] Polling stream status for $sessionId: active=$stillActive (tick $tickCount/$maxTicks)');
 
         if (!stillActive) {
           // Stream completed - reload session to get final content
@@ -573,11 +616,13 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
           debugPrint('[ChatMessagesNotifier] Server stream completed - reloading session');
           state = state.copyWith(isStreaming: false);
           await loadSession(sessionId);
-          _ref.invalidate(chatSessionsProvider);
+          if (mounted) {
+            _ref.invalidate(chatSessionsProvider);
+          }
         } else {
           // Still streaming - reload to get latest content
-          // This gives incremental updates while waiting
           final transcript = await _service.getSessionTranscript(sessionId);
+          if (!mounted) { timer.cancel(); return; } // Guard after await
           if (transcript != null && transcript.events.isNotEmpty) {
             final messages = transcript.toMessages();
             if (messages.length > state.messages.length) {
@@ -589,6 +634,8 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
       } catch (e) {
         debugPrint('[ChatMessagesNotifier] Polling error: $e');
         // Don't stop polling on transient errors
+      } finally {
+        _isPolling = false;
       }
     });
   }
@@ -856,10 +903,7 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
   /// Clean up resources when notifier is disposed
   @override
   void dispose() {
-    _currentStreamSubscription?.cancel();
-    _currentStreamSubscription = null;
-    _pollTimer?.cancel();
-    _pollTimer = null;
+    _resetTransientState();
     super.dispose();
   }
 
@@ -869,11 +913,7 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
   /// Preserves workingDirectory if [preserveWorkingDirectory] is true.
   /// Note: Background streams continue even when session is cleared.
   void clearSession({bool preserveWorkingDirectory = false}) {
-    // Cancel subscription but let background stream continue
-    _currentStreamSubscription?.cancel();
-    _currentStreamSubscription = null;
-    _activeStreamSessionId = null;
-    _pendingResendMessage = null;
+    _resetTransientState();
 
     if (preserveWorkingDirectory && state.workingDirectory != null) {
       state = ChatMessagesState(workingDirectory: state.workingDirectory);
@@ -1728,11 +1768,5 @@ final chatMessagesProvider =
   final service = ref.watch(chatServiceProvider);
   final streamManager = ref.watch(backgroundStreamManagerProvider);
   final notifier = ChatMessagesNotifier(service, streamManager, ref);
-
-  // Ensure proper cleanup when provider is disposed
-  ref.onDispose(() {
-    notifier.dispose();
-  });
-
   return notifier;
 });
