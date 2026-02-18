@@ -134,6 +134,10 @@ class _MessageBubbleState extends State<MessageBubble>
         // Flush any pending thinking items before adding text
         flushThinkingItems();
         widgets.add(_buildTextContent(context, content.text!, isUser, isDark, vaultPath));
+      } else if (content.type == ContentType.warning && content.text != null) {
+        // Flush any pending thinking items before adding warning
+        flushThinkingItems();
+        widgets.add(_buildWarningContent(context, content.text!, isDark));
       } else if (content.type == ContentType.thinking || content.type == ContentType.toolUse) {
         // Accumulate thinking and tool calls
         pendingThinkingItems.add(content);
@@ -175,11 +179,41 @@ class _MessageBubbleState extends State<MessageBubble>
     );
   }
 
+  Widget _buildWarningContent(BuildContext context, String text, bool isDark) {
+    return Padding(
+      padding: Spacing.cardPadding,
+      child: Container(
+        padding: const EdgeInsets.all(Spacing.sm),
+        decoration: BoxDecoration(
+          color: (isDark ? Colors.orange.shade900 : Colors.orange.shade50)
+              .withValues(alpha: 0.5),
+          borderRadius: BorderRadius.circular(Spacing.xs),
+          border: Border(
+            left: BorderSide(
+              color: isDark ? Colors.orange.shade700 : Colors.orange.shade300,
+              width: 3,
+            ),
+          ),
+        ),
+        child: Text(
+          text,
+          style: TextStyle(
+            fontSize: 13,
+            color: isDark ? Colors.orange.shade200 : Colors.orange.shade900,
+            height: 1.4,
+          ),
+        ),
+      ),
+    );
+  }
+
   /// Get all text content from the message for copying
   String _getFullText() {
     final textParts = <String>[];
     for (final content in widget.message.content) {
-      if (content.type == ContentType.text && content.text != null) {
+      if ((content.type == ContentType.text ||
+              content.type == ContentType.warning) &&
+          content.text != null) {
         textParts.add(content.text!);
       }
     }

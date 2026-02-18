@@ -591,6 +591,23 @@ class TelegramConnector(BotConnector):
                     logger.error(f"Orchestrator error event: {error_msg}")
                     error_occurred = True
 
+                elif event_type == "typed_error":
+                    # Structured error with user-friendly message
+                    title = event.get("title", "Error") if isinstance(event, dict) else getattr(event, "title", "Error")
+                    message = event.get("message", "") if isinstance(event, dict) else getattr(event, "message", "")
+                    error_text = f"{title}: {message}" if message else title
+                    logger.error(f"Orchestrator typed error: {error_text}")
+                    buffer += f"\n\n⚠️ {error_text}"
+                    error_occurred = True
+
+                elif event_type == "warning":
+                    # Non-fatal warning — append to response
+                    title = event.get("title", "Warning") if isinstance(event, dict) else getattr(event, "title", "Warning")
+                    message = event.get("message", "") if isinstance(event, dict) else getattr(event, "message", "")
+                    warning_text = f"{title}: {message}" if message else title
+                    logger.warning(f"Orchestrator warning: {warning_text}")
+                    buffer += f"\n\n⚠️ {warning_text}"
+
             # Final edit with complete formatted response
             if buffer:
                 formatted = claude_to_telegram(buffer)

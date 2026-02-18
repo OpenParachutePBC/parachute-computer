@@ -20,6 +20,7 @@ enum StreamEventType {
   done,
   error,
   typedError, // Structured error with recovery actions
+  warning, // Non-fatal issue, stream continues
   unknown,
 }
 
@@ -96,6 +97,9 @@ class StreamEvent {
           break;
         case 'typed_error':
           type = StreamEventType.typedError;
+          break;
+        case 'warning':
+          type = StreamEventType.warning;
           break;
         default:
           type = StreamEventType.unknown;

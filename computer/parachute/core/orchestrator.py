@@ -32,6 +32,7 @@ from parachute.core.context_folders import ContextFolderService
 from parachute.core.capability_filter import filter_by_trust_level, filter_capabilities
 from parachute.lib.mcp_loader import load_mcp_servers, resolve_mcp_servers, validate_and_filter_servers
 from parachute.models.agent import AgentDefinition, AgentType, create_vault_agent
+from parachute.lib.typed_errors import ErrorCode, parse_error
 from parachute.models.events import (
     AbortedEvent,
     DoneEvent,
@@ -47,8 +48,10 @@ from parachute.models.events import (
     ThinkingEvent,
     ToolResultEvent,
     ToolUseEvent,
+    TypedErrorEvent,
     UserMessageEvent,
     UserQuestionEvent,
+    WarningEvent,
 )
 from parachute.models.session import ResumeInfo, SessionSource, TrustLevel
 
@@ -401,6 +404,7 @@ class Orchestrator:
 
         # Handle attachments
         # For now, we save attachments to the vault and reference them in the message
+        attachment_failures: list[str] = []
         if attachments:
             attachment_parts = []
             for att in attachments:
@@ -457,6 +461,7 @@ class Orchestrator:
                     except Exception as e:
                         logger.error(f"Failed to save attachment {file_name}: {e}")
                         attachment_parts.append(f"[Failed to attach: {file_name}]")
+                        attachment_failures.append(f"{file_name}: {e}")
 
             if attachment_parts:
                 attachment_text = "\n\n".join(attachment_parts)
@@ -467,6 +472,16 @@ class Orchestrator:
         # (SDK doesn't write user messages to JSONL until response completes)
         logger.info(f"Emitting user_message event: {message[:50]}...")
         yield UserMessageEvent(content=message).model_dump(by_alias=True)
+
+        # Yield attachment warning after user message (user sees their message first)
+        if attachment_failures:
+            yield WarningEvent(
+                code=ErrorCode.ATTACHMENT_SAVE_FAILED,
+                title="Attachment Failed",
+                message=f"Failed to save {len(attachment_failures)} attachment(s).",
+                details=attachment_failures[:5],
+                session_id=session.id if session.id != "pending" else None,
+            ).model_dump(by_alias=True)
 
         # Handle recovery mode
         force_new = False
@@ -501,6 +516,7 @@ class Orchestrator:
             # Wrap in try/catch for resilience - MCP misconfig shouldn't crash the server
             resolved_mcps = None
             mcp_warnings: list[str] = []
+            mcp_load_warning: WarningEvent | None = None
             try:
                 global_mcps = await load_mcp_servers(self.vault_path)
                 resolved_mcps = resolve_mcp_servers(agent.mcp_servers, global_mcps)
@@ -520,6 +536,13 @@ class Orchestrator:
                 # MCP loading failed entirely - log and continue without MCP
                 logger.error(f"Failed to load MCP servers (continuing without MCP): {e}")
                 resolved_mcps = None
+                mcp_load_warning = WarningEvent(
+                    code=ErrorCode.MCP_LOAD_FAILED,
+                    title="MCP Tools Unavailable",
+                    message="MCP servers failed to load. Chat will continue without MCP tools.",
+                    details=[str(e)],
+                    session_id=session.id if session.id != "pending" else None,
+                )
 
             # Discover skills and generate runtime plugin
             plugin_dirs: list[Path] = []
@@ -654,6 +677,18 @@ class Orchestrator:
                 trust_mode=(session.permissions.trust_level == TrustLevel.TRUSTED),
                 working_directory_claude_md=prompt_metadata.get("working_directory_claude_md"),
             ).model_dump(by_alias=True)
+
+            # Yield MCP warnings (after metadata so client knows about capabilities)
+            if mcp_load_warning:
+                yield mcp_load_warning.model_dump(by_alias=True)
+            if mcp_warnings:
+                yield WarningEvent(
+                    code=ErrorCode.MCP_CONNECTION_FAILED,
+                    title="MCP Configuration Issues",
+                    message=f"{len(mcp_warnings)} MCP server(s) skipped due to configuration issues.",
+                    details=mcp_warnings[:5],
+                    session_id=session.id if session.id != "pending" else None,
+                ).model_dump(by_alias=True)
 
             # Set up permission handler with event callbacks
             def on_permission_denial(denial: dict) -> None:
@@ -1134,9 +1169,9 @@ class Orchestrator:
                             message=f"Session could not be loaded: {error_msg}",
                         ).model_dump(by_alias=True)
                     else:
-                        yield ErrorEvent(
-                            error=error_msg,
-                            session_id=captured_session_id or session.id,
+                        typed = parse_error(error_msg)
+                        yield TypedErrorEvent.from_typed_error(
+                            typed, session_id=captured_session_id or session.id
                         ).model_dump(by_alias=True)
 
                     # Stop processing - don't continue to done event
@@ -1196,9 +1231,9 @@ class Orchestrator:
                     message="The conversation history could not be loaded.",
                 ).model_dump(by_alias=True)
             else:
-                yield ErrorEvent(
-                    error=str(e),
-                    session_id=captured_session_id or session.id,
+                typed = parse_error(e)
+                yield TypedErrorEvent.from_typed_error(
+                    typed, session_id=captured_session_id or session.id
                 ).model_dump(by_alias=True)
 
         finally:

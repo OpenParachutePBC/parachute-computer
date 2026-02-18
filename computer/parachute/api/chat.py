@@ -16,6 +16,8 @@ from pydantic import BaseModel, Field
 
 from parachute.config import get_settings
 from parachute.core.orchestrator import InjectResult
+from parachute.lib.typed_errors import parse_error
+from parachute.models.events import TypedErrorEvent
 from parachute.models.requests import ChatRequest
 
 router = APIRouter()
@@ -97,7 +99,9 @@ async def event_generator(request: Request, chat_request: ChatRequest):
 
     except Exception as e:
         logger.error(f"Stream error: {e}", exc_info=True)
-        yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
+        typed = parse_error(e)
+        event = TypedErrorEvent.from_typed_error(typed)
+        yield f"data: {json.dumps(event.model_dump(by_alias=True))}\n\n"
 
 
 @router.post("/chat")

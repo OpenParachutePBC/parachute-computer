@@ -35,7 +35,11 @@ class ErrorCode(str, Enum):
 
     # MCP errors
     MCP_CONNECTION_FAILED = "mcp_connection_failed"
+    MCP_LOAD_FAILED = "mcp_load_failed"
     MCP_TOOL_ERROR = "mcp_tool_error"
+
+    # Attachment errors
+    ATTACHMENT_SAVE_FAILED = "attachment_save_failed"
 
     # Tool errors
     TOOL_EXECUTION_FAILED = "tool_execution_failed"
@@ -175,11 +179,29 @@ ERROR_DEFINITIONS: dict[ErrorCode, dict[str, Any]] = {
         "can_retry": True,
         "retry_delay_ms": 2000,
     },
+    ErrorCode.MCP_LOAD_FAILED: {
+        "title": "MCP Tools Unavailable",
+        "message": "MCP servers failed to load. Chat will continue without MCP tools.",
+        "actions": [
+            RecoveryAction(key="r", label="Retry", action="retry"),
+        ],
+        "can_retry": True,
+        "retry_delay_ms": 2000,
+    },
     ErrorCode.MCP_TOOL_ERROR: {
         "title": "Tool Error",
         "message": "An MCP tool failed to execute.",
         "actions": [
             RecoveryAction(key="r", label="Retry", action="retry"),
+        ],
+        "can_retry": True,
+    },
+    ErrorCode.ATTACHMENT_SAVE_FAILED: {
+        "title": "Attachment Failed",
+        "message": "One or more attachments could not be saved.",
+        "actions": [
+            RecoveryAction(key="r", label="Retry", action="retry"),
+            RecoveryAction(key="d", label="Dismiss", action="dismiss"),
         ],
         "can_retry": True,
     },

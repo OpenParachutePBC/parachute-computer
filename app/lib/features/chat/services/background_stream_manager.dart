@@ -87,7 +87,9 @@ class BackgroundStreamManager {
 
         // Check for terminal events
         if (event.type == StreamEventType.done ||
-            event.type == StreamEventType.error) {
+            event.type == StreamEventType.error ||
+            event.type == StreamEventType.typedError ||
+            event.type == StreamEventType.aborted) {
           break;
         }
       }
