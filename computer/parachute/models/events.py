@@ -4,11 +4,16 @@ SSE event models for streaming chat responses.
 These match the event types from the Node.js server for compatibility.
 """
 
-from typing import Any, Literal, Optional, Union
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any, Literal, Optional, Union
 
 from pydantic import BaseModel, Field
 
 from parachute.lib.typed_errors import ErrorCode, RecoveryAction
+
+if TYPE_CHECKING:
+    from parachute.lib.typed_errors import TypedError
 
 
 class SessionEvent(BaseModel):
@@ -152,6 +157,41 @@ class TypedErrorEvent(BaseModel):
     )
     original_error: Optional[str] = Field(
         alias="originalError", default=None, description="Original error for debugging"
+    )
+    session_id: Optional[str] = Field(alias="sessionId", default=None)
+
+    model_config = {"populate_by_name": True}
+
+    @classmethod
+    def from_typed_error(
+        cls, error: TypedError, session_id: str | None = None
+    ) -> TypedErrorEvent:
+        """Create from a TypedError, avoiding brittle field-by-field copying."""
+        return cls(
+            code=error.code,
+            title=error.title,
+            message=error.message,
+            actions=error.actions,
+            can_retry=error.can_retry,
+            retry_delay_ms=error.retry_delay_ms,
+            original_error=error.original_error,
+            session_id=session_id,
+        )
+
+
+class WarningEvent(BaseModel):
+    """Warning event — non-fatal issue, stream continues.
+
+    Unlike TypedErrorEvent, warnings do not terminate the stream.
+    Existing clients that don't handle 'warning' will safely ignore it.
+    """
+
+    type: Literal["warning"] = "warning"
+    code: ErrorCode = Field(description="Warning code for programmatic handling")
+    title: str = Field(description="User-friendly warning title")
+    message: str = Field(description="Detailed warning message")
+    details: Optional[list[str]] = Field(
+        default=None, description="List of specific issues (e.g., per-MCP failures)"
     )
     session_id: Optional[str] = Field(alias="sessionId", default=None)
 
@@ -323,6 +363,7 @@ SSEEvent = Union[
     SessionUnavailableEvent,
     ErrorEvent,
     TypedErrorEvent,
+    WarningEvent,
     UserMessageEvent,
     PermissionRequestEvent,
     UserQuestionEvent,
