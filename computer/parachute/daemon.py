@@ -62,7 +62,16 @@ class DaemonManager(ABC):
     def restart(self) -> None:
         """Restart the daemon."""
         self.stop()
-        time.sleep(1)
+
+        # Wait for process to fully stop (up to 5 seconds)
+        for i in range(10):
+            status = self.status()
+            if not status.get("running"):
+                break
+            time.sleep(0.5)
+        else:
+            logger.warning("Process still running after 5s, attempting start anyway")
+
         self.start()
 
     @abstractmethod
@@ -173,21 +182,63 @@ class LaunchdDaemon(DaemonManager):
             capture_output=True, text=True, timeout=10,
         )
         if result.returncode != 0:
-            # May already be loaded — try kickstart instead
-            result2 = subprocess.run(
-                ["launchctl", "kickstart", "-k", f"gui/{os.getuid()}/{label}"],
-                capture_output=True, text=True, timeout=10,
-            )
-            if result2.returncode != 0:
-                raise RuntimeError(f"Failed to start daemon: {result.stderr} / {result2.stderr}")
+            # Bootstrap failed - could be already loaded or still shutting down
+            stderr = result.stderr.strip()
+
+            # If already loaded, try kickstart
+            if "already loaded" in stderr.lower() or "service already loaded" in stderr.lower():
+                result2 = subprocess.run(
+                    ["launchctl", "kickstart", "-k", f"gui/{os.getuid()}/{label}"],
+                    capture_output=True, text=True, timeout=10,
+                )
+                if result2.returncode != 0:
+                    raise RuntimeError(f"Failed to kickstart: {result2.stderr.strip()}")
+                return
+
+            # If I/O error or bootstrap failed, wait and retry once
+            if "input/output error" in stderr.lower() or "bootstrap failed: 5" in stderr.lower():
+                logger.warning(f"Bootstrap failed (process may still be stopping), retrying in 2s...")
+                time.sleep(2)
+
+                # Retry bootstrap
+                result3 = subprocess.run(
+                    ["launchctl", "bootstrap", f"gui/{os.getuid()}", str(self.plist_path)],
+                    capture_output=True, text=True, timeout=10,
+                )
+                if result3.returncode != 0:
+                    # Still failed, try kickstart
+                    result4 = subprocess.run(
+                        ["launchctl", "kickstart", "-k", f"gui/{os.getuid()}/{label}"],
+                        capture_output=True, text=True, timeout=10,
+                    )
+                    if result4.returncode != 0:
+                        raise RuntimeError(
+                            f"Failed to start daemon after retry:\n"
+                            f"  Bootstrap: {result3.stderr.strip()}\n"
+                            f"  Kickstart: {result4.stderr.strip()}"
+                        )
+                return
+
+            # Other error
+            raise RuntimeError(f"Failed to start daemon: {stderr}")
 
     def stop(self) -> None:
         try:
             label = SUPERVISOR_LAUNCHD_LABEL if self.supervisor else LAUNCHD_LABEL
-            subprocess.run(
+            result = subprocess.run(
                 ["launchctl", "bootout", f"gui/{os.getuid()}/{label}"],
                 capture_output=True, text=True, timeout=10,
             )
+
+            # Wait for process to actually stop (up to 3 seconds)
+            for i in range(6):
+                status = self.status()
+                if not status.get("running"):
+                    break
+                time.sleep(0.5)
+
+            if result.returncode != 0 and "could not find" not in result.stderr.lower():
+                logger.warning(f"Bootout returned error: {result.stderr.strip()}")
         except Exception as e:
             logger.warning(f"Error stopping daemon: {e}")
 
