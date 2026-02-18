@@ -835,6 +835,62 @@ def cmd_status(args: argparse.Namespace) -> None:
     print()
 
 
+# --- Supervisor command ---
+
+
+def cmd_supervisor(args: argparse.Namespace) -> None:
+    """Manage the supervisor daemon."""
+    action = getattr(args, "action", None)
+    vault_path = _get_vault_path()
+    config = _load_yaml_config(vault_path)
+
+    try:
+        from parachute.daemon import get_supervisor_daemon_manager
+
+        daemon = get_supervisor_daemon_manager(vault_path, config)
+
+        if action == "install":
+            daemon.install()
+            print("Supervisor daemon installed.")
+            print("Use 'parachute supervisor start' to start it.")
+        elif action == "uninstall":
+            daemon.uninstall()
+            print("Supervisor daemon removed.")
+        elif action == "start":
+            if not daemon.is_installed():
+                print("Supervisor not installed. Run 'parachute supervisor install' first.")
+                return
+            daemon.start()
+            print("Supervisor started on http://localhost:3334")
+        elif action == "stop":
+            daemon.stop()
+            print("Supervisor stopped.")
+        elif action == "restart":
+            daemon.restart()
+            print("Supervisor restarted.")
+        elif action == "status":
+            status = daemon.status()
+            print(f"Supervisor daemon status:")
+            print(f"  Installed: {status.get('installed', False)}")
+            print(f"  Running: {status.get('running', False)}")
+            if status.get("pid"):
+                print(f"  PID: {status['pid']}")
+            print(f"  Type: {status.get('type', 'unknown')}")
+
+            # Check HTTP health
+            try:
+                _api_get("http://localhost:3334/supervisor/status")
+                print("  HTTP health: OK")
+            except Exception:
+                print("  HTTP health: not responding")
+        else:
+            print("Usage: parachute supervisor {install|uninstall|start|stop|restart|status}")
+
+    except Exception as e:
+        print(f"Error: {e}")
+        sys.exit(1)
+
+
 # --- Logs command ---
 
 
@@ -1771,6 +1827,16 @@ def main() -> None:
     bot_deny_parser.add_argument("request_id", help="Request ID to deny")
     bot_sub.add_parser("users", help="List approved users across platforms")
 
+    # supervisor subcommand
+    supervisor_parser = subparsers.add_parser("supervisor", help="Supervisor daemon management")
+    supervisor_sub = supervisor_parser.add_subparsers(dest="action")
+    supervisor_sub.add_parser("start", help="Start supervisor daemon")
+    supervisor_sub.add_parser("stop", help="Stop supervisor daemon")
+    supervisor_sub.add_parser("restart", help="Restart supervisor daemon")
+    supervisor_sub.add_parser("status", help="Check supervisor status")
+    supervisor_sub.add_parser("install", help="Install supervisor daemon")
+    supervisor_sub.add_parser("uninstall", help="Remove supervisor daemon")
+
     # help (alias for --help)
     subparsers.add_parser("help", help="Show this help message")
 
@@ -1804,5 +1870,7 @@ def main() -> None:
             module_parser.print_help()
     elif args.command == "bot":
         cmd_bot(args)
+    elif args.command == "supervisor":
+        cmd_supervisor(args)
     else:
         parser.print_help()
