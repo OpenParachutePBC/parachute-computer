@@ -499,7 +499,7 @@ def cmd_update(args: argparse.Namespace) -> None:
 
     # 1. Git pull and detect what changed
     supervisor_code_changed = False
-        if (repo_dir / ".git").exists():
+    if (repo_dir / ".git").exists():
             print("\nPulling latest code...")
 
             # Store current HEAD for diff

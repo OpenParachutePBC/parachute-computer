@@ -44,9 +44,7 @@ except Exception as e:
     # Supervisor still starts, but endpoints return degraded status
 
 
-# ===
-
- Health Check Cache ===
+# === Health Check Cache ===
 class ServerHealthCache:
     """TTL cache for main server health checks (90% overhead reduction)."""
 
