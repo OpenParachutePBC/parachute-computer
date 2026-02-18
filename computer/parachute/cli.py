@@ -545,7 +545,7 @@ def cmd_update(args: argparse.Namespace) -> None:
         sys.exit(1)
     print("  Dependencies updated.")
 
-    # 3. Restart main server daemon if running
+    # 3. Restart main server daemon if running (deps already installed above)
     vault_path = _get_vault_path()
     config = _load_yaml_config(vault_path)
 
@@ -724,10 +724,27 @@ def _server_stop() -> None:
 
 
 def _server_restart() -> None:
-    """Restart the daemon, killing any rogue process on the port first."""
+    """Restart the daemon, reinstalling deps first to ensure everything is current."""
     vault_path = _get_vault_path()
     config = _load_yaml_config(vault_path)
     port = config.get("port", 3333)
+
+    # Reinstall dependencies to pick up any changes (new deps, updates, etc.)
+    repo_dir = _get_repo_dir()
+    venv_pip = Path(sys.executable).parent / "pip"
+
+    print("Installing dependencies...")
+    result = subprocess.run(
+        [str(venv_pip), "install", "-e", str(repo_dir), "-q"],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    if result.returncode != 0:
+        print(f"  pip install failed: {result.stderr.strip()}")
+        print("  Continuing with restart anyway...")
+    else:
+        print("  Dependencies updated.")
 
     try:
         from parachute.daemon import get_daemon_manager
