@@ -168,6 +168,15 @@ async def lifespan(app: FastAPI):
             logger.warning(f"Error stopping {platform} connector: {e}")
     bot_connectors.clear()
 
+    # Clean up any remaining pending permissions before shutdown
+    if app.state.orchestrator:
+        for session_id, handler in list(app.state.orchestrator.pending_permissions.items()):
+            try:
+                handler.cleanup()
+            except Exception as e:
+                logger.warning("Error cleaning permissions for %s during shutdown: %s", session_id, e)
+        app.state.orchestrator.pending_permissions.clear()
+
     await stop_scheduler()
     await close_database()
     app.state.orchestrator = None

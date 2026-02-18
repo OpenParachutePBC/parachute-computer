@@ -13,7 +13,7 @@ dynamically via the permission_request SSE flow.
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
 from uuid import uuid4
@@ -68,7 +68,7 @@ class PermissionRequest:
     tool_name: str
     input_data: dict[str, Any]
     agent_name: str
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     status: str = "pending"  # pending, granted, denied, timeout
 
     # For write tools
@@ -81,6 +81,7 @@ class PermissionRequest:
 
     # Resolution
     _resolve: Optional[Callable[[str], None]] = field(default=None, repr=False)
+    _future: Optional[asyncio.Future] = field(default=None, repr=False)
 
 
 @dataclass
@@ -90,11 +91,12 @@ class UserQuestionRequest:
     id: str
     tool_use_id: str
     questions: list[dict[str, Any]]
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     status: str = "pending"  # pending, answered, timeout
 
     # Resolution - receives dict of question -> answer(s)
     _resolve: Optional[Callable[[dict[str, Any]], None]] = field(default=None, repr=False)
+    _future: Optional[asyncio.Future] = field(default=None, repr=False)
 
 
 @dataclass
@@ -499,6 +501,7 @@ class PermissionHandler:
             file_path=file_path,
             allowed_patterns=self._permissions.read if permission_type == "read" else self._permissions.write,
             _resolve=resolve,
+            _future=future,
         )
 
         self.pending[request_id] = request
@@ -509,40 +512,40 @@ class PermissionHandler:
 
         logger.info(f"Waiting for approval: {request_id} ({permission_type} {file_path})")
 
-        # Wait for decision with timeout
+        # Wait for decision with timeout, ensuring cleanup on any exit path
         try:
-            decision = await asyncio.wait_for(
-                future, timeout=self.timeout_seconds
+            try:
+                decision = await asyncio.wait_for(
+                    future, timeout=self.timeout_seconds
+                )
+            except asyncio.TimeoutError:
+                decision = "timeout"
+
+            logger.info(f"Permission decision: {request_id} -> {decision}")
+
+            if decision.startswith("granted"):
+                # Handle permission grants with pattern
+                # Format: "granted:pattern" or just "granted"
+                if ":" in decision:
+                    pattern = decision.split(":", 1)[1]
+                    self._add_permission(permission_type, pattern)
+                return PermissionDecision(behavior="allow", updated_input=input_data)
+
+            # Denied or timeout
+            reason = "timeout" if decision == "timeout" else "denied"
+            if self.on_denial:
+                self.on_denial({
+                    "tool_name": tool_name,
+                    "file_path": file_path,
+                    "reason": reason,
+                })
+
+            return PermissionDecision(
+                behavior="deny",
+                message=f"Permission {reason} for {tool_name}",
             )
-        except asyncio.TimeoutError:
-            decision = "timeout"
-
-        # Clean up
-        del self.pending[request_id]
-
-        logger.info(f"Permission decision: {request_id} -> {decision}")
-
-        if decision.startswith("granted"):
-            # Handle permission grants with pattern
-            # Format: "granted:pattern" or just "granted"
-            if ":" in decision:
-                pattern = decision.split(":", 1)[1]
-                self._add_permission(permission_type, pattern)
-            return PermissionDecision(behavior="allow", updated_input=input_data)
-
-        # Denied or timeout
-        reason = "timeout" if decision == "timeout" else "denied"
-        if self.on_denial:
-            self.on_denial({
-                "tool_name": tool_name,
-                "file_path": file_path,
-                "reason": reason,
-            })
-
-        return PermissionDecision(
-            behavior="deny",
-            message=f"Permission {reason} for {tool_name}",
-        )
+        finally:
+            self.pending.pop(request_id, None)
 
     def _add_permission(self, permission_type: str, pattern: str) -> None:
         """Add a permission pattern to the session."""
@@ -610,17 +613,60 @@ class PermissionHandler:
         """Get all pending permission requests."""
         return [r for r in self.pending.values() if r.status == "pending"]
 
-    def cleanup_stale(self, max_age_seconds: int = 300) -> int:
-        """Clean up stale permission requests."""
-        now = datetime.utcnow()
+    def cleanup(self) -> None:
+        """Force-resolve all pending futures and clear state. Called on session end."""
+        cleaned_approvals = 0
+        cleaned_questions = 0
+
+        for request_id, request in list(self.pending.items()):
+            if request._future and not request._future.done():
+                try:
+                    request._future.set_result("denied")
+                except asyncio.InvalidStateError:
+                    pass  # Future cancelled between done() check and set_result()
+                cleaned_approvals += 1
+        self.pending.clear()
+
+        for request_id, request in list(self.pending_questions.items()):
+            if request._future and not request._future.done():
+                try:
+                    request._future.set_result({})
+                except asyncio.InvalidStateError:
+                    pass
+                cleaned_questions += 1
+        self.pending_questions.clear()
+
+        if cleaned_approvals or cleaned_questions:
+            logger.warning(
+                "Cleaned up %d pending approvals and %d pending questions for session %s",
+                cleaned_approvals, cleaned_questions, self.session.id
+            )
+
+    def cleanup_stale(self, max_age_seconds: int = 600) -> int:
+        """Clean up stale permission requests. Resolves futures before removing."""
+        now = datetime.now(timezone.utc)
         cleaned = 0
 
-        for request_id in list(self.pending.keys()):
-            request = self.pending[request_id]
+        for request_id, request in list(self.pending.items()):
             age = (now - request.timestamp).total_seconds()
+            if age > max_age_seconds:
+                if request._future and not request._future.done():
+                    try:
+                        request._future.set_result("denied")
+                    except asyncio.InvalidStateError:
+                        pass
+                self.pending.pop(request_id, None)
+                cleaned += 1
 
-            if age > max_age_seconds or request.status != "pending":
-                del self.pending[request_id]
+        for request_id, request in list(self.pending_questions.items()):
+            age = (now - request.timestamp).total_seconds()
+            if age > max_age_seconds:
+                if request._future and not request._future.done():
+                    try:
+                        request._future.set_result({})
+                    except asyncio.InvalidStateError:
+                        pass
+                self.pending_questions.pop(request_id, None)
                 cleaned += 1
 
         return cleaned
@@ -723,6 +769,7 @@ class PermissionHandler:
             tool_use_id=tool_use_id,
             questions=questions,
             _resolve=resolve,
+            _future=future,
         )
 
         self.pending_questions[request_id] = request
@@ -731,26 +778,26 @@ class PermissionHandler:
         if self.on_user_question:
             self.on_user_question(request)
 
-        # Wait for user response with timeout
+        # Wait for user response with timeout, ensuring cleanup on any exit path
         try:
-            answers = await asyncio.wait_for(
-                future, timeout=self.question_timeout_seconds
-            )
-            request.status = "answered"
-        except asyncio.TimeoutError:
-            logger.warning(f"AskUserQuestion timeout: {request_id}")
-            request.status = "timeout"
-            # Return empty answers on timeout - Claude will see no response
-            answers = {}
+            try:
+                answers = await asyncio.wait_for(
+                    future, timeout=self.question_timeout_seconds
+                )
+                request.status = "answered"
+            except asyncio.TimeoutError:
+                logger.warning(f"AskUserQuestion timeout: {request_id}")
+                request.status = "timeout"
+                # Return empty answers on timeout - Claude will see no response
+                answers = {}
 
-        # Clean up
-        del self.pending_questions[request_id]
-
-        # Return updated input with answers
-        return {
-            "questions": questions,
-            "answers": answers,
-        }
+            # Return updated input with answers
+            return {
+                "questions": questions,
+                "answers": answers,
+            }
+        finally:
+            self.pending_questions.pop(request_id, None)
 
     def answer_questions(self, request_id: str, answers: dict[str, Any]) -> bool:
         """
