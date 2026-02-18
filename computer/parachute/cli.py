@@ -569,7 +569,8 @@ def cmd_update(args: argparse.Namespace) -> None:
         print(f"\nCouldn't restart main server daemon: {e}")
         print("  Restart manually: parachute server restart")
 
-    # 4. Restart supervisor daemon if running, or install if not present
+    # 4. Ensure supervisor is installed and running (don't restart if already up —
+    #    supervisor doesn't load user code so there's nothing to reload)
     try:
         from parachute.daemon import get_supervisor_daemon_manager
 
@@ -577,23 +578,19 @@ def cmd_update(args: argparse.Namespace) -> None:
         supervisor_status = supervisor_daemon.status()
 
         if supervisor_status.get("running"):
-            print("\nRestarting supervisor...")
-            supervisor_daemon.restart()
-            print("  Supervisor restarted.")
+            pass  # Already up, leave it alone
         elif supervisor_status.get("installed"):
             print("\nStarting supervisor...")
             supervisor_daemon.start()
             print("  Supervisor started.")
         else:
-            # Auto-install supervisor if not present
-            print("\nInstalling supervisor daemon...")
+            print("\nInstalling supervisor...")
             supervisor_daemon.install()
-            print("  Supervisor daemon installed.")
             supervisor_daemon.start()
-            print("  Supervisor daemon started.")
+            print("  Supervisor installed and started.")
     except Exception as e:
-        print(f"\nCouldn't manage supervisor daemon: {e}")
-        print("  Manage manually: parachute supervisor install/start")
+        print(f"\nCouldn't start supervisor: {e}")
+        print("  Try: parachute supervisor install")
 
     print("\nDone!")
 
