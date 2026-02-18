@@ -92,6 +92,66 @@ def save_yaml_config(vault_path: Path, data: dict[str, Any]) -> Path:
     return config_file
 
 
+def save_yaml_config_atomic(vault_path: Path, updates: dict[str, Any]) -> Path:
+    """
+    Atomically update config.yaml with file locking.
+
+    ARCHITECTURE: Prevents race conditions from concurrent writes
+    (supervisor API, CLI tool, potential server writes).
+
+    Pattern:
+    1. Acquire exclusive lock on .config.lock
+    2. Read current config
+    3. Merge updates
+    4. Write to temp file
+    5. Atomic rename
+    6. Release lock
+    """
+    import fcntl
+    import tempfile
+
+    config_file = vault_path / ".parachute" / "config.yaml"
+    lock_file = vault_path / ".parachute" / ".config.lock"
+
+    config_file.parent.mkdir(parents=True, exist_ok=True)
+
+    with open(lock_file, 'w') as lock:
+        # Acquire exclusive lock (blocks if another process is writing)
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+
+        try:
+            # Read current config
+            current = {}
+            if config_file.exists():
+                with open(config_file) as f:
+                    current = yaml.safe_load(f) or {}
+
+            # Merge updates
+            current.update(updates)
+
+            # Write to temp file
+            fd, temp_path = tempfile.mkstemp(
+                dir=config_file.parent,
+                prefix=".config-",
+                suffix=".yaml.tmp"
+            )
+            try:
+                with os.fdopen(fd, "w") as f:
+                    yaml.safe_dump(current, f, default_flow_style=False, sort_keys=False)
+
+                # Atomic rename (POSIX guarantee)
+                os.replace(temp_path, config_file)
+            except Exception:
+                # Clean up temp file on error
+                Path(temp_path).unlink(missing_ok=True)
+                raise
+        finally:
+            # Release lock
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+    return config_file
+
+
 def save_token(vault_path: Path, token: str) -> Path:
     """Write token to vault/.parachute/.token with restricted permissions."""
     token_file = vault_path / ".parachute" / ".token"
