@@ -21,62 +21,60 @@ export ANTHROPIC_API_KEY="sk-ant-..."
 cd /Volumes/ExternalSSD/Parachute/Projects/parachute-computer
 ```
 
+**Note:** As of this PR, the supervisor is **automatically installed** by `./install.sh` and `parachute update`. You no longer need to manually run `parachute supervisor install`.
+
 ---
 
 ## Phase 1: Supervisor Service (Backend)
 
-### 1.1 Install Dependencies
+### 1.1 Install or Update (Auto-installs Supervisor)
 
+**Option A: Fresh install**
 ```bash
 cd computer
-pip install -e .
+./install.sh
 ```
 
-**Expected:** Installation completes without errors, `parachute-supervisor` script registered.
-
-### 1.2 Install Supervisor Daemon
-
+**Option B: Update existing installation**
 ```bash
-parachute supervisor install
+parachute update --local
 ```
 
 **Expected output:**
 ```
-✓ Supervisor daemon installed successfully
-  Label: io.openparachute.supervisor
-  Port: 3334
+Installing main server daemon...
+  Main server daemon installed.
+  Main server daemon started.
+  Server running on port 3333
 
-Run 'parachute supervisor start' to start the daemon
+Installing supervisor daemon...
+  Supervisor daemon installed.
+  Supervisor daemon started.
+  Supervisor running on port 3334
+
+Done! Use 'parachute server status' to check the daemon.
+Use 'parachute supervisor status' to check the supervisor.
 ```
 
-**Verify:** Check that launchd plist exists (macOS):
+**Verify both are running:**
 ```bash
-ls ~/Library/LaunchAgents/io.openparachute.supervisor.plist
-```
-
-### 1.3 Start Supervisor
-
-```bash
-parachute supervisor start
-```
-
-**Expected:**
-```
-✓ Supervisor daemon started
-```
-
-**Verify it's running:**
-```bash
+parachute server status
 parachute supervisor status
 ```
 
 **Expected:**
 ```
-Supervisor Status: ● Running (PID: 12345)
-Uptime: 5 seconds
+Server Status: ● Running (PID: 12345)
+Supervisor Status: ● Running (PID: 12346)
 ```
 
-### 1.4 Check Supervisor Health
+**Verify launchd plists exist (macOS):**
+```bash
+ls ~/Library/LaunchAgents/io.openparachute.parachute.plist
+ls ~/Library/LaunchAgents/io.openparachute.supervisor.plist
+```
+
+### 1.2 Check Supervisor Health
 
 ```bash
 curl -s http://localhost:3334/supervisor/status | jq
@@ -93,7 +91,7 @@ curl -s http://localhost:3334/supervisor/status | jq
 }
 ```
 
-### 1.5 Test Server Control Endpoints
+### 1.3 Test Server Control Endpoints
 
 **Restart main server:**
 ```bash
@@ -115,7 +113,7 @@ curl http://localhost:3333/api/health
 {"status": "healthy", "version": "0.7.0"}
 ```
 
-### 1.6 Test Log Streaming
+### 1.4 Test Log Streaming
 
 ```bash
 curl -N http://localhost:3334/supervisor/logs
@@ -129,7 +127,7 @@ data: {"timestamp": "2026-02-18T10:30:01", "level": "info", "message": "API key:
 
 Press `Ctrl+C` to stop stream.
 
-### 1.7 Test Config Endpoint
+### 1.5 Test Config Endpoint
 
 **Read config:**
 ```bash
