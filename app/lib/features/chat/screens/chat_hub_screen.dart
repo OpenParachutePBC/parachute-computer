@@ -573,12 +573,16 @@ class _ChatHubScreenState extends ConsumerState<ChatHubScreen> {
 
         return RefreshIndicator(
           onRefresh: () async {
-            if (_showArchived) {
-              ref.invalidate(archivedSessionsProvider);
-              await ref.read(archivedSessionsProvider.future);
-            } else {
-              ref.invalidate(chatSessionsProvider);
-              await ref.read(chatSessionsProvider.future);
+            try {
+              if (_showArchived) {
+                ref.invalidate(archivedSessionsProvider);
+                await ref.read(archivedSessionsProvider.future);
+              } else {
+                ref.invalidate(chatSessionsProvider);
+                await ref.read(chatSessionsProvider.future);
+              }
+            } catch (_) {
+              // Error state will be rendered by .when(error:) handler
             }
           },
           child: DateGroupedSessionList(

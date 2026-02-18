@@ -270,9 +270,12 @@ class _AgentHubScreenState extends ConsumerState<AgentHubScreen> {
   }
 
   Future<void> _refreshSessions() async {
-    // Invalidate the provider to fetch the updated list
-    ref.invalidate(chatSessionsProvider);
-    await ref.read(chatSessionsProvider.future);
+    try {
+      ref.invalidate(chatSessionsProvider);
+      await ref.read(chatSessionsProvider.future);
+    } catch (_) {
+      // Error state will be rendered by .when(error:) handler
+    }
   }
 
   Widget _buildSessionsList(
