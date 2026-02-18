@@ -30,6 +30,8 @@ class HookEvent(str, Enum):
     # Bot events
     BOT_MESSAGE_RECEIVED = "bot.message.received"
     BOT_MESSAGE_SENT = "bot.message.sent"
+    BOT_CONNECTOR_DOWN = "bot.connector.down"
+    BOT_CONNECTOR_RECONNECTED = "bot.connector.reconnected"
 
     # Module events
     MODULE_LOADED = "module.loaded"

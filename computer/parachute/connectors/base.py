@@ -7,13 +7,32 @@ and implement platform-specific message handling.
 
 import asyncio
 import logging
+import random
+import re
+import time
 from abc import ABC, abstractmethod
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Optional
+from enum import StrEnum
+from typing import Any, ClassVar, Optional
 
 logger = logging.getLogger(__name__)
+
+# Patterns that may leak sensitive info in exception messages
+_SENSITIVE_PATTERNS = [
+    (re.compile(r"(bot|token)[\"']?\s*[:=]\s*[\"']?([a-zA-Z0-9:_-]{20,})", re.IGNORECASE), r"\1=<REDACTED>"),
+    (re.compile(r"/[a-z0-9_.-]+/\.parachute/[^\s]+", re.IGNORECASE), "~/.parachute/<REDACTED>"),
+]
+
+
+class ConnectorState(StrEnum):
+    """Connector lifecycle states."""
+
+    STOPPED = "stopped"
+    RUNNING = "running"
+    RECONNECTING = "reconnecting"
+    FAILED = "failed"
 
 
 @dataclass
@@ -115,6 +134,17 @@ class BotConnector(ABC):
         self._init_nudge_sent: dict[str, int] = {}
         self.group_history = GroupHistoryBuffer(max_messages=50)
 
+        # Health tracking
+        self._status: ConnectorState = ConnectorState.STOPPED
+        self._failure_count: int = 0
+        self._last_error: str | None = None
+        self._last_error_time: float | None = None
+        self._started_at: float | None = None  # monotonic clock
+        self._last_message_time: float | None = None  # wall clock for display
+        self._reconnect_attempts: int = 0
+        self._stop_event: asyncio.Event = asyncio.Event()
+        self._task: asyncio.Task | None = None
+
     @abstractmethod
     async def start(self) -> None:
         """Start the connector (polling or webhook)."""
@@ -126,6 +156,125 @@ class BotConnector(ABC):
     @abstractmethod
     async def on_text_message(self, update: Any, context: Any) -> None:
         """Handle incoming text message."""
+
+    @abstractmethod
+    async def _run_loop(self) -> None:
+        """Platform-specific connection loop. Raise on failure, return on clean exit."""
+        ...
+
+    # Valid state transitions
+    _VALID_TRANSITIONS: ClassVar[dict[ConnectorState, set[ConnectorState]]] = {
+        ConnectorState.STOPPED: {ConnectorState.RUNNING},
+        ConnectorState.RUNNING: {ConnectorState.STOPPED, ConnectorState.RECONNECTING, ConnectorState.FAILED},
+        ConnectorState.RECONNECTING: {ConnectorState.RUNNING, ConnectorState.FAILED, ConnectorState.STOPPED},
+        ConnectorState.FAILED: {ConnectorState.STOPPED, ConnectorState.RUNNING},
+    }
+
+    def _set_status(self, new: ConnectorState) -> None:
+        """Transition to a new state with validation."""
+        old = self._status
+        if new not in self._VALID_TRANSITIONS.get(old, set()):
+            logger.warning(f"Invalid connector state transition: {old} -> {new}")
+            return
+        self._status = new
+        # Keep _running in sync for backwards compatibility
+        self._running = new == ConnectorState.RUNNING
+
+    def _sanitize_error(self, exc: Exception) -> str:
+        """Sanitize exception message for safe API exposure."""
+        exc_type = type(exc).__name__
+        msg = str(exc)
+        for pattern, repl in _SENSITIVE_PATTERNS:
+            msg = pattern.sub(repl, msg)
+        return f"{exc_type}: {msg[:200]}"
+
+    async def _fire_hook(self, event: Any, context: dict[str, Any]) -> None:
+        """Fire a hook event if the hook runner is available."""
+        hook_runner = getattr(self.server, "hook_runner", None)
+        if hook_runner:
+            try:
+                await hook_runner.fire(event, context)
+            except Exception as e:
+                logger.debug(f"Hook fire failed (non-critical): {e}")
+
+    def mark_failed(self, exc: Exception) -> None:
+        """Mark connector as failed due to an external error (e.g., start() failure)."""
+        self._set_status(ConnectorState.FAILED)
+        self._last_error = self._sanitize_error(exc)
+        self._last_error_time = time.time()
+
+    async def _run_with_reconnect(self) -> None:
+        """Reconnection wrapper with exponential backoff + jitter."""
+        from parachute.core.hooks.events import HookEvent
+
+        consecutive_failures = 0
+        max_failures = 10
+
+        while not self._stop_event.is_set() and consecutive_failures < max_failures:
+            try:
+                self._set_status(ConnectorState.RUNNING)
+                self._started_at = time.monotonic()
+                await self._run_loop()
+                # Clean exit — fire reconnection success if recovering from failures
+                if consecutive_failures > 0:
+                    logger.info(f"{self.platform} connector recovered after {consecutive_failures} attempt(s)")
+                    await self._fire_hook(
+                        HookEvent.BOT_CONNECTOR_RECONNECTED,
+                        {"platform": self.platform, "attempts": consecutive_failures},
+                    )
+                    self._reconnect_attempts = 0
+                break
+            except asyncio.CancelledError:
+                raise  # Never swallow CancelledError
+            except Exception as e:
+                consecutive_failures += 1
+                self._failure_count += 1
+                self._reconnect_attempts = consecutive_failures
+                self._last_error = self._sanitize_error(e)
+                self._last_error_time = time.time()
+
+                # Fast-fail on auth errors — no point retrying with a bad token
+                exc_name = type(e).__name__
+                if exc_name in ("InvalidToken", "LoginFailure", "Unauthorized", "Forbidden"):
+                    self._set_status(ConnectorState.FAILED)
+                    logger.error(f"{self.platform} fatal auth error, not retrying: {e}")
+                    await self._fire_hook(
+                        HookEvent.BOT_CONNECTOR_DOWN,
+                        {"platform": self.platform, "error": self._last_error, "failure_count": 1},
+                    )
+                    return
+
+                self._set_status(ConnectorState.RECONNECTING)
+                logger.error(
+                    f"{self.platform} connector error ({consecutive_failures}/{max_failures}): {e}"
+                )
+                if consecutive_failures < max_failures:
+                    # Full Jitter: random(0, min(cap, base * 2^attempt))
+                    exp = min(60, 1.0 * (2 ** (consecutive_failures - 1)))
+                    delay = random.uniform(0, exp)
+                    # Interruptible sleep — stop() can wake us immediately
+                    try:
+                        await asyncio.wait_for(
+                            self._stop_event.wait(), timeout=delay
+                        )
+                        break  # stop_event was set during backoff
+                    except asyncio.TimeoutError:
+                        pass  # Timeout expired, retry
+
+        if consecutive_failures >= max_failures:
+            self._set_status(ConnectorState.FAILED)
+            logger.error(
+                f"{self.platform} connector failed after {max_failures} attempts. "
+                f"Last error: {self._last_error}"
+            )
+            await self._fire_hook(
+                HookEvent.BOT_CONNECTOR_DOWN,
+                {
+                    "platform": self.platform,
+                    "error": self._last_error,
+                    "failure_count": self._failure_count,
+                },
+            )
 
     async def on_voice_message(self, update: Any, context: Any) -> None:
         """Handle incoming voice message. Override in subclasses that support voice."""
@@ -345,9 +494,16 @@ class BotConnector(ABC):
 
     @property
     def status(self) -> dict:
-        """Return connector status."""
+        """Return connector status with health data."""
         return {
             "platform": self.platform,
-            "running": self._running,
+            "status": self._status.value,
+            "running": self._status == ConnectorState.RUNNING,
+            "failure_count": self._failure_count,
+            "last_error": self._last_error,
+            "last_error_time": self._last_error_time,
+            "uptime": (time.monotonic() - self._started_at) if self._started_at and self._status == ConnectorState.RUNNING else None,
+            "last_message_time": self._last_message_time,
+            "reconnect_attempts": self._reconnect_attempts,
             "allowed_users_count": len(self.allowed_users),
         }

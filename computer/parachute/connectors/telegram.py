@@ -10,10 +10,11 @@ Install: pip install 'python-telegram-bot>=21.0'
 import asyncio
 import logging
 import re
+import time
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from parachute.connectors.base import BotConnector, GroupMessage
+from parachute.connectors.base import BotConnector, ConnectorState, GroupMessage
 from parachute.connectors.message_formatter import claude_to_telegram
 
 logger = logging.getLogger(__name__)
@@ -63,7 +64,6 @@ class TelegramConnector(BotConnector):
             ack_emoji=ack_emoji,
         )
         self._app: Optional[Application] = None
-        self._polling_task: Optional[asyncio.Task] = None
 
     async def start(self) -> None:
         """Start Telegram long-polling."""
@@ -92,32 +92,41 @@ class TelegramConnector(BotConnector):
 
         await self._app.initialize()
         await self._app.start()
-        self._running = True
 
+        self._stop_event.clear()
         logger.info("Telegram connector started (long-polling)")
-        # Start polling in background
-        self._polling_task = asyncio.create_task(self._poll())
+        # Start polling with reconnection in background
+        self._task = asyncio.create_task(self._run_with_reconnect())
 
-    async def _poll(self) -> None:
-        """Run the polling loop."""
-        try:
-            await self._app.updater.start_polling(drop_pending_updates=True)
-        except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            logger.error(f"Telegram polling error: {e}")
-            self._running = False
+    async def _run_loop(self) -> None:
+        """Run Telegram long-polling. Returns when updater stops, raises on error."""
+        await self._app.updater.start_polling(drop_pending_updates=True)
 
     async def stop(self) -> None:
         """Stop Telegram connector."""
-        self._running = False
+        if self._status == ConnectorState.STOPPED:
+            return  # Idempotent
+        # Set stop_event BEFORE cancelling task — interrupts backoff sleep immediately
+        self._stop_event.set()
         if self._app:
-            if self._app.updater and self._app.updater.running:
-                await self._app.updater.stop()
-            await self._app.stop()
-            await self._app.shutdown()
-        if self._polling_task:
-            self._polling_task.cancel()
+            try:
+                if self._app.updater and self._app.updater.running:
+                    await self._app.updater.stop()
+                if self._app.running:
+                    await self._app.stop()
+                await self._app.shutdown()
+            except Exception as e:
+                logger.warning(f"Error during Telegram app shutdown: {e}")
+        # Await the background task with timeout
+        if self._task and not self._task.done():
+            self._task.cancel()
+            try:
+                await asyncio.wait_for(self._task, timeout=5.0)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                pass
+        self._task = None
+        self._started_at = None
+        self._set_status(ConnectorState.STOPPED)
         logger.info("Telegram connector stopped")
 
     async def _cmd_start(self, update: Any, context: Any) -> None:
@@ -384,6 +393,8 @@ class TelegramConnector(BotConnector):
         if not await self.is_session_initialized(session):
             await self._handle_uninitialized(update, chat_id)
             return
+
+        self._last_message_time = time.time()
 
         # Ack reaction — instant feedback before acquiring lock
         ack_sent = False

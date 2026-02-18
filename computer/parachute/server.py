@@ -145,6 +145,7 @@ async def lifespan(app: FastAPI):
         database=db,
         orchestrator=orchestrator,
         orchestrate=orchestrate,
+        hook_runner=app.state.hook_runner,
     )
     init_bots_api(vault_path=settings.vault_path, server_ref=server_ref)
 
