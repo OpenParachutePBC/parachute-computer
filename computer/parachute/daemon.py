@@ -24,13 +24,12 @@ SYSTEMD_UNIT = "parachute.service"
 SUPERVISOR_SYSTEMD_UNIT = "parachute-supervisor.service"
 
 
-def _is_port_available(port: int, host: str = "127.0.0.1") -> bool:
-    """Check if a port is available for binding."""
+def _is_port_listening(port: int) -> bool:
+    """Check if anything is listening on a port (regardless of bind address)."""
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            sock.bind((host, port))
-            return True
+            sock.settimeout(0.5)
+            return sock.connect_ex(("127.0.0.1", port)) == 0
     except OSError:
         return False
 
@@ -75,22 +74,14 @@ class DaemonManager(ABC):
         """Restart the daemon."""
         self.stop()
 
-        # Wait for process to fully stop AND port to be released (up to 8 seconds)
+        # Wait for port to stop listening (up to 8 seconds)
         port_to_check = 3334 if getattr(self, 'supervisor', False) else self.port
-        for i in range(16):
-            status = self.status()
-            port_available = _is_port_available(port_to_check, "0.0.0.0")
-
-            if not status.get("running") and port_available:
+        for _ in range(16):
+            if not _is_port_listening(port_to_check):
                 break
-
-            if not status.get("running") and not port_available:
-                # Process stopped but port still bound - wait longer
-                logger.debug(f"Process stopped but port {port_to_check} still in use, waiting...")
-
             time.sleep(0.5)
         else:
-            logger.warning(f"Process still holding port {port_to_check} after 8s, attempting start anyway")
+            logger.warning(f"Port {port_to_check} still in use after 8s, attempting start anyway")
 
         self.start()
 
@@ -249,14 +240,6 @@ class LaunchdDaemon(DaemonManager):
                 ["launchctl", "bootout", f"gui/{os.getuid()}/{label}"],
                 capture_output=True, text=True, timeout=10,
             )
-
-            # Wait for process to actually stop (up to 3 seconds)
-            for i in range(6):
-                status = self.status()
-                if not status.get("running"):
-                    break
-                time.sleep(0.5)
-
             if result.returncode != 0 and "could not find" not in result.stderr.lower():
                 logger.warning(f"Bootout returned error: {result.stderr.strip()}")
         except Exception as e:

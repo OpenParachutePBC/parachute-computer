@@ -22,7 +22,7 @@ class _ModelPickerDropdownState extends ConsumerState<ModelPickerDropdown> {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final modelsAsync = ref.watch(availableModelsProvider(showAll: _showAll));
-    final statusAsync = ref.watch(supervisorStatusProvider);
+    final statusAsync = ref.watch(supervisorStatusNotifierProvider);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,

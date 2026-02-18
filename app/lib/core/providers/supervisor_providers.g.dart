@@ -26,27 +26,28 @@ final supervisorServiceProvider =
 @Deprecated('Will be removed in 3.0. Use Ref instead')
 // ignore: unused_element
 typedef SupervisorServiceRef = AutoDisposeProviderRef<SupervisorService>;
-String _$supervisorStatusHash() => r'8a3ced3ea660a2571a21eae78a823c3df922f716';
+String _$supervisorStatusNotifierHash() =>
+    r'afb99dbb62b19829786f04f77cd2243902539acc';
 
 /// Supervisor status provider (auto-refresh every 5s)
 ///
-/// Copied from [SupervisorStatus].
-@ProviderFor(SupervisorStatus)
-final supervisorStatusProvider =
+/// Copied from [SupervisorStatusNotifier].
+@ProviderFor(SupervisorStatusNotifier)
+final supervisorStatusNotifierProvider =
     AutoDisposeAsyncNotifierProvider<
-      SupervisorStatus,
-      SupervisorStatusResponse
+      SupervisorStatusNotifier,
+      SupervisorStatus
     >.internal(
-      SupervisorStatus.new,
-      name: r'supervisorStatusProvider',
+      SupervisorStatusNotifier.new,
+      name: r'supervisorStatusNotifierProvider',
       debugGetCreateSourceHash: const bool.fromEnvironment('dart.vm.product')
           ? null
-          : _$supervisorStatusHash,
+          : _$supervisorStatusNotifierHash,
       dependencies: null,
       allTransitiveDependencies: null,
     );
 
-typedef _$SupervisorStatus = AutoDisposeAsyncNotifier<SupervisorStatusResponse>;
+typedef _$SupervisorStatusNotifier = AutoDisposeAsyncNotifier<SupervisorStatus>;
 String _$availableModelsHash() => r'24b65ef9385bc998cdf64d7af3a07f8156fe86f0';
 
 /// Copied from Dart SDK
@@ -220,7 +221,7 @@ class _AvailableModelsProviderElement
   bool get showAll => (origin as AvailableModelsProvider).showAll;
 }
 
-String _$serverControlHash() => r'808988ddb4ca692a53b0f77d5c2402d1c49a271a';
+String _$serverControlHash() => r'3453c7ccbdfb30616a2cf071e269b853929901b9';
 
 /// Server control actions
 ///
@@ -238,7 +239,7 @@ final serverControlProvider =
     );
 
 typedef _$ServerControl = AutoDisposeAsyncNotifier<void>;
-String _$modelConfigHash() => r'3690df1119481b704e0da9a7a6fb32040eb9821d';
+String _$modelConfigHash() => r'62da0309656eb9a72242577bb38803605052373f';
 
 /// Update default model
 ///

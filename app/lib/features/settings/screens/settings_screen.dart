@@ -80,7 +80,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   /// Builds model selection widget - dynamic picker if supervisor available, static fallback otherwise
   Widget _buildModelSection() {
-    final supervisorStatusAsync = ref.watch(supervisorStatusProvider);
+    final supervisorStatusAsync = ref.watch(supervisorStatusNotifierProvider);
 
     return supervisorStatusAsync.when(
       data: (status) {

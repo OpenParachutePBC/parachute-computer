@@ -15,9 +15,9 @@ SupervisorService supervisorService(SupervisorServiceRef ref) {
 
 /// Supervisor status provider (auto-refresh every 5s)
 @riverpod
-class SupervisorStatus extends _$SupervisorStatus {
+class SupervisorStatusNotifier extends _$SupervisorStatusNotifier {
   @override
-  Future<SupervisorStatusResponse> build() async {
+  Future<SupervisorStatus> build() async {
     // Auto-refresh every 5 seconds
     final timer = ref.keepAlive();
     Future.delayed(const Duration(seconds: 5), () => timer.close());
@@ -71,7 +71,7 @@ class ServerControl extends _$ServerControl {
     });
 
     // Refresh status after action
-    ref.invalidate(supervisorStatusProvider);
+    ref.invalidate(supervisorStatusNotifierProvider);
   }
 
   Future<void> stop() async {
@@ -81,7 +81,7 @@ class ServerControl extends _$ServerControl {
       await service.stopServer();
     });
 
-    ref.invalidate(supervisorStatusProvider);
+    ref.invalidate(supervisorStatusNotifierProvider);
   }
 
   Future<void> restart() async {
@@ -91,7 +91,7 @@ class ServerControl extends _$ServerControl {
       await service.restartServer();
     });
 
-    ref.invalidate(supervisorStatusProvider);
+    ref.invalidate(supervisorStatusNotifierProvider);
   }
 }
 
@@ -111,6 +111,6 @@ class ModelConfig extends _$ModelConfig {
     });
 
     // Refresh status to reflect new config
-    ref.invalidate(supervisorStatusProvider);
+    ref.invalidate(supervisorStatusNotifierProvider);
   }
 }
