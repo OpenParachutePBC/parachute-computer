@@ -1203,13 +1203,21 @@ class Orchestrator:
                 ).model_dump(by_alias=True)
 
         finally:
-            # Clean up
-            if stream_session_id and stream_session_id in self.active_streams:
-                del self.active_streams[stream_session_id]
-            if stream_session_id and stream_session_id in self.active_stream_queues:
-                del self.active_stream_queues[stream_session_id]
-            if session.id in self.pending_permissions:
-                del self.pending_permissions[session.id]
+            # Clean up active streams
+            if stream_session_id:
+                self.active_streams.pop(stream_session_id, None)
+                self.active_stream_queues.pop(stream_session_id, None)
+
+            # Clean up permission handler — try both possible keys defensively
+            handler = self.pending_permissions.pop(session.id, None)
+            if captured_session_id and captured_session_id != session.id:
+                alt_handler = self.pending_permissions.pop(captured_session_id, None)
+                if alt_handler and not handler:
+                    handler = alt_handler
+                elif alt_handler and alt_handler is not handler:
+                    alt_handler.cleanup()
+            if handler:
+                handler.cleanup()
 
     async def abort_stream(self, session_id: str) -> bool:
         """Abort an active streaming session."""
