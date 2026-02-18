@@ -27,7 +27,16 @@ class StreamingTranscriptionDisplay extends ConsumerWidget {
     return streamingState.when(
       data: (state) => _buildContent(context, state, isDark),
       loading: () => const SizedBox.shrink(),
-      error: (e, st) => const SizedBox.shrink(),
+      error: (e, st) => Padding(
+        padding: padding,
+        child: Text(
+          'Live transcription unavailable',
+          style: TextStyle(
+            color: BrandColors.error,
+            fontSize: 12,
+          ),
+        ),
+      ),
     );
   }
 

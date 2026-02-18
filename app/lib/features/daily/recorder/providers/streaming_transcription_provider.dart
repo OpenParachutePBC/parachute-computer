@@ -32,8 +32,8 @@ final streamingTranscriptionProvider = StreamProvider.autoDispose<StreamingTrans
     data: (service) => service.streamingStateStream,
     loading: () => Stream.value(const StreamingTranscriptionState()),
     error: (e, st) {
-      debugPrint('[StreamingTranscription] Error: $e');
-      return Stream.value(const StreamingTranscriptionState());
+      debugPrint('[StreamingTranscription] Init error: $e');
+      return Stream.error(e, st);
     },
   );
 });

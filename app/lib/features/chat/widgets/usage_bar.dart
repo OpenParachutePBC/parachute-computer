@@ -18,13 +18,30 @@ class UsageBar extends ConsumerWidget {
     return usageAsync.when(
       data: (usage) {
         if (usage.hasError || !usage.hasData) {
-          // Don't show anything if there's an error or no data
-          return const SizedBox.shrink();
+          return Padding(
+            padding: EdgeInsets.symmetric(horizontal: Spacing.md, vertical: Spacing.sm),
+            child: Text(
+              'Usage unavailable',
+              style: TextStyle(
+                color: isDark ? Colors.white54 : Colors.black38,
+                fontSize: 12,
+              ),
+            ),
+          );
         }
         return _UsageContent(usage: usage, isDark: isDark);
       },
       loading: () => const SizedBox.shrink(),
-      error: (_, __) => const SizedBox.shrink(),
+      error: (_, __) => Padding(
+        padding: EdgeInsets.symmetric(horizontal: Spacing.md, vertical: Spacing.sm),
+        child: Text(
+          'Usage unavailable',
+          style: TextStyle(
+            color: isDark ? Colors.white54 : Colors.black38,
+            fontSize: 12,
+          ),
+        ),
+      ),
     );
   }
 }

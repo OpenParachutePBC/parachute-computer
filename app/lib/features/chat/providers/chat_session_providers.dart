@@ -74,9 +74,10 @@ final chatSessionsProvider = FutureProvider.autoDispose<List<ChatSession>>((ref)
       final localSessions = await localReader.getLocalSessions();
       debugPrint('[ChatProviders] Loaded ${localSessions.length} local sessions');
       return localSessions.where((s) => !s.archived).toList();
-    } catch (localError) {
-      debugPrint('[ChatProviders] Error loading local sessions: $localError');
-      return [];
+    } catch (_) {
+      debugPrint('[ChatProviders] Error loading local sessions, both sources failed');
+      // Both server and local failed — let error propagate to UI
+      throw e;
     }
   }
 });
