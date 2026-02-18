@@ -66,8 +66,6 @@ class DiscordConnector(BotConnector):
                 "Install with: pip install 'discord.py>=2.3'"
             )
 
-        self._setup_client()
-
         self._stop_event.clear()
         # Start bot with reconnection in background
         self._task = asyncio.create_task(self._run_with_reconnect())
@@ -110,7 +108,11 @@ class DiscordConnector(BotConnector):
             await self.on_text_message(message, None)
 
     async def _run_loop(self) -> None:
-        """Run Discord gateway client. Returns on clean close, raises on error."""
+        """Run Discord gateway client. Returns on clean close, raises on error.
+
+        Builds a fresh client each attempt so reconnection gets a clean state.
+        """
+        self._setup_client()
         # reconnect=False disables network-error auto-recovery (we handle it).
         # Discord RESUME protocol for server-initiated reconnects still works.
         await self._client.start(self.bot_token, reconnect=False)

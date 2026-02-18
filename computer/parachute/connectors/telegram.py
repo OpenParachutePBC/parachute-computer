@@ -73,42 +73,50 @@ class TelegramConnector(BotConnector):
                 "Install with: pip install 'python-telegram-bot>=21.0'"
             )
 
-        self._app = Application.builder().token(self.bot_token).build()
-
-        # Register handlers
-        self._app.add_handler(CommandHandler("start", self._cmd_start))
-        self._app.add_handler(CommandHandler("help", self._cmd_help))
-        self._app.add_handler(CommandHandler("new", self._cmd_new))
-        self._app.add_handler(CommandHandler("ask", self._cmd_ask))
-        self._app.add_handler(CommandHandler("journal", self._cmd_journal))
-        self._app.add_handler(CommandHandler("j", self._cmd_journal))
-        self._app.add_handler(CommandHandler("init", self._cmd_init))
-        self._app.add_handler(
-            MessageHandler(filters.TEXT & ~filters.COMMAND, self.on_text_message)
-        )
-        self._app.add_handler(
-            MessageHandler(filters.VOICE | filters.AUDIO, self.on_voice_message)
-        )
-
-        await self._app.initialize()
-        await self._app.start()
-
         self._stop_event.clear()
         logger.info("Telegram connector started (long-polling)")
         # Start polling with reconnection in background
         self._task = asyncio.create_task(self._run_with_reconnect())
 
-    async def _run_loop(self) -> None:
-        """Run Telegram long-polling. Returns when updater stops, raises on error."""
-        await self._app.updater.start_polling(drop_pending_updates=True)
+    def _build_app(self) -> "Application":
+        """Build a fresh Application with all handlers registered."""
+        app = Application.builder().token(self.bot_token).build()
 
-    async def stop(self) -> None:
-        """Stop Telegram connector."""
-        if self._status == ConnectorState.STOPPED:
-            return  # Idempotent
-        # Set stop_event BEFORE cancelling task — interrupts backoff sleep immediately
-        self._stop_event.set()
-        if self._app:
+        app.add_handler(CommandHandler("start", self._cmd_start))
+        app.add_handler(CommandHandler("help", self._cmd_help))
+        app.add_handler(CommandHandler("new", self._cmd_new))
+        app.add_handler(CommandHandler("ask", self._cmd_ask))
+        app.add_handler(CommandHandler("journal", self._cmd_journal))
+        app.add_handler(CommandHandler("j", self._cmd_journal))
+        app.add_handler(CommandHandler("init", self._cmd_init))
+        app.add_handler(
+            MessageHandler(filters.TEXT & ~filters.COMMAND, self.on_text_message)
+        )
+        app.add_handler(
+            MessageHandler(filters.VOICE | filters.AUDIO, self.on_voice_message)
+        )
+
+        return app
+
+    async def _run_loop(self) -> None:
+        """Run Telegram long-polling. Blocks until updater stops or stop is requested.
+
+        Builds a fresh Application each attempt so initialize()/start() are
+        re-executed on reconnection — matching Discord's _setup_client() pattern.
+        """
+        self._app = self._build_app()
+        await self._app.initialize()
+        await self._app.start()
+        try:
+            await self._app.updater.start_polling(drop_pending_updates=True)
+            # start_polling() returns immediately — block until stop is requested
+            # or the updater dies unexpectedly.
+            while not self._stop_event.is_set():
+                if not self._app.updater.running:
+                    raise RuntimeError("Telegram updater stopped unexpectedly")
+                await asyncio.sleep(1)
+        finally:
+            # Clean up this Application instance regardless of outcome
             try:
                 if self._app.updater and self._app.updater.running:
                     await self._app.updater.stop()
@@ -116,8 +124,16 @@ class TelegramConnector(BotConnector):
                     await self._app.stop()
                 await self._app.shutdown()
             except Exception as e:
-                logger.warning(f"Error during Telegram app shutdown: {e}")
-        # Await the background task with timeout
+                logger.debug(f"Cleanup during _run_loop teardown: {e}")
+
+    async def stop(self) -> None:
+        """Stop Telegram connector."""
+        if self._status == ConnectorState.STOPPED:
+            return  # Idempotent
+        # Set stop_event BEFORE cancelling task — interrupts backoff sleep
+        # and breaks _run_loop's while-loop immediately
+        self._stop_event.set()
+        # Await the background task with timeout (_run_loop handles its own cleanup)
         if self._task and not self._task.done():
             self._task.cancel()
             try:
