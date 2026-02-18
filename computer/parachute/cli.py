@@ -117,11 +117,11 @@ def _save_env_file(env: dict[str, str]) -> Path:
     return env_file
 
 
-def _api_get(url: str) -> dict:
+def _api_get(url: str, timeout: int = 5) -> dict:
     """Make a GET request to the server API."""
     req = Request(url)
     req.add_header("Accept", "application/json")
-    with urlopen(req, timeout=5) as resp:
+    with urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read())
 
 
@@ -498,10 +498,21 @@ def cmd_update(args: argparse.Namespace) -> None:
     print(f"Updating Parachute ({repo_dir})")
     print("=" * 40)
 
-    # 1. Git pull (unless --local)
+    # 1. Git pull (unless --local) and detect what changed
+    supervisor_code_changed = False
     if not local_only:
         if (repo_dir / ".git").exists():
             print("\nPulling latest code...")
+
+            # Store current HEAD for diff
+            old_head = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=repo_dir,
+                capture_output=True,
+                text=True,
+            )
+            old_head_sha = old_head.stdout.strip() if old_head.returncode == 0 else None
+
             # Try git pull, fall back to git pull origin main if no upstream
             result = subprocess.run(
                 ["git", "pull"],
@@ -528,6 +539,28 @@ def cmd_update(args: argparse.Namespace) -> None:
                 print("  Already up to date.")
             else:
                 print(f"  {output}")
+
+                # Check if supervisor code changed
+                if old_head_sha:
+                    diff_result = subprocess.run(
+                        ["git", "diff", "--name-only", old_head_sha, "HEAD"],
+                        cwd=repo_dir,
+                        capture_output=True,
+                        text=True,
+                    )
+                    if diff_result.returncode == 0:
+                        changed_files = diff_result.stdout.strip().split('\n')
+                        supervisor_files = [
+                            "parachute/supervisor.py",
+                            "parachute/supervisor_main.py",
+                            "parachute/daemon.py",
+                        ]
+                        supervisor_code_changed = any(
+                            any(f.endswith(sf) for sf in supervisor_files)
+                            for f in changed_files
+                        )
+                        if supervisor_code_changed:
+                            print("  ⚠️  Supervisor code changed, will restart supervisor")
         else:
             print("\nNot a git repo — skipping pull.")
             print("  (Install from git clone for auto-updates)")
@@ -569,16 +602,45 @@ def cmd_update(args: argparse.Namespace) -> None:
         print(f"\nCouldn't restart main server daemon: {e}")
         print("  Restart manually: parachute server restart")
 
-    # 4. Ensure supervisor is installed and running (don't restart if already up —
-    #    supervisor doesn't load user code so there's nothing to reload)
+    # 4. Manage supervisor based on what changed
     try:
         from parachute.daemon import get_supervisor_daemon_manager
 
         supervisor_daemon = get_supervisor_daemon_manager(vault_path, config)
         supervisor_status = supervisor_daemon.status()
 
-        if supervisor_status.get("running"):
-            pass  # Already up, leave it alone
+        if supervisor_code_changed and supervisor_status.get("running"):
+            # Supervisor code changed and it's running — need to restart it
+            print("\nRestarting supervisor (code changed)...")
+            try:
+                # Verify main server is healthy before touching supervisor
+                try:
+                    health = _api_get("http://localhost:3333/api/health", timeout=2)
+                    if not health.get("status") == "ok":
+                        print("  ⚠️  Main server unhealthy, skipping supervisor restart")
+                        print("  Restart manually when safe: parachute supervisor restart")
+                        supervisor_code_changed = False
+                except Exception:
+                    print("  ⚠️  Can't verify main server health, skipping supervisor restart")
+                    print("  Restart manually when safe: parachute supervisor restart")
+                    supervisor_code_changed = False
+
+                if supervisor_code_changed:
+                    supervisor_daemon.restart()
+                    # Verify it came back up
+                    time.sleep(1)
+                    try:
+                        _api_get("http://localhost:3334/supervisor/status", timeout=3)
+                        print("  Supervisor restarted successfully.")
+                    except Exception:
+                        print("  ⚠️  Supervisor may not have restarted cleanly")
+                        print("  Check status: parachute supervisor status")
+            except Exception as e:
+                print(f"  ⚠️  Supervisor restart failed: {e}")
+                print("  Restart manually: parachute supervisor restart")
+
+        elif supervisor_status.get("running"):
+            pass  # Already up and code didn't change, leave it alone
         elif supervisor_status.get("installed"):
             print("\nStarting supervisor...")
             supervisor_daemon.start()
@@ -589,7 +651,7 @@ def cmd_update(args: argparse.Namespace) -> None:
             supervisor_daemon.start()
             print("  Supervisor installed and started.")
     except Exception as e:
-        print(f"\nCouldn't start supervisor: {e}")
+        print(f"\nCouldn't manage supervisor: {e}")
         print("  Try: parachute supervisor install")
 
     print("\nDone!")
