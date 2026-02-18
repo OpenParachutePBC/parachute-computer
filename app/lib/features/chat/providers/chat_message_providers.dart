@@ -254,6 +254,16 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
 
   ChatMessagesNotifier(this._service, this._streamManager, this._ref) : super(const ChatMessagesState());
 
+  /// Format warning event data into display text
+  String _formatWarningText(StreamEvent event) {
+    final title = (event.data['title'] as String?) ?? 'Warning';
+    final msg = (event.data['message'] as String?) ?? '';
+    final details = (event.data['details'] as List<dynamic>?)?.whereType<String>().toList() ?? [];
+    return details.isNotEmpty
+        ? '$title: $msg\n${details.map((d) => '  - $d').join('\n')}'
+        : '$title: $msg';
+  }
+
   /// Reset all mutable transient state that should not persist across sessions.
   /// Called from prepareForSessionSwitch, clearSession, and dispose.
   void _resetTransientState() {
@@ -750,13 +760,7 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
 
       case StreamEventType.warning:
         // Non-fatal warning — append as distinct content type (won't be overwritten by text)
-        final title = (event.data['title'] as String?) ?? 'Warning';
-        final msg = (event.data['message'] as String?) ?? '';
-        final details = (event.data['details'] as List<dynamic>?)?.cast<String>() ?? [];
-        final warningText = details.isNotEmpty
-            ? '$title: $msg\n${details.map((d) => '  - $d').join('\n')}'
-            : '$title: $msg';
-        _reattachStreamContent.add(MessageContent.warning(warningText));
+        _reattachStreamContent.add(MessageContent.warning(_formatWarningText(event)));
         _updateOrAddAssistantMessage(_reattachStreamContent, sessionId, isStreaming: true);
         break;
 
@@ -1540,13 +1544,7 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
 
           case StreamEventType.warning:
             // Non-fatal warning — append as distinct content type (won't be overwritten by text)
-            final title = (event.data['title'] as String?) ?? 'Warning';
-            final msg = (event.data['message'] as String?) ?? '';
-            final details = (event.data['details'] as List<dynamic>?)?.cast<String>() ?? [];
-            final warningText = details.isNotEmpty
-                ? '$title: $msg\n${details.map((d) => '  - $d').join('\n')}'
-                : '$title: $msg';
-            accumulatedContent.add(MessageContent.warning(warningText));
+            accumulatedContent.add(MessageContent.warning(_formatWarningText(event)));
             _updateAssistantMessage(accumulatedContent, isStreaming: true);
             break;
 

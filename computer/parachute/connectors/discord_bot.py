@@ -439,6 +439,22 @@ class DiscordConnector(BotConnector):
                 elif event_type == "error":
                     error_msg = event.get("error", "") if isinstance(event, dict) else getattr(event, "error", "")
                     logger.error(f"Orchestrator error event: {error_msg}")
+
+                elif event_type == "typed_error":
+                    # Structured error with user-friendly message
+                    title = event.get("title", "Error") if isinstance(event, dict) else getattr(event, "title", "Error")
+                    message = event.get("message", "") if isinstance(event, dict) else getattr(event, "message", "")
+                    error_text = f"{title}: {message}" if message else title
+                    logger.error(f"Orchestrator typed error: {error_text}")
+                    response_text += f"\n\n⚠️ {error_text}"
+
+                elif event_type == "warning":
+                    # Non-fatal warning — append to response
+                    title = event.get("title", "Warning") if isinstance(event, dict) else getattr(event, "title", "Warning")
+                    message = event.get("message", "") if isinstance(event, dict) else getattr(event, "message", "")
+                    warning_text = f"{title}: {message}" if message else title
+                    logger.warning(f"Orchestrator warning: {warning_text}")
+                    response_text += f"\n\n⚠️ {warning_text}"
             logger.info(f"Discord orchestration: {event_count} events, {len(response_text)} chars response")
         except Exception as e:
             logger.error(f"Chat orchestration failed: {e}", exc_info=True)
