@@ -630,7 +630,7 @@ class PermissionHandler:
         for request_id, request in list(self.pending_questions.items()):
             if request._future and not request._future.done():
                 try:
-                    request._future.set_result(None)
+                    request._future.set_result({})
                 except asyncio.InvalidStateError:
                     pass
                 cleaned_questions += 1
@@ -663,7 +663,7 @@ class PermissionHandler:
             if age > max_age_seconds:
                 if request._future and not request._future.done():
                     try:
-                        request._future.set_result(None)
+                        request._future.set_result({})
                     except asyncio.InvalidStateError:
                         pass
                 self.pending_questions.pop(request_id, None)

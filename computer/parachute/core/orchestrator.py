@@ -989,8 +989,7 @@ class Orchestrator:
                         # Update permission handler with finalized session so request_ids match
                         permission_handler.session = session
                         # Also update the pending_permissions key to use the real session ID
-                        if "pending" in self.pending_permissions:
-                            del self.pending_permissions["pending"]
+                        self.pending_permissions.pop("pending", None)
                         self.pending_permissions[captured_session_id] = permission_handler
 
                         # Yield a second session event now that we have the real ID
