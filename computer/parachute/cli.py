@@ -4,7 +4,7 @@ Parachute CLI.
 Usage:
     parachute install                  # First-time setup + daemon install
     parachute update                   # Pull latest code, reinstall, restart
-    parachute update --local           # Reinstall + restart (no git pull)
+    parachute server restart           # Reinstall deps + restart server
     parachute server                   # Start daemon (background)
     parachute server --foreground      # Start in foreground (dev mode)
     parachute server stop              # Stop daemon
@@ -491,16 +491,14 @@ def _get_repo_dir() -> Path:
 
 def cmd_update(args: argparse.Namespace) -> None:
     """Pull latest code, reinstall deps, and restart daemon."""
-    local_only = getattr(args, "local", False)
     repo_dir = _get_repo_dir()
     venv_pip = Path(sys.executable).parent / "pip"
 
     print(f"Updating Parachute ({repo_dir})")
     print("=" * 40)
 
-    # 1. Git pull (unless --local) and detect what changed
+    # 1. Git pull and detect what changed
     supervisor_code_changed = False
-    if not local_only:
         if (repo_dir / ".git").exists():
             print("\nPulling latest code...")
 
@@ -532,7 +530,7 @@ def cmd_update(args: argparse.Namespace) -> None:
                 )
             if result.returncode != 0:
                 print(f"  git pull failed: {result.stderr.strip()}")
-                print("  Try pulling manually, or use: parachute update --local")
+                print("  Try pulling manually, then run: parachute server restart")
                 sys.exit(1)
             output = result.stdout.strip()
             if "Already up to date" in output:
@@ -561,9 +559,9 @@ def cmd_update(args: argparse.Namespace) -> None:
                         )
                         if supervisor_code_changed:
                             print("  ⚠️  Supervisor code changed, will restart supervisor")
-        else:
-            print("\nNot a git repo — skipping pull.")
-            print("  (Install from git clone for auto-updates)")
+    else:
+        print("\nNot a git repo — skipping pull.")
+        print("  (Install from git clone for auto-updates)")
 
     # 2. Reinstall deps
     print("\nInstalling dependencies...")
@@ -1871,11 +1869,7 @@ def main() -> None:
     subparsers.add_parser("install", help="First-time setup + daemon install")
 
     # update
-    update_parser = subparsers.add_parser("update", help="Pull latest code, reinstall, restart")
-    update_parser.add_argument(
-        "--local", action="store_true",
-        help="Skip git pull (just reinstall deps + restart)",
-    )
+    subparsers.add_parser("update", help="Pull latest code, reinstall, restart")
 
     # status
     subparsers.add_parser("status", help="Show system status")
