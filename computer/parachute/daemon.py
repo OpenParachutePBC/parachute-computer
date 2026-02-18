@@ -8,6 +8,7 @@ import logging
 import os
 import plistlib
 import signal
+import socket
 import subprocess
 import sys
 import time
@@ -21,6 +22,17 @@ LAUNCHD_LABEL = "io.openparachute.server"
 SUPERVISOR_LAUNCHD_LABEL = "io.openparachute.supervisor"
 SYSTEMD_UNIT = "parachute.service"
 SUPERVISOR_SYSTEMD_UNIT = "parachute-supervisor.service"
+
+
+def _is_port_available(port: int, host: str = "127.0.0.1") -> bool:
+    """Check if a port is available for binding."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.bind((host, port))
+            return True
+    except OSError:
+        return False
 
 
 class DaemonManager(ABC):
@@ -63,14 +75,22 @@ class DaemonManager(ABC):
         """Restart the daemon."""
         self.stop()
 
-        # Wait for process to fully stop (up to 5 seconds)
-        for i in range(10):
+        # Wait for process to fully stop AND port to be released (up to 8 seconds)
+        port_to_check = 3334 if getattr(self, 'supervisor', False) else self.port
+        for i in range(16):
             status = self.status()
-            if not status.get("running"):
+            port_available = _is_port_available(port_to_check, "0.0.0.0")
+
+            if not status.get("running") and port_available:
                 break
+
+            if not status.get("running") and not port_available:
+                # Process stopped but port still bound - wait longer
+                logger.debug(f"Process stopped but port {port_to_check} still in use, waiting...")
+
             time.sleep(0.5)
         else:
-            logger.warning("Process still running after 5s, attempting start anyway")
+            logger.warning(f"Process still holding port {port_to_check} after 8s, attempting start anyway")
 
         self.start()
 
