@@ -2,7 +2,7 @@
 enum MessageRole { user, assistant }
 
 /// Type of content within a message
-enum ContentType { text, toolUse, thinking }
+enum ContentType { text, toolUse, thinking, warning }
 
 /// A tool call made by the assistant
 class ToolCall {
@@ -107,6 +107,10 @@ class MessageContent {
 
   factory MessageContent.thinking(String text) {
     return MessageContent(type: ContentType.thinking, text: text);
+  }
+
+  factory MessageContent.warning(String text) {
+    return MessageContent(type: ContentType.warning, text: text);
   }
 }
 

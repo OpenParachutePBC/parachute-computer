@@ -748,6 +748,18 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
         }
         break;
 
+      case StreamEventType.warning:
+        // Non-fatal warning — append as distinct content type (won't be overwritten by text)
+        final title = (event.data['title'] as String?) ?? 'Warning';
+        final msg = (event.data['message'] as String?) ?? '';
+        final details = (event.data['details'] as List<dynamic>?)?.cast<String>() ?? [];
+        final warningText = details.isNotEmpty
+            ? '$title: $msg\n${details.map((d) => '  - $d').join('\n')}'
+            : '$title: $msg';
+        _reattachStreamContent.add(MessageContent.warning(warningText));
+        _updateOrAddAssistantMessage(_reattachStreamContent, sessionId, isStreaming: true);
+        break;
+
       case StreamEventType.done:
         _updateOrAddAssistantMessage(_reattachStreamContent, sessionId, isStreaming: false);
         _reattachStreamContent = []; // Reset for next stream
@@ -1264,10 +1276,11 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
         // Just skip UI updates for this session
         final isBackgroundStream = _activeStreamSessionId != displaySessionId;
         if (isBackgroundStream) {
-          // Only process terminal events (done/error) when in background
+          // Only process terminal events when in background
           // This keeps the HTTP connection alive so server continues processing
           if (event.type != StreamEventType.done &&
               event.type != StreamEventType.error &&
+              event.type != StreamEventType.typedError &&
               event.type != StreamEventType.aborted) {
             continue; // Skip UI updates but keep consuming stream
           }
@@ -1523,6 +1536,18 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
             } else {
               debugPrint('[ChatMessagesNotifier] Background stream typed error for session $displaySessionId: $errorMsg');
             }
+            break;
+
+          case StreamEventType.warning:
+            // Non-fatal warning — append as distinct content type (won't be overwritten by text)
+            final title = (event.data['title'] as String?) ?? 'Warning';
+            final msg = (event.data['message'] as String?) ?? '';
+            final details = (event.data['details'] as List<dynamic>?)?.cast<String>() ?? [];
+            final warningText = details.isNotEmpty
+                ? '$title: $msg\n${details.map((d) => '  - $d').join('\n')}'
+                : '$title: $msg';
+            accumulatedContent.add(MessageContent.warning(warningText));
+            _updateAssistantMessage(accumulatedContent, isStreaming: true);
             break;
 
           case StreamEventType.thinking:

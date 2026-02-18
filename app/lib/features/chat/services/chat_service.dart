@@ -216,7 +216,8 @@ class ChatService {
             yield event;
 
             if (event.type == StreamEventType.done ||
-                event.type == StreamEventType.error) {
+                event.type == StreamEventType.error ||
+                event.type == StreamEventType.typedError) {
               return;
             }
           } else if (line.isNotEmpty && !line.startsWith(':')) {
