@@ -416,26 +416,43 @@ def cmd_install(args: argparse.Namespace) -> None:
     config_file = save_yaml_config(vault_path, config)
     print(f"\nConfig written to {config_file}")
 
-    # 8. Install and start daemon
-    print("\nInstalling daemon...")
+    # 8. Install and start main server daemon
+    print("\nInstalling main server daemon...")
     try:
         from parachute.daemon import get_daemon_manager
 
         daemon = get_daemon_manager(vault_path, config)
         daemon.install()
-        print("  Daemon installed.")
+        print("  Main server daemon installed.")
 
         daemon.start()
-        print("  Daemon started.")
-        print(f"\n  Server running on port {config.get('port', 3333)}")
+        print("  Main server daemon started.")
+        print(f"  Server running on port {config.get('port', 3333)}")
     except Exception as e:
-        print(f"  Daemon install failed: {e}")
+        print(f"  Main server daemon install failed: {e}")
         print("  You can start manually with: parachute server --foreground")
 
-    # 9. Check PATH
+    # 9. Install and start supervisor daemon
+    print("\nInstalling supervisor daemon...")
+    try:
+        from parachute.daemon import get_supervisor_daemon_manager
+
+        supervisor_daemon = get_supervisor_daemon_manager(vault_path, config)
+        supervisor_daemon.install()
+        print("  Supervisor daemon installed.")
+
+        supervisor_daemon.start()
+        print("  Supervisor daemon started.")
+        print("  Supervisor running on port 3334")
+    except Exception as e:
+        print(f"  Supervisor daemon install failed: {e}")
+        print("  You can install manually with: parachute supervisor install")
+
+    # 10. Check PATH
     _check_path()
 
     print("\nDone! Use 'parachute server status' to check the daemon.")
+    print("Use 'parachute supervisor status' to check the supervisor.")
 
 
 def _check_path() -> None:
@@ -528,7 +545,7 @@ def cmd_update(args: argparse.Namespace) -> None:
         sys.exit(1)
     print("  Dependencies updated.")
 
-    # 3. Restart daemon if running
+    # 3. Restart main server daemon if running
     vault_path = _get_vault_path()
     config = _load_yaml_config(vault_path)
 
@@ -539,18 +556,44 @@ def cmd_update(args: argparse.Namespace) -> None:
         status = daemon.status()
 
         if status.get("running"):
-            print("\nRestarting server...")
+            print("\nRestarting main server...")
             daemon.restart()
-            print("  Server restarted.")
+            print("  Main server restarted.")
         elif daemon.is_installed():
-            print("\nStarting server...")
+            print("\nStarting main server...")
             daemon.start()
-            print("  Server started.")
+            print("  Main server started.")
         else:
-            print("\nDaemon not installed. Run 'parachute install' for daemon support.")
+            print("\nMain server daemon not installed. Run 'parachute install' for daemon support.")
     except Exception as e:
-        print(f"\nCouldn't restart daemon: {e}")
+        print(f"\nCouldn't restart main server daemon: {e}")
         print("  Restart manually: parachute server restart")
+
+    # 4. Restart supervisor daemon if running, or install if not present
+    try:
+        from parachute.daemon import get_supervisor_daemon_manager
+
+        supervisor_daemon = get_supervisor_daemon_manager(vault_path, config)
+        supervisor_status = supervisor_daemon.status()
+
+        if supervisor_status.get("running"):
+            print("\nRestarting supervisor...")
+            supervisor_daemon.restart()
+            print("  Supervisor restarted.")
+        elif supervisor_status.get("installed"):
+            print("\nStarting supervisor...")
+            supervisor_daemon.start()
+            print("  Supervisor started.")
+        else:
+            # Auto-install supervisor if not present
+            print("\nInstalling supervisor daemon...")
+            supervisor_daemon.install()
+            print("  Supervisor daemon installed.")
+            supervisor_daemon.start()
+            print("  Supervisor daemon started.")
+    except Exception as e:
+        print(f"\nCouldn't manage supervisor daemon: {e}")
+        print("  Manage manually: parachute supervisor install/start")
 
     print("\nDone!")
 
