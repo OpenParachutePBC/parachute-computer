@@ -9,9 +9,10 @@ Install: pip install 'discord.py>=2.3'
 
 import asyncio
 import logging
+import time
 from typing import Any, Optional
 
-from parachute.connectors.base import BotConnector
+from parachute.connectors.base import BotConnector, ConnectorState
 from parachute.connectors.message_formatter import claude_to_discord
 
 logger = logging.getLogger(__name__)
@@ -65,6 +66,13 @@ class DiscordConnector(BotConnector):
                 "Install with: pip install 'discord.py>=2.3'"
             )
 
+        self._stop_event.clear()
+        # Start bot with reconnection in background
+        self._task = asyncio.create_task(self._run_with_reconnect())
+        logger.info("Discord connector started")
+
+    def _setup_client(self) -> None:
+        """Create Discord client and register handlers."""
         intents = discord.Intents.default()
         intents.message_content = True
 
@@ -87,7 +95,6 @@ class DiscordConnector(BotConnector):
         @self._client.event
         async def on_ready():
             logger.info(f"Discord bot logged in as {self._client.user}")
-            # Sync slash commands globally
             try:
                 await self._tree.sync()
                 logger.info("Synced slash commands globally")
@@ -100,26 +107,37 @@ class DiscordConnector(BotConnector):
                 return
             await self.on_text_message(message, None)
 
-        # Start bot (this blocks, so run in background)
-        asyncio.create_task(self._run_client())
-        self._running = True
-        logger.info("Discord connector started")
+    async def _run_loop(self) -> None:
+        """Run Discord gateway client. Returns on clean close, raises on error.
 
-    async def _run_client(self) -> None:
-        """Run the Discord client."""
-        try:
-            await self._client.start(self.bot_token)
-        except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            logger.error(f"Discord client error: {e}")
-            self._running = False
+        Builds a fresh client each attempt so reconnection gets a clean state.
+        """
+        self._setup_client()
+        # reconnect=False disables network-error auto-recovery (we handle it).
+        # Discord RESUME protocol for server-initiated reconnects still works.
+        await self._client.start(self.bot_token, reconnect=False)
 
     async def stop(self) -> None:
         """Stop Discord bot."""
-        self._running = False
+        if self._status == ConnectorState.STOPPED:
+            return  # Idempotent
+        # Set stop_event BEFORE cancelling task — interrupts backoff sleep immediately
+        self._stop_event.set()
         if self._client:
-            await self._client.close()
+            try:
+                await self._client.close()
+            except Exception as e:
+                logger.warning(f"Error during Discord client close: {e}")
+        # Await the background task with timeout
+        if self._task and not self._task.done():
+            self._task.cancel()
+            try:
+                await asyncio.wait_for(self._task, timeout=5.0)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                pass
+        self._task = None
+        self._started_at = None
+        self._set_status(ConnectorState.STOPPED)
         logger.info("Discord connector stopped")
 
     async def on_text_message(self, update: Any, context: Any) -> None:
@@ -190,6 +208,8 @@ class DiscordConnector(BotConnector):
                 )
             self._init_nudge_sent[chat_id] = count + 1
             return
+
+        self._last_message_time = time.time()
 
         # Ack reaction — instant feedback before acquiring lock
         ack_sent = False

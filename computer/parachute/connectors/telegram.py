@@ -10,10 +10,11 @@ Install: pip install 'python-telegram-bot>=21.0'
 import asyncio
 import logging
 import re
+import time
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from parachute.connectors.base import BotConnector, GroupMessage
+from parachute.connectors.base import BotConnector, ConnectorState, GroupMessage
 from parachute.connectors.message_formatter import claude_to_telegram
 
 logger = logging.getLogger(__name__)
@@ -63,7 +64,6 @@ class TelegramConnector(BotConnector):
             ack_emoji=ack_emoji,
         )
         self._app: Optional[Application] = None
-        self._polling_task: Optional[asyncio.Task] = None
 
     async def start(self) -> None:
         """Start Telegram long-polling."""
@@ -73,51 +73,76 @@ class TelegramConnector(BotConnector):
                 "Install with: pip install 'python-telegram-bot>=21.0'"
             )
 
-        self._app = Application.builder().token(self.bot_token).build()
+        self._stop_event.clear()
+        logger.info("Telegram connector started (long-polling)")
+        # Start polling with reconnection in background
+        self._task = asyncio.create_task(self._run_with_reconnect())
 
-        # Register handlers
-        self._app.add_handler(CommandHandler("start", self._cmd_start))
-        self._app.add_handler(CommandHandler("help", self._cmd_help))
-        self._app.add_handler(CommandHandler("new", self._cmd_new))
-        self._app.add_handler(CommandHandler("ask", self._cmd_ask))
-        self._app.add_handler(CommandHandler("journal", self._cmd_journal))
-        self._app.add_handler(CommandHandler("j", self._cmd_journal))
-        self._app.add_handler(CommandHandler("init", self._cmd_init))
-        self._app.add_handler(
+    def _build_app(self) -> "Application":
+        """Build a fresh Application with all handlers registered."""
+        app = Application.builder().token(self.bot_token).build()
+
+        app.add_handler(CommandHandler("start", self._cmd_start))
+        app.add_handler(CommandHandler("help", self._cmd_help))
+        app.add_handler(CommandHandler("new", self._cmd_new))
+        app.add_handler(CommandHandler("ask", self._cmd_ask))
+        app.add_handler(CommandHandler("journal", self._cmd_journal))
+        app.add_handler(CommandHandler("j", self._cmd_journal))
+        app.add_handler(CommandHandler("init", self._cmd_init))
+        app.add_handler(
             MessageHandler(filters.TEXT & ~filters.COMMAND, self.on_text_message)
         )
-        self._app.add_handler(
+        app.add_handler(
             MessageHandler(filters.VOICE | filters.AUDIO, self.on_voice_message)
         )
 
+        return app
+
+    async def _run_loop(self) -> None:
+        """Run Telegram long-polling. Blocks until updater stops or stop is requested.
+
+        Builds a fresh Application each attempt so initialize()/start() are
+        re-executed on reconnection — matching Discord's _setup_client() pattern.
+        """
+        self._app = self._build_app()
         await self._app.initialize()
         await self._app.start()
-        self._running = True
-
-        logger.info("Telegram connector started (long-polling)")
-        # Start polling in background
-        self._polling_task = asyncio.create_task(self._poll())
-
-    async def _poll(self) -> None:
-        """Run the polling loop."""
         try:
             await self._app.updater.start_polling(drop_pending_updates=True)
-        except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            logger.error(f"Telegram polling error: {e}")
-            self._running = False
+            # start_polling() returns immediately — block until stop is requested
+            # or the updater dies unexpectedly.
+            while not self._stop_event.is_set():
+                if not self._app.updater.running:
+                    raise RuntimeError("Telegram updater stopped unexpectedly")
+                await asyncio.sleep(1)
+        finally:
+            # Clean up this Application instance regardless of outcome
+            try:
+                if self._app.updater and self._app.updater.running:
+                    await self._app.updater.stop()
+                if self._app.running:
+                    await self._app.stop()
+                await self._app.shutdown()
+            except Exception as e:
+                logger.debug(f"Cleanup during _run_loop teardown: {e}")
 
     async def stop(self) -> None:
         """Stop Telegram connector."""
-        self._running = False
-        if self._app:
-            if self._app.updater and self._app.updater.running:
-                await self._app.updater.stop()
-            await self._app.stop()
-            await self._app.shutdown()
-        if self._polling_task:
-            self._polling_task.cancel()
+        if self._status == ConnectorState.STOPPED:
+            return  # Idempotent
+        # Set stop_event BEFORE cancelling task — interrupts backoff sleep
+        # and breaks _run_loop's while-loop immediately
+        self._stop_event.set()
+        # Await the background task with timeout (_run_loop handles its own cleanup)
+        if self._task and not self._task.done():
+            self._task.cancel()
+            try:
+                await asyncio.wait_for(self._task, timeout=5.0)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                pass
+        self._task = None
+        self._started_at = None
+        self._set_status(ConnectorState.STOPPED)
         logger.info("Telegram connector stopped")
 
     async def _cmd_start(self, update: Any, context: Any) -> None:
@@ -384,6 +409,8 @@ class TelegramConnector(BotConnector):
         if not await self.is_session_initialized(session):
             await self._handle_uninitialized(update, chat_id)
             return
+
+        self._last_message_time = time.time()
 
         # Ack reaction — instant feedback before acquiring lock
         ack_sent = False
