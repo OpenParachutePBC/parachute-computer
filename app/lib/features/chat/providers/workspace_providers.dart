@@ -37,7 +37,13 @@ final workspaceSessionsProvider = FutureProvider.autoDispose<List<ChatSession>>(
   final activeSlug = ref.watch(activeWorkspaceProvider);
 
   if (activeSlug == null) {
-    return ref.watch(chatSessionsProvider.future);
+    try {
+      return await ref.watch(chatSessionsProvider.future);
+    } catch (_) {
+      // chatSessionsProvider can throw when both server and local fail;
+      // workspace filter view degrades gracefully to empty list
+      return [];
+    }
   }
 
   // Filter by workspace — use the chat service with workspace filter

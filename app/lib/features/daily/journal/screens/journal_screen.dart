@@ -383,6 +383,19 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
     debugPrint('[JournalScreen] Draft cleared for entry $entryId');
   }
 
+  // ========== Error Feedback ==========
+
+  void _showErrorSnackbar(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: BrandColors.error,
+        duration: const Duration(seconds: 3),
+      ),
+    );
+  }
+
   // ========== Entry CRUD Operations ==========
 
   Future<void> _addTextEntry(String text) async {
@@ -407,6 +420,7 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
       ref.read(syncProvider.notifier).schedulePush(journalPath);
     } catch (e, st) {
       debugPrint('[JournalScreen] Error adding text entry: $e\n$st');
+      _showErrorSnackbar('Failed to add entry');
     }
   }
 
@@ -442,6 +456,7 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
       ref.read(syncProvider.notifier).schedulePush(journalPath);
     } catch (e, st) {
       debugPrint('[JournalScreen] Error adding voice entry: $e\n$st');
+      _showErrorSnackbar('Failed to add voice entry');
     }
   }
 
@@ -467,15 +482,7 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
       ref.read(syncProvider.notifier).schedulePush(journalPath);
     } catch (e, st) {
       debugPrint('[JournalScreen] Error adding photo entry: $e\n$st');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to add photo: $e'),
-            backgroundColor: BrandColors.error,
-            duration: const Duration(seconds: 3),
-          ),
-        );
-      }
+      _showErrorSnackbar('Failed to add photo');
     }
   }
 
@@ -504,15 +511,7 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
       ref.read(syncProvider.notifier).schedulePush(journalPath);
     } catch (e, st) {
       debugPrint('[JournalScreen] Error adding handwriting entry: $e\n$st');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to add handwriting: $e'),
-            backgroundColor: BrandColors.error,
-            duration: const Duration(seconds: 3),
-          ),
-        );
-      }
+      _showErrorSnackbar('Failed to add handwriting');
     }
   }
 
@@ -567,6 +566,7 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
       }
     } catch (e, st) {
       debugPrint('[JournalScreen] Error updating transcription: $e\n$st');
+      _showErrorSnackbar('Voice note saved, but transcript update failed');
     }
   }
 
@@ -1153,6 +1153,7 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
         ref.read(syncProvider.notifier).schedulePush(journalPath);
       } catch (e, st) {
         debugPrint('[JournalScreen] Error deleting entry: $e\n$st');
+        _showErrorSnackbar('Failed to delete entry');
       }
     }
   }

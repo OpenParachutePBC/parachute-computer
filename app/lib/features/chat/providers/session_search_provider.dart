@@ -15,7 +15,13 @@ final searchedSessionsProvider =
   final query = ref.watch(sessionSearchQueryProvider);
 
   if (query.isEmpty) {
-    return ref.watch(chatSessionsProvider.future);
+    try {
+      return await ref.watch(chatSessionsProvider.future);
+    } catch (_) {
+      // chatSessionsProvider can throw when both server and local fail;
+      // search view degrades gracefully to empty list
+      return [];
+    }
   }
 
   final service = ref.watch(chatServiceProvider);

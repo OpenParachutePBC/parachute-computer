@@ -1507,6 +1507,12 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
             // Typed error with recovery info
             final typedErr = event.typedError;
             final errorMsg = typedErr?.message ?? event.errorMessage ?? 'Unknown error';
+            if (typedErr != null) {
+              _log.error('Stream typed error: code=${typedErr.code}, '
+                  'canRetry=${typedErr.canRetry}, '
+                  'originalError=${typedErr.originalError}',
+                  error: errorMsg);
+            }
             if (!isBackgroundStream) {
               state = state.copyWith(
                 isStreaming: false,
