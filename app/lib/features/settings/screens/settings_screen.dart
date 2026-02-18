@@ -19,10 +19,12 @@ import '../widgets/bot_connectors_section.dart';
 import '../widgets/hooks_section.dart';
 import '../widgets/migration_section.dart';
 import '../widgets/model_selection_section.dart';
+import '../widgets/model_picker_dropdown.dart';
 import '../widgets/workspace_management_section.dart';
 import '../widgets/about_section.dart';
 import '../widgets/settings_card.dart';
 import 'capabilities_screen.dart';
+import 'package:parachute/core/providers/supervisor_providers.dart';
 
 /// Unified Settings screen for Parachute
 ///
@@ -76,6 +78,23 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     }
   }
 
+  /// Builds model selection widget - dynamic picker if supervisor available, static fallback otherwise
+  Widget _buildModelSection() {
+    final supervisorStatusAsync = ref.watch(supervisorStatusProvider);
+
+    return supervisorStatusAsync.when(
+      data: (status) {
+        // Supervisor is available - use dynamic model picker
+        if (status.supervisorUptimeSeconds > 0) {
+          return const ModelPickerDropdown();
+        }
+        // Supervisor not running - fall back to static picker
+        return const ModelSelectionSection();
+      },
+      loading: () => const ModelSelectionSection(), // Use static while checking
+      error: (_, __) => const ModelSelectionSection(), // Fall back on error
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -138,7 +157,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           if (showFullModeSettings) ...[
             SettingsCard(
               isDark: isDark,
-              child: const ModelSelectionSection(),
+              child: _buildModelSection(),
             ),
             SizedBox(height: Spacing.xl),
           ],
