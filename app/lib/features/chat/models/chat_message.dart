@@ -2,7 +2,37 @@
 enum MessageRole { user, assistant }
 
 /// Type of content within a message
-enum ContentType { text, toolUse, thinking, warning }
+enum ContentType { text, toolUse, thinking, warning, userQuestion }
+
+/// Status of a user question (from AskUserQuestion tool)
+enum UserQuestionStatus { pending, answered, dismissed, timeout }
+
+/// Data for an AskUserQuestion tool call persisted in message content
+class UserQuestionData {
+  final String toolUseId;
+  final List<Map<String, dynamic>> questions;
+  final Map<String, dynamic>? answers; // null = pending, {} = timeout, {...} = answered
+  final UserQuestionStatus status;
+
+  const UserQuestionData({
+    required this.toolUseId,
+    required this.questions,
+    this.answers,
+    this.status = UserQuestionStatus.pending,
+  });
+
+  UserQuestionData copyWith({
+    Map<String, dynamic>? answers,
+    UserQuestionStatus? status,
+  }) {
+    return UserQuestionData(
+      toolUseId: toolUseId,
+      questions: questions,
+      answers: answers ?? this.answers,
+      status: status ?? this.status,
+    );
+  }
+}
 
 /// A tool call made by the assistant
 class ToolCall {
@@ -90,11 +120,13 @@ class MessageContent {
   final ContentType type;
   final String? text;
   final ToolCall? toolCall;
+  final UserQuestionData? userQuestionData;
 
   const MessageContent({
     required this.type,
     this.text,
     this.toolCall,
+    this.userQuestionData,
   });
 
   factory MessageContent.text(String text) {
@@ -111,6 +143,10 @@ class MessageContent {
 
   factory MessageContent.warning(String text) {
     return MessageContent(type: ContentType.warning, text: text);
+  }
+
+  factory MessageContent.userQuestion(UserQuestionData data) {
+    return MessageContent(type: ContentType.userQuestion, userQuestionData: data);
   }
 }
 

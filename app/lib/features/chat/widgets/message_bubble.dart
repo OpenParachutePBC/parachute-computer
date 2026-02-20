@@ -8,6 +8,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
 import '../models/chat_message.dart';
 import 'inline_audio_player.dart';
+import 'inline_user_question_card.dart';
 import 'collapsible_thinking_section.dart';
 import 'collapsible_compact_summary.dart';
 // NOTE: CollapsibleCodeBlockBuilder removed due to flutter_markdown bug
@@ -138,6 +139,10 @@ class _MessageBubbleState extends State<MessageBubble>
         // Flush any pending thinking items before adding warning
         flushThinkingItems();
         widgets.add(_buildWarningContent(context, content.text!, isDark));
+      } else if (content.type == ContentType.userQuestion && content.userQuestionData != null) {
+        // Flush any pending thinking items before adding question card
+        flushThinkingItems();
+        widgets.add(InlineUserQuestionCard(data: content.userQuestionData!));
       } else if (content.type == ContentType.thinking || content.type == ContentType.toolUse) {
         // Accumulate thinking and tool calls
         pendingThinkingItems.add(content);
