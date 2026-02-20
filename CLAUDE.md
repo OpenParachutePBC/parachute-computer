@@ -110,13 +110,14 @@ The app connects to the server at `localhost:3333`. Chat, Vault, and Brain featu
 
 ### Brainstorm → Issue → Plan → Work
 
-1. **Brainstorm** — Run `/para-brainstorm` to explore an idea collaboratively
-2. **File issue** — Create a GitHub issue from the brainstorm (`brainstorm` label + module/priority labels)
-3. **Pick up** — Pull down a brainstorm issue when ready to work on it
-4. **Plan** — Run `/para-plan` to create a concrete implementation plan from the brainstorm
-5. **Work** — Run `/para-work` to implement; PR references the brainstorm issue
+The GitHub issue number is the handle that threads through the entire lifecycle:
 
-Brainstorm issues are the durable artifact — they capture the *what* and *why*. Plans are implementation details that live in PRs or issue comments.
+1. **Brainstorm** — Run `/para-brainstorm` to explore an idea collaboratively. Creates a GitHub issue and writes `**Issue:** #NN` back into the brainstorm file.
+2. **Pick up** — Run `/para-next` to find the next issue to work on.
+3. **Plan** — Run `/para-plan #NN` to create an implementation plan. The plan is posted as a comment on the issue and the `plan` label is added.
+4. **Work** — Run `/para-work #NN` to implement. Creates a PR with `Closes #NN`.
+
+All commands accept `#NN` as input. The issue is the durable tracking artifact; local files (`docs/brainstorms/`, `docs/plans/`) are working documents linked by `issue:` in their frontmatter.
 
 ### Issue Tracking
 

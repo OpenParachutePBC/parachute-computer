@@ -65,7 +65,9 @@ Use **AskUserQuestion tool** to ask:
 2. **Pick a different one** - Specify an issue number
 3. **Just browsing** - No action needed
 
-If the user picks an issue, ask whether they want to:
-1. **Plan it** — Run `/para-plan` with the issue context
-2. **Brainstorm first** — Run `/para-brainstorm` to explore further
-3. **Just read it** — Show the full issue body
+If the user picks an issue, check its labels to determine the right next step:
+
+- **Has `plan` label** → "This issue has a plan. Run `/para-work #NN` to start implementing."
+- **Has `brainstorm` label but no `plan`** → "This issue has a brainstorm but no plan yet. Run `/para-plan #NN` to create one."
+- **Has neither** → Ask: "This issue hasn't been brainstormed yet. Would you like to `/para-brainstorm` first, or jump to `/para-plan #NN`?"
+- **User wants to read it** → Show the full issue body with `gh issue view NN`

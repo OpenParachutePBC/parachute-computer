@@ -96,6 +96,14 @@ gh issue create \
   --label brainstorm,<module-label>
 ```
 
+**After creation:**
+1. Capture the issue number from the `gh issue create` output URL
+2. Add `**Issue:** #NN` to the brainstorm file's metadata block (after the Status/Priority lines)
+3. Update the issue body on GitHub to include the issue reference:
+   ```bash
+   gh issue edit NN --body-file docs/brainstorms/YYYY-MM-DD-<topic>-brainstorm.md
+   ```
+
 ### Phase 5: Handoff
 
 Use **AskUserQuestion tool** to present next steps:
@@ -103,7 +111,7 @@ Use **AskUserQuestion tool** to present next steps:
 **Question:** "Brainstorm filed as GitHub issue. What would you like to do next?"
 
 **Options:**
-1. **Proceed to planning** - Run `/para-plan` to create an implementation plan from this brainstorm
+1. **Proceed to planning** - Run `/para-plan #NN` to create an implementation plan from this brainstorm
 2. **Refine design further** - Continue exploring before planning
 3. **Done for now** - Issue is tracked, return later
 
@@ -115,13 +123,13 @@ When complete, display:
 Brainstorm complete!
 
 Document: docs/brainstorms/YYYY-MM-DD-<topic>-brainstorm.md
-Issue: <GitHub issue URL>
+Issue: <GitHub issue URL> (#NN)
 
 Key decisions:
 - [Decision 1]
 - [Decision 2]
 
-Next: Someone can pick up this issue and run `/para-plan` when ready to implement.
+Next: Run `/para-plan #NN` when ready to implement.
 ```
 
 ## Important Guidelines
