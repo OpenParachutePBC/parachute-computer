@@ -6,6 +6,7 @@ date: 2026-01-01T12:00:00
 author: "Aaron G Neyer"
 permalink: /blog/opening-the-parachute/
 description: "Building an extended mind for the year ahead"
+substack_url: "https://openparachute.substack.com/p/opening-the-parachute"
 ---
 
 ![Parachute header image](https://substack-post-media.s3.amazonaws.com/public/images/ef6f8040-27ae-4372-95dc-9f3d80bcbd31_1376x768.png)

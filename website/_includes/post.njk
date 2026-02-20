@@ -6,7 +6,7 @@ layout: base.njk
         <div class="post-header fade-up fade-up-1">
             <h1>{{ title }}</h1>
             {% if subtitle %}<p class="post-subtitle">{{ subtitle }}</p>{% endif %}
-            <p class="post-meta">{{ date | dateDisplay }}{% if author %} &middot; {{ author }}{% endif %}</p>
+            <p class="post-meta">{{ date | dateDisplay }}{% if author %} &middot; {{ author }}{% endif %}{% if substack_url %} &middot; <a href="{{ substack_url }}" target="_blank">Also on Substack</a>{% endif %}</p>
         </div>
 
         <div class="post-content fade-up fade-up-2">

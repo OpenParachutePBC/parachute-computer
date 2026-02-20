@@ -500,6 +500,12 @@ footer p:first-child {
     font-size: 1.05rem;
 }
 
+.roadmap-header .subscribe-line {
+    margin-top: 0.75rem;
+    font-size: 0.9rem;
+    color: var(--fg-dim);
+}
+
 .sow-meta {
     background: var(--card-bg);
     border: 1px solid var(--border);
