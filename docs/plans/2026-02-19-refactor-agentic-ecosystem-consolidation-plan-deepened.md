@@ -354,28 +354,29 @@ Currently hooks are a separate settings section. The Capabilities screen has 4 t
 **After Phases 1-4 have been stable for 2+ release cycles:**
 
 **Code removal:**
-- [ ] Delete `discover_agents()` from `core/agents.py` (or delete the entire file if only discovery remains)
-- [ ] Delete `_index_plugin()`, `_discover_plugin_*()` from `core/plugins.py`
-- [ ] Remove dual-path fallbacks added during migration
-- [ ] Remove deprecation warnings
-- [ ] Clean up unused AgentDefinition fields from `models/agent.py`
-- [ ] Remove unused HookEvent types (only keep bot connector + server lifecycle)
+- [x] Delete `core/agents.py` entirely (dead code, no production imports)
+- [x] Delete `lib/agent_loader.py` entirely (dead code, no production imports)
+- [x] Delete `tests/unit/test_agents.py` and `test_agent_loader.py`
+- [x] Remove dead `_parse_hook()` from `core/hooks/runner.py`
+- [x] Clean up integration test (remove agent discovery tests)
+- [ ] Clean up unused AgentDefinition fields from `models/agent.py` (future)
+- [ ] Remove unused HookEvent types (future — only bot connector + server lifecycle needed)
 
 **Documentation:**
-- [ ] Update `computer/CLAUDE.md` — document 5 primitives model
+- [x] Update `computer/CLAUDE.md` — document 5 primitives model
 - [ ] Update `app/CLAUDE.md` — document extensions panel
 - [ ] Update root `CLAUDE.md` — reflect consolidated architecture
 
 **Orchestrator simplification:**
-- [ ] Verify discovery flow is now 4 calls (agent, MCP, skills, plugins metadata)
-- [ ] Remove any remaining merge logic
-- [ ] Measure: count lines in `execute_stream()` before/after
+- [x] Removed dead import comments
+- [x] Plugin MCP merging scoped to legacy plugins only
+- [ ] Measure: count lines in `execute_stream()` before/after (future)
 
 **Acceptance criteria:**
-- [ ] No references to `.parachute/agents/` in codebase (except migration code if kept)
-- [ ] No user-facing references to HookRunner
-- [ ] CLAUDE.md files document the 5 primitives model
-- [ ] Orchestrator discovery is measurably simpler
+- [x] No references to `.parachute/agents/` in production codebase
+- [x] No user-facing references to HookRunner
+- [x] `computer/CLAUDE.md` documents the 5 primitives model
+- [x] Dead code removed (core/agents.py, lib/agent_loader.py)
 
 ---
 

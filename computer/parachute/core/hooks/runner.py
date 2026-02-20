@@ -11,14 +11,13 @@ of SDK-native hooks.
 """
 
 import asyncio
-import importlib.util
 import logging
 from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from parachute.core.hooks.events import BLOCKING_EVENTS, HookEvent
+from parachute.core.hooks.events import HookEvent
 from parachute.core.hooks.models import HookConfig, HookError
 
 logger = logging.getLogger(__name__)
@@ -49,58 +48,6 @@ class HookRunner:
         """
         logger.info("HookRunner: internal event bus ready (user hook discovery disabled)")
         return 0
-
-    def _parse_hook(self, hook_file: Path) -> HookConfig | None:
-        """Parse a hook script and extract its configuration."""
-        name = hook_file.stem
-
-        try:
-            spec = importlib.util.spec_from_file_location(
-                f"parachute_hook_{name}", hook_file
-            )
-            if not spec or not spec.loader:
-                return None
-
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-            self._hook_modules[name] = module
-
-            # Read HOOK_CONFIG from module
-            hook_config = getattr(module, "HOOK_CONFIG", None)
-            if not hook_config or not isinstance(hook_config, dict):
-                logger.warning(f"Hook {name} has no HOOK_CONFIG dict, skipping")
-                return None
-
-            events = hook_config.get("events", [])
-            if not events:
-                logger.warning(f"Hook {name} has no events, skipping")
-                return None
-
-            # Determine if blocking (from config or from event type)
-            blocking = hook_config.get("blocking", False)
-            if not blocking:
-                # Auto-detect blocking from event types
-                for event_str in events:
-                    try:
-                        event = HookEvent(event_str)
-                        if event in BLOCKING_EVENTS:
-                            blocking = True
-                            break
-                    except ValueError:
-                        pass  # Unknown event, not blocking
-
-            return HookConfig(
-                name=name,
-                path=hook_file,
-                events=events,
-                blocking=blocking,
-                timeout=hook_config.get("timeout", 30.0),
-                enabled=hook_config.get("enabled", True),
-                description=hook_config.get("description", ""),
-            )
-        except Exception as e:
-            logger.error(f"Failed to load hook {name}: {e}")
-            return None
 
     async def fire(
         self,

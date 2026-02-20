@@ -23,10 +23,8 @@ from parachute.core.permission_handler import PermissionHandler
 from parachute.core.plugins import discover_plugins, get_plugin_dirs
 from parachute.core.sandbox import DockerSandbox, AgentSandboxConfig
 from parachute.core.skills import generate_runtime_plugin, cleanup_runtime_plugin, discover_skills
-# Custom agent discovery removed — SDK discovers .claude/agents/ natively
 from parachute.core.session_manager import SessionManager
 from parachute.db.database import Database
-# agent_loader removed — SDK handles agent discovery natively
 from parachute.lib.context_loader import format_context_for_prompt, load_agent_context
 from parachute.core.context_folders import ContextFolderService
 from parachute.core.capability_filter import filter_by_trust_level, filter_capabilities

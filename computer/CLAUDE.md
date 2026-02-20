@@ -24,7 +24,9 @@ Router → Orchestrator → Claude Agent SDK → AI
 - `parachute/core/claude_sdk.py` - SDK wrapper (CLAUDE_CODE_OAUTH_TOKEN auth)
 - `parachute/core/module_loader.py` - Module discovery, hash verification, bootstrap
 - `parachute/core/sandbox.py` - Docker container execution for sandboxed sessions
-- `parachute/core/hooks/` - Pre/post event hook system
+- `parachute/core/hooks/` - Internal event bus (bot connectors only; user hooks via SDK)
+- `parachute/core/plugins.py` - Plugin discovery (manifest-based + legacy)
+- `parachute/core/plugin_installer.py` - Plugin install/uninstall from Git URLs
 
 **Connectors:**
 - `parachute/connectors/telegram.py` - Telegram bot connector
@@ -53,6 +55,24 @@ Modules are SHA-256 hash-verified. New/modified modules must be approved:
 parachute module list      # See status (new/approved/modified)
 parachute module approve brain  # Record hash
 ```
+
+---
+
+## Extension Points
+
+Five SDK-native primitives — Parachute manages files, the SDK discovers them at runtime:
+
+| Primitive | Location | Format |
+|-----------|----------|--------|
+| **Agents** | `vault/.claude/agents/*.md` | Markdown with YAML frontmatter |
+| **Skills** | `vault/.skills/*.md` or `vault/.skills/*/SKILL.md` | Markdown with frontmatter |
+| **MCPs** | `vault/.mcp.json` | JSON `{ "mcpServers": { ... } }` |
+| **Hooks** | `vault/.claude/settings.json` | SDK hook config |
+| **Plugins** | Installed via API → copies to above locations | Git repos with SDK-layout |
+
+**Plugin install flow:** Clone repo → scan for `.claude/agents/`, `skills/`, `.mcp.json` → copy to vault standard locations with `plugin-{slug}-` prefix → write manifest to `vault/.parachute/plugin-manifests/{slug}.json`.
+
+**HookRunner** (`core/hooks/runner.py`) is an internal event bus for bot connector events only. Not user-facing.
 
 ---
 
