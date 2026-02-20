@@ -1591,10 +1591,10 @@ def _bot_status() -> None:
             print("\nBot Configuration (offline — server not running)")
             print("-" * 40)
 
-            for platform in ("telegram", "discord"):
+            for platform in ("telegram", "discord", "matrix"):
                 cfg = data.get(platform, {})
                 enabled = cfg.get("enabled", False)
-                has_token = bool(cfg.get("bot_token", ""))
+                has_token = bool(cfg.get("bot_token", "") or cfg.get("access_token", ""))
                 print(f"  {platform}: {'enabled' if enabled else 'disabled'}")
                 if has_token:
                     print(f"    token: configured")
@@ -1604,9 +1604,9 @@ def _bot_status() -> None:
 
 def _bot_start(platform: str) -> None:
     """Start a bot connector via the server API."""
-    if platform not in ("telegram", "discord"):
+    if platform not in ("telegram", "discord", "matrix"):
         print(f"Unknown platform: {platform}")
-        print("Valid platforms: telegram, discord")
+        print("Valid platforms: telegram, discord, matrix")
         sys.exit(1)
 
     server_url = _get_server_url()
@@ -1625,9 +1625,9 @@ def _bot_start(platform: str) -> None:
 
 def _bot_stop(platform: str) -> None:
     """Stop a bot connector via the server API."""
-    if platform not in ("telegram", "discord"):
+    if platform not in ("telegram", "discord", "matrix"):
         print(f"Unknown platform: {platform}")
-        print("Valid platforms: telegram, discord")
+        print("Valid platforms: telegram, discord, matrix")
         sys.exit(1)
 
     server_url = _get_server_url()
@@ -1662,11 +1662,11 @@ def _bot_config_show() -> None:
     print("\nBot Configuration")
     print("-" * 40)
 
-    for platform in ("telegram", "discord"):
+    for platform in ("telegram", "discord", "matrix"):
         cfg = data.get(platform, {})
         print(f"\n  {platform}:")
 
-        has_token = cfg.get("has_token", bool(cfg.get("bot_token", "")))
+        has_token = cfg.get("has_token", bool(cfg.get("bot_token", "") or cfg.get("access_token", "")))
         enabled = cfg.get("enabled", False)
         print(f"    enabled: {enabled}")
         print(f"    token: {'configured' if has_token else 'not set'}")
@@ -1681,10 +1681,20 @@ def _bot_config_show() -> None:
             users = cfg.get("allowed_users", [])
             if users:
                 print(f"    allowed_users: {', '.join(str(u) for u in users)}")
-        else:
+        elif platform == "discord":
             guilds = cfg.get("allowed_guilds", [])
             if guilds:
                 print(f"    allowed_guilds: {', '.join(guilds)}")
+        elif platform == "matrix":
+            rooms = cfg.get("allowed_rooms", [])
+            if rooms:
+                print(f"    allowed_rooms: {', '.join(rooms)}")
+            homeserver = cfg.get("homeserver_url", "")
+            if homeserver:
+                print(f"    homeserver_url: {homeserver}")
+            user_id = cfg.get("user_id", "")
+            if user_id:
+                print(f"    user_id: {user_id}")
 
     print()
 
@@ -1692,14 +1702,14 @@ def _bot_config_show() -> None:
 def _bot_config_set(key: str, value: str) -> None:
     """Set a bot config value. Key format: platform.field (e.g. telegram.bot_token)."""
     parts = key.split(".", 1)
-    if len(parts) != 2 or parts[0] not in ("telegram", "discord"):
+    if len(parts) != 2 or parts[0] not in ("telegram", "discord", "matrix"):
         print(f"Invalid key: {key}")
         print("Format: <platform>.<field>  (e.g. telegram.bot_token, discord.enabled)")
         sys.exit(1)
 
     platform, field = parts
 
-    valid_fields = {"enabled", "bot_token", "allowed_users", "allowed_guilds", "dm_trust_level", "group_trust_level"}
+    valid_fields = {"enabled", "bot_token", "access_token", "homeserver_url", "user_id", "device_id", "allowed_users", "allowed_guilds", "allowed_rooms", "dm_trust_level", "group_trust_level"}
     if field not in valid_fields:
         print(f"Unknown field: {field}")
         print(f"Valid fields: {', '.join(sorted(valid_fields))}")
@@ -1718,6 +1728,16 @@ def _bot_config_set(key: str, value: str) -> None:
             update["allowed_users"] = [x.strip() for x in value.split(",") if x.strip()]
     elif field == "allowed_guilds":
         update["allowed_guilds"] = [x.strip() for x in value.split(",") if x.strip()]
+    elif field == "allowed_rooms":
+        update["allowed_rooms"] = [x.strip() for x in value.split(",") if x.strip()]
+    elif field == "access_token":
+        update["access_token"] = value
+    elif field == "homeserver_url":
+        update["homeserver_url"] = value
+    elif field == "user_id":
+        update["user_id"] = value
+    elif field == "device_id":
+        update["device_id"] = value
     elif field in ("dm_trust_level", "group_trust_level"):
         if value not in ("trusted", "untrusted"):
             print(f"Invalid trust level: {value}")
@@ -1840,7 +1860,7 @@ def _bot_users() -> None:
     print("-" * 40)
 
     any_users = False
-    for platform in ("telegram", "discord"):
+    for platform in ("telegram", "discord", "matrix"):
         cfg = data.get(platform, {})
         users = cfg.get("allowed_users", [])
         if users:
@@ -1924,9 +1944,9 @@ def main() -> None:
     bot_sub = bot_parser.add_subparsers(dest="action")
     bot_sub.add_parser("status", help="Show bot connector status")
     bot_start_parser = bot_sub.add_parser("start", help="Start a bot connector")
-    bot_start_parser.add_argument("platform", choices=["telegram", "discord"])
+    bot_start_parser.add_argument("platform", choices=["telegram", "discord", "matrix"])
     bot_stop_parser = bot_sub.add_parser("stop", help="Stop a bot connector")
-    bot_stop_parser.add_argument("platform", choices=["telegram", "discord"])
+    bot_stop_parser.add_argument("platform", choices=["telegram", "discord", "matrix"])
 
     bot_config_parser = bot_sub.add_parser("config", help="Bot configuration")
     bot_config_sub = bot_config_parser.add_subparsers(dest="config_action")

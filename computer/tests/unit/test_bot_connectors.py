@@ -15,11 +15,13 @@ from parachute.connectors.base import BotConnector, ConnectorState
 from parachute.connectors.config import (
     BotsConfig,
     DiscordConfig,
+    MatrixConfig,
     TelegramConfig,
     load_bots_config,
 )
 from parachute.connectors.message_formatter import (
     claude_to_discord,
+    claude_to_matrix,
     claude_to_plain,
     claude_to_telegram,
 )
@@ -581,3 +583,199 @@ class TestConnectorResilience:
         assert c._status == ConnectorState.FAILED
         assert "RuntimeError" in c._last_error
         assert c._last_error_time is not None
+
+
+# ---------------------------------------------------------------------------
+# Matrix config tests
+# ---------------------------------------------------------------------------
+
+
+class TestMatrixConfig:
+    def test_default_config(self):
+        config = MatrixConfig()
+        assert not config.enabled
+        assert config.homeserver_url == ""
+        assert config.user_id == ""
+        assert config.access_token == ""
+        assert config.device_id == "PARACHUTE01"
+        assert config.allowed_rooms == []
+        assert config.dm_trust_level == "untrusted"
+        assert config.group_trust_level == "untrusted"
+        assert config.group_mention_mode == "mention_only"
+        assert config.ack_emoji == "👀"
+
+    def test_matrix_config_parsing(self):
+        config = MatrixConfig(
+            enabled=True,
+            homeserver_url="https://matrix.example.org",
+            user_id="@bot:example.org",
+            access_token="syt_test_token",
+            device_id="TEST01",
+            allowed_rooms=["!abc:example.org", "#room:example.org"],
+        )
+        assert config.enabled
+        assert config.homeserver_url == "https://matrix.example.org"
+        assert config.user_id == "@bot:example.org"
+        assert len(config.allowed_rooms) == 2
+
+    def test_trust_level_normalization(self):
+        config = MatrixConfig(
+            dm_trust_level="full",
+            group_trust_level="sandboxed",
+        )
+        assert config.dm_trust_level == "trusted"
+        assert config.group_trust_level == "untrusted"
+
+    def test_bots_config_includes_matrix(self):
+        config = BotsConfig()
+        assert hasattr(config, "matrix")
+        assert not config.matrix.enabled
+
+    def test_full_config_with_matrix(self):
+        config = BotsConfig(**{
+            "matrix": {
+                "enabled": True,
+                "homeserver_url": "https://matrix.test.org",
+                "user_id": "@parachute:test.org",
+                "access_token": "syt_test",
+                "allowed_rooms": ["!room1:test.org"],
+                "dm_trust_level": "untrusted",
+                "group_trust_level": "untrusted",
+            }
+        })
+        assert config.matrix.enabled
+        assert config.matrix.homeserver_url == "https://matrix.test.org"
+        assert len(config.matrix.allowed_rooms) == 1
+
+    def test_load_matrix_from_yaml(self, tmp_path):
+        parachute_dir = tmp_path / ".parachute"
+        parachute_dir.mkdir()
+        (parachute_dir / "bots.yaml").write_text(
+            "matrix:\n"
+            "  enabled: true\n"
+            "  homeserver_url: 'https://matrix.example.org'\n"
+            "  user_id: '@bot:example.org'\n"
+            "  access_token: 'syt_test'\n"
+            "  device_id: 'BOT01'\n"
+            "  allowed_rooms:\n"
+            "    - '!abc:example.org'\n"
+        )
+        config = load_bots_config(tmp_path)
+        assert config.matrix.enabled
+        assert config.matrix.homeserver_url == "https://matrix.example.org"
+        assert config.matrix.device_id == "BOT01"
+        assert "!abc:example.org" in config.matrix.allowed_rooms
+
+
+# ---------------------------------------------------------------------------
+# Matrix message formatter tests
+# ---------------------------------------------------------------------------
+
+
+class TestClaudeToMatrix:
+    def test_empty(self):
+        plain, html = claude_to_matrix("")
+        assert plain == ""
+        assert html == ""
+
+    def test_bold(self):
+        plain, html = claude_to_matrix("**Bold text**")
+        assert "Bold text" in plain
+        assert "<b>Bold text</b>" in html
+
+    def test_italic(self):
+        plain, html = claude_to_matrix("*italic*")
+        assert "italic" in plain
+        assert "<i>italic</i>" in html
+
+    def test_inline_code(self):
+        plain, html = claude_to_matrix("Use `code` here")
+        assert "code" in plain
+        assert "<code>code</code>" in html
+
+    def test_code_block(self):
+        plain, html = claude_to_matrix("```python\nprint('hi')\n```")
+        assert "print('hi')" in plain
+        assert "<pre><code" in html
+        assert "print(&#x27;hi&#x27;)" in html or "print('hi')" in html
+
+    def test_link(self):
+        plain, html = claude_to_matrix("[Google](https://google.com)")
+        assert "Google" in plain
+        assert '<a href="https://google.com">Google</a>' in html
+
+    def test_heading(self):
+        plain, html = claude_to_matrix("## My Heading")
+        assert "My Heading" in plain
+        assert "<h2>" in html
+
+    def test_blockquote(self):
+        plain, html = claude_to_matrix("> quoted text")
+        assert "quoted text" in plain
+        assert "<blockquote>" in html
+
+    def test_unordered_list(self):
+        plain, html = claude_to_matrix("- item one\n- item two")
+        assert "item one" in plain
+        assert "<ul>" in html
+        assert "<li>" in html
+
+    def test_ordered_list(self):
+        plain, html = claude_to_matrix("1. first\n2. second")
+        assert "first" in plain
+        assert "<ol>" in html
+        assert "<li>" in html
+
+    def test_plain_text_is_stripped(self):
+        plain, html = claude_to_matrix("**bold** and *italic*")
+        assert "**" not in plain
+        assert "*" not in plain
+
+    def test_html_escaping(self):
+        plain, html = claude_to_matrix("Use <script> and & symbols")
+        assert "&lt;script&gt;" in html
+        assert "&amp;" in html
+
+    def test_returns_tuple(self):
+        result = claude_to_matrix("hello")
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+
+
+# ---------------------------------------------------------------------------
+# Matrix message splitting tests
+# ---------------------------------------------------------------------------
+
+
+class TestMatrixMessageSplit:
+    def test_split_at_25k_boundary(self):
+        text = "A" * 30000
+        chunks = BotConnector.split_response(text, 25000)
+        assert len(chunks) >= 2
+        assert all(len(c) <= 25000 for c in chunks)
+
+    def test_matrix_limit_with_paragraphs(self):
+        paragraphs = [f"Paragraph {i}: " + "x" * 500 for i in range(60)]
+        text = "\n\n".join(paragraphs)
+        chunks = BotConnector.split_response(text, 25000)
+        assert all(len(c) <= 25000 for c in chunks)
+        # All content preserved
+        combined = "\n\n".join(chunks)
+        assert "Paragraph 0" in combined
+        assert "Paragraph 59" in combined
+
+
+# ---------------------------------------------------------------------------
+# Matrix connector import test
+# ---------------------------------------------------------------------------
+
+
+class TestMatrixConnectorImport:
+    def test_matrix_connector_importable(self):
+        from parachute.connectors.matrix_bot import MatrixConnector, MATRIX_AVAILABLE
+        assert MatrixConnector.platform == "matrix"
+
+    def test_matrix_available_flag_exists(self):
+        from parachute.connectors.matrix_bot import MATRIX_AVAILABLE
+        # Should be a boolean regardless of whether matrix-nio is installed
+        assert isinstance(MATRIX_AVAILABLE, bool)
