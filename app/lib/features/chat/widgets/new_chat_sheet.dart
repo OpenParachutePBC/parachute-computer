@@ -429,7 +429,7 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
   Widget _buildAgentChip(AgentInfo agent, bool isSelected, bool isDark) {
     final icon = agent.isBuiltin
         ? Icons.chat_bubble_outline
-        : (agent.source == 'vault_agents' ? Icons.auto_awesome : Icons.smart_toy_outlined);
+        : (agent.source == 'sdk' ? Icons.auto_awesome : Icons.smart_toy_outlined);
     return GestureDetector(
       onTap: () => setState(() => _selectedAgentId = agent.name),
       child: Container(

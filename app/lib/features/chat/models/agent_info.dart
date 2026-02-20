@@ -5,7 +5,7 @@ class AgentInfo {
   final String type;
   final String? model;
   final String? path;
-  final String source; // "builtin", "vault_agents", "custom_agents", "plugin"
+  final String source; // "builtin", "sdk", "plugin"
   final List<String> tools;
 
   // Detail fields (populated by GET /agents/{name})

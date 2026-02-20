@@ -11,8 +11,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
+import re
+
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from parachute.config import get_settings
 from parachute.core.plugins import discover_plugins
@@ -28,11 +30,23 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
+_SLUG_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]*$")
+
+
 class InstallPluginInput(BaseModel):
     """Input for installing a plugin from a URL."""
 
     url: str
     slug: Optional[str] = None
+
+    @field_validator("slug")
+    @classmethod
+    def validate_slug(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and not _SLUG_RE.match(v):
+            raise ValueError(
+                "Slug must contain only letters, numbers, hyphens, and underscores"
+            )
+        return v
 
 
 def _plugin_to_dict(plugin) -> dict[str, Any]:
@@ -253,6 +267,12 @@ async def get_plugin_skill(
     if not skills_dir.is_dir():
         raise HTTPException(status_code=404, detail=f"Plugin '{slug}' has no skills")
 
+    # Validate path stays within skills_dir
+    try:
+        (skills_dir / skill_name).resolve().relative_to(skills_dir.resolve())
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid skill name")
+
     # Try single file first
     skill_file = skills_dir / f"{skill_name}.md"
     if skill_file.exists():
@@ -301,6 +321,12 @@ async def get_plugin_agent(
 
     if not agents_dir.is_dir():
         raise HTTPException(status_code=404, detail=f"Plugin '{slug}' has no agents")
+
+    # Validate path stays within agents_dir
+    try:
+        (agents_dir / agent_name).resolve().relative_to(agents_dir.resolve())
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid agent name")
 
     # Search for agent file by name (supports nested dirs)
     for ext in (".md", ".yaml", ".yml"):

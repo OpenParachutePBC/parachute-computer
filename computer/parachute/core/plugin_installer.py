@@ -298,10 +298,30 @@ def _install_files(
         except (json.JSONDecodeError, OSError):
             plugin_servers = {}
 
-        # Merge (conflicts already checked)
+        # Merge (conflicts already checked) — validate configs before merging
         for name in content["mcps"]:
             if name in plugin_servers and name not in servers:
-                servers[name] = plugin_servers[name]
+                config = plugin_servers[name]
+                if not isinstance(config, dict):
+                    logger.warning(f"Skipping MCP '{name}': config is not a dict")
+                    continue
+                # Validate required fields have expected types
+                cmd = config.get("command")
+                if cmd is not None and not isinstance(cmd, str):
+                    logger.warning(f"Skipping MCP '{name}': 'command' must be a string")
+                    continue
+                args = config.get("args")
+                if args is not None and not isinstance(args, list):
+                    logger.warning(f"Skipping MCP '{name}': 'args' must be a list")
+                    continue
+                env = config.get("env")
+                if env is not None and not isinstance(env, dict):
+                    logger.warning(f"Skipping MCP '{name}': 'env' must be a dict")
+                    continue
+                logger.info(
+                    f"Plugin MCP '{name}' will run command: {cmd} {args or []}"
+                )
+                servers[name] = config
                 installed["mcps"].append(name)
                 logger.debug(f"Installed MCP: {name}")
 
@@ -397,6 +417,14 @@ async def install_plugin_from_url(
         ValueError: If URL is invalid, plugin has no content, or conflicts exist
         RuntimeError: If git clone fails
     """
+    # Validate URL scheme
+    from urllib.parse import urlparse
+    parsed = urlparse(url)
+    if parsed.scheme not in ("https", "http"):
+        raise ValueError(
+            f"Only HTTPS URLs are supported for plugin install, got: {parsed.scheme or 'none'}"
+        )
+
     if not slug:
         slug = _derive_slug(url)
 

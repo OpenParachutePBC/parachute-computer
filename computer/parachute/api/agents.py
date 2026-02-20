@@ -141,6 +141,8 @@ async def list_agents(request: Request) -> dict[str, Any]:
 @router.get("/agents/{name}")
 async def get_agent(request: Request, name: str) -> dict[str, Any]:
     """Get a single agent by name with full detail."""
+    if name != "vault-agent":
+        _validate_agent_name(name)
     settings = get_settings()
 
     # Check built-in
