@@ -6,7 +6,6 @@ Lightweight FastAPI service that manages the main Parachute server.
 - Provides server lifecycle control (start/stop/restart)
 - Streams server logs
 - Manages config updates
-- Proxies Anthropic Models API
 
 CRITICAL: NO module loading, NO Claude SDK, NO orchestrator.
 Supervisor must be ultra-stable and defensive.
@@ -37,7 +36,7 @@ _start_time = time.time()
 # Defensive config loading (survives corrupted config.yaml)
 settings = None
 try:
-    from parachute.config import get_settings, get_vault_path
+    from parachute.config import get_settings
     settings = get_settings()
 except Exception as e:
     logger.error(f"Config load failed: {e}. Using fallback settings.")
@@ -61,7 +60,7 @@ class ServerHealthCache:
 
         try:
             async with httpx.AsyncClient(timeout=2.0) as client:
-                resp = await client.get("http://localhost:3333/api/health")
+                resp = await client.get("http://localhost:3333/api/health?detailed=true")
                 resp.raise_for_status()
                 self._cache = {"running": True, "status": resp.json()}
         except Exception as e:
@@ -98,6 +97,9 @@ class SupervisorStatusResponse(BaseModel):
     supervisor_version: str
     main_server_healthy: bool
     main_server_status: str  # "running" | "stopped" | "crashed"
+    main_server_uptime_seconds: Optional[int] = None  # None if stopped
+    main_server_version: Optional[str] = None
+    main_server_port: Optional[int] = None
     config_loaded: bool  # False if config.yaml corrupted
 
 
@@ -123,14 +125,6 @@ class ConfigUpdateResponse(BaseModel):
     server_restarted: bool
 
 
-class ModelsListResponse(BaseModel):
-    """Response from GET /supervisor/models."""
-    models: list
-    current_model: Optional[str]
-    cached_at: Optional[str]
-    is_stale: bool = Field(default=False, description="Whether cache is stale")
-
-
 # === Helper Functions ===
 def _redact_log_line(line: str) -> str:
     """Redact sensitive patterns from log lines (SECURITY requirement)."""
@@ -150,12 +144,31 @@ def _redact_log_line(line: str) -> str:
 async def get_status() -> SupervisorStatusResponse:
     """Check supervisor health and main server status."""
     server_health = await _health_cache.get_health()
+    is_running = server_health.get("running", False)
+
+    # Extract server details from health check if available
+    main_server_uptime = None
+    main_server_version = None
+    main_server_port = None
+
+    if is_running and settings:
+        main_server_port = settings.port
+        # Get version and uptime from nested status object
+        status_data = server_health.get("status", {})
+        if "version" in status_data:
+            main_server_version = status_data["version"]
+        # The health endpoint returns "uptime" (seconds as float), not "uptime_seconds"
+        if "uptime" in status_data:
+            main_server_uptime = int(status_data["uptime"])
 
     return SupervisorStatusResponse(
         supervisor_uptime_seconds=int(time.time() - _start_time),
         supervisor_version=__version__,
-        main_server_healthy=server_health.get("running", False),
-        main_server_status="running" if server_health.get("running") else "stopped",
+        main_server_healthy=is_running,
+        main_server_status="running" if is_running else "stopped",
+        main_server_uptime_seconds=main_server_uptime,
+        main_server_version=main_server_version,
+        main_server_port=main_server_port,
         config_loaded=settings is not None,
     )
 
@@ -163,10 +176,22 @@ async def get_status() -> SupervisorStatusResponse:
 @app.post("/supervisor/server/start", response_model=ServerActionResponse, status_code=200)
 async def start_server() -> ServerActionResponse:
     """Start the main server via daemon manager."""
+    if not settings:
+        raise HTTPException(status_code=503, detail="Config not loaded")
+
     from parachute.daemon import get_daemon_manager
+    from parachute.config import get_config_path
+    import yaml
 
     def _start_sync():
-        daemon = get_daemon_manager()
+        # Load config from vault
+        config_path = get_config_path(settings.vault_path)
+        config = {}
+        if config_path.exists():
+            with open(config_path) as f:
+                config = yaml.safe_load(f) or {}
+
+        daemon = get_daemon_manager(settings.vault_path, config)
         daemon.start()
 
     try:
@@ -179,10 +204,22 @@ async def start_server() -> ServerActionResponse:
 @app.post("/supervisor/server/stop", response_model=ServerActionResponse, status_code=200)
 async def stop_server() -> ServerActionResponse:
     """Stop the main server (SIGTERM → SIGKILL after 5s)."""
+    if not settings:
+        raise HTTPException(status_code=503, detail="Config not loaded")
+
     from parachute.daemon import get_daemon_manager
+    from parachute.config import get_config_path
+    import yaml
 
     def _stop_sync():
-        daemon = get_daemon_manager()
+        # Load config from vault
+        config_path = get_config_path(settings.vault_path)
+        config = {}
+        if config_path.exists():
+            with open(config_path) as f:
+                config = yaml.safe_load(f) or {}
+
+        daemon = get_daemon_manager(settings.vault_path, config)
         daemon.stop()
 
     try:
@@ -195,10 +232,22 @@ async def stop_server() -> ServerActionResponse:
 @app.post("/supervisor/server/restart", response_model=ServerActionResponse, status_code=200)
 async def restart_server() -> ServerActionResponse:
     """Restart the main server (stop + start)."""
+    if not settings:
+        raise HTTPException(status_code=503, detail="Config not loaded")
+
     from parachute.daemon import get_daemon_manager
+    from parachute.config import get_config_path
+    import yaml
 
     def _restart_sync():
-        daemon = get_daemon_manager()
+        # Load config from vault
+        config_path = get_config_path(settings.vault_path)
+        config = {}
+        if config_path.exists():
+            with open(config_path) as f:
+                config = yaml.safe_load(f) or {}
+
+        daemon = get_daemon_manager(settings.vault_path, config)
         daemon.restart()
 
     try:
@@ -273,10 +322,9 @@ async def get_config() -> dict:
     if not settings:
         raise HTTPException(status_code=503, detail="Config not loaded (corrupted yaml)")
 
-    from parachute.config import get_vault_path
     import yaml
 
-    config_file = get_vault_path() / ".parachute" / "config.yaml"
+    config_file = settings.vault_path / ".parachute" / "config.yaml"
 
     def _read_config():
         if not config_file.exists():
@@ -316,9 +364,9 @@ async def update_config(body: ConfigUpdateRequest) -> ConfigUpdateResponse:
             raise HTTPException(status_code=400, detail="Invalid model ID format")
 
     try:
-        from parachute.config import get_vault_path, save_yaml_config_atomic
+        from parachute.config import save_yaml_config_atomic
 
-        vault_path = get_vault_path()
+        vault_path = settings.vault_path
         await asyncio.to_thread(save_yaml_config_atomic, vault_path, body.values)
 
         restarted = False
@@ -335,42 +383,43 @@ async def update_config(body: ConfigUpdateRequest) -> ConfigUpdateResponse:
         raise HTTPException(status_code=500, detail=f"Config update failed: {e}")
 
 
-@app.get("/supervisor/models", response_model=ModelsListResponse, status_code=200)
-async def list_models(show_all: bool = False) -> ModelsListResponse:
+@app.get("/supervisor/models")
+async def get_available_models(show_all: bool = False):
     """
-    Return available Claude models from Anthropic API.
+    GET /supervisor/models?show_all=false
 
-    Args:
-        show_all: If false (default), return latest per family only.
-                  If true, return all Claude models with dated versions.
+    Query Anthropic Models API and return filtered list.
+    - show_all=false (default): Latest version per family only
+    - show_all=true: All versions, grouped by family
 
-    Caching: 1-hour TTL, gracefully degrades if Anthropic API unreachable.
+    Requires: settings.claude_code_oauth_token
     """
     if not settings:
         raise HTTPException(status_code=503, detail="Config not loaded")
 
-    # Get API key from config
-    api_key = settings.claude_code_oauth_token or os.getenv("CLAUDE_CODE_OAUTH_TOKEN")
+    api_key = settings.claude_code_oauth_token
     if not api_key:
-        raise HTTPException(status_code=503, detail="Anthropic API key not configured")
+        raise HTTPException(
+            status_code=503,
+            detail="CLAUDE_CODE_OAUTH_TOKEN not configured"
+        )
 
     try:
-        from parachute.models_api import get_cached_models
+        from parachute.models_api import fetch_available_models
 
-        result = await get_cached_models(api_key, show_all=show_all)
+        models = await fetch_available_models(api_key)
 
-        # Include current active model from config
-        current_model = settings.default_model if settings else None
+        if not show_all:
+            # Filter to latest version per family
+            models = [m for m in models if m.is_latest]
 
-        # Convert models to dict for JSON serialization
-        models_list = [m.model_dump() for m in result["models"]]
-
-        return ModelsListResponse(
-            models=models_list,
-            current_model=current_model,
-            cached_at=result["cached_at"].isoformat() if result["cached_at"] else None,
-            is_stale=result["is_stale"],
-        )
+        return {
+            "models": [m.model_dump() for m in models],
+            "count": len(models),
+            "show_all": show_all,
+        }
     except Exception as e:
         logger.error(f"Failed to fetch models: {e}")
-        raise HTTPException(status_code=503, detail=f"Model fetch failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Models API error: {e}")
+
+

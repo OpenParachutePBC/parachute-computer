@@ -10,11 +10,11 @@ def main():
     """Run supervisor service."""
     import uvicorn
 
-    logger.info("Starting Parachute Supervisor on http://127.0.0.1:3334")
+    logger.info("Starting Parachute Supervisor on http://0.0.0.0:3334")
 
     uvicorn.run(
         "parachute.supervisor:app",
-        host="127.0.0.1",  # Localhost only — no remote access
+        host="0.0.0.0",  # Listen on all interfaces for remote access
         port=3334,
         log_level="info",
     )

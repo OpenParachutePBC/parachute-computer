@@ -117,7 +117,7 @@ class LaunchdDaemon(DaemonManager):
                 "ProgramArguments": [
                     python, "-m", "uvicorn",
                     "parachute.supervisor:app",
-                    "--host", "127.0.0.1",  # Supervisor localhost-only
+                    "--host", "0.0.0.0",  # Listen on all interfaces for remote access
                     "--port", "3334",
                 ],
                 "EnvironmentVariables": {
@@ -307,7 +307,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart={python} -m uvicorn parachute.supervisor:app --host 127.0.0.1 --port 3334
+ExecStart={python} -m uvicorn parachute.supervisor:app --host 0.0.0.0 --port 3334
 WorkingDirectory={self._find_repo_dir()}
 Environment=VAULT_PATH={self.vault_path}
 Environment=PARACHUTE_CONFIG={self.vault_path / '.parachute' / 'config.yaml'}

@@ -6,9 +6,9 @@ part of 'supervisor_providers.dart';
 // RiverpodGenerator
 // **************************************************************************
 
-String _$supervisorServiceHash() => r'5670fa4fab4483e1141b43e6a1ed51da1f53df1d';
+String _$supervisorServiceHash() => r'1648cf9759d3816a91ce01353f11a313e1d66708';
 
-/// Supervisor service singleton
+/// Supervisor service singleton (for server management)
 ///
 /// Copied from [supervisorService].
 @ProviderFor(supervisorService)
@@ -26,6 +26,25 @@ final supervisorServiceProvider =
 @Deprecated('Will be removed in 3.0. Use Ref instead')
 // ignore: unused_element
 typedef SupervisorServiceRef = AutoDisposeProviderRef<SupervisorService>;
+String _$modelsServiceHash() => r'a68cd334ebab0aba067d4fa563fbf92118e36c17';
+
+/// Models service singleton (for model selection - talks to supervisor)
+///
+/// Copied from [modelsService].
+@ProviderFor(modelsService)
+final modelsServiceProvider = AutoDisposeProvider<ModelsService>.internal(
+  modelsService,
+  name: r'modelsServiceProvider',
+  debugGetCreateSourceHash: const bool.fromEnvironment('dart.vm.product')
+      ? null
+      : _$modelsServiceHash,
+  dependencies: null,
+  allTransitiveDependencies: null,
+);
+
+@Deprecated('Will be removed in 3.0. Use Ref instead')
+// ignore: unused_element
+typedef ModelsServiceRef = AutoDisposeProviderRef<ModelsService>;
 String _$supervisorStatusNotifierHash() =>
     r'afb99dbb62b19829786f04f77cd2243902539acc';
 
@@ -48,7 +67,7 @@ final supervisorStatusNotifierProvider =
     );
 
 typedef _$SupervisorStatusNotifier = AutoDisposeAsyncNotifier<SupervisorStatus>;
-String _$availableModelsHash() => r'24b65ef9385bc998cdf64d7af3a07f8156fe86f0';
+String _$availableModelsHash() => r'09bdab6358102040ef88ab3e5fc8f28116e39bb2';
 
 /// Copied from Dart SDK
 class _SystemHash {
@@ -239,23 +258,5 @@ final serverControlProvider =
     );
 
 typedef _$ServerControl = AutoDisposeAsyncNotifier<void>;
-String _$modelConfigHash() => r'62da0309656eb9a72242577bb38803605052373f';
-
-/// Update default model
-///
-/// Copied from [ModelConfig].
-@ProviderFor(ModelConfig)
-final modelConfigProvider =
-    AutoDisposeAsyncNotifierProvider<ModelConfig, void>.internal(
-      ModelConfig.new,
-      name: r'modelConfigProvider',
-      debugGetCreateSourceHash: const bool.fromEnvironment('dart.vm.product')
-          ? null
-          : _$modelConfigHash,
-      dependencies: null,
-      allTransitiveDependencies: null,
-    );
-
-typedef _$ModelConfig = AutoDisposeAsyncNotifier<void>;
 // ignore_for_file: type=lint
 // ignore_for_file: subtype_of_sealed_class, invalid_use_of_internal_member, invalid_use_of_visible_for_testing_member, deprecated_member_use_from_same_package

@@ -8,6 +8,9 @@ class SupervisorStatus {
     required this.mainServerHealthy,
     required this.mainServerStatus,
     required this.configLoaded,
+    this.mainServerUptimeSeconds,
+    this.mainServerVersion,
+    this.mainServerPort,
   });
 
   final int supervisorUptimeSeconds;
@@ -15,6 +18,9 @@ class SupervisorStatus {
   final bool mainServerHealthy;
   final String mainServerStatus; // "running" | "stopped"
   final bool configLoaded;
+  final int? mainServerUptimeSeconds;
+  final String? mainServerVersion;
+  final int? mainServerPort;
 
   factory SupervisorStatus.fromJson(Map<String, dynamic> json) {
     return SupervisorStatus(
@@ -23,6 +29,9 @@ class SupervisorStatus {
       mainServerHealthy: json['main_server_healthy'] as bool,
       mainServerStatus: json['main_server_status'] as String,
       configLoaded: json['config_loaded'] as bool,
+      mainServerUptimeSeconds: json['main_server_uptime_seconds'] as int?,
+      mainServerVersion: json['main_server_version'] as String?,
+      mainServerPort: json['main_server_port'] as int?,
     );
   }
 

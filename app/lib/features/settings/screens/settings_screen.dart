@@ -20,6 +20,7 @@ import '../widgets/hooks_section.dart';
 import '../widgets/migration_section.dart';
 import '../widgets/model_selection_section.dart';
 import '../widgets/model_picker_dropdown.dart';
+import '../widgets/server_control_section.dart';
 import '../widgets/workspace_management_section.dart';
 import '../widgets/about_section.dart';
 import '../widgets/settings_card.dart';
@@ -158,6 +159,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             SettingsCard(
               isDark: isDark,
               child: _buildModelSection(),
+            ),
+            SizedBox(height: Spacing.xl),
+          ],
+
+          // Server Control (requires supervisor)
+          if (showFullModeSettings) ...[
+            SettingsCard(
+              isDark: isDark,
+              child: const ServerControlSection(),
             ),
             SizedBox(height: Spacing.xl),
           ],

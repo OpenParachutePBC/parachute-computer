@@ -2,13 +2,32 @@ import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 import '../models/supervisor_models.dart';
 import '../services/supervisor_service.dart';
+import '../services/models_service.dart';
+import 'app_state_provider.dart';
 
 part 'supervisor_providers.g.dart';
 
-/// Supervisor service singleton
+/// Supervisor service singleton (for server management)
 @riverpod
 SupervisorService supervisorService(SupervisorServiceRef ref) {
-  final service = SupervisorService(baseUrl: 'http://localhost:3334');
+  // Get main server URL and derive supervisor URL (port 3334 instead of 3333)
+  final serverUrlAsync = ref.watch(serverUrlProvider);
+  final serverUrl = serverUrlAsync.valueOrNull ?? 'http://localhost:3333';
+  final supervisorUrl = serverUrl.replaceAll(':3333', ':3334');
+
+  final service = SupervisorService(baseUrl: supervisorUrl);
+  ref.onDispose(() => service.dispose());
+  return service;
+}
+
+/// Models service singleton (for model selection - talks to supervisor)
+@riverpod
+ModelsService modelsService(ModelsServiceRef ref) {
+  final serverUrlAsync = ref.watch(serverUrlProvider);
+  final serverUrl = serverUrlAsync.valueOrNull ?? 'http://localhost:3333';
+  final supervisorUrl = serverUrl.replaceAll(':3333', ':3334');
+
+  final service = ModelsService(baseUrl: supervisorUrl);
   ref.onDispose(() => service.dispose());
   return service;
 }
@@ -41,7 +60,7 @@ class SupervisorStatusNotifier extends _$SupervisorStatusNotifier {
 class AvailableModels extends _$AvailableModels {
   @override
   Future<List<ModelInfo>> build({bool showAll = false}) async {
-    final service = ref.watch(supervisorServiceProvider);
+    final service = ref.watch(modelsServiceProvider);
     return service.getModels(showAll: showAll);
   }
 
@@ -49,7 +68,7 @@ class AvailableModels extends _$AvailableModels {
   Future<void> refresh() async {
     state = const AsyncValue.loading();
     state = await AsyncValue.guard(() async {
-      final service = ref.read(supervisorServiceProvider);
+      final service = ref.read(modelsServiceProvider);
       return service.getModels(showAll: false);
     });
   }
@@ -95,22 +114,3 @@ class ServerControl extends _$ServerControl {
   }
 }
 
-/// Update default model
-@riverpod
-class ModelConfig extends _$ModelConfig {
-  @override
-  Future<void> build() async {
-    // No initial state
-  }
-
-  Future<void> updateDefaultModel(String modelId, {bool restart = true}) async {
-    state = const AsyncValue.loading();
-    state = await AsyncValue.guard(() async {
-      final service = ref.read(supervisorServiceProvider);
-      await service.updateConfig({'default_model': modelId}, restart: restart);
-    });
-
-    // Refresh status to reflect new config
-    ref.invalidate(supervisorStatusNotifierProvider);
-  }
-}

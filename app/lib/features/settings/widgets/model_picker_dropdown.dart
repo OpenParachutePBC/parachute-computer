@@ -86,11 +86,7 @@ class _ModelPickerDropdownState extends ConsumerState<ModelPickerDropdown> {
             height: 48,
             child: Center(child: CircularProgressIndicator()),
           ),
-          error: (error, _) => _buildErrorState(
-            context,
-            isDark,
-            'Failed to load models: ${error.toString()}',
-          ),
+          error: (error, _) => _buildFallbackPicker(context, isDark),
         ),
 
         // Show all toggle
@@ -195,24 +191,7 @@ class _ModelPickerDropdownState extends ConsumerState<ModelPickerDropdown> {
               ),
             );
           }).toList(),
-          onChanged: (model) async {
-            if (model != null) {
-              // Update config via supervisor
-              await ref
-                  .read(modelConfigProvider.notifier)
-                  .updateDefaultModel(model.id, restart: true);
-
-              // Show confirmation
-              if (context.mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('Model updated to ${model.displayName}'),
-                    duration: const Duration(seconds: 2),
-                  ),
-                );
-              }
-            }
-          },
+          onChanged: null,  // TODO: Add model update endpoint to main server
         ),
       ),
     );
@@ -248,6 +227,123 @@ class _ModelPickerDropdownState extends ConsumerState<ModelPickerDropdown> {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildFallbackPicker(BuildContext context, bool isDark) {
+    // Standard Claude models when API is unavailable
+    const fallbackModels = [
+      ('claude-opus-4-6', 'Claude Opus 4.6', 'Most capable'),
+      ('claude-sonnet-4-6', 'Claude Sonnet 4.6', 'Balanced'),
+      ('claude-haiku-4-5-20251001', 'Claude Haiku 4.5', 'Fastest'),
+    ];
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Info message
+        Container(
+          padding: EdgeInsets.all(Spacing.sm),
+          margin: EdgeInsets.only(bottom: Spacing.md),
+          decoration: BoxDecoration(
+            color: isDark
+                ? BrandColors.nightTextSecondary.withValues(alpha: 0.1)
+                : BrandColors.stone.withValues(alpha: 0.1),
+            borderRadius: Radii.card,
+          ),
+          child: Row(
+            children: [
+              Icon(
+                Icons.info_outline,
+                size: 16,
+                color: isDark ? BrandColors.nightTextSecondary : BrandColors.stone,
+              ),
+              SizedBox(width: Spacing.xs),
+              Expanded(
+                child: Text(
+                  'Using standard models (API unavailable)',
+                  style: TextStyle(
+                    fontSize: TypographyTokens.labelSmall,
+                    color: isDark ? BrandColors.nightTextSecondary : BrandColors.stone,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        // Standard model dropdown
+        DropdownButtonFormField<String>(
+          decoration: InputDecoration(
+            hintText: 'Select a model',
+            border: OutlineInputBorder(borderRadius: Radii.card),
+          ),
+          items: fallbackModels.map((model) {
+            final (id, displayName, description) = model;
+            return DropdownMenuItem(
+              value: id,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    displayName,
+                    style: TextStyle(
+                      fontSize: TypographyTokens.bodyMedium,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  Text(
+                    description,
+                    style: TextStyle(
+                      fontSize: TypographyTokens.bodySmall,
+                      color: isDark
+                          ? BrandColors.nightTextSecondary
+                          : BrandColors.stone,
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }).toList(),
+          onChanged: (modelId) {
+            if (modelId != null) {
+              // TODO: Save model to config via supervisor
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('Selected: $modelId'),
+                  duration: const Duration(seconds: 2),
+                ),
+              );
+            }
+          },
+        ),
+
+        SizedBox(height: Spacing.md),
+
+        // Custom model input
+        Text(
+          'Or enter a custom model ID:',
+          style: TextStyle(
+            fontSize: TypographyTokens.bodySmall,
+            color: isDark ? BrandColors.nightTextSecondary : BrandColors.stone,
+          ),
+        ),
+        SizedBox(height: Spacing.xs),
+        TextField(
+          decoration: InputDecoration(
+            hintText: 'claude-sonnet-4-6',
+            border: OutlineInputBorder(borderRadius: Radii.card),
+            suffixIcon: IconButton(
+              icon: const Icon(Icons.check, size: 18),
+              onPressed: () {
+                // TODO: Save custom model to config
+              },
+            ),
+          ),
+          style: TextStyle(fontSize: TypographyTokens.bodySmall),
+        ),
+      ],
     );
   }
 
