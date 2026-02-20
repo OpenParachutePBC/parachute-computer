@@ -338,12 +338,12 @@ Currently hooks are a separate settings section. The Capabilities screen has 4 t
 - **Recommended: B** — hooks are configuration, not "capabilities" the user browses. Update the existing hooks section to read SDK hook data.
 
 **Acceptance criteria:**
-- [ ] Pull-to-refresh on all Capabilities tabs
-- [ ] Agent name validation (client-side)
-- [ ] Source badges on agents (built-in/user/plugin)
-- [ ] Hooks section shows SDK hook config
-- [ ] Empty states reference correct paths
-- [ ] Error states have retry buttons
+- [x] Pull-to-refresh on all Capabilities tabs
+- [x] Agent name validation (client-side)
+- [x] Source badges on agents (built-in/user/plugin)
+- [x] Hooks section shows SDK hook config (Phase 2)
+- [x] Empty states reference correct paths
+- [x] Error states have retry buttons
 
 ---
 

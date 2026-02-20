@@ -189,27 +189,33 @@ class _AgentsTab extends ConsumerWidget {
                 ),
               ),
             )
-          : ListView.separated(
-              padding: EdgeInsets.all(Spacing.lg),
-              itemCount: list.length,
-              separatorBuilder: (_, _) => SizedBox(height: Spacing.sm),
-              itemBuilder: (_, i) => _AgentCard(
-                agent: list[i],
-                isDark: isDark,
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => AgentDetailScreen(agent: list[i]),
+          : RefreshIndicator(
+              onRefresh: () async => ref.invalidate(agentsProvider),
+              child: ListView.separated(
+                padding: EdgeInsets.all(Spacing.lg),
+                itemCount: list.length,
+                separatorBuilder: (_, _) => SizedBox(height: Spacing.sm),
+                itemBuilder: (_, i) => _AgentCard(
+                  agent: list[i],
+                  isDark: isDark,
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => AgentDetailScreen(agent: list[i]),
+                    ),
                   ),
+                  onDelete: list[i].source == 'sdk'
+                      ? () => _deleteAgent(context, ref, list[i].name)
+                      : null,
                 ),
-                onDelete: list[i].source == 'custom_agents'
-                    ? () => _deleteAgent(context, ref, list[i].name)
-                    : null,
               ),
             ),
       loading: () => const Center(child: CircularProgressIndicator()),
-      error: (e, _) =>
-          _ErrorState(isDark: isDark, message: 'Could not load agents'),
+      error: (e, _) => _ErrorState(
+        isDark: isDark,
+        message: 'Could not load agents',
+        onRetry: () => ref.invalidate(agentsProvider),
+      ),
     );
   }
 
@@ -354,9 +360,7 @@ class _AgentCard extends StatelessWidget {
     switch (source) {
       case 'builtin':
         return Icons.chat_bubble_outline;
-      case 'vault_agents':
-        return Icons.auto_awesome;
-      case 'custom_agents':
+      case 'sdk':
         return Icons.smart_toy_outlined;
       default:
         return Icons.extension_outlined;
@@ -390,25 +394,31 @@ class _SkillsTab extends ConsumerWidget {
                 ),
               ),
             )
-          : ListView.separated(
-              padding: EdgeInsets.all(Spacing.lg),
-              itemCount: list.length,
-              separatorBuilder: (_, _) => SizedBox(height: Spacing.sm),
-              itemBuilder: (_, i) => _SkillCard(
-                skill: list[i],
-                isDark: isDark,
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => SkillDetailScreen(skill: list[i]),
+          : RefreshIndicator(
+              onRefresh: () async => ref.invalidate(skillsProvider),
+              child: ListView.separated(
+                padding: EdgeInsets.all(Spacing.lg),
+                itemCount: list.length,
+                separatorBuilder: (_, _) => SizedBox(height: Spacing.sm),
+                itemBuilder: (_, i) => _SkillCard(
+                  skill: list[i],
+                  isDark: isDark,
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => SkillDetailScreen(skill: list[i]),
+                    ),
                   ),
+                  onDelete: () => _deleteSkill(context, ref, list[i].name),
                 ),
-                onDelete: () => _deleteSkill(context, ref, list[i].name),
               ),
             ),
       loading: () => const Center(child: CircularProgressIndicator()),
-      error: (e, _) =>
-          _ErrorState(isDark: isDark, message: 'Could not load skills'),
+      error: (e, _) => _ErrorState(
+        isDark: isDark,
+        message: 'Could not load skills',
+        onRetry: () => ref.invalidate(skillsProvider),
+      ),
     );
   }
 
@@ -554,28 +564,34 @@ class _McpServersTab extends ConsumerWidget {
                 ),
               ),
             )
-          : ListView.separated(
-              padding: EdgeInsets.all(Spacing.lg),
-              itemCount: list.length,
-              separatorBuilder: (_, _) => SizedBox(height: Spacing.sm),
-              itemBuilder: (_, i) => _McpServerCard(
-                server: list[i],
-                isDark: isDark,
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => McpDetailScreen(server: list[i]),
+          : RefreshIndicator(
+              onRefresh: () async => ref.invalidate(mcpServersProvider),
+              child: ListView.separated(
+                padding: EdgeInsets.all(Spacing.lg),
+                itemCount: list.length,
+                separatorBuilder: (_, _) => SizedBox(height: Spacing.sm),
+                itemBuilder: (_, i) => _McpServerCard(
+                  server: list[i],
+                  isDark: isDark,
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => McpDetailScreen(server: list[i]),
+                    ),
                   ),
+                  onTest: () => _testMcp(context, ref, list[i].name),
+                  onDelete: list[i].builtin
+                      ? null
+                      : () => _deleteMcp(context, ref, list[i].name),
                 ),
-                onTest: () => _testMcp(context, ref, list[i].name),
-                onDelete: list[i].builtin
-                    ? null
-                    : () => _deleteMcp(context, ref, list[i].name),
               ),
             ),
       loading: () => const Center(child: CircularProgressIndicator()),
-      error: (e, _) =>
-          _ErrorState(isDark: isDark, message: 'Could not load MCP servers'),
+      error: (e, _) => _ErrorState(
+        isDark: isDark,
+        message: 'Could not load MCP servers',
+        onRetry: () => ref.invalidate(mcpServersProvider),
+      ),
     );
   }
 
@@ -783,30 +799,36 @@ class _PluginsTab extends ConsumerWidget {
                 ),
               ),
             )
-          : ListView.separated(
-              padding: EdgeInsets.all(Spacing.lg),
-              itemCount: list.length,
-              separatorBuilder: (_, _) => SizedBox(height: Spacing.sm),
-              itemBuilder: (_, i) => _PluginCard(
-                plugin: list[i],
-                isDark: isDark,
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => PluginDetailScreen(plugin: list[i]),
+          : RefreshIndicator(
+              onRefresh: () async => ref.invalidate(pluginsProvider),
+              child: ListView.separated(
+                padding: EdgeInsets.all(Spacing.lg),
+                itemCount: list.length,
+                separatorBuilder: (_, _) => SizedBox(height: Spacing.sm),
+                itemBuilder: (_, i) => _PluginCard(
+                  plugin: list[i],
+                  isDark: isDark,
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => PluginDetailScreen(plugin: list[i]),
+                    ),
                   ),
+                  onUpdate: list[i].isRemote
+                      ? () => _updatePlugin(context, ref, list[i].slug)
+                      : null,
+                  onDelete: !list[i].isUserPlugin
+                      ? () => _deletePlugin(context, ref, list[i].slug)
+                      : null,
                 ),
-                onUpdate: list[i].isRemote
-                    ? () => _updatePlugin(context, ref, list[i].slug)
-                    : null,
-                onDelete: !list[i].isUserPlugin
-                    ? () => _deletePlugin(context, ref, list[i].slug)
-                    : null,
               ),
             ),
       loading: () => const Center(child: CircularProgressIndicator()),
-      error: (e, _) =>
-          _ErrorState(isDark: isDark, message: 'Could not load plugins'),
+      error: (e, _) => _ErrorState(
+        isDark: isDark,
+        message: 'Could not load plugins',
+        onRetry: () => ref.invalidate(pluginsProvider),
+      ),
     );
   }
 
@@ -1097,10 +1119,19 @@ class _CreateAgentDialogState extends State<_CreateAgentDialog> {
     );
   }
 
+  static final _agentNameRegex = RegExp(r'^[a-zA-Z0-9][a-zA-Z0-9_-]*$');
+
   Future<void> _save() async {
     final name = _nameController.text.trim();
     final prompt = _promptController.text.trim();
     if (name.isEmpty || prompt.isEmpty) return;
+
+    if (!_agentNameRegex.hasMatch(name)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Agent name must contain only letters, numbers, hyphens, and underscores')),
+      );
+      return;
+    }
 
     setState(() => _saving = true);
     try {
@@ -1414,8 +1445,8 @@ class _InstallPluginDialogState extends State<_InstallPluginDialog> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Install a plugin from a GitHub URL. The repository must contain '
-                'a .claude-plugin/plugin.json manifest.',
+                'Install a plugin from a GitHub URL. The repository should contain '
+                'SDK-layout files (.claude/agents/, skills/, .mcp.json).',
                 style: TextStyle(
                   fontSize: TypographyTokens.bodySmall,
                   color: Theme.of(context).brightness == Brightness.dark
@@ -1555,7 +1586,8 @@ class _SourceBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final label = switch (source) {
-      'builtin' => 'builtin',
+      'builtin' => 'built-in',
+      'sdk' => 'user',
       'vault_agents' => 'vault',
       'custom_agents' => 'custom',
       _ => source,
@@ -1638,7 +1670,8 @@ class _EmptyState extends StatelessWidget {
 class _ErrorState extends StatelessWidget {
   final bool isDark;
   final String message;
-  const _ErrorState({required this.isDark, required this.message});
+  final VoidCallback? onRetry;
+  const _ErrorState({required this.isDark, required this.message, this.onRetry});
 
   @override
   Widget build(BuildContext context) {
@@ -1664,6 +1697,14 @@ class _ErrorState extends StatelessWidget {
               ),
               textAlign: TextAlign.center,
             ),
+            if (onRetry != null) ...[
+              SizedBox(height: Spacing.md),
+              OutlinedButton.icon(
+                onPressed: onRetry,
+                icon: const Icon(Icons.refresh, size: 18),
+                label: const Text('Retry'),
+              ),
+            ],
           ],
         ),
       ),
