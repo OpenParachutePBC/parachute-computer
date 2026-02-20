@@ -23,10 +23,10 @@ from parachute.core.permission_handler import PermissionHandler
 from parachute.core.plugins import discover_plugins, get_plugin_dirs
 from parachute.core.sandbox import DockerSandbox, AgentSandboxConfig
 from parachute.core.skills import generate_runtime_plugin, cleanup_runtime_plugin, discover_skills
-from parachute.core.agents import discover_agents, agents_to_sdk_format
+# Custom agent discovery removed — SDK discovers .claude/agents/ natively
 from parachute.core.session_manager import SessionManager
 from parachute.db.database import Database
-from parachute.lib.agent_loader import build_system_prompt, load_agent
+# agent_loader removed — SDK handles agent discovery natively
 from parachute.lib.context_loader import format_context_for_prompt, load_agent_context
 from parachute.core.context_folders import ContextFolderService
 from parachute.core.capability_filter import filter_by_trust_level, filter_capabilities
@@ -259,19 +259,12 @@ class Orchestrator:
         """
         start_time = time.time()
 
-        # Load agent
+        # Load agent — always use the built-in vault-agent.
+        # Custom agents are discovered by the SDK via .claude/agents/ (setting_sources=["project"]).
         logger.info(f"run_streaming: agent_path={agent_path!r}, agent_type={agent_type!r}")
         if agent_path and agent_path != "vault-agent":
-            logger.info(f"Loading custom agent from: {agent_path}")
-            agent = await load_agent(agent_path, self.vault_path)
-            if not agent:
-                logger.warning(f"Agent not found at path: {agent_path}, vault_path: {self.vault_path}")
-                yield ErrorEvent(error=f"Agent not found: {agent_path}").model_dump(by_alias=True)
-                return
-            logger.info(f"Loaded agent: {agent.name}")
-        else:
-            logger.info("Using default vault agent")
-            agent = create_vault_agent()
+            logger.info(f"Ignoring agent_path={agent_path!r} — SDK handles agent discovery natively")
+        agent = create_vault_agent()
 
         # Load workspace config if specified
         workspace_config = None
@@ -593,11 +586,8 @@ class Orchestrator:
                 else:
                     logger.warning(f"Plugin directory not found, skipping: {plugin_path}")
 
-            # Load custom agents from .parachute/agents/
-            custom_agents = discover_agents(self.vault_path)
-            agents_dict = agents_to_sdk_format(custom_agents) if custom_agents else None
-            if agents_dict:
-                logger.info(f"Loaded {len(agents_dict)} custom agents")
+            # Custom agents: SDK discovers .claude/agents/ natively via setting_sources=["project"]
+            agents_dict = None
 
             # Determine effective trust level early (needed for capability filtering)
             # Priority: client param > session stored > workspace default > trusted

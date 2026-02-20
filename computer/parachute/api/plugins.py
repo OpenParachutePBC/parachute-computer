@@ -15,7 +15,7 @@ from pydantic import BaseModel
 
 from parachute.config import get_settings
 from parachute.core.plugins import discover_plugins
-from parachute.core.agents import _parse_markdown_agent, _data_to_agent
+import yaml as _yaml
 from parachute.core.plugin_installer import (
     install_plugin_from_url,
     uninstall_plugin,
@@ -299,29 +299,49 @@ async def get_plugin_agent(
             detail=f"Agent '{agent_name}' not found in plugin '{slug}'",
         )
 
-    if agent_file.suffix == ".md":
-        agent = _parse_markdown_agent(agent_file, agent_name)
-    else:
-        # YAML/JSON agent
-        import yaml
+    # Parse agent file inline (no dependency on core.agents)
+    content = agent_file.read_text(encoding="utf-8")
+    description = f"Agent: {agent_name}"
+    model = None
+    tools: list[str] = []
+    prompt = content
 
-        data = yaml.safe_load(agent_file.read_text(encoding="utf-8"))
-        agent = _data_to_agent(data, agent_name) if isinstance(data, dict) else None
+    if agent_file.suffix == ".md" and content.startswith("---"):
+        parts = content.split("---", 2)
+        if len(parts) >= 3:
+            try:
+                data = _yaml.safe_load(parts[1].strip())
+                if isinstance(data, dict):
+                    description = data.get("description", description)
+                    model = data.get("model")
+                    tools = data.get("tools", [])
+                    if isinstance(tools, str):
+                        tools = [t.strip() for t in tools.split(",")]
+            except _yaml.YAMLError:
+                pass
+            prompt = parts[2].strip()
+    elif agent_file.suffix in (".yaml", ".yml"):
+        data = _yaml.safe_load(content)
+        if isinstance(data, dict):
+            description = data.get("description", description)
+            model = data.get("model")
+            tools = data.get("tools", [])
+            prompt = data.get("prompt", "")
 
-    if not agent:
+    if not prompt:
         raise HTTPException(
             status_code=400,
             detail=f"Could not parse agent '{agent_name}' in plugin '{slug}'",
         )
 
     return {
-        "name": agent.name,
-        "description": agent.description,
+        "name": agent_name,
+        "description": description,
         "type": "chatbot",
-        "model": agent.model,
+        "model": model,
         "path": str(agent_file.relative_to(plugin_path)),
         "source": "plugin",
-        "tools": agent.tools,
-        "system_prompt": agent.prompt,
-        "system_prompt_preview": agent.prompt[:500] if agent.prompt else None,
+        "tools": tools,
+        "system_prompt": prompt,
+        "system_prompt_preview": prompt[:500] if prompt else None,
     }

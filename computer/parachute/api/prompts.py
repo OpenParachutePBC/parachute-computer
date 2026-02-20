@@ -11,7 +11,6 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Request, Query
 from pydantic import BaseModel, Field
 
-from parachute.lib.agent_loader import load_agent
 from parachute.models.agent import create_vault_agent
 
 router = APIRouter(prefix="/prompt")
@@ -84,13 +83,9 @@ async def preview_prompt(
                 if stripped or c == "":
                     context_list.append(stripped)
 
-        # Load or create agent
-        if agent_path:
-            agent = await load_agent(agent_path, orchestrator.vault_path)
-            if not agent:
-                raise HTTPException(status_code=404, detail=f"Agent not found: {agent_path}")
-        else:
-            agent = create_vault_agent()
+        # Always use the default vault-agent.
+        # Custom agents are discovered by the SDK natively via .claude/agents/.
+        agent = create_vault_agent()
 
         # Build the system prompt using orchestrator's method
         prompt, metadata = await orchestrator._build_system_prompt(

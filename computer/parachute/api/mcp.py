@@ -66,15 +66,38 @@ def load_mcp_config() -> dict[str, Any]:
 
 
 def save_mcp_config(config: dict[str, Any]) -> None:
-    """Save MCP configuration to file.
+    """Save MCP configuration to file atomically.
 
     Unwraps the mcpServers key before saving since file format
     has servers as top-level keys.
+
+    Uses write-to-temp-then-rename for atomic writes to prevent
+    corruption from concurrent writes or crashes mid-write.
     """
+    import tempfile
+
     config_path = get_mcp_config_path()
     # Unwrap mcpServers for file format
     raw_config = config.get("mcpServers", config)
-    config_path.write_text(json.dumps(raw_config, indent=2), encoding="utf-8")
+    content = json.dumps(raw_config, indent=2)
+
+    # Atomic write: write to temp file in same directory, then rename
+    fd, tmp_path = tempfile.mkstemp(
+        dir=config_path.parent, suffix=".tmp", prefix=".mcp-"
+    )
+    closed = False
+    try:
+        os.write(fd, content.encode("utf-8"))
+        os.fsync(fd)
+        os.close(fd)
+        closed = True
+        os.rename(tmp_path, config_path)
+    except Exception:
+        if not closed:
+            os.close(fd)
+        if Path(tmp_path).exists():
+            os.unlink(tmp_path)
+        raise
 
 
 def config_to_server_response(name: str, config: dict[str, Any]) -> dict[str, Any]:

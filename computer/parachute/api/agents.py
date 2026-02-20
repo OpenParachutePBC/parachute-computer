@@ -1,26 +1,28 @@
 """
 Agents listing API endpoints.
 
-Merges agents from two sources:
-1. Vault agents: markdown files in {vault}/agents/*.md (AgentDefinition)
-2. Custom agents: YAML/JSON/md files in {vault}/.parachute/agents/ (AgentConfig)
-
-Plus the built-in vault-agent which is always first.
+Returns the built-in vault-agent plus any user agents from {vault}/.claude/agents/.
+The SDK discovers .claude/agents/ natively via setting_sources=["project"],
+so Parachute only manages the files — the SDK handles runtime loading.
 """
 
 import logging
+import re
+from pathlib import Path
 from typing import Any, Optional
 
+import yaml
 from fastapi import APIRouter, HTTPException, Request, UploadFile, File
 from pydantic import BaseModel
 
 from parachute.config import get_settings
-from parachute.core.agents import discover_agents, _parse_markdown_agent
-from parachute.lib.agent_loader import load_all_agents
 from parachute.models.agent import create_vault_agent
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+# Agent names must be safe for use as filenames
+AGENT_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]*$")
 
 
 class AgentListItem(BaseModel):
@@ -31,18 +33,32 @@ class AgentListItem(BaseModel):
     type: str = "chatbot"
     model: Optional[str] = None
     path: Optional[str] = None
-    source: str  # "builtin", "vault_agents", "custom_agents"
+    source: str  # "builtin", "sdk"
     tools: list[str] = []
 
 
 class CreateAgentInput(BaseModel):
-    """Input for creating a new custom agent."""
+    """Input for creating a new agent in .claude/agents/."""
 
     name: str
     description: Optional[str] = None
     prompt: str
     tools: list[str] = []
     model: Optional[str] = None
+
+
+def _validate_agent_name(name: str) -> None:
+    """Validate agent name is safe for filesystem use."""
+    if not name or not AGENT_NAME_RE.match(name):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid agent name '{name}'. Use only letters, numbers, hyphens, and underscores.",
+        )
+
+
+def _get_sdk_agents_dir(vault_path: Path) -> Path:
+    """Get the SDK-native agents directory."""
+    return vault_path / ".claude" / "agents"
 
 
 def _vault_agent_to_item() -> AgentListItem:
@@ -59,44 +75,65 @@ def _vault_agent_to_item() -> AgentListItem:
     )
 
 
+def _scan_sdk_agents(vault_path: Path) -> list[AgentListItem]:
+    """Scan .claude/agents/ for user-created agent files."""
+    agents_dir = _get_sdk_agents_dir(vault_path)
+    if not agents_dir.exists():
+        return []
+
+    items: list[AgentListItem] = []
+    for agent_file in sorted(agents_dir.glob("*.md")):
+        name = agent_file.stem
+        try:
+            content = agent_file.read_text(encoding="utf-8")
+            description = f"Agent: {name}"
+            model = None
+            tools: list[str] = []
+
+            # Parse YAML frontmatter if present
+            if content.startswith("---"):
+                parts = content.split("---", 2)
+                if len(parts) >= 3:
+                    try:
+                        data = yaml.safe_load(parts[1].strip())
+                        if isinstance(data, dict):
+                            description = data.get("description", description)
+                            model = data.get("model")
+                            tools = data.get("tools", [])
+                            if isinstance(tools, str):
+                                tools = [t.strip() for t in tools.split(",")]
+                    except yaml.YAMLError:
+                        pass
+
+            items.append(
+                AgentListItem(
+                    name=name,
+                    description=description,
+                    type="chatbot",
+                    model=model,
+                    path=f".claude/agents/{agent_file.name}",
+                    source="sdk",
+                    tools=tools,
+                )
+            )
+        except Exception as e:
+            logger.warning(f"Failed to read agent file {agent_file}: {e}")
+
+    return items
+
+
 @router.get("/agents")
 async def list_agents(request: Request) -> dict[str, Any]:
-    """List all available agents from all sources."""
+    """List all available agents."""
     settings = get_settings()
     items: list[dict[str, Any]] = []
 
     # 1. Built-in vault-agent always first
     items.append(_vault_agent_to_item().model_dump())
 
-    # 2. Vault agents from {vault}/agents/*.md
-    vault_agents = await load_all_agents(settings.vault_path)
-    for agent in vault_agents:
-        items.append(
-            AgentListItem(
-                name=agent.name,
-                description=agent.description,
-                type=agent.type.value,
-                model=agent.model,
-                path=agent.path,
-                source="vault_agents",
-                tools=agent.tools,
-            ).model_dump()
-        )
-
-    # 3. Custom agents from {vault}/.parachute/agents/
-    custom_agents = discover_agents(settings.vault_path)
-    for agent in custom_agents:
-        items.append(
-            AgentListItem(
-                name=agent.name,
-                description=agent.description,
-                type="chatbot",
-                model=agent.model,
-                path=f".parachute/agents/{agent.name}",
-                source="custom_agents",
-                tools=agent.tools,
-            ).model_dump()
-        )
+    # 2. SDK-native agents from {vault}/.claude/agents/
+    for agent_item in _scan_sdk_agents(settings.vault_path):
+        items.append(agent_item.model_dump())
 
     return {"agents": items}
 
@@ -113,69 +150,61 @@ async def get_agent(request: Request, name: str) -> dict[str, Any]:
         prompt = agent.system_prompt or ""
         item["system_prompt"] = prompt
         item["system_prompt_preview"] = prompt[:500] if prompt else None
-        item["permissions"] = agent.permissions.model_dump(by_alias=True)
-        item["constraints"] = agent.constraints.model_dump(by_alias=True)
-        item["mcp_servers"] = agent.mcp_servers
-        item["spawns"] = agent.spawns
         return item
 
-    # Check vault agents (AgentDefinition - has permissions/constraints)
-    vault_agents = await load_all_agents(settings.vault_path)
-    for agent in vault_agents:
-        if agent.name == name:
-            item = AgentListItem(
-                name=agent.name,
-                description=agent.description,
-                type=agent.type.value,
-                model=agent.model,
-                path=agent.path,
-                source="vault_agents",
-                tools=agent.tools,
-            ).model_dump()
-            prompt = agent.system_prompt or ""
-            item["system_prompt"] = prompt
-            item["system_prompt_preview"] = prompt[:500] if prompt else None
-            item["permissions"] = agent.permissions.model_dump(by_alias=True)
-            item["constraints"] = agent.constraints.model_dump(by_alias=True)
-            item["mcp_servers"] = agent.mcp_servers
-            item["spawns"] = agent.spawns
-            return item
+    # Check SDK agents
+    agents_dir = _get_sdk_agents_dir(settings.vault_path)
+    agent_file = agents_dir / f"{name}.md"
+    if agent_file.exists():
+        content = agent_file.read_text(encoding="utf-8")
+        description = f"Agent: {name}"
+        model = None
+        tools: list[str] = []
+        prompt = content
 
-    # Check custom agents (AgentConfig - simpler, no permissions/constraints)
-    custom_agents = discover_agents(settings.vault_path)
-    for agent in custom_agents:
-        if agent.name == name:
-            item = AgentListItem(
-                name=agent.name,
-                description=agent.description,
-                type="chatbot",
-                model=agent.model,
-                path=f".parachute/agents/{agent.name}",
-                source="custom_agents",
-                tools=agent.tools,
-            ).model_dump()
-            prompt = agent.prompt or ""
-            item["system_prompt"] = prompt
-            item["system_prompt_preview"] = prompt[:500] if prompt else None
-            return item
+        if content.startswith("---"):
+            parts = content.split("---", 2)
+            if len(parts) >= 3:
+                try:
+                    data = yaml.safe_load(parts[1].strip())
+                    if isinstance(data, dict):
+                        description = data.get("description", description)
+                        model = data.get("model")
+                        tools = data.get("tools", [])
+                        if isinstance(tools, str):
+                            tools = [t.strip() for t in tools.split(",")]
+                except yaml.YAMLError:
+                    pass
+                prompt = parts[2].strip()
+
+        item = AgentListItem(
+            name=name,
+            description=description,
+            type="chatbot",
+            model=model,
+            path=f".claude/agents/{name}.md",
+            source="sdk",
+            tools=tools,
+        ).model_dump()
+        item["system_prompt"] = prompt
+        item["system_prompt_preview"] = prompt[:500] if prompt else None
+        return item
 
     raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
 
 
 @router.post("/agents")
 async def create_agent(request: Request, body: CreateAgentInput) -> dict[str, Any]:
-    """Create a new custom agent as a markdown file with YAML frontmatter."""
+    """Create a new agent as a markdown file in .claude/agents/."""
+    _validate_agent_name(body.name)
+
     settings = get_settings()
-    agents_dir = settings.vault_path / ".parachute" / "agents"
+    agents_dir = _get_sdk_agents_dir(settings.vault_path)
     agents_dir.mkdir(parents=True, exist_ok=True)
 
     agent_file = agents_dir / f"{body.name}.md"
     if agent_file.exists():
         raise HTTPException(status_code=409, detail=f"Agent '{body.name}' already exists")
-
-    # Validate model if provided
-    if body.model and body.model not in ("sonnet", "opus", "haiku"):
-        raise HTTPException(status_code=400, detail=f"Invalid model '{body.model}'. Must be sonnet, opus, or haiku.")
 
     # Build markdown with YAML frontmatter
     frontmatter_lines = [f"description: {body.description or f'Agent: {body.name}'}"]
@@ -187,24 +216,24 @@ async def create_agent(request: Request, body: CreateAgentInput) -> dict[str, An
     content = f"---\n{chr(10).join(frontmatter_lines)}\n---\n\n{body.prompt}\n"
 
     agent_file.write_text(content, encoding="utf-8")
-    logger.info(f"Created custom agent: {body.name}")
+    logger.info(f"Created agent: {body.name} at {agent_file}")
 
     return AgentListItem(
         name=body.name,
         description=body.description or f"Agent: {body.name}",
         type="chatbot",
         model=body.model,
-        path=f".parachute/agents/{body.name}",
-        source="custom_agents",
+        path=f".claude/agents/{body.name}.md",
+        source="sdk",
         tools=body.tools,
     ).model_dump()
 
 
 @router.post("/agents/upload")
 async def upload_agent(request: Request, file: UploadFile = File(...)) -> dict[str, Any]:
-    """Upload a .md agent file directly."""
+    """Upload a .md agent file to .claude/agents/."""
     settings = get_settings()
-    agents_dir = settings.vault_path / ".parachute" / "agents"
+    agents_dir = _get_sdk_agents_dir(settings.vault_path)
     agents_dir.mkdir(parents=True, exist_ok=True)
 
     if not file.filename:
@@ -214,57 +243,47 @@ async def upload_agent(request: Request, file: UploadFile = File(...)) -> dict[s
         raise HTTPException(status_code=400, detail="Agent file must be .md format")
 
     name = file.filename.replace(".md", "")
-    agent_file = agents_dir / file.filename
+    _validate_agent_name(name)
 
+    agent_file = agents_dir / file.filename
     if agent_file.exists():
         raise HTTPException(status_code=409, detail=f"Agent '{name}' already exists")
 
     content = await file.read()
     agent_file.write_bytes(content)
 
-    # Parse to validate and return the agent info
-    agent = _parse_markdown_agent(agent_file, name)
-    if not agent:
-        agent_file.unlink()
-        raise HTTPException(status_code=400, detail="Could not parse agent file (missing prompt?)")
+    logger.info(f"Uploaded agent: {name} at {agent_file}")
 
-    logger.info(f"Uploaded custom agent: {name}")
+    # Scan the file for display info
+    for agent_item in _scan_sdk_agents(settings.vault_path):
+        if agent_item.name == name:
+            return agent_item.model_dump()
 
+    # Fallback if scan didn't pick it up
     return AgentListItem(
-        name=agent.name,
-        description=agent.description,
+        name=name,
+        description=f"Agent: {name}",
         type="chatbot",
-        model=agent.model,
-        path=f".parachute/agents/{name}",
-        source="custom_agents",
-        tools=agent.tools,
+        path=f".claude/agents/{name}.md",
+        source="sdk",
     ).model_dump()
 
 
 @router.delete("/agents/{name}")
 async def delete_agent(request: Request, name: str) -> dict[str, Any]:
-    """Delete a custom agent. Rejects builtin and vault agents."""
+    """Delete an agent from .claude/agents/."""
     if name == "vault-agent":
         raise HTTPException(status_code=403, detail="Cannot delete built-in vault-agent")
 
+    _validate_agent_name(name)
+
     settings = get_settings()
+    agents_dir = _get_sdk_agents_dir(settings.vault_path)
+    agent_file = agents_dir / f"{name}.md"
 
-    # Check if it's a vault agent (not deletable from here)
-    vault_agents = await load_all_agents(settings.vault_path)
-    for agent in vault_agents:
-        if agent.name == name:
-            raise HTTPException(
-                status_code=403,
-                detail=f"Cannot delete vault agent '{name}'. Remove the file from agents/ in your vault.",
-            )
+    if not agent_file.exists():
+        raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
 
-    # Delete from custom agents directory
-    agents_dir = settings.vault_path / ".parachute" / "agents"
-    for ext in (".md", ".yaml", ".yml", ".json"):
-        agent_file = agents_dir / f"{name}{ext}"
-        if agent_file.exists():
-            agent_file.unlink()
-            logger.info(f"Deleted custom agent: {name}")
-            return {"success": True, "deleted": name}
-
-    raise HTTPException(status_code=404, detail=f"Agent '{name}' not found in custom agents")
+    agent_file.unlink()
+    logger.info(f"Deleted agent: {name}")
+    return {"success": True, "deleted": name}

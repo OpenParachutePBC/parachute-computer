@@ -8,12 +8,11 @@ for the workspace capability editor UI.
 import logging
 from typing import Any
 
+import yaml
 from fastapi import APIRouter, Request
 
 from parachute.config import get_settings
-from parachute.core.agents import discover_agents
 from parachute.core.skills import discover_skills
-from parachute.lib.agent_loader import load_all_agents
 from parachute.lib.mcp_loader import load_mcp_servers, _get_server_type
 from parachute.models.agent import create_vault_agent
 
@@ -43,21 +42,26 @@ async def get_capabilities(request: Request) -> dict[str, Any]:
         "source": "builtin",
     })
 
-    # Vault agents
-    for agent in await load_all_agents(vault_path):
-        agent_items.append({
-            "name": agent.name,
-            "description": agent.description,
-            "source": "vault_agents",
-        })
-
-    # Custom agents
-    for agent in discover_agents(vault_path):
-        agent_items.append({
-            "name": agent.name,
-            "description": agent.description,
-            "source": "custom_agents",
-        })
+    # SDK-native agents from .claude/agents/
+    sdk_agents_dir = vault_path / ".claude" / "agents"
+    if sdk_agents_dir.exists():
+        for agent_file in sorted(sdk_agents_dir.glob("*.md")):
+            description = f"Agent: {agent_file.stem}"
+            try:
+                content = agent_file.read_text(encoding="utf-8")
+                if content.startswith("---"):
+                    parts = content.split("---", 2)
+                    if len(parts) >= 3:
+                        data = yaml.safe_load(parts[1].strip())
+                        if isinstance(data, dict):
+                            description = data.get("description", description)
+            except Exception:
+                pass
+            agent_items.append({
+                "name": agent_file.stem,
+                "description": description,
+                "source": "sdk",
+            })
 
     # Skills
     skill_items: list[dict[str, Any]] = []
