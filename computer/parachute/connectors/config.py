@@ -60,11 +60,32 @@ class DiscordConfig(BaseModel):
         return _normalize_trust_level(v)
 
 
+class MatrixConfig(BaseModel):
+    """Matrix bot configuration."""
+
+    enabled: bool = False
+    homeserver_url: str = ""
+    user_id: str = ""
+    access_token: str = ""
+    device_id: str = "PARACHUTE01"
+    allowed_rooms: list[str] = Field(default_factory=list)
+    dm_trust_level: TrustLevelStr = "untrusted"
+    group_trust_level: TrustLevelStr = "untrusted"
+    group_mention_mode: Literal["mention_only", "all_messages"] = "mention_only"
+    ack_emoji: Optional[str] = "👀"
+
+    @field_validator("dm_trust_level", "group_trust_level", mode="before")
+    @classmethod
+    def normalize_trust(cls, v: str) -> str:
+        return _normalize_trust_level(v)
+
+
 class BotsConfig(BaseModel):
     """Top-level bot connector configuration."""
 
     telegram: TelegramConfig = Field(default_factory=TelegramConfig)
     discord: DiscordConfig = Field(default_factory=DiscordConfig)
+    matrix: MatrixConfig = Field(default_factory=MatrixConfig)
 
 
 def load_bots_config(vault_path: Path) -> BotsConfig:
@@ -81,7 +102,8 @@ def load_bots_config(vault_path: Path) -> BotsConfig:
         config = BotsConfig(**raw)
         logger.info(
             f"Loaded bots config: telegram={config.telegram.enabled}, "
-            f"discord={config.discord.enabled}"
+            f"discord={config.discord.enabled}, "
+            f"matrix={config.matrix.enabled}"
         )
         return config
     except Exception as e:

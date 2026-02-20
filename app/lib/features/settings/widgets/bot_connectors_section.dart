@@ -6,7 +6,7 @@ import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/core/providers/app_state_provider.dart' show apiKeyProvider;
 import 'package:parachute/core/providers/feature_flags_provider.dart';
 
-/// Bot connectors (Telegram, Discord) status and settings section.
+/// Bot connectors (Telegram, Discord, Matrix) status and settings section.
 class BotConnectorsSection extends ConsumerStatefulWidget {
   const BotConnectorsSection({super.key});
 
@@ -37,6 +37,16 @@ class _BotConnectorsSectionState extends ConsumerState<BotConnectorsSection> {
   String _dcGroupTrust = 'untrusted';
   bool _dcTokenVisible = false;
 
+  // Matrix controllers
+  final _mxTokenController = TextEditingController();
+  final _mxHomeserverController = TextEditingController();
+  final _mxUserIdController = TextEditingController();
+  final _mxAllowedRoomsController = TextEditingController();
+  bool _mxEnabled = false;
+  String _mxDmTrust = 'untrusted';
+  String _mxGroupTrust = 'untrusted';
+  bool _mxTokenVisible = false;
+
   static const _trustLevels = ['trusted', 'untrusted'];
 
   @override
@@ -51,6 +61,10 @@ class _BotConnectorsSectionState extends ConsumerState<BotConnectorsSection> {
     _tgAllowedUsersController.dispose();
     _dcTokenController.dispose();
     _dcAllowedUsersController.dispose();
+    _mxTokenController.dispose();
+    _mxHomeserverController.dispose();
+    _mxUserIdController.dispose();
+    _mxAllowedRoomsController.dispose();
     super.dispose();
   }
 
@@ -70,6 +84,15 @@ class _BotConnectorsSectionState extends ConsumerState<BotConnectorsSection> {
     _dcGroupTrust = (dc['group_trust_level'] as String?) ?? 'untrusted';
     final dcUsers = dc['allowed_users'] as List<dynamic>? ?? [];
     _dcAllowedUsersController.text = dcUsers.join(', ');
+
+    final mx = config['matrix'] as Map<String, dynamic>? ?? {};
+    _mxEnabled = mx['enabled'] == true;
+    _mxDmTrust = (mx['dm_trust_level'] as String?) ?? 'untrusted';
+    _mxGroupTrust = (mx['group_trust_level'] as String?) ?? 'untrusted';
+    _mxHomeserverController.text = (mx['homeserver_url'] as String?) ?? '';
+    _mxUserIdController.text = (mx['user_id'] as String?) ?? '';
+    final mxRooms = mx['allowed_rooms'] as List<dynamic>? ?? [];
+    _mxAllowedRoomsController.text = mxRooms.join(', ');
   }
 
   Future<void> _loadStatus() async {
@@ -150,6 +173,16 @@ class _BotConnectorsSectionState extends ConsumerState<BotConnectorsSection> {
               .map((s) => s.trim())
               .toList();
 
+      // Parse allowed Matrix rooms as list of strings
+      final mxRoomsRaw = _mxAllowedRoomsController.text.trim();
+      final mxRooms = mxRoomsRaw.isEmpty
+          ? <String>[]
+          : mxRoomsRaw
+              .split(RegExp(r'[,\s]+'))
+              .where((s) => s.isNotEmpty)
+              .map((s) => s.trim())
+              .toList();
+
       final body = {
         'telegram': {
           'enabled': _tgEnabled,
@@ -164,6 +197,15 @@ class _BotConnectorsSectionState extends ConsumerState<BotConnectorsSection> {
           'group_trust_level': _dcGroupTrust,
           'allowed_users': dcUsers,
           if (_dcTokenController.text.isNotEmpty) 'bot_token': _dcTokenController.text,
+        },
+        'matrix': {
+          'enabled': _mxEnabled,
+          'dm_trust_level': _mxDmTrust,
+          'group_trust_level': _mxGroupTrust,
+          'allowed_rooms': mxRooms,
+          if (_mxHomeserverController.text.isNotEmpty) 'homeserver_url': _mxHomeserverController.text,
+          if (_mxUserIdController.text.isNotEmpty) 'user_id': _mxUserIdController.text,
+          if (_mxTokenController.text.isNotEmpty) 'access_token': _mxTokenController.text,
         },
       };
 
@@ -184,6 +226,7 @@ class _BotConnectorsSectionState extends ConsumerState<BotConnectorsSection> {
           // Clear token fields after save (server won't return them)
           _tgTokenController.clear();
           _dcTokenController.clear();
+          _mxTokenController.clear();
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: const Text('Bot configuration saved'),
@@ -402,6 +445,11 @@ class _BotConnectorsSectionState extends ConsumerState<BotConnectorsSection> {
             hasToken: _config?['discord']?['has_token'] == true,
           ),
 
+          SizedBox(height: Spacing.lg),
+
+          // Matrix section
+          _buildMatrixSection(isDark: isDark),
+
           // Save button
           SizedBox(height: Spacing.lg),
           SizedBox(
@@ -583,6 +631,194 @@ class _BotConnectorsSectionState extends ConsumerState<BotConnectorsSection> {
                 SizedBox(width: Spacing.sm),
                 TextButton.icon(
                   onPressed: () => _toggleConnector(platform, !isRunning),
+                  icon: Icon(
+                    isRunning ? Icons.stop_circle_outlined : Icons.play_circle_outlined,
+                    size: 16,
+                  ),
+                  label: Text(isRunning ? 'Stop' : 'Start'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: isRunning
+                        ? BrandColors.error
+                        : (isDark ? BrandColors.nightForest : BrandColors.forest),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMatrixSection({required bool isDark}) {
+    final connectors = _status?['connectors'] as Map<String, dynamic>?;
+    final connectorStatus = connectors?['matrix'] as Map<String, dynamic>?;
+    final isRunning = connectorStatus?['running'] == true;
+    final hasToken = _config?['matrix']?['has_token'] == true;
+
+    return Container(
+      padding: EdgeInsets.all(Spacing.md),
+      decoration: BoxDecoration(
+        color: isDark ? BrandColors.nightSurface : BrandColors.cream,
+        borderRadius: BorderRadius.circular(Spacing.sm),
+        border: Border.all(
+          color: isDark ? BrandColors.nightSurfaceElevated : BrandColors.stone,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header row with enable switch
+          Row(
+            children: [
+              Icon(Icons.grid_view_outlined, size: 20,
+                color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood),
+              SizedBox(width: Spacing.sm),
+              Expanded(
+                child: Text(
+                  'Matrix',
+                  style: TextStyle(
+                    fontSize: TypographyTokens.bodyMedium,
+                    fontWeight: FontWeight.w600,
+                    color: isDark ? BrandColors.nightText : BrandColors.ink,
+                  ),
+                ),
+              ),
+              if (isRunning)
+                Container(
+                  padding: EdgeInsets.symmetric(horizontal: Spacing.sm, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: BrandColors.forest.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    'Running',
+                    style: TextStyle(
+                      fontSize: TypographyTokens.labelSmall,
+                      color: BrandColors.forest,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+              SizedBox(width: Spacing.sm),
+              Switch.adaptive(
+                value: _mxEnabled,
+                onChanged: (v) => setState(() => _mxEnabled = v),
+                activeTrackColor: BrandColors.forest,
+              ),
+            ],
+          ),
+
+          SizedBox(height: Spacing.sm),
+
+          // Homeserver URL
+          TextField(
+            controller: _mxHomeserverController,
+            decoration: InputDecoration(
+              labelText: 'Homeserver URL',
+              hintText: 'https://matrix.example.org',
+              isDense: true,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(Spacing.xs),
+              ),
+            ),
+            style: TextStyle(fontSize: TypographyTokens.bodySmall),
+          ),
+
+          SizedBox(height: Spacing.sm),
+
+          // User ID (display)
+          TextField(
+            controller: _mxUserIdController,
+            decoration: InputDecoration(
+              labelText: 'Bot User ID',
+              hintText: '@parachute:example.org',
+              isDense: true,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(Spacing.xs),
+              ),
+            ),
+            style: TextStyle(fontSize: TypographyTokens.bodySmall),
+          ),
+
+          SizedBox(height: Spacing.sm),
+
+          // Access token
+          TextField(
+            controller: _mxTokenController,
+            obscureText: !_mxTokenVisible,
+            decoration: InputDecoration(
+              labelText: 'Access Token',
+              hintText: hasToken ? 'Token configured (leave empty to keep)' : 'Enter access token',
+              isDense: true,
+              suffixIcon: IconButton(
+                icon: Icon(_mxTokenVisible ? Icons.visibility_off : Icons.visibility, size: 18),
+                onPressed: () => setState(() => _mxTokenVisible = !_mxTokenVisible),
+              ),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(Spacing.xs),
+              ),
+            ),
+            style: TextStyle(fontSize: TypographyTokens.bodySmall),
+          ),
+
+          SizedBox(height: Spacing.sm),
+
+          // Allowed rooms
+          TextField(
+            controller: _mxAllowedRoomsController,
+            decoration: InputDecoration(
+              labelText: 'Allowed Rooms',
+              hintText: '!room:server, #alias:server (empty = all)',
+              isDense: true,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(Spacing.xs),
+              ),
+            ),
+            style: TextStyle(fontSize: TypographyTokens.bodySmall),
+          ),
+
+          SizedBox(height: Spacing.sm),
+
+          // Trust level dropdowns
+          Row(
+            children: [
+              Expanded(
+                child: _buildTrustDropdown(
+                  label: 'DM Trust',
+                  value: _mxDmTrust,
+                  onChanged: (v) => setState(() => _mxDmTrust = v),
+                  isDark: isDark,
+                ),
+              ),
+              SizedBox(width: Spacing.sm),
+              Expanded(
+                child: _buildTrustDropdown(
+                  label: 'Group Trust',
+                  value: _mxGroupTrust,
+                  onChanged: (v) => setState(() => _mxGroupTrust = v),
+                  isDark: isDark,
+                ),
+              ),
+            ],
+          ),
+
+          // Action buttons
+          if (_mxEnabled && hasToken) ...[
+            SizedBox(height: Spacing.sm),
+            Row(
+              children: [
+                TextButton.icon(
+                  onPressed: () => _testConnection('matrix'),
+                  icon: const Icon(Icons.wifi_tethering, size: 16),
+                  label: const Text('Test'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: isDark ? BrandColors.nightForest : BrandColors.forest,
+                  ),
+                ),
+                SizedBox(width: Spacing.sm),
+                TextButton.icon(
+                  onPressed: () => _toggleConnector('matrix', !isRunning),
                   icon: Icon(
                     isRunning ? Icons.stop_circle_outlined : Icons.play_circle_outlined,
                     size: 16,

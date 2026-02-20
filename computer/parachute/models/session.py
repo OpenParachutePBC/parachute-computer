@@ -114,6 +114,7 @@ class SessionSource(str, Enum):
     CHATGPT = "chatgpt"  # Imported from ChatGPT
     TELEGRAM = "telegram"  # From Telegram bot connector
     DISCORD = "discord"  # From Discord bot connector
+    MATRIX = "matrix"  # From Matrix bot connector
 
 
 class Session(BaseModel):

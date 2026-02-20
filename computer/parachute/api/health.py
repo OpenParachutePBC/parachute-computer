@@ -89,7 +89,7 @@ async def health_check(
     # Bot connector status
     from parachute.api.bots import _connectors
     bots = {}
-    for platform in ("telegram", "discord"):
+    for platform in ("telegram", "discord", "matrix"):
         connector = _connectors.get(platform)
         if connector:
             bots[platform] = {"running": connector._running}
