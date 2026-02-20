@@ -4,7 +4,7 @@ Parachute CLI.
 Usage:
     parachute install                  # First-time setup + daemon install
     parachute update                   # Pull latest code, reinstall, restart
-    parachute update --local           # Reinstall + restart (no git pull)
+    parachute server restart           # Reinstall deps + restart server
     parachute server                   # Start daemon (background)
     parachute server --foreground      # Start in foreground (dev mode)
     parachute server stop              # Stop daemon
@@ -117,11 +117,11 @@ def _save_env_file(env: dict[str, str]) -> Path:
     return env_file
 
 
-def _api_get(url: str) -> dict:
+def _api_get(url: str, timeout: int = 5) -> dict:
     """Make a GET request to the server API."""
     req = Request(url)
     req.add_header("Accept", "application/json")
-    with urlopen(req, timeout=5) as resp:
+    with urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read())
 
 
@@ -416,26 +416,43 @@ def cmd_install(args: argparse.Namespace) -> None:
     config_file = save_yaml_config(vault_path, config)
     print(f"\nConfig written to {config_file}")
 
-    # 8. Install and start daemon
-    print("\nInstalling daemon...")
+    # 8. Install and start main server daemon
+    print("\nInstalling main server daemon...")
     try:
         from parachute.daemon import get_daemon_manager
 
         daemon = get_daemon_manager(vault_path, config)
         daemon.install()
-        print("  Daemon installed.")
+        print("  Main server daemon installed.")
 
         daemon.start()
-        print("  Daemon started.")
-        print(f"\n  Server running on port {config.get('port', 3333)}")
+        print("  Main server daemon started.")
+        print(f"  Server running on port {config.get('port', 3333)}")
     except Exception as e:
-        print(f"  Daemon install failed: {e}")
+        print(f"  Main server daemon install failed: {e}")
         print("  You can start manually with: parachute server --foreground")
 
-    # 9. Check PATH
+    # 9. Install and start supervisor daemon
+    print("\nInstalling supervisor daemon...")
+    try:
+        from parachute.daemon import get_supervisor_daemon_manager
+
+        supervisor_daemon = get_supervisor_daemon_manager(vault_path, config)
+        supervisor_daemon.install()
+        print("  Supervisor daemon installed.")
+
+        supervisor_daemon.start()
+        print("  Supervisor daemon started.")
+        print("  Supervisor running on port 3334")
+    except Exception as e:
+        print(f"  Supervisor daemon install failed: {e}")
+        print("  You can install manually with: parachute supervisor install")
+
+    # 10. Check PATH
     _check_path()
 
     print("\nDone! Use 'parachute server status' to check the daemon.")
+    print("Use 'parachute supervisor status' to check the supervisor.")
 
 
 def _check_path() -> None:
@@ -474,17 +491,26 @@ def _get_repo_dir() -> Path:
 
 def cmd_update(args: argparse.Namespace) -> None:
     """Pull latest code, reinstall deps, and restart daemon."""
-    local_only = getattr(args, "local", False)
     repo_dir = _get_repo_dir()
     venv_pip = Path(sys.executable).parent / "pip"
 
     print(f"Updating Parachute ({repo_dir})")
     print("=" * 40)
 
-    # 1. Git pull (unless --local)
-    if not local_only:
-        if (repo_dir / ".git").exists():
+    # 1. Git pull and detect what changed
+    supervisor_code_changed = False
+    if (repo_dir / ".git").exists():
             print("\nPulling latest code...")
+
+            # Store current HEAD for diff
+            old_head = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=repo_dir,
+                capture_output=True,
+                text=True,
+            )
+            old_head_sha = old_head.stdout.strip() if old_head.returncode == 0 else None
+
             # Try git pull, fall back to git pull origin main if no upstream
             result = subprocess.run(
                 ["git", "pull"],
@@ -504,16 +530,38 @@ def cmd_update(args: argparse.Namespace) -> None:
                 )
             if result.returncode != 0:
                 print(f"  git pull failed: {result.stderr.strip()}")
-                print("  Try pulling manually, or use: parachute update --local")
+                print("  Try pulling manually, then run: parachute server restart")
                 sys.exit(1)
             output = result.stdout.strip()
             if "Already up to date" in output:
                 print("  Already up to date.")
             else:
                 print(f"  {output}")
-        else:
-            print("\nNot a git repo — skipping pull.")
-            print("  (Install from git clone for auto-updates)")
+
+                # Check if supervisor code changed
+                if old_head_sha:
+                    diff_result = subprocess.run(
+                        ["git", "diff", "--name-only", old_head_sha, "HEAD"],
+                        cwd=repo_dir,
+                        capture_output=True,
+                        text=True,
+                    )
+                    if diff_result.returncode == 0:
+                        changed_files = diff_result.stdout.strip().split('\n')
+                        supervisor_files = [
+                            "parachute/supervisor.py",
+                            "parachute/supervisor_main.py",
+                            "parachute/daemon.py",
+                        ]
+                        supervisor_code_changed = any(
+                            any(f.endswith(sf) for sf in supervisor_files)
+                            for f in changed_files
+                        )
+                        if supervisor_code_changed:
+                            print("  ⚠️  Supervisor code changed, will restart supervisor")
+    else:
+        print("\nNot a git repo — skipping pull.")
+        print("  (Install from git clone for auto-updates)")
 
     # 2. Reinstall deps
     print("\nInstalling dependencies...")
@@ -528,7 +576,7 @@ def cmd_update(args: argparse.Namespace) -> None:
         sys.exit(1)
     print("  Dependencies updated.")
 
-    # 3. Restart daemon if running
+    # 3. Restart main server daemon if running (deps already installed above)
     vault_path = _get_vault_path()
     config = _load_yaml_config(vault_path)
 
@@ -539,18 +587,70 @@ def cmd_update(args: argparse.Namespace) -> None:
         status = daemon.status()
 
         if status.get("running"):
-            print("\nRestarting server...")
+            print("\nRestarting main server...")
             daemon.restart()
-            print("  Server restarted.")
+            print("  Main server restarted.")
         elif daemon.is_installed():
-            print("\nStarting server...")
+            print("\nStarting main server...")
             daemon.start()
-            print("  Server started.")
+            print("  Main server started.")
         else:
-            print("\nDaemon not installed. Run 'parachute install' for daemon support.")
+            print("\nMain server daemon not installed. Run 'parachute install' for daemon support.")
     except Exception as e:
-        print(f"\nCouldn't restart daemon: {e}")
+        print(f"\nCouldn't restart main server daemon: {e}")
         print("  Restart manually: parachute server restart")
+
+    # 4. Manage supervisor based on what changed
+    try:
+        from parachute.daemon import get_supervisor_daemon_manager
+
+        supervisor_daemon = get_supervisor_daemon_manager(vault_path, config)
+        supervisor_status = supervisor_daemon.status()
+
+        if supervisor_code_changed and supervisor_status.get("running"):
+            # Supervisor code changed and it's running — need to restart it
+            print("\nRestarting supervisor (code changed)...")
+            try:
+                # Verify main server is healthy before touching supervisor
+                try:
+                    health = _api_get("http://localhost:3333/api/health", timeout=2)
+                    if not health.get("status") == "ok":
+                        print("  ⚠️  Main server unhealthy, skipping supervisor restart")
+                        print("  Restart manually when safe: parachute supervisor restart")
+                        supervisor_code_changed = False
+                except Exception:
+                    print("  ⚠️  Can't verify main server health, skipping supervisor restart")
+                    print("  Restart manually when safe: parachute supervisor restart")
+                    supervisor_code_changed = False
+
+                if supervisor_code_changed:
+                    supervisor_daemon.restart()
+                    # Verify it came back up
+                    time.sleep(1)
+                    try:
+                        _api_get("http://localhost:3334/supervisor/status", timeout=3)
+                        print("  Supervisor restarted successfully.")
+                    except Exception:
+                        print("  ⚠️  Supervisor may not have restarted cleanly")
+                        print("  Check status: parachute supervisor status")
+            except Exception as e:
+                print(f"  ⚠️  Supervisor restart failed: {e}")
+                print("  Restart manually: parachute supervisor restart")
+
+        elif supervisor_status.get("running"):
+            pass  # Already up and code didn't change, leave it alone
+        elif supervisor_status.get("installed"):
+            print("\nStarting supervisor...")
+            supervisor_daemon.start()
+            print("  Supervisor started.")
+        else:
+            print("\nInstalling supervisor...")
+            supervisor_daemon.install()
+            supervisor_daemon.start()
+            print("  Supervisor installed and started.")
+    except Exception as e:
+        print(f"\nCouldn't manage supervisor: {e}")
+        print("  Try: parachute supervisor install")
 
     print("\nDone!")
 
@@ -684,10 +784,27 @@ def _server_stop() -> None:
 
 
 def _server_restart() -> None:
-    """Restart the daemon, killing any rogue process on the port first."""
+    """Restart the daemon, reinstalling deps first to ensure everything is current."""
     vault_path = _get_vault_path()
     config = _load_yaml_config(vault_path)
     port = config.get("port", 3333)
+
+    # Reinstall dependencies to pick up any changes (new deps, updates, etc.)
+    repo_dir = _get_repo_dir()
+    venv_pip = Path(sys.executable).parent / "pip"
+
+    print("Installing dependencies...")
+    result = subprocess.run(
+        [str(venv_pip), "install", "-e", str(repo_dir), "-q"],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    if result.returncode != 0:
+        print(f"  pip install failed: {result.stderr.strip()}")
+        print("  Continuing with restart anyway...")
+    else:
+        print("  Dependencies updated.")
 
     try:
         from parachute.daemon import get_daemon_manager
@@ -833,6 +950,62 @@ def cmd_status(args: argparse.Namespace) -> None:
         print("  status: not running")
 
     print()
+
+
+# --- Supervisor command ---
+
+
+def cmd_supervisor(args: argparse.Namespace) -> None:
+    """Manage the supervisor daemon."""
+    action = getattr(args, "action", None)
+    vault_path = _get_vault_path()
+    config = _load_yaml_config(vault_path)
+
+    try:
+        from parachute.daemon import get_supervisor_daemon_manager
+
+        daemon = get_supervisor_daemon_manager(vault_path, config)
+
+        if action == "install":
+            daemon.install()
+            print("Supervisor daemon installed.")
+            print("Use 'parachute supervisor start' to start it.")
+        elif action == "uninstall":
+            daemon.uninstall()
+            print("Supervisor daemon removed.")
+        elif action == "start":
+            if not daemon.is_installed():
+                print("Supervisor not installed. Run 'parachute supervisor install' first.")
+                return
+            daemon.start()
+            print("Supervisor started on http://localhost:3334")
+        elif action == "stop":
+            daemon.stop()
+            print("Supervisor stopped.")
+        elif action == "restart":
+            daemon.restart()
+            print("Supervisor restarted.")
+        elif action == "status":
+            status = daemon.status()
+            print(f"Supervisor daemon status:")
+            print(f"  Installed: {status.get('installed', False)}")
+            print(f"  Running: {status.get('running', False)}")
+            if status.get("pid"):
+                print(f"  PID: {status['pid']}")
+            print(f"  Type: {status.get('type', 'unknown')}")
+
+            # Check HTTP health
+            try:
+                _api_get("http://localhost:3334/supervisor/status")
+                print("  HTTP health: OK")
+            except Exception:
+                print("  HTTP health: not responding")
+        else:
+            print("Usage: parachute supervisor {install|uninstall|start|stop|restart|status}")
+
+    except Exception as e:
+        print(f"Error: {e}")
+        sys.exit(1)
 
 
 # --- Logs command ---
@@ -1696,11 +1869,7 @@ def main() -> None:
     subparsers.add_parser("install", help="First-time setup + daemon install")
 
     # update
-    update_parser = subparsers.add_parser("update", help="Pull latest code, reinstall, restart")
-    update_parser.add_argument(
-        "--local", action="store_true",
-        help="Skip git pull (just reinstall deps + restart)",
-    )
+    subparsers.add_parser("update", help="Pull latest code, reinstall, restart")
 
     # status
     subparsers.add_parser("status", help="Show system status")
@@ -1771,6 +1940,16 @@ def main() -> None:
     bot_deny_parser.add_argument("request_id", help="Request ID to deny")
     bot_sub.add_parser("users", help="List approved users across platforms")
 
+    # supervisor subcommand
+    supervisor_parser = subparsers.add_parser("supervisor", help="Supervisor daemon management")
+    supervisor_sub = supervisor_parser.add_subparsers(dest="action")
+    supervisor_sub.add_parser("start", help="Start supervisor daemon")
+    supervisor_sub.add_parser("stop", help="Stop supervisor daemon")
+    supervisor_sub.add_parser("restart", help="Restart supervisor daemon")
+    supervisor_sub.add_parser("status", help="Check supervisor status")
+    supervisor_sub.add_parser("install", help="Install supervisor daemon")
+    supervisor_sub.add_parser("uninstall", help="Remove supervisor daemon")
+
     # help (alias for --help)
     subparsers.add_parser("help", help="Show this help message")
 
@@ -1804,5 +1983,7 @@ def main() -> None:
             module_parser.print_help()
     elif args.command == "bot":
         cmd_bot(args)
+    elif args.command == "supervisor":
+        cmd_supervisor(args)
     else:
         parser.print_help()

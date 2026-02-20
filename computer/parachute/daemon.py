@@ -8,6 +8,7 @@ import logging
 import os
 import plistlib
 import signal
+import socket
 import subprocess
 import sys
 import time
@@ -18,7 +19,19 @@ from typing import Any, Optional
 logger = logging.getLogger(__name__)
 
 LAUNCHD_LABEL = "io.openparachute.server"
+SUPERVISOR_LAUNCHD_LABEL = "io.openparachute.supervisor"
 SYSTEMD_UNIT = "parachute.service"
+SUPERVISOR_SYSTEMD_UNIT = "parachute-supervisor.service"
+
+
+def _is_port_listening(port: int) -> bool:
+    """Check if anything is listening on a port (regardless of bind address)."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.settimeout(0.5)
+            return sock.connect_ex(("127.0.0.1", port)) == 0
+    except OSError:
+        return False
 
 
 class DaemonManager(ABC):
@@ -60,7 +73,16 @@ class DaemonManager(ABC):
     def restart(self) -> None:
         """Restart the daemon."""
         self.stop()
-        time.sleep(1)
+
+        # Wait for port to stop listening (up to 5 seconds)
+        port_to_check = 3334 if getattr(self, 'supervisor', False) else self.port
+        for _ in range(25):
+            if not _is_port_listening(port_to_check):
+                break
+            time.sleep(0.2)
+        else:
+            logger.warning(f"Port {port_to_check} still in use after 5s, attempting start anyway")
+
         self.start()
 
     @abstractmethod
@@ -75,9 +97,11 @@ class DaemonManager(ABC):
 class LaunchdDaemon(DaemonManager):
     """macOS launchd daemon management."""
 
-    def __init__(self, vault_path: Path, config: dict[str, Any]):
+    def __init__(self, vault_path: Path, config: dict[str, Any], supervisor: bool = False):
         super().__init__(vault_path, config)
-        self.plist_path = Path.home() / "Library" / "LaunchAgents" / f"{LAUNCHD_LABEL}.plist"
+        self.supervisor = supervisor
+        label = SUPERVISOR_LAUNCHD_LABEL if supervisor else LAUNCHD_LABEL
+        self.plist_path = Path.home() / "Library" / "LaunchAgents" / f"{label}.plist"
         # Use ~/Library/Logs/ — launchd can't write to external volumes
         self.log_dir = Path.home() / "Library" / "Logs" / "Parachute"
 
@@ -86,28 +110,53 @@ class LaunchdDaemon(DaemonManager):
         python = self._find_python()
         self.log_dir.mkdir(parents=True, exist_ok=True)
 
-        return {
-            "Label": LAUNCHD_LABEL,
-            "ProgramArguments": [
-                python, "-m", "uvicorn",
-                "parachute.server:app",
-                "--host", self.host,
-                "--port", str(self.port),
-            ],
-            "EnvironmentVariables": {
-                "VAULT_PATH": str(self.vault_path),
-                "PARACHUTE_CONFIG": str(self.vault_path / ".parachute" / "config.yaml"),
-                "PYTHONUNBUFFERED": "1",
-                # launchd has minimal PATH — add standard locations for docker, git, etc.
-                "PATH": "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin",
-            },
-            "RunAtLoad": True,
-            "KeepAlive": True,
-            "ThrottleInterval": 10,
-            "StandardOutPath": str(self.log_dir / "stdout.log"),
-            "StandardErrorPath": str(self.log_dir / "stderr.log"),
-            "WorkingDirectory": str(self._find_repo_dir()),
-        }
+        if self.supervisor:
+            # Supervisor service on port 3334
+            return {
+                "Label": SUPERVISOR_LAUNCHD_LABEL,
+                "ProgramArguments": [
+                    python, "-m", "uvicorn",
+                    "parachute.supervisor:app",
+                    "--host", "0.0.0.0",  # Listen on all interfaces for remote access
+                    "--port", "3334",
+                ],
+                "EnvironmentVariables": {
+                    "VAULT_PATH": str(self.vault_path),
+                    "PARACHUTE_CONFIG": str(self.vault_path / ".parachute" / "config.yaml"),
+                    "PYTHONUNBUFFERED": "1",
+                    "PATH": "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin",
+                },
+                "RunAtLoad": True,
+                "KeepAlive": True,
+                "ThrottleInterval": 10,
+                "StandardOutPath": str(self.log_dir / "supervisor-stdout.log"),
+                "StandardErrorPath": str(self.log_dir / "supervisor-stderr.log"),
+                "WorkingDirectory": str(self._find_repo_dir()),
+            }
+        else:
+            # Main server service on configured port
+            return {
+                "Label": LAUNCHD_LABEL,
+                "ProgramArguments": [
+                    python, "-m", "uvicorn",
+                    "parachute.server:app",
+                    "--host", self.host,
+                    "--port", str(self.port),
+                ],
+                "EnvironmentVariables": {
+                    "VAULT_PATH": str(self.vault_path),
+                    "PARACHUTE_CONFIG": str(self.vault_path / ".parachute" / "config.yaml"),
+                    "PYTHONUNBUFFERED": "1",
+                    # launchd has minimal PATH — add standard locations for docker, git, etc.
+                    "PATH": "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin",
+                },
+                "RunAtLoad": True,
+                "KeepAlive": True,
+                "ThrottleInterval": 10,
+                "StandardOutPath": str(self.log_dir / "stdout.log"),
+                "StandardErrorPath": str(self.log_dir / "stderr.log"),
+                "WorkingDirectory": str(self._find_repo_dir()),
+            }
 
     def install(self) -> None:
         self.plist_path.parent.mkdir(parents=True, exist_ok=True)
@@ -138,25 +187,57 @@ class LaunchdDaemon(DaemonManager):
         if not self.plist_path.exists():
             raise RuntimeError("Daemon not installed. Run 'parachute install' first.")
 
+        label = SUPERVISOR_LAUNCHD_LABEL if self.supervisor else LAUNCHD_LABEL
+        uid = os.getuid()
+        target = f"gui/{uid}"
+        service = f"gui/{uid}/{label}"
+
+        # Bootstrap may return error 5 ("Bootstrap failed: 5: Input/output error") for
+        # up to ~2 seconds after bootout while launchd finalises teardown. Retry until
+        # it succeeds or we hit a different error.
+        last_stderr = ""
+        for attempt in range(20):  # up to ~6s of retries
+            result = subprocess.run(
+                ["launchctl", "bootstrap", target, str(self.plist_path)],
+                capture_output=True, text=True, timeout=10,
+            )
+            if result.returncode == 0:
+                break
+
+            last_stderr = result.stderr.strip()
+
+            if "already loaded" in last_stderr.lower() or "service already loaded" in last_stderr.lower():
+                # Already bootstrapped — just kick it
+                break
+
+            if "bootstrap failed: 5" in last_stderr.lower() or "input/output error" in last_stderr.lower():
+                # launchd still tearing down — wait and retry
+                time.sleep(0.3)
+                continue
+
+            # Any other error is fatal
+            raise RuntimeError(f"Failed to start daemon: {last_stderr}")
+        else:
+            raise RuntimeError(f"Failed to bootstrap after retries: {last_stderr}")
+
+        # Kickstart ensures the process actually runs (handles both fresh bootstrap
+        # and already-loaded cases)
         result = subprocess.run(
-            ["launchctl", "bootstrap", f"gui/{os.getuid()}", str(self.plist_path)],
+            ["launchctl", "kickstart", "-k", service],
             capture_output=True, text=True, timeout=10,
         )
         if result.returncode != 0:
-            # May already be loaded — try kickstart instead
-            result2 = subprocess.run(
-                ["launchctl", "kickstart", "-k", f"gui/{os.getuid()}/{LAUNCHD_LABEL}"],
-                capture_output=True, text=True, timeout=10,
-            )
-            if result2.returncode != 0:
-                raise RuntimeError(f"Failed to start daemon: {result.stderr} / {result2.stderr}")
+            raise RuntimeError(f"Failed to kickstart: {result.stderr.strip()}")
 
     def stop(self) -> None:
         try:
-            subprocess.run(
-                ["launchctl", "bootout", f"gui/{os.getuid()}/{LAUNCHD_LABEL}"],
+            label = SUPERVISOR_LAUNCHD_LABEL if self.supervisor else LAUNCHD_LABEL
+            result = subprocess.run(
+                ["launchctl", "bootout", f"gui/{os.getuid()}/{label}"],
                 capture_output=True, text=True, timeout=10,
             )
+            if result.returncode != 0 and "could not find" not in result.stderr.lower():
+                logger.warning(f"Bootout returned error: {result.stderr.strip()}")
         except Exception as e:
             logger.warning(f"Error stopping daemon: {e}")
 
@@ -168,8 +249,9 @@ class LaunchdDaemon(DaemonManager):
         }
 
         try:
+            label = SUPERVISOR_LAUNCHD_LABEL if self.supervisor else LAUNCHD_LABEL
             result = subprocess.run(
-                ["launchctl", "print", f"gui/{os.getuid()}/{LAUNCHD_LABEL}"],
+                ["launchctl", "print", f"gui/{os.getuid()}/{label}"],
                 capture_output=True, text=True, timeout=5,
             )
             if result.returncode == 0:
@@ -204,10 +286,12 @@ class LaunchdDaemon(DaemonManager):
 class SystemdDaemon(DaemonManager):
     """Linux systemd user service management."""
 
-    def __init__(self, vault_path: Path, config: dict[str, Any]):
+    def __init__(self, vault_path: Path, config: dict[str, Any], supervisor: bool = False):
         super().__init__(vault_path, config)
+        self.supervisor = supervisor
         self.unit_dir = Path.home() / ".config" / "systemd" / "user"
-        self.unit_path = self.unit_dir / SYSTEMD_UNIT
+        unit_name = SUPERVISOR_SYSTEMD_UNIT if supervisor else SYSTEMD_UNIT
+        self.unit_path = self.unit_dir / unit_name
         # Use XDG state dir — avoids issues with vault on network/external mounts
         self.log_dir = Path.home() / ".local" / "state" / "parachute" / "logs"
 
@@ -216,7 +300,28 @@ class SystemdDaemon(DaemonManager):
         python = self._find_python()
         self.log_dir.mkdir(parents=True, exist_ok=True)
 
-        return f"""[Unit]
+        if self.supervisor:
+            return f"""[Unit]
+Description=Parachute Supervisor Service
+After=network.target
+
+[Service]
+Type=simple
+ExecStart={python} -m uvicorn parachute.supervisor:app --host 0.0.0.0 --port 3334
+WorkingDirectory={self._find_repo_dir()}
+Environment=VAULT_PATH={self.vault_path}
+Environment=PARACHUTE_CONFIG={self.vault_path / '.parachute' / 'config.yaml'}
+Environment=PYTHONUNBUFFERED=1
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:{self.log_dir / 'supervisor-stdout.log'}
+StandardError=append:{self.log_dir / 'supervisor-stderr.log'}
+
+[Install]
+WantedBy=default.target
+"""
+        else:
+            return f"""[Unit]
 Description=Parachute AI Server
 After=network.target
 
@@ -243,16 +348,18 @@ WantedBy=default.target
             ["systemctl", "--user", "daemon-reload"],
             capture_output=True, timeout=10,
         )
+        unit_name = SUPERVISOR_SYSTEMD_UNIT if self.supervisor else SYSTEMD_UNIT
         subprocess.run(
-            ["systemctl", "--user", "enable", SYSTEMD_UNIT],
+            ["systemctl", "--user", "enable", unit_name],
             capture_output=True, timeout=10,
         )
         logger.info(f"Installed systemd unit: {self.unit_path}")
 
     def uninstall(self) -> None:
         self.stop()
+        unit_name = SUPERVISOR_SYSTEMD_UNIT if self.supervisor else SYSTEMD_UNIT
         subprocess.run(
-            ["systemctl", "--user", "disable", SYSTEMD_UNIT],
+            ["systemctl", "--user", "disable", unit_name],
             capture_output=True, timeout=10,
         )
         if self.unit_path.exists():
@@ -264,22 +371,25 @@ WantedBy=default.target
         logger.info(f"Removed systemd unit: {self.unit_path}")
 
     def start(self) -> None:
+        unit_name = SUPERVISOR_SYSTEMD_UNIT if self.supervisor else SYSTEMD_UNIT
         result = subprocess.run(
-            ["systemctl", "--user", "start", SYSTEMD_UNIT],
+            ["systemctl", "--user", "start", unit_name],
             capture_output=True, text=True, timeout=10,
         )
         if result.returncode != 0:
             raise RuntimeError(f"Failed to start: {result.stderr}")
 
     def stop(self) -> None:
+        unit_name = SUPERVISOR_SYSTEMD_UNIT if self.supervisor else SYSTEMD_UNIT
         subprocess.run(
-            ["systemctl", "--user", "stop", SYSTEMD_UNIT],
+            ["systemctl", "--user", "stop", unit_name],
             capture_output=True, timeout=10,
         )
 
     def restart(self) -> None:
+        unit_name = SUPERVISOR_SYSTEMD_UNIT if self.supervisor else SYSTEMD_UNIT
         result = subprocess.run(
-            ["systemctl", "--user", "restart", SYSTEMD_UNIT],
+            ["systemctl", "--user", "restart", unit_name],
             capture_output=True, text=True, timeout=10,
         )
         if result.returncode != 0:
@@ -293,15 +403,16 @@ WantedBy=default.target
         }
 
         try:
+            unit_name = SUPERVISOR_SYSTEMD_UNIT if self.supervisor else SYSTEMD_UNIT
             result = subprocess.run(
-                ["systemctl", "--user", "is-active", SYSTEMD_UNIT],
+                ["systemctl", "--user", "is-active", unit_name],
                 capture_output=True, text=True, timeout=5,
             )
             info["running"] = result.stdout.strip() == "active"
 
             if info["running"]:
                 pid_result = subprocess.run(
-                    ["systemctl", "--user", "show", SYSTEMD_UNIT, "--property=MainPID"],
+                    ["systemctl", "--user", "show", unit_name, "--property=MainPID"],
                     capture_output=True, text=True, timeout=5,
                 )
                 for line in pid_result.stdout.splitlines():
@@ -322,15 +433,18 @@ WantedBy=default.target
 class PidDaemon(DaemonManager):
     """Fallback PID-file based daemon for systems without launchd/systemd."""
 
-    def __init__(self, vault_path: Path, config: dict[str, Any]):
+    def __init__(self, vault_path: Path, config: dict[str, Any], supervisor: bool = False):
         super().__init__(vault_path, config)
-        self.pid_file = vault_path / ".parachute" / "server.pid"
+        self.supervisor = supervisor
+        pid_name = "supervisor.pid" if supervisor else "server.pid"
+        self.pid_file = vault_path / ".parachute" / pid_name
         # Use same location as systemd on Linux, macOS logs on macOS
         if sys.platform == "darwin":
             self.log_dir = Path.home() / "Library" / "Logs" / "Parachute"
         else:
             self.log_dir = Path.home() / ".local" / "state" / "parachute" / "logs"
-        self._installed_marker = vault_path / ".parachute" / ".daemon_installed"
+        marker_name = ".supervisor_daemon_installed" if supervisor else ".daemon_installed"
+        self._installed_marker = vault_path / ".parachute" / marker_name
 
     def install(self) -> None:
         self.log_dir.mkdir(parents=True, exist_ok=True)
@@ -359,16 +473,26 @@ class PidDaemon(DaemonManager):
         python = self._find_python()
         self.log_dir.mkdir(parents=True, exist_ok=True)
 
-        stdout_log = open(self.log_dir / "stdout.log", "a")
-        stderr_log = open(self.log_dir / "stderr.log", "a")
+        if self.supervisor:
+            stdout_log = open(self.log_dir / "supervisor-stdout.log", "a")
+            stderr_log = open(self.log_dir / "supervisor-stderr.log", "a")
+            app_module = "parachute.supervisor:app"
+            host = "127.0.0.1"
+            port = 3334
+        else:
+            stdout_log = open(self.log_dir / "stdout.log", "a")
+            stderr_log = open(self.log_dir / "stderr.log", "a")
+            app_module = "parachute.server:app"
+            host = self.host
+            port = self.port
 
         env = os.environ.copy()
         env["VAULT_PATH"] = str(self.vault_path)
         env["PYTHONUNBUFFERED"] = "1"
 
         proc = subprocess.Popen(
-            [python, "-m", "uvicorn", "parachute.server:app",
-             "--host", self.host, "--port", str(self.port)],
+            [python, "-m", "uvicorn", app_module,
+             "--host", host, "--port", str(port)],
             stdout=stdout_log,
             stderr=stderr_log,
             env=env,
@@ -443,3 +567,15 @@ def get_daemon_manager(vault_path: Path, config: dict[str, Any]) -> DaemonManage
             return SystemdDaemon(vault_path, config)
     # Fallback
     return PidDaemon(vault_path, config)
+
+
+def get_supervisor_daemon_manager(vault_path: Path, config: dict[str, Any]) -> DaemonManager:
+    """Factory: detect platform and return supervisor daemon manager."""
+    if sys.platform == "darwin":
+        return LaunchdDaemon(vault_path, config, supervisor=True)
+    elif sys.platform == "linux":
+        # Check if systemd is available
+        if (Path.home() / ".config" / "systemd").exists() or Path("/run/systemd/system").exists():
+            return SystemdDaemon(vault_path, config, supervisor=True)
+    # Fallback
+    return PidDaemon(vault_path, config, supervisor=True)

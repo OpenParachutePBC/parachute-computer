@@ -29,6 +29,7 @@ dev = [
 
 [project.scripts]
 parachute = "parachute.cli:main"
+parachute-supervisor = "parachute.supervisor_main:main"
 
 [tool.setuptools.packages.find]
 include = ["parachute*"]
