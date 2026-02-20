@@ -69,12 +69,11 @@ class BackgroundStreamManager {
     final activeStream = _ActiveStream(
       sessionId: sessionId,
       controller: controller,
-      onEvent: onEvent,
     );
     _activeStreams[sessionId] = activeStream;
 
     // Consume the source stream and forward to broadcast
-    _consumeStream(sessionId, stream, controller);
+    _consumeStream(activeStream, stream);
 
     // Return a subscription that updates UI
     return controller.stream.listen(
@@ -96,18 +95,34 @@ class BackgroundStreamManager {
     }
   }
 
-  /// Consume a stream and forward events to the controller
-  Future<void> _consumeStream(
-    String sessionId,
+  /// Consume a stream and forward events to the broadcast controller.
+  ///
+  /// Uses a manual [StreamSubscription] so it can be cancelled explicitly
+  /// on eviction (closing the underlying HTTP connection).
+  void _consumeStream(
+    _ActiveStream activeStream,
     Stream<StreamEvent> source,
-    StreamController<StreamEvent> controller,
-  ) async {
-    try {
-      await for (final event in source) {
+  ) {
+    final controller = activeStream.controller;
+
+    void cleanup() {
+      // Use activeStream.sessionId which tracks the current ID even after
+      // updateSessionId() remaps "pending" → real ID.
+      final currentId = activeStream.sessionId;
+      debugPrint('[BackgroundStreamManager] Stream completed for session: $currentId');
+      _activeStreams.remove(currentId);
+      if (!controller.isClosed) {
+        controller.close();
+      }
+    }
+
+    activeStream.sourceSubscription = source.listen(
+      (event) {
         // Stop consuming if the controller was closed externally (eviction)
         if (controller.isClosed) {
-          debugPrint('[BackgroundStreamManager] Controller closed (evicted?) for $sessionId — stopping consumption');
-          break;
+          debugPrint('[BackgroundStreamManager] Controller closed (evicted?) for ${activeStream.sessionId} — stopping consumption');
+          activeStream.sourceSubscription?.cancel();
+          return;
         }
 
         controller.add(event);
@@ -117,21 +132,19 @@ class BackgroundStreamManager {
             event.type == StreamEventType.error ||
             event.type == StreamEventType.typedError ||
             event.type == StreamEventType.aborted) {
-          break;
+          activeStream.sourceSubscription?.cancel();
+          cleanup();
         }
-      }
-    } catch (e) {
-      debugPrint('[BackgroundStreamManager] Stream error for $sessionId: $e');
-      if (!controller.isClosed) {
-        controller.addError(e);
-      }
-    } finally {
-      debugPrint('[BackgroundStreamManager] Stream completed for session: $sessionId');
-      _activeStreams.remove(sessionId);
-      if (!controller.isClosed) {
-        await controller.close();
-      }
-    }
+      },
+      onError: (Object e) {
+        debugPrint('[BackgroundStreamManager] Stream error for ${activeStream.sessionId}: $e');
+        if (!controller.isClosed) {
+          controller.addError(e);
+        }
+        cleanup();
+      },
+      onDone: cleanup,
+    );
   }
 
   /// Update the session ID for an active stream
@@ -196,17 +209,22 @@ class BackgroundStreamManager {
 
 /// Internal class to track an active stream
 class _ActiveStream {
+  /// Mutable — updated by [BackgroundStreamManager.updateSessionId] when the
+  /// server assigns a real ID to replace "pending".
   String sessionId;
   final StreamController<StreamEvent> controller;
-  StreamEventCallback onEvent;
+
+  /// Subscription to the source HTTP stream. Set after [_consumeStream] starts.
+  /// Cancelled explicitly on eviction to close the underlying HTTP connection.
+  StreamSubscription<StreamEvent>? sourceSubscription;
 
   _ActiveStream({
     required this.sessionId,
     required this.controller,
-    required this.onEvent,
   });
 
   void cancel() {
+    sourceSubscription?.cancel();
     if (!controller.isClosed) {
       controller.close();
     }

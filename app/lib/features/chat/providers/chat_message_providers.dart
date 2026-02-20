@@ -254,8 +254,12 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
   /// Throttle for UI updates during streaming (50ms = ~20 updates/sec max)
   final _streamingThrottle = Throttle(const Duration(milliseconds: 50));
 
-  /// Track pending content updates for batching
+  /// Track pending content updates for batching.
+  /// When non-null, [_pendingSessionId] distinguishes the reattach path
+  /// (non-null session ID → flush via [_updateOrAddAssistantMessage]) from the
+  /// sendMessage path (null → flush via [_performMessageUpdate]).
   List<MessageContent>? _pendingContent;
+  String? _pendingSessionId;
 
   /// Background stream manager for handling streams that survive navigation
   final BackgroundStreamManager _streamManager;
@@ -302,6 +306,7 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
     _streamingThrottle.reset();
     _reattachStreamContent.clear();
     _pendingContent = null;
+    _pendingSessionId = null;
     _pendingResendMessage = null;
   }
 
@@ -932,13 +937,15 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
     if (!isStreaming) {
       // Always flush immediately when streaming ends
       _pendingContent = null;
+      _pendingSessionId = null;
       _updateOrAddAssistantMessage(content, sessionId, isStreaming: false);
       _streamingThrottle.reset();
       return;
     }
 
-    // Store pending content and throttle
+    // Store pending content with session ID so flush routes correctly
     _pendingContent = content;
+    _pendingSessionId = sessionId;
     if (_streamingThrottle.shouldProceed()) {
       _updateOrAddAssistantMessage(content, sessionId, isStreaming: true);
     }
@@ -1684,6 +1691,7 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
   /// backgrounded).
   void _onSendStreamDone(_SendStreamContext ctx) {
     debugPrint('[ChatMessagesNotifier] Stream done callback for: ${ctx.displaySessionId}');
+    if (!mounted) return;
     // If we're still viewing this session and streaming wasn't already stopped
     // by a terminal event, clean up now.
     if (state.sessionId == ctx.displaySessionId && state.isStreaming) {
@@ -1694,9 +1702,13 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
   }
 
   /// Called when the BackgroundStreamManager reports a stream error.
+  ///
+  /// Only acts if streaming is still active — if a terminal event
+  /// (error/typedError/done) was already processed by [_handleSendStreamEvent],
+  /// this is a no-op to prevent double-reporting errors to the user.
   void _onSendStreamError(Object error, _SendStreamContext ctx) {
     debugPrint('[ChatMessagesNotifier] Stream error callback for ${ctx.displaySessionId}: $error');
-    if (_activeStreamSessionId == ctx.displaySessionId) {
+    if (_activeStreamSessionId == ctx.displaySessionId && state.isStreaming) {
       state = state.copyWith(
         isStreaming: false,
         error: error.toString(),
@@ -1713,13 +1725,15 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
     // Always update immediately when streaming ends
     if (!isStreaming) {
       _pendingContent = null;
+      _pendingSessionId = null;
       _performMessageUpdate(content, isStreaming: false);
       _streamingThrottle.reset();
       return;
     }
 
-    // Store pending content
+    // Store pending content (null sessionId = sendMessage path)
     _pendingContent = content;
+    _pendingSessionId = null;
 
     // Throttle UI updates during streaming
     if (_streamingThrottle.shouldProceed()) {
@@ -1765,10 +1779,17 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
     trace.end();
   }
 
-  /// Flush any pending content updates (call when important events happen)
+  /// Flush any pending content updates (call when important events happen).
+  ///
+  /// Routes through the correct update method based on which path stored
+  /// the pending content: reattach path (has session ID) vs sendMessage path.
   void _flushPendingUpdates() {
     if (_pendingContent != null) {
-      _performMessageUpdate(_pendingContent!, isStreaming: true);
+      if (_pendingSessionId != null) {
+        _updateOrAddAssistantMessage(_pendingContent!, _pendingSessionId!, isStreaming: true);
+      } else {
+        _performMessageUpdate(_pendingContent!, isStreaming: true);
+      }
     }
   }
 
