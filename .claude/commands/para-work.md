@@ -1,7 +1,7 @@
 ---
 name: para-work
 description: Execute work plans efficiently while maintaining quality and finishing features
-argument-hint: "[plan file, specification, or todo file path]"
+argument-hint: "[#issue-number, plan file, specification, or todo file path]"
 ---
 
 # Work Plan Execution Command
@@ -20,7 +20,22 @@ This command takes a work document (plan, specification, or todo file) and execu
 
 ### Phase 1: Quick Start
 
-1. **Read Plan and Clarify**
+1. **Resolve Input**
+
+   **If the argument starts with `#` (e.g., `#77`):**
+   1. Fetch the issue: `gh issue view NN --json title,body,labels`
+   2. Search for a local plan file:
+      - Scan `docs/plans/*.md` YAML frontmatter for `issue: NN`
+      - If found, use that as the work document
+      - If not found, check the issue comments for a plan (the most recent long comment)
+        and tell the user: "No local plan file found for #NN. The plan was posted as a
+        comment on the issue. Would you like me to save it locally first?"
+   3. Store the issue number for PR linking later.
+
+   **If the argument is a file path:**
+   Proceed with existing behavior (read the file directly). If the file has `issue: NN` in its YAML frontmatter, store that issue number for PR linking.
+
+2. **Read Plan and Clarify**
 
    - Read the work document completely
    - Review any references or links provided in the plan
@@ -257,14 +272,18 @@ This command takes a work document (plan, specification, or todo file) and execu
 
 3. **Create Pull Request**
 
+   **Determine the issue number** from the plan file's YAML frontmatter (`issue: NN`) or from the `#NN` argument. If an issue number is known, include `Closes #NN` in the PR body to auto-link the issue.
+
    ```bash
    git push -u origin feature-branch-name
 
-   gh pr create --title "Feature: [Description]" --body "$(cat <<'EOF'
+   gh pr create --title "<type>: [Description]" --body "$(cat <<'EOF'
    ## Summary
    - What was built
    - Why it was needed
    - Key decisions made
+
+   Closes #NN
 
    ## Testing
    - Tests added/modified
@@ -274,9 +293,6 @@ This command takes a work document (plan, specification, or todo file) and execu
    | Before | After |
    |--------|-------|
    | ![before](URL) | ![after](URL) |
-
-   ## Figma Design
-   [Link if applicable]
 
    ---
 

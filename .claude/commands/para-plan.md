@@ -1,7 +1,7 @@
 ---
 name: para-plan
 description: Transform feature descriptions into well-structured project plans following conventions
-argument-hint: "[feature description, bug report, or improvement idea]"
+argument-hint: "[#issue-number or feature description]"
 ---
 
 # Create a plan for a new feature or bug fix
@@ -20,7 +20,28 @@ Transform feature descriptions, bug reports, or improvement ideas into well-stru
 
 Do not proceed until you have a clear feature description from the user.
 
-### 0. Idea Refinement
+### 0. Resolve Issue Context
+
+**If the argument starts with `#` (e.g., `#77`):**
+
+1. Extract the issue number and fetch the issue:
+   ```bash
+   gh issue view NN --json title,body,labels,state
+   ```
+2. If the issue doesn't exist, tell the user and stop.
+3. Search for a local brainstorm file that references this issue:
+   - Scan `docs/brainstorms/*.md` for files containing `**Issue:** #NN`
+   - If found, read the brainstorm file — use it as context and **skip Idea Refinement (Step 0b)**
+   - If not found, use the GitHub issue body as context and **skip Idea Refinement (Step 0b)**
+4. Note whether the issue already has a `plan` label (if so, warn: "This issue already has a plan. Creating a new plan will add another comment to the issue.")
+5. Store the issue number for later use (plan frontmatter, posting to issue).
+6. Proceed to Local Research (Step 1)
+
+**If the argument is a description (no `#` prefix):**
+
+Proceed with Idea Refinement below.
+
+### 0b. Idea Refinement
 
 **Check for brainstorm output first:**
 
@@ -179,6 +200,7 @@ Select how comprehensive you want the issue to be, simpler is mostly better.
 title: [Issue Title]
 type: [feat|fix|refactor]
 date: YYYY-MM-DD
+issue: NN
 ---
 
 # [Issue Title]
@@ -231,6 +253,7 @@ end
 title: [Issue Title]
 type: [feat|fix|refactor]
 date: YYYY-MM-DD
+issue: NN
 ---
 
 # [Issue Title]
@@ -295,6 +318,7 @@ date: YYYY-MM-DD
 title: [Issue Title]
 type: [feat|fix|refactor]
 date: YYYY-MM-DD
+issue: NN
 ---
 
 # [Issue Title]
@@ -493,59 +517,57 @@ Examples:
 
 After writing the plan file, use the **AskUserQuestion tool** to present these options:
 
-**Question:** "Plan ready at `docs/plans/YYYY-MM-DD-<type>-<name>-plan.md`. What would you like to do next?"
+**Post plan to GitHub issue:**
+
+Before presenting options, post the plan to the GitHub issue:
+
+**If an issue number is known** (from `#NN` argument or brainstorm's `**Issue:** #NN`):
+
+1. Post the plan as a comment on the existing issue:
+   ```bash
+   gh issue comment NN --body-file docs/plans/YYYY-MM-DD-<type>-<name>-plan.md
+   ```
+2. Add the `plan` label:
+   ```bash
+   gh issue edit NN --add-label plan
+   ```
+
+**If no issue exists** (user provided a description, no brainstorm):
+
+1. Create a new issue:
+   ```bash
+   gh issue create --title "<type>: <title>" --body "Planning in progress. See plan comment below." --label plan
+   ```
+2. Capture the issue number from the output URL
+3. Post the plan as a comment on the new issue:
+   ```bash
+   gh issue comment NN --body-file docs/plans/YYYY-MM-DD-<type>-<name>-plan.md
+   ```
+4. Write `issue: NN` into the plan file's YAML frontmatter
+
+**Always:** Ensure the plan file's YAML frontmatter includes `issue: NN` (integer, no `#`).
+
+**Question:** "Plan ready at `docs/plans/YYYY-MM-DD-<type>-<name>-plan.md` and posted to issue #NN. What would you like to do next?"
 
 **Options:**
 1. **Open plan in editor** - Open the plan file for review
 2. **Run `/deepen-plan`** - Enhance each section with parallel research agents (best practices, performance, UI)
 3. **Run `/plan_review`** - Get feedback from reviewers (DHH, Kieran, Simplicity)
-4. **Start `/para-work`** - Begin implementing this plan locally
-5. **Start `/para-work` on remote** - Begin implementing in Claude Code on the web (use `&` to run in background)
-6. **Create Issue** - Create issue in project tracker (GitHub/Linear)
-7. **Simplify** - Reduce detail level
+4. **Start `/para-work #NN`** - Begin implementing this plan locally
+5. **Start `/para-work #NN` on remote** - Begin implementing in Claude Code on the web (use `&` to run in background)
+6. **Simplify** - Reduce detail level
 
 Based on selection:
 - **Open plan in editor** → Run `open docs/plans/<plan_filename>.md` to open the file in the user's default editor
 - **`/deepen-plan`** → Call the /deepen-plan command with the plan file path to enhance with research
 - **`/plan_review`** → Call the /plan_review command with the plan file path
-- **`/para-work`** → Call the /para-work command with the plan file path
-- **`/para-work` on remote** → Run `/para-work docs/plans/<plan_filename>.md &` to start work in background for Claude Code web
-- **Create Issue** → See "Issue Creation" section below
+- **`/para-work #NN`** → Call the /para-work command with the issue number
+- **`/para-work #NN` on remote** → Run `/para-work #NN &` to start work in background for Claude Code web
 - **Simplify** → Ask "What should I simplify?" then regenerate simpler version
 - **Other** (automatically provided) → Accept free text for rework or specific changes
 
 **Note:** If running `/para-plan` with ultrathink enabled, automatically run `/deepen-plan` after plan creation for maximum depth and grounding.
 
 Loop back to options after Simplify or Other changes until user selects `/para-work` or `/plan_review`.
-
-## Issue Creation
-
-When user selects "Create Issue", detect their project tracker from CLAUDE.md:
-
-1. **Check for tracker preference** in user's CLAUDE.md (global or project):
-   - Look for `project_tracker: github` or `project_tracker: linear`
-   - Or look for mentions of "GitHub Issues" or "Linear" in their workflow section
-
-2. **If GitHub:**
-
-   Use the title and type from Step 2 (already in context - no need to re-read the file):
-
-   ```bash
-   gh issue create --title "<type>: <title>" --body-file <plan_path>
-   ```
-
-3. **If Linear:**
-
-   ```bash
-   linear issue create --title "<title>" --description "$(cat <plan_path>)"
-   ```
-
-4. **If no tracker configured:**
-   Ask user: "Which project tracker do you use? (GitHub/Linear/Other)"
-   - Suggest adding `project_tracker: github` or `project_tracker: linear` to their CLAUDE.md
-
-5. **After creation:**
-   - Display the issue URL
-   - Ask if they want to proceed to `/para-work` or `/plan_review`
 
 NEVER CODE! Just research and write the plan.
