@@ -33,7 +33,7 @@ Do not proceed until you have a clear feature description from the user.
    - Scan `docs/brainstorms/*.md` for files containing `**Issue:** #NN`
    - If found, read the brainstorm file — use it as context and **skip Idea Refinement (Step 0b)**
    - If not found, use the GitHub issue body as context and **skip Idea Refinement (Step 0b)**
-4. Note whether the issue already has a `plan` label (if so, warn: "This issue already has a plan. Creating a new plan will add another comment to the issue.")
+4. Note whether the issue already has a `plan` label (if so, warn: "This issue already has a plan. Proceeding will replace the current issue body.")
 5. Store the issue number for later use (plan frontmatter, posting to issue).
 6. Proceed to Local Research (Step 1)
 
@@ -523,27 +523,27 @@ Before presenting options, post the plan to the GitHub issue:
 
 **If an issue number is known** (from `#NN` argument or brainstorm's `**Issue:** #NN`):
 
-1. Post the plan as a comment on the existing issue:
+1. **Update the issue title** to reflect the plan (drop `[Brainstorm]` prefix if present, use conventional format like `feat: ...`):
    ```bash
-   gh issue comment NN --body-file docs/plans/YYYY-MM-DD-<type>-<name>-plan.md
+   gh issue edit NN --title "<type>: <title>"
    ```
-2. Add the `plan` label:
+2. **Replace the issue body** with the plan content (GitHub preserves edit history, so the brainstorm is not lost):
    ```bash
-   gh issue edit NN --add-label plan
+   gh issue edit NN --body-file docs/plans/YYYY-MM-DD-<type>-<name>-plan.md
+   ```
+3. **Swap labels** — remove `brainstorm`, add `plan`:
+   ```bash
+   gh issue edit NN --remove-label brainstorm --add-label plan
    ```
 
 **If no issue exists** (user provided a description, no brainstorm):
 
-1. Create a new issue:
+1. Create a new issue with the plan as the body:
    ```bash
-   gh issue create --title "<type>: <title>" --body "Planning in progress. See plan comment below." --label plan
+   gh issue create --title "<type>: <title>" --body-file docs/plans/YYYY-MM-DD-<type>-<name>-plan.md --label plan
    ```
 2. Capture the issue number from the output URL
-3. Post the plan as a comment on the new issue:
-   ```bash
-   gh issue comment NN --body-file docs/plans/YYYY-MM-DD-<type>-<name>-plan.md
-   ```
-4. Write `issue: NN` into the plan file's YAML frontmatter
+3. Write `issue: NN` into the plan file's YAML frontmatter
 
 **Always:** Ensure the plan file's YAML frontmatter includes `issue: NN` (integer, no `#`).
 
