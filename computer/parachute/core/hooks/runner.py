@@ -1,21 +1,13 @@
 """
-Hook runner: discovers and executes lifecycle hooks.
+Internal event bus for server-to-module communication. Not user-facing.
 
-Hooks are Python scripts in vault/.parachute/hooks/ that declare
-which events they listen to via a module-level HOOK_CONFIG dict.
+Used by bot connectors to fire BOT_CONNECTOR_DOWN / BOT_CONNECTOR_RECONNECTED
+events. User-facing hooks are handled by the Claude Agent SDK via
+.claude/settings.json (SDK hooks).
 
-Example hook script:
-
-    # vault/.parachute/hooks/session_summary.py
-    HOOK_CONFIG = {
-        "events": ["session.completed"],
-        "blocking": False,
-        "description": "Summarize session to activity log",
-    }
-
-    async def run(context: dict) -> None:
-        session_id = context["session_id"]
-        # ... generate summary ...
+Previously, this module also discovered user hook scripts from
+vault/.parachute/hooks/. That functionality has been removed in favor
+of SDK-native hooks.
 """
 
 import asyncio
@@ -36,49 +28,27 @@ MAX_RECENT_ERRORS = 50
 
 
 class HookRunner:
-    """Discovers and executes hooks from vault/.parachute/hooks/."""
+    """Internal event bus for server-to-module communication.
+
+    Used by bot connectors to fire internal events. Not user-facing.
+    User-facing hooks are configured via .claude/settings.json (SDK hooks).
+    """
 
     def __init__(self, vault_path: Path):
         self.vault_path = vault_path
-        self.hooks_dir = vault_path / ".parachute" / "hooks"
         self._hooks: dict[str, list[HookConfig]] = {}
         self._hook_modules: dict[str, Any] = {}  # name -> loaded module
         self._recent_errors: deque[HookError] = deque(maxlen=MAX_RECENT_ERRORS)
 
     async def discover(self) -> int:
-        """Scan hooks directory for hook scripts. Returns count of hooks found."""
-        self._hooks.clear()
-        self._hook_modules.clear()
+        """No-op. User hook discovery has been removed.
 
-        if not self.hooks_dir.exists():
-            logger.info("No hooks directory found")
-            return 0
-
-        count = 0
-        for hook_file in sorted(self.hooks_dir.glob("*.py")):
-            if hook_file.name.startswith("_"):
-                continue  # Skip __init__.py, __pycache__, etc.
-
-            try:
-                config = self._parse_hook(hook_file)
-                if not config or not config.enabled:
-                    continue
-
-                for event in config.events:
-                    self._hooks.setdefault(event, []).append(config)
-
-                count += 1
-                logger.info(
-                    f"Discovered hook: {config.name} "
-                    f"(events: {', '.join(config.events)}, "
-                    f"blocking: {config.blocking})"
-                )
-            except Exception as e:
-                logger.error(f"Failed to parse hook {hook_file.name}: {e}")
-                self._record_error(hook_file.name, "discover", str(e))
-
-        logger.info(f"Discovered {count} hooks")
-        return count
+        User-facing hooks are now handled by the Claude Agent SDK
+        via .claude/settings.json. This method is kept for backwards
+        compatibility with the server startup sequence.
+        """
+        logger.info("HookRunner: internal event bus ready (user hook discovery disabled)")
+        return 0
 
     def _parse_hook(self, hook_file: Path) -> HookConfig | None:
         """Parse a hook script and extract its configuration."""

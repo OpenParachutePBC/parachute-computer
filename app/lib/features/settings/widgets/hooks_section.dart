@@ -136,7 +136,7 @@ class _HooksSectionState extends ConsumerState<HooksSection> {
           )
         else if (_hooks == null || _hooks!.isEmpty)
           Text(
-            'No hooks registered. Add scripts to .parachute/hooks/',
+            'No hooks configured. Add hooks to .claude/settings.json',
             style: TextStyle(
               fontSize: TypographyTokens.bodySmall,
               color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
