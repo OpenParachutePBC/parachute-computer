@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'chat_message.dart';
 
 /// Represents the full SDK transcript for a session
@@ -179,11 +181,35 @@ class SessionTranscript {
                   }
                 }
               }
-              pendingAssistantContent.add(MessageContent.toolUse(ToolCall(
-                id: block['id'] as String? ?? '',
-                name: block['name'] as String? ?? '',
-                input: block['input'] as Map<String, dynamic>? ?? {},
-              )));
+
+              final toolName = block['name'] as String? ?? '';
+              final toolId = block['id'] as String? ?? '';
+
+              if (toolName == 'AskUserQuestion') {
+                // Render as interactive question card instead of generic tool call
+                final input = block['input'] as Map<String, dynamic>? ?? {};
+                final questions = (input['questions'] as List?)
+                    ?.map((q) => q as Map<String, dynamic>)
+                    .toList() ?? [];
+
+                final answers = _findToolResult(toolId);
+                final status = _determineQuestionStatus(answers);
+
+                pendingAssistantContent.add(MessageContent.userQuestion(
+                  UserQuestionData(
+                    toolUseId: toolId,
+                    questions: questions,
+                    answers: answers,
+                    status: status,
+                  ),
+                ));
+              } else {
+                pendingAssistantContent.add(MessageContent.toolUse(ToolCall(
+                  id: toolId,
+                  name: toolName,
+                  input: block['input'] as Map<String, dynamic>? ?? {},
+                )));
+              }
             } else if (blockType == 'thinking') {
               final thinking = block['thinking'] as String? ?? '';
               if (thinking.isNotEmpty) {
@@ -208,6 +234,43 @@ class SessionTranscript {
     }
 
     return messages;
+  }
+
+  /// Find tool_result matching a tool_use ID in the transcript events.
+  /// Returns the parsed answers map, or null if no result found (still pending).
+  Map<String, dynamic>? _findToolResult(String toolUseId) {
+    if (toolUseId.isEmpty) return null;
+    for (final event in events) {
+      if (event.type != 'user') continue;
+      final content = event.message?['content'];
+      if (content is! List) continue;
+      for (final block in content) {
+        if (block is! Map) continue;
+        if (block['type'] == 'tool_result' && block['tool_use_id'] == toolUseId) {
+          // The tool_result content is typically a string with the JSON answers
+          final resultContent = block['content'] as String?;
+          if (resultContent == null || resultContent.isEmpty) {
+            return {}; // Empty result = timeout/dismissed
+          }
+          // The answers are passed as a JSON string in the tool_result content
+          try {
+            final parsed = jsonDecode(resultContent);
+            if (parsed is Map<String, dynamic>) return parsed;
+          } catch (_) {
+            // Not valid JSON, treat as answered
+          }
+          return {}; // Fallback: treat as answered with empty
+        }
+      }
+    }
+    return null; // No result found = still pending
+  }
+
+  /// Determine question status from answers
+  static UserQuestionStatus _determineQuestionStatus(Map<String, dynamic>? answers) {
+    if (answers == null) return UserQuestionStatus.pending;
+    if (answers.isEmpty) return UserQuestionStatus.timeout;
+    return UserQuestionStatus.answered;
   }
 }
 

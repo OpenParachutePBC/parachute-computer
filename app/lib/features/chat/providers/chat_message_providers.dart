@@ -863,11 +863,20 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
         }
         break;
 
+      case StreamEventType.userQuestion:
+        // Restore pendingUserQuestion when reattaching to background stream
+        debugPrint('[ChatMessagesNotifier] Restoring user question from reattach: ${event.questionRequestId}');
+        state = state.copyWith(
+          pendingUserQuestion: {
+            'requestId': event.questionRequestId,
+            'sessionId': event.sessionId,
+            'questions': event.questions,
+          },
+        );
+        break;
+
       case StreamEventType.init:
       case StreamEventType.sessionUnavailable:
-      case StreamEventType.userQuestion:
-        // userQuestion events are handled separately via pendingUserQuestion state
-        // The UI should listen for these and display the UserQuestionCard
       case StreamEventType.unknown:
         // Ignore these events in join stream
         break;
@@ -1859,7 +1868,11 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
         state = state.copyWith(clearPendingUserQuestion: true);
         debugPrint('[ChatMessagesNotifier] Question answered successfully');
       } else {
-        debugPrint('[ChatMessagesNotifier] Failed to submit answer');
+        // Backend likely timed out — clear the stale floating card.
+        // The inline card in the transcript will show the correct status
+        // when the session is reloaded.
+        debugPrint('[ChatMessagesNotifier] Answer rejected (question likely expired), clearing');
+        state = state.copyWith(clearPendingUserQuestion: true);
       }
 
       return success;
