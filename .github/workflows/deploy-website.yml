@@ -1,9 +1,9 @@
-name: Deploy docs to GitHub Pages
+name: Deploy website to GitHub Pages
 
 on:
   push:
     branches: [main]
-    paths: [docs/**]
+    paths: [website/**]
   workflow_dispatch:
 
 permissions:
@@ -26,7 +26,7 @@ jobs:
           node-version: 22
 
       - name: Install and build
-        working-directory: docs
+        working-directory: website
         run: |
           npm ci
           npx @11ty/eleventy
@@ -34,7 +34,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: docs/_site
+          path: website/_site
 
   deploy:
     needs: build

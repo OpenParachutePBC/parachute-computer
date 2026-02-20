@@ -1,4 +1,4 @@
-# docs/ — parachute.computer
+# website/ — parachute.computer
 
 > Website, blog, and documentation for Parachute Computer.
 > Built with Eleventy (11ty). Domain: **parachute.computer**
@@ -8,7 +8,7 @@
 ## Structure
 
 ```
-docs/
+website/
 ├── index.njk               # Landing page
 ├── roadmap.njk              # Current roadmap / scope of work
 ├── style.css                # Shared styles (all pages use this)
@@ -36,7 +36,7 @@ docs/
 ## Building the Site
 
 ```bash
-cd docs
+cd website
 npm install                  # First time only
 npx @11ty/eleventy           # Build to _site/
 npx @11ty/eleventy --serve   # Dev server with hot reload
@@ -125,6 +125,6 @@ These are technical reference docs for developers. They describe how the server 
 
 GitHub Pages deployment needs to run `npx @11ty/eleventy` and serve `_site/`. Options:
 - GitHub Action that builds on push to main, then deploys the `_site/` output
-- Or configure GitHub Pages to use a GitHub Action workflow instead of serving directly from `docs/`
+- Or configure GitHub Pages to use a GitHub Action workflow instead of serving directly from `website/`
 
 **CNAME**: `parachute.computer` (DNS needs to point to GitHub Pages)
