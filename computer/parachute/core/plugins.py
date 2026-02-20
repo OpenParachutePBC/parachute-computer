@@ -2,12 +2,12 @@
 Plugin discovery and indexing.
 
 Discovers installed plugins from:
-1. {vault}/.parachute/plugins/  — Parachute-managed plugins (installed via API)
-2. ~/.claude/plugins/installed_plugins.json — Claude Code CLI installed plugins
-3. ~/.claude/plugins/ top-level dirs — Legacy user plugins (direct placement)
+1. Install manifests in {vault}/.parachute/plugin-manifests/ — manifest-based (new)
+2. {vault}/.parachute/plugins/ — legacy Parachute-managed plugins (backwards compat)
+3. ~/.claude/plugins/installed_plugins.json — Claude Code CLI installed plugins
 
-Each plugin must have .claude-plugin/plugin.json to be recognized.
-Plugin contents (skills, agents, MCPs) are indexed for capability filtering.
+Plugin contents (skills, agents, MCPs) are tracked in install manifests rather
+than discovered by recursive directory scanning.
 """
 
 import json
@@ -15,7 +15,8 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-from parachute.models.plugin import InstalledPlugin, PluginManifest
+from parachute.core.plugin_installer import list_install_manifests
+from parachute.models.plugin import InstalledPlugin
 
 logger = logging.getLogger(__name__)
 
@@ -26,53 +27,78 @@ def discover_plugins(
 ) -> list[InstalledPlugin]:
     """Discover all installed plugins.
 
+    Primary source: install manifests in plugin-manifests/.
+    Fallback: legacy .parachute/plugins/ directories and CLI plugins.
+
     Args:
         vault_path: Path to the vault directory
         include_user: Whether to include ~/.claude/plugins/
 
     Returns:
-        List of discovered and indexed plugins
+        List of discovered plugins
     """
     plugins: list[InstalledPlugin] = []
-    seen_paths: set[str] = set()  # Deduplicate by path
+    seen_slugs: set[str] = set()
 
-    # 1. Parachute-managed plugins
-    plugin_dir = vault_path / ".parachute" / "plugins"
-    if plugin_dir.is_dir():
-        for entry in sorted(plugin_dir.iterdir()):
-            if entry.is_dir() and (entry / ".claude-plugin" / "plugin.json").exists():
-                plugin = _index_plugin(entry, source="parachute")
+    # 1. Manifest-based plugins (new install format)
+    for manifest in list_install_manifests(vault_path):
+        slug = manifest.get("slug", "")
+        if not slug:
+            continue
+
+        installed_files = manifest.get("installed_files", {})
+        plugins.append(InstalledPlugin(
+            slug=slug,
+            name=manifest.get("name", slug),
+            version=manifest.get("version", "0.0.0"),
+            description=manifest.get("description", ""),
+            author=manifest.get("author"),
+            source="parachute",
+            source_url=manifest.get("source_url"),
+            path=str(vault_path / ".parachute" / "plugin-manifests" / f"{slug}.json"),
+            skills=_extract_skill_names(installed_files.get("skills", [])),
+            agents=_extract_agent_names(installed_files.get("agents", [])),
+            mcps={name: {} for name in installed_files.get("mcps", [])},
+            installed_at=manifest.get("installed_at"),
+        ))
+        seen_slugs.add(slug)
+
+    # 2. Legacy: .parachute/plugins/ directories (backwards compat)
+    legacy_dir = vault_path / ".parachute" / "plugins"
+    if legacy_dir.is_dir():
+        for entry in sorted(legacy_dir.iterdir()):
+            if entry.is_dir() and entry.name not in seen_slugs:
+                plugin = _index_legacy_plugin(entry, source="parachute")
                 if plugin:
                     plugins.append(plugin)
-                    seen_paths.add(str(entry.resolve()))
+                    seen_slugs.add(plugin.slug)
 
-    # 2. Claude Code CLI installed plugins (from installed_plugins.json)
+    # 3. Claude Code CLI installed plugins
     if include_user:
         cli_plugins = _discover_cli_plugins()
         for plugin in cli_plugins:
-            resolved = str(Path(plugin.path).resolve())
-            if resolved not in seen_paths:
+            if plugin.slug not in seen_slugs:
                 plugins.append(plugin)
-                seen_paths.add(resolved)
-
-        # 3. Legacy: top-level dirs in ~/.claude/plugins/ with plugin.json
-        user_dir = Path.home() / ".claude" / "plugins"
-        if user_dir.is_dir():
-            for entry in sorted(user_dir.iterdir()):
-                if (
-                    entry.is_dir()
-                    and entry.name not in ("cache", "marketplaces")
-                    and (entry / ".claude-plugin" / "plugin.json").exists()
-                ):
-                    resolved = str(entry.resolve())
-                    if resolved not in seen_paths:
-                        plugin = _index_plugin(entry, source="user")
-                        if plugin:
-                            plugins.append(plugin)
-                            seen_paths.add(resolved)
+                seen_slugs.add(plugin.slug)
 
     logger.info(f"Discovered {len(plugins)} plugins")
     return plugins
+
+
+def _extract_skill_names(skill_paths: list[str]) -> list[str]:
+    """Extract skill names from installed file paths."""
+    names: list[str] = []
+    for path in skill_paths:
+        # ".skills/plugin-foo-my-skill.md" → "plugin-foo-my-skill"
+        # ".skills/plugin-foo-my-skill/" → "plugin-foo-my-skill"
+        name = Path(path).stem if path.endswith(".md") else Path(path.rstrip("/")).name
+        names.append(name)
+    return sorted(names)
+
+
+def _extract_agent_names(agent_paths: list[str]) -> list[str]:
+    """Extract agent names from installed file paths."""
+    return sorted(Path(p).stem for p in agent_paths)
 
 
 def _discover_cli_plugins() -> list[InstalledPlugin]:
@@ -87,7 +113,6 @@ def _discover_cli_plugins() -> list[InstalledPlugin]:
         logger.warning(f"Failed to read installed_plugins.json: {e}")
         return []
 
-    version = data.get("version", 1)
     plugins_map = data.get("plugins", {})
     results: list[InstalledPlugin] = []
 
@@ -95,7 +120,6 @@ def _discover_cli_plugins() -> list[InstalledPlugin]:
         if not isinstance(installs, list) or not installs:
             continue
 
-        # Use the first (or most recent) installation entry
         install = installs[0]
         install_path = install.get("installPath")
         if not install_path:
@@ -106,13 +130,11 @@ def _discover_cli_plugins() -> list[InstalledPlugin]:
             logger.debug(f"CLI plugin path does not exist: {install_path}")
             continue
 
-        # Extract slug from key: "compound-engineering@every-marketplace" → "compound-engineering"
         slug = plugin_key.split("@")[0] if "@" in plugin_key else plugin_key
 
-        plugin = _index_plugin(path, source="cli")
+        plugin = _index_legacy_plugin(path, source="cli")
         if plugin:
             plugin.slug = slug
-            # Override version from installed_plugins.json if available
             cli_version = install.get("version")
             if cli_version:
                 plugin.version = cli_version
@@ -121,33 +143,67 @@ def _discover_cli_plugins() -> list[InstalledPlugin]:
     return results
 
 
-def _index_plugin(path: Path, source: str = "parachute") -> Optional[InstalledPlugin]:
-    """Index a single plugin directory.
+def _index_legacy_plugin(path: Path, source: str = "parachute") -> Optional[InstalledPlugin]:
+    """Index a legacy plugin directory (with .claude-plugin/plugin.json or SDK-layout).
 
-    Reads the manifest and discovers skills, agents, and MCPs.
+    Supports both old .claude-plugin/plugin.json format and SDK-layout plugins.
     """
-    try:
-        manifest_path = path / ".claude-plugin" / "plugin.json"
-        manifest_data = json.loads(manifest_path.read_text())
-        manifest = PluginManifest(**manifest_data)
-    except (json.JSONDecodeError, OSError, ValueError) as e:
-        logger.warning(f"Failed to read plugin manifest at {path}: {e}")
-        return None
+    # Try .claude-plugin/plugin.json first (legacy format)
+    manifest_path = path / ".claude-plugin" / "plugin.json"
+    name = path.name
+    version = "0.0.0"
+    description = ""
+    author = None
+    source_url = None
+    installed_at = None
 
+    if manifest_path.exists():
+        try:
+            manifest_data = json.loads(manifest_path.read_text())
+            name = manifest_data.get("name") or name
+            version = manifest_data.get("version", version)
+            description = manifest_data.get("description", "")
+            a = manifest_data.get("author")
+            if isinstance(a, str):
+                author = a
+            elif isinstance(a, dict):
+                author = a.get("name")
+            source_url = manifest_data.get("source_url") or manifest_data.get("repository")
+            installed_at = manifest_data.get("installed_at")
+        except (json.JSONDecodeError, OSError, ValueError):
+            pass
+    else:
+        # Try root plugin.json (SDK-layout)
+        root_manifest = path / "plugin.json"
+        if root_manifest.exists():
+            try:
+                data = json.loads(root_manifest.read_text())
+                name = data.get("name") or name
+                version = data.get("version", version)
+                description = data.get("description", "")
+                a = data.get("author")
+                if isinstance(a, str):
+                    author = a
+                elif isinstance(a, dict):
+                    author = a.get("name")
+            except (json.JSONDecodeError, OSError):
+                pass
+
+    # Scan content
     skills = _discover_plugin_skills(path)
     agents = _discover_plugin_agents(path)
-    mcps = _discover_plugin_mcps(path, manifest_data)
+    mcps = _discover_plugin_mcps(path)
 
-    # Check for source_url in manifest (set during install)
-    source_url = manifest_data.get("source_url") or manifest_data.get("repository")
-    installed_at = manifest_data.get("installed_at")
+    # Must have at least something recognizable
+    if not skills and not agents and not mcps and not manifest_path.exists():
+        return None
 
     return InstalledPlugin(
         slug=path.name,
-        name=manifest.name or path.name,
-        version=manifest.version,
-        description=manifest.description,
-        author=manifest.author_name,
+        name=name,
+        version=version,
+        description=description,
+        author=author,
         source=source,
         source_url=source_url,
         path=str(path),
@@ -167,10 +223,8 @@ def _discover_plugin_skills(path: Path) -> list[str]:
 
     for entry in skills_dir.iterdir():
         if entry.is_file() and entry.suffix == ".md":
-            # Single-file skill: skills/my-skill.md
             skills.append(entry.stem)
         elif entry.is_dir():
-            # Directory skill: skills/my-skill/SKILL.md
             if (entry / "SKILL.md").exists() or (entry / "index.md").exists():
                 skills.append(entry.name)
 
@@ -180,12 +234,16 @@ def _discover_plugin_skills(path: Path) -> list[str]:
 def _discover_plugin_agents(path: Path) -> list[str]:
     """Discover agent names inside a plugin."""
     agents: list[str] = []
-    agents_dir = path / "agents"
+
+    # Check SDK-layout .claude/agents/
+    agents_dir = path / ".claude" / "agents"
+    if not agents_dir.is_dir():
+        # Fallback to legacy agents/ directory
+        agents_dir = path / "agents"
     if not agents_dir.is_dir():
         return agents
 
     for entry in agents_dir.rglob("*.md"):
-        # Support nested directories: agents/review/code-reviewer.md
         agents.append(entry.stem)
     for entry in agents_dir.rglob("*.yaml"):
         agents.append(entry.stem)
@@ -195,14 +253,10 @@ def _discover_plugin_agents(path: Path) -> list[str]:
     return sorted(set(agents))
 
 
-def _discover_plugin_mcps(path: Path, manifest_data: dict = None) -> dict:
-    """Discover MCP server configs inside a plugin.
-
-    Checks both .mcp.json file and mcpServers in plugin.json manifest.
-    """
+def _discover_plugin_mcps(path: Path) -> dict:
+    """Discover MCP server configs inside a plugin."""
     mcps = {}
 
-    # 1. Check .mcp.json file
     mcp_json = path / ".mcp.json"
     if mcp_json.exists():
         try:
@@ -213,13 +267,22 @@ def _discover_plugin_mcps(path: Path, manifest_data: dict = None) -> dict:
         except (json.JSONDecodeError, OSError) as e:
             logger.warning(f"Failed to read plugin MCP config at {mcp_json}: {e}")
 
-    # 2. Check mcpServers in plugin.json manifest
-    if manifest_data and isinstance(manifest_data.get("mcpServers"), dict):
-        mcps.update(manifest_data["mcpServers"])
-
     return mcps
 
 
 def get_plugin_dirs(plugins: list[InstalledPlugin]) -> list[Path]:
-    """Get plugin directory paths for passing to SDK."""
-    return [Path(p.path) for p in plugins]
+    """Get plugin directory paths for passing to SDK.
+
+    Only returns paths for legacy plugins that are actual directories on disk.
+    Manifest-based plugins don't need directory passing — their content is
+    already in vault standard locations.
+    """
+    dirs: list[Path] = []
+    for p in plugins:
+        path = Path(p.path)
+        # Skip manifest-based plugins (path points to manifest JSON, not a dir)
+        if path.suffix == ".json":
+            continue
+        if path.is_dir():
+            dirs.append(path)
+    return dirs

@@ -1,12 +1,12 @@
 """
 Plugin models.
 
-Plugins follow the Claude Code plugin format:
-  {slug}/.claude-plugin/plugin.json  — manifest
-  {slug}/skills/                     — skill files (SKILL.md)
-  {slug}/agents/                     — agent definitions
-  {slug}/commands/                   — slash commands
-  {slug}/.mcp.json                   — MCP server configs
+Plugins use SDK-layout conventions:
+  {slug}/.claude/agents/   — subagent definitions (SDK-native)
+  {slug}/skills/           — skill files (SKILL.md)
+  {slug}/.mcp.json         — MCP server configs
+  {slug}/plugin.json       — optional metadata (name, version, author)
+  {slug}/.claude-plugin/plugin.json  — legacy manifest (backwards compat)
 """
 
 from typing import Any, Optional

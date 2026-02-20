@@ -553,28 +553,33 @@ class Orchestrator:
                 plugin_dirs.append(skills_plugin_dir)
                 logger.info(f"Generated skills plugin at {skills_plugin_dir}")
 
-            # Discover installed plugins (parachute-managed + user)
+            # Discover installed plugins (parachute-managed + user + CLI)
+            # Manifest-based plugins have content in vault standard locations already.
+            # Legacy/CLI plugins still need plugin_dirs for SDK discovery.
             settings = get_settings()
             installed_plugins = discover_plugins(
                 self.vault_path,
                 include_user=settings.include_user_plugins,
             )
-            plugin_dirs.extend(get_plugin_dirs(installed_plugins))
+            legacy_plugin_dirs = get_plugin_dirs(installed_plugins)
+            plugin_dirs.extend(legacy_plugin_dirs)
 
-            # Merge plugin MCPs into global MCPs
+            # Merge MCPs from legacy/CLI plugins only (manifest-based plugins
+            # already have their MCPs copied into vault/.mcp.json at install time)
             for plugin in installed_plugins:
+                # Skip manifest-based plugins (path ends in .json)
+                if Path(plugin.path).suffix == ".json":
+                    continue
                 if plugin.mcps and resolved_mcps is not None:
                     for mcp_name, mcp_config in plugin.mcps.items():
                         if mcp_name not in resolved_mcps:
                             resolved_mcps[mcp_name] = mcp_config
                             logger.info(f"Added MCP '{mcp_name}' from plugin '{plugin.slug}'")
-                        else:
-                            logger.debug(f"MCP '{mcp_name}' from plugin '{plugin.slug}' skipped (already exists)")
 
-            if installed_plugins:
+            if legacy_plugin_dirs:
                 logger.info(
                     f"Discovered {len(installed_plugins)} plugins, "
-                    f"{len(plugin_dirs)} total plugin dirs"
+                    f"{len(legacy_plugin_dirs)} legacy plugin dirs"
                 )
 
             # Load additional configured plugin directories

@@ -2,7 +2,8 @@
 Plugin management API endpoints.
 
 CRUD operations for plugins installed from GitHub URLs.
-Plugins are stored in {vault}/.parachute/plugins/{slug}/.
+Plugins are installed by copying content to vault standard locations
+and tracked via install manifests in {vault}/.parachute/plugin-manifests/.
 """
 
 import logging
@@ -53,6 +54,26 @@ def _plugin_to_dict(plugin) -> dict[str, Any]:
     }
 
 
+def _manifest_to_dict(manifest: dict[str, Any]) -> dict[str, Any]:
+    """Convert an install manifest dict to API response dict."""
+    installed = manifest.get("installed_files", {})
+    return {
+        "slug": manifest.get("slug", ""),
+        "name": manifest.get("name", ""),
+        "version": manifest.get("version", "0.0.0"),
+        "description": manifest.get("description", ""),
+        "author": manifest.get("author"),
+        "source": "parachute",
+        "sourceUrl": manifest.get("source_url"),
+        "path": "",
+        "skills": installed.get("skills", []),
+        "agents": installed.get("agents", []),
+        "mcps": installed.get("mcps", []),
+        "mcpConfigs": {},
+        "installedAt": manifest.get("installed_at"),
+    }
+
+
 @router.get("/plugins")
 async def list_plugins(request: Request) -> dict[str, Any]:
     """List all installed plugins."""
@@ -83,13 +104,13 @@ async def install_plugin(request: Request, body: InstallPluginInput) -> dict[str
         raise HTTPException(status_code=400, detail="URL is required")
 
     try:
-        plugin = await install_plugin_from_url(
+        manifest = await install_plugin_from_url(
             vault_path=settings.vault_path,
             url=body.url,
             slug=body.slug,
         )
-        logger.info(f"Installed plugin '{plugin.slug}' from {body.url}")
-        return {"success": True, "plugin": _plugin_to_dict(plugin)}
+        logger.info(f"Installed plugin '{manifest['slug']}' from {body.url}")
+        return {"success": True, "plugin": _manifest_to_dict(manifest)}
 
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -124,8 +145,8 @@ async def update_plugin_endpoint(request: Request, slug: str) -> dict[str, Any]:
     settings = get_settings()
 
     try:
-        plugin = await update_plugin(settings.vault_path, slug)
-        return {"success": True, "plugin": _plugin_to_dict(plugin)}
+        manifest = await update_plugin(settings.vault_path, slug)
+        return {"success": True, "plugin": _manifest_to_dict(manifest)}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except RuntimeError as e:
