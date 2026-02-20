@@ -32,7 +32,7 @@ import sys
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -94,10 +94,32 @@ async def handle_stop_hook(hook_input: dict) -> None:
             logger.debug("No exchange to summarize")
             return
 
-        # 2. Get session title from database if available
-        session_title = await get_session_title(session_id)
+        exchange_num = exchange.get("exchange_number", 1)
 
-        # 3. Call the summarizer (uses SDK internally)
+        # 2. Decide whether this exchange warrants a title update
+        should_update_title = _should_update_title(exchange_num)
+
+        if not should_update_title:
+            # Still log activity, but skip the Haiku call
+            session_title = await get_session_title(session_id)
+            await append_activity_log(
+                session_id=session_id,
+                session_title=session_title,
+                agent_type=await get_session_agent_type(session_id),
+                exchange_number=exchange_num,
+                summary=f"Exchange #{exchange_num} (skipped summarization)",
+            )
+            return
+
+        # 3. Check if user manually renamed this session — don't overwrite
+        session, session_title = await get_session_with_title(session_id)
+        title_source = None
+        if session and session.metadata:
+            title_source = session.metadata.get("title_source")
+
+        user_renamed = title_source == "user"
+
+        # 4. Call the summarizer (uses SDK internally)
         summary, new_title = await call_summarizer(
             session_id=session_id,
             session_title=session_title,
@@ -105,25 +127,38 @@ async def handle_stop_hook(hook_input: dict) -> None:
             assistant_response=exchange["assistant_response"],
             tools_used=exchange.get("tools_used", []),
             thinking=exchange.get("thinking", ""),
-            exchange_number=exchange.get("exchange_number", 1),
+            exchange_number=exchange_num,
         )
 
-        # 4. Append to activity log
+        # 5. Append to activity log
         await append_activity_log(
             session_id=session_id,
             session_title=session_title,
             agent_type=await get_session_agent_type(session_id),
-            exchange_number=exchange.get("exchange_number", 1),
+            exchange_number=exchange_num,
             summary=summary,
         )
 
-        # 5. Update session title if changed
-        if new_title and new_title != "NO_CHANGE" and new_title != session_title:
-            await update_session_title(session_id, new_title)
+        # 6. Update session title if changed (and user hasn't renamed it)
+        if not user_renamed and new_title and new_title != "NO_CHANGE" and new_title != session_title:
+            await update_session_title(session_id, new_title, title_source="ai")
 
     except Exception as e:
         # Fire-and-forget - log but don't fail
         logger.warning(f"Activity hook failed: {e}")
+
+
+# Cadence control: don't call Haiku on every exchange
+_TITLE_UPDATE_EXCHANGES = {1, 3, 5}  # Always fire on these
+_TITLE_UPDATE_INTERVAL = 10           # After 5, fire every 10th
+
+
+def _should_update_title(exchange_number: int) -> bool:
+    """Decide whether this exchange warrants a title update via Haiku."""
+    return (
+        exchange_number in _TITLE_UPDATE_EXCHANGES
+        or (exchange_number > 5 and exchange_number % _TITLE_UPDATE_INTERVAL == 0)
+    )
 
 
 def read_last_exchange(transcript_path: Path) -> Optional[dict]:
@@ -221,6 +256,17 @@ async def get_session_title(session_id: str) -> Optional[str]:
         return session.title if session else None
     except Exception:
         return None
+
+
+async def get_session_with_title(session_id: str) -> tuple[Optional[Any], Optional[str]]:
+    """Get session object and title from the database."""
+    try:
+        from parachute.db.database import get_database
+        db = await get_database()
+        session = await db.get_session(session_id)
+        return (session, session.title) if session else (None, None)
+    except Exception:
+        return None, None
 
 
 async def get_session_agent_type(session_id: str) -> Optional[str]:
@@ -384,14 +430,21 @@ async def append_activity_log(
         f.write(json.dumps(entry) + "\n")
 
 
-async def update_session_title(session_id: str, new_title: str) -> None:
-    """Update session title in the database."""
+async def update_session_title(
+    session_id: str, new_title: str, title_source: str = "ai"
+) -> None:
+    """Update session title and title_source in the database."""
     try:
         from parachute.db.database import get_database
         from parachute.models.session import SessionUpdate
 
         db = await get_database()
-        await db.update_session(session_id, SessionUpdate(title=new_title))
+        session = await db.get_session(session_id)
+        metadata = dict(session.metadata or {}) if session and session.metadata else {}
+        metadata["title_source"] = title_source
+        await db.update_session(
+            session_id, SessionUpdate(title=new_title, metadata=metadata)
+        )
     except Exception as e:
         logger.warning(f"Failed to update session title: {e}")
 

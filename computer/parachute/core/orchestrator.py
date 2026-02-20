@@ -79,6 +79,13 @@ def generate_title_from_message(message: str, max_length: int = 60) -> str:
     return first_line
 
 
+def _set_title_source(session, source: str) -> None:
+    """Set title_source in session metadata (mutates the placeholder before finalization)."""
+    if session.metadata is None:
+        session.metadata = {}
+    session.metadata["title_source"] = source
+
+
 # Default system prompt for vault agent
 DEFAULT_VAULT_PROMPT = """# Parachute Agent
 
@@ -885,6 +892,7 @@ class Orchestrator:
                             if is_new and not sbx["finalized"]:
                                 try:
                                     title = generate_title_from_message(message) if message.strip() else None
+                                    _set_title_source(sbx["session"], "default")
                                     sbx["session"] = await self.session_manager.finalize_session(
                                         sbx["session"], sandbox_sid, captured_model, title=title,
                                         agent_type=agent_type,
@@ -1013,6 +1021,7 @@ class Orchestrator:
                     # even if the user navigates away before the response completes
                     if is_new and not session_finalized and captured_session_id:
                         title = generate_title_from_message(message) if message.strip() else None
+                        _set_title_source(session, "default")
                         session = await self.session_manager.finalize_session(
                             session, captured_session_id, captured_model, title=title,
                             agent_type=agent_type,
@@ -1181,6 +1190,7 @@ class Orchestrator:
             if is_new and captured_session_id and not session_finalized:
                 # Generate title from the user's first message
                 title = generate_title_from_message(message) if message.strip() else None
+                _set_title_source(session, "default")
                 session = await self.session_manager.finalize_session(
                     session, captured_session_id, captured_model, title=title,
                     agent_type=agent_type,
