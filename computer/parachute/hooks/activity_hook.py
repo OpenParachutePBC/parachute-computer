@@ -97,26 +97,18 @@ async def handle_stop_hook(hook_input: dict) -> None:
         exchange_num = exchange.get("exchange_number", 1)
 
         # 2. Decide whether this exchange warrants a title update
-        should_update_title = _should_update_title(exchange_num)
-
-        if not should_update_title:
-            # Still log activity, but skip the Haiku call
-            session_title = await get_session_title(session_id)
-            await append_activity_log(
-                session_id=session_id,
-                session_title=session_title,
-                agent_type=await get_session_agent_type(session_id),
-                exchange_number=exchange_num,
-                summary=f"Exchange #{exchange_num} (skipped summarization)",
-            )
+        if not _should_update_title(exchange_num):
             return
 
-        # 3. Check if user manually renamed this session — don't overwrite
-        session, session_title = await get_session_with_title(session_id)
-        title_source = None
-        if session and session.metadata:
-            title_source = session.metadata.get("title_source")
-
+        # 3. Fetch session once — reuse for title, metadata, and agent_type
+        session = await _get_session(session_id)
+        session_title = session.title if session else None
+        agent_type = session.get_agent_type() if session else None
+        title_source = (
+            session.metadata.get("title_source")
+            if session and session.metadata
+            else None
+        )
         user_renamed = title_source == "user"
 
         # 4. Call the summarizer (uses SDK internally)
@@ -134,7 +126,7 @@ async def handle_stop_hook(hook_input: dict) -> None:
         await append_activity_log(
             session_id=session_id,
             session_title=session_title,
-            agent_type=await get_session_agent_type(session_id),
+            agent_type=agent_type,
             exchange_number=exchange_num,
             summary=summary,
         )
@@ -247,36 +239,14 @@ def read_last_exchange(transcript_path: Path) -> Optional[dict]:
     }
 
 
-async def get_session_title(session_id: str) -> Optional[str]:
-    """Get session title from the database."""
+async def _get_session(session_id: str) -> Optional[Any]:
+    """Fetch a session from the database. Returns None on any failure."""
     try:
         from parachute.db.database import get_database
         db = await get_database()
-        session = await db.get_session(session_id)
-        return session.title if session else None
-    except Exception:
-        return None
-
-
-async def get_session_with_title(session_id: str) -> tuple[Optional[Any], Optional[str]]:
-    """Get session object and title from the database."""
-    try:
-        from parachute.db.database import get_database
-        db = await get_database()
-        session = await db.get_session(session_id)
-        return (session, session.title) if session else (None, None)
-    except Exception:
-        return None, None
-
-
-async def get_session_agent_type(session_id: str) -> Optional[str]:
-    """Get session agent_type from the database."""
-    try:
-        from parachute.db.database import get_database
-        db = await get_database()
-        session = await db.get_session(session_id)
-        return session.get_agent_type() if session else None
-    except Exception:
+        return await db.get_session(session_id)
+    except Exception as e:
+        logger.debug(f"Failed to fetch session {session_id[:8]}: {e}")
         return None
 
 
@@ -378,7 +348,8 @@ async def get_daily_summarizer_session(vault_path: Path, date: str) -> Optional[
     try:
         cache = json.loads(cache_path.read_text())
         return cache.get(date)
-    except Exception:
+    except Exception as e:
+        logger.debug(f"Failed to read summarizer cache: {e}")
         return None
 
 
@@ -392,8 +363,8 @@ async def save_daily_summarizer_session(vault_path: Path, date: str, session_id:
     if cache_path.exists():
         try:
             cache = json.loads(cache_path.read_text())
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Failed to read existing summarizer cache: {e}")
 
     cache[date] = session_id
     cache_path.write_text(json.dumps(cache, indent=2))
@@ -438,10 +409,10 @@ async def update_session_title(
         from parachute.db.database import get_database
         from parachute.models.session import SessionUpdate
 
-        db = await get_database()
-        session = await db.get_session(session_id)
+        session = await _get_session(session_id)
         metadata = dict(session.metadata or {}) if session and session.metadata else {}
         metadata["title_source"] = title_source
+        db = await get_database()
         await db.update_session(
             session_id, SessionUpdate(title=new_title, metadata=metadata)
         )

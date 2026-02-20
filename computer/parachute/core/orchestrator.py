@@ -53,7 +53,7 @@ from parachute.models.events import (
     UserQuestionEvent,
     WarningEvent,
 )
-from parachute.models.session import ResumeInfo, SessionSource, TrustLevel
+from parachute.models.session import ResumeInfo, Session, SessionSource, TrustLevel
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +79,7 @@ def generate_title_from_message(message: str, max_length: int = 60) -> str:
     return first_line
 
 
-def _set_title_source(session, source: str) -> None:
+def _set_title_source(session: Session, source: str) -> None:
     """Set title_source in session metadata (mutates the placeholder before finalization)."""
     if session.metadata is None:
         session.metadata = {}
