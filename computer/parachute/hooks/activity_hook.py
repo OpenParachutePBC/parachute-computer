@@ -32,7 +32,7 @@ import sys
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -94,10 +94,24 @@ async def handle_stop_hook(hook_input: dict) -> None:
             logger.debug("No exchange to summarize")
             return
 
-        # 2. Get session title from database if available
-        session_title = await get_session_title(session_id)
+        exchange_num = exchange.get("exchange_number", 1)
 
-        # 3. Call the summarizer (uses SDK internally)
+        # 2. Decide whether this exchange warrants a title update
+        if not _should_update_title(exchange_num):
+            return
+
+        # 3. Fetch session once — reuse for title, metadata, and agent_type
+        session = await _get_session(session_id)
+        session_title = session.title if session else None
+        agent_type = session.get_agent_type() if session else None
+        title_source = (
+            session.metadata.get("title_source")
+            if session and session.metadata
+            else None
+        )
+        user_renamed = title_source == "user"
+
+        # 4. Call the summarizer (uses SDK internally)
         summary, new_title = await call_summarizer(
             session_id=session_id,
             session_title=session_title,
@@ -105,25 +119,38 @@ async def handle_stop_hook(hook_input: dict) -> None:
             assistant_response=exchange["assistant_response"],
             tools_used=exchange.get("tools_used", []),
             thinking=exchange.get("thinking", ""),
-            exchange_number=exchange.get("exchange_number", 1),
+            exchange_number=exchange_num,
         )
 
-        # 4. Append to activity log
+        # 5. Append to activity log
         await append_activity_log(
             session_id=session_id,
             session_title=session_title,
-            agent_type=await get_session_agent_type(session_id),
-            exchange_number=exchange.get("exchange_number", 1),
+            agent_type=agent_type,
+            exchange_number=exchange_num,
             summary=summary,
         )
 
-        # 5. Update session title if changed
-        if new_title and new_title != "NO_CHANGE" and new_title != session_title:
-            await update_session_title(session_id, new_title)
+        # 6. Update session title if changed (and user hasn't renamed it)
+        if not user_renamed and new_title and new_title != "NO_CHANGE" and new_title != session_title:
+            await update_session_title(session_id, new_title, title_source="ai")
 
     except Exception as e:
         # Fire-and-forget - log but don't fail
         logger.warning(f"Activity hook failed: {e}")
+
+
+# Cadence control: don't call Haiku on every exchange
+_TITLE_UPDATE_EXCHANGES = {1, 3, 5}  # Always fire on these
+_TITLE_UPDATE_INTERVAL = 10           # After 5, fire every 10th
+
+
+def _should_update_title(exchange_number: int) -> bool:
+    """Decide whether this exchange warrants a title update via Haiku."""
+    return (
+        exchange_number in _TITLE_UPDATE_EXCHANGES
+        or (exchange_number > 5 and exchange_number % _TITLE_UPDATE_INTERVAL == 0)
+    )
 
 
 def read_last_exchange(transcript_path: Path) -> Optional[dict]:
@@ -212,25 +239,14 @@ def read_last_exchange(transcript_path: Path) -> Optional[dict]:
     }
 
 
-async def get_session_title(session_id: str) -> Optional[str]:
-    """Get session title from the database."""
+async def _get_session(session_id: str) -> Optional[Any]:
+    """Fetch a session from the database. Returns None on any failure."""
     try:
         from parachute.db.database import get_database
         db = await get_database()
-        session = await db.get_session(session_id)
-        return session.title if session else None
-    except Exception:
-        return None
-
-
-async def get_session_agent_type(session_id: str) -> Optional[str]:
-    """Get session agent_type from the database."""
-    try:
-        from parachute.db.database import get_database
-        db = await get_database()
-        session = await db.get_session(session_id)
-        return session.get_agent_type() if session else None
-    except Exception:
+        return await db.get_session(session_id)
+    except Exception as e:
+        logger.debug(f"Failed to fetch session {session_id[:8]}: {e}")
         return None
 
 
@@ -332,7 +348,8 @@ async def get_daily_summarizer_session(vault_path: Path, date: str) -> Optional[
     try:
         cache = json.loads(cache_path.read_text())
         return cache.get(date)
-    except Exception:
+    except Exception as e:
+        logger.debug(f"Failed to read summarizer cache: {e}")
         return None
 
 
@@ -346,8 +363,8 @@ async def save_daily_summarizer_session(vault_path: Path, date: str, session_id:
     if cache_path.exists():
         try:
             cache = json.loads(cache_path.read_text())
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Failed to read existing summarizer cache: {e}")
 
     cache[date] = session_id
     cache_path.write_text(json.dumps(cache, indent=2))
@@ -384,14 +401,21 @@ async def append_activity_log(
         f.write(json.dumps(entry) + "\n")
 
 
-async def update_session_title(session_id: str, new_title: str) -> None:
-    """Update session title in the database."""
+async def update_session_title(
+    session_id: str, new_title: str, title_source: str = "ai"
+) -> None:
+    """Update session title and title_source in the database."""
     try:
         from parachute.db.database import get_database
         from parachute.models.session import SessionUpdate
 
+        session = await _get_session(session_id)
+        metadata = dict(session.metadata or {}) if session and session.metadata else {}
+        metadata["title_source"] = title_source
         db = await get_database()
-        await db.update_session(session_id, SessionUpdate(title=new_title))
+        await db.update_session(
+            session_id, SessionUpdate(title=new_title, metadata=metadata)
+        )
     except Exception as e:
         logger.warning(f"Failed to update session title: {e}")
 
