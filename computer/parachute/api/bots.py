@@ -464,17 +464,32 @@ async def approve_pairing(request_id: str, body: PairingApproval):
         request_id, approved=True, trust_level=body.trust_level
     )
 
-    # Add user to connector's allowlist in bots.yaml
-    await _add_to_allowlist(pr.platform, pr.platform_user_id)
+    # Determine if this is a room-based approval (Matrix bridged rooms use room IDs)
+    is_room_approval = pr.platform == "matrix" and pr.platform_user_id.startswith("!")
 
-    # Update running connector's in-memory allowlist and trust cache
+    if is_room_approval:
+        # Room-based approval — add to allowed_rooms
+        await _add_to_allowlist("matrix", pr.platform_user_id, is_room=True)
+
+        # Update running connector's in-memory allowed_rooms
+        connector = _connectors.get("matrix")
+        if connector and hasattr(connector, "allowed_rooms"):
+            if pr.platform_user_id not in connector.allowed_rooms:
+                connector.allowed_rooms.append(pr.platform_user_id)
+    else:
+        # User-based approval (Telegram/Discord/Matrix DM)
+        await _add_to_allowlist(pr.platform, pr.platform_user_id)
+
+        # Update running connector's in-memory allowlist and trust cache
+        connector = _connectors.get(pr.platform)
+        if connector and hasattr(connector, "allowed_users"):
+            if pr.platform_user_id not in [str(u) for u in connector.allowed_users]:
+                typed_id = int(pr.platform_user_id) if pr.platform == "telegram" else pr.platform_user_id
+                connector.allowed_users.append(typed_id)
+
     connector = _connectors.get(pr.platform)
-    if connector and hasattr(connector, "allowed_users"):
-        if pr.platform_user_id not in [str(u) for u in connector.allowed_users]:
-            typed_id = int(pr.platform_user_id) if pr.platform == "telegram" else pr.platform_user_id
-            connector.allowed_users.append(typed_id)
-        if hasattr(connector, "update_trust_override"):
-            connector.update_trust_override(pr.platform_user_id, body.trust_level)
+    if connector and hasattr(connector, "update_trust_override"):
+        connector.update_trust_override(pr.platform_user_id, body.trust_level)
 
     # Activate the pending session: clear pending_approval, update trust level
     linked_session = await db.get_session_by_bot_link(pr.platform, pr.platform_chat_id)
@@ -489,11 +504,26 @@ async def approve_pairing(request_id: str, body: PairingApproval):
         logger.info(f"Activated pending session {linked_session.id[:8]} for approved user")
 
     # Send approval message to user
+    connector = _connectors.get(pr.platform)
     if connector and hasattr(connector, "send_approval_message"):
         try:
             await connector.send_approval_message(pr.platform_chat_id)
         except Exception as e:
             logger.warning(f"Failed to send approval message: {e}")
+
+    # For bridged rooms, send relay setup notice
+    if is_room_approval and linked_session and linked_session.metadata:
+        bridge_meta = linked_session.metadata.get("bridge_metadata", {})
+        bridge_type = bridge_meta.get("bridge_type", "")
+        if bridge_type and connector and hasattr(connector, "send_message"):
+            try:
+                await connector.send_message(
+                    pr.platform_chat_id,
+                    f"To relay my responses back through the bridge, "
+                    f"run `!{bridge_type} set-relay` in this room as the admin user.",
+                )
+            except Exception as e:
+                logger.warning(f"Failed to send relay notice: {e}")
 
     return {"success": True, "request": resolved.model_dump(by_alias=True) if resolved else None}
 
@@ -530,8 +560,8 @@ async def deny_pairing(request_id: str):
     return {"success": True}
 
 
-async def _add_to_allowlist(platform: str, user_id: str) -> None:
-    """Persist a user addition to the platform's allowlist in bots.yaml."""
+async def _add_to_allowlist(platform: str, identifier: str, *, is_room: bool = False) -> None:
+    """Persist a user or room addition to the platform's allowlist in bots.yaml."""
     if not _vault_path:
         return
 
@@ -541,13 +571,17 @@ async def _add_to_allowlist(platform: str, user_id: str) -> None:
         if not platform_config:
             return
 
-        current_users = [str(u) for u in platform_config.allowed_users]
-        if user_id in current_users:
-            return
-
-        # Telegram uses int IDs, Discord uses string IDs
-        typed_id = int(user_id) if platform == "telegram" else user_id
-        platform_config.allowed_users.append(typed_id)
-
-        _write_bots_config(config)
-        logger.info(f"Added user {user_id} to {platform} allowlist")
+        if is_room and hasattr(platform_config, "allowed_rooms"):
+            if identifier not in platform_config.allowed_rooms:
+                platform_config.allowed_rooms.append(identifier)
+                _write_bots_config(config)
+                logger.info(f"Added room {identifier} to {platform} allowed_rooms")
+        else:
+            current_users = [str(u) for u in platform_config.allowed_users]
+            if identifier in current_users:
+                return
+            # Telegram uses int IDs, Discord uses string IDs
+            typed_id = int(identifier) if platform == "telegram" else identifier
+            platform_config.allowed_users.append(typed_id)
+            _write_bots_config(config)
+            logger.info(f"Added user {identifier} to {platform} allowlist")

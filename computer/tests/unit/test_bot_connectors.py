@@ -779,3 +779,274 @@ class TestMatrixConnectorImport:
         from parachute.connectors.matrix_bot import MATRIX_AVAILABLE
         # Should be a boolean regardless of whether matrix-nio is installed
         assert isinstance(MATRIX_AVAILABLE, bool)
+
+
+# ---------------------------------------------------------------------------
+# Bridge detection pattern tests
+# ---------------------------------------------------------------------------
+
+
+class TestBridgePatterns:
+    def test_meta_ghost_pattern(self):
+        from parachute.connectors.matrix_bot import BRIDGE_GHOST_PATTERNS
+        assert any(p.match("@meta_100054638951038:localhost") for p in BRIDGE_GHOST_PATTERNS)
+
+    def test_telegram_ghost_pattern(self):
+        from parachute.connectors.matrix_bot import BRIDGE_GHOST_PATTERNS
+        assert any(p.match("@telegram_123456:example.org") for p in BRIDGE_GHOST_PATTERNS)
+
+    def test_discord_ghost_pattern(self):
+        from parachute.connectors.matrix_bot import BRIDGE_GHOST_PATTERNS
+        assert any(p.match("@discord_987654321:matrix.org") for p in BRIDGE_GHOST_PATTERNS)
+
+    def test_signal_ghost_pattern(self):
+        from parachute.connectors.matrix_bot import BRIDGE_GHOST_PATTERNS
+        assert any(p.match("@signal_12345:localhost") for p in BRIDGE_GHOST_PATTERNS)
+
+    def test_whatsapp_ghost_pattern(self):
+        from parachute.connectors.matrix_bot import BRIDGE_GHOST_PATTERNS
+        assert any(p.match("@whatsapp_15551234567:localhost") for p in BRIDGE_GHOST_PATTERNS)
+
+    def test_non_ghost_user_not_matched(self):
+        from parachute.connectors.matrix_bot import BRIDGE_GHOST_PATTERNS
+        assert not any(p.match("@alice:example.org") for p in BRIDGE_GHOST_PATTERNS)
+        assert not any(p.match("@parachute:localhost") for p in BRIDGE_GHOST_PATTERNS)
+
+    def test_bridge_bot_pattern(self):
+        from parachute.connectors.matrix_bot import BRIDGE_BOT_PATTERNS
+        assert any(p.match("@metabot:localhost") for p in BRIDGE_BOT_PATTERNS)
+        assert any(p.match("@telegrambot:example.org") for p in BRIDGE_BOT_PATTERNS)
+        assert any(p.match("@discordbot:matrix.org") for p in BRIDGE_BOT_PATTERNS)
+
+    def test_non_bot_not_matched(self):
+        from parachute.connectors.matrix_bot import BRIDGE_BOT_PATTERNS
+        assert not any(p.match("@alice:example.org") for p in BRIDGE_BOT_PATTERNS)
+        assert not any(p.match("@parachute:localhost") for p in BRIDGE_BOT_PATTERNS)
+
+
+# ---------------------------------------------------------------------------
+# Bridge detection method tests
+# ---------------------------------------------------------------------------
+
+
+def _make_matrix_connector(**kwargs):
+    """Create a MatrixConnector for testing with mocked client."""
+    from parachute.connectors.matrix_bot import MatrixConnector
+
+    defaults = dict(
+        homeserver_url="http://localhost:6167",
+        user_id="@parachute:localhost",
+        access_token="test-token",
+        device_id="TEST01",
+        server=SimpleNamespace(database=None),
+        allowed_users=[],
+        allowed_rooms=[],
+    )
+    defaults.update(kwargs)
+    return MatrixConnector(**defaults)
+
+
+class TestDetectBridgeRoom:
+    @pytest.mark.asyncio
+    async def test_detects_meta_bridge_dm(self):
+        """Single meta ghost user = bridged DM."""
+        connector = _make_matrix_connector()
+
+        mock_response = SimpleNamespace(
+            members={
+                "@parachute:localhost": {},
+                "@metabot:localhost": {},
+                "@meta_100054638951038:localhost": {},
+            }
+        )
+        connector._client = AsyncMock()
+        connector._client.joined_members = AsyncMock(return_value=mock_response)
+
+        result = await connector._detect_bridge_room("!room:localhost")
+        assert result is not None
+        assert result["bridge_type"] == "meta"
+        assert result["remote_chat_type"] == "dm"
+        assert len(result["ghost_users"]) == 1
+        assert result["is_bridged"] is True
+
+    @pytest.mark.asyncio
+    async def test_detects_telegram_bridge_group(self):
+        """Multiple telegram ghost users = bridged group."""
+        connector = _make_matrix_connector()
+
+        mock_response = SimpleNamespace(
+            members={
+                "@parachute:localhost": {},
+                "@telegrambot:localhost": {},
+                "@telegram_111:localhost": {},
+                "@telegram_222:localhost": {},
+                "@telegram_333:localhost": {},
+            }
+        )
+        connector._client = AsyncMock()
+        connector._client.joined_members = AsyncMock(return_value=mock_response)
+
+        result = await connector._detect_bridge_room("!room:localhost")
+        assert result is not None
+        assert result["bridge_type"] == "telegram"
+        assert result["remote_chat_type"] == "group"
+        assert len(result["ghost_users"]) == 3
+
+    @pytest.mark.asyncio
+    async def test_non_bridged_room_returns_none(self):
+        """Room with only real users returns None."""
+        connector = _make_matrix_connector()
+
+        mock_response = SimpleNamespace(
+            members={
+                "@parachute:localhost": {},
+                "@alice:localhost": {},
+                "@bob:localhost": {},
+            }
+        )
+        connector._client = AsyncMock()
+        connector._client.joined_members = AsyncMock(return_value=mock_response)
+
+        result = await connector._detect_bridge_room("!room:localhost")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_no_client_returns_none(self):
+        """No client returns None."""
+        connector = _make_matrix_connector()
+        connector._client = None
+
+        result = await connector._detect_bridge_room("!room:localhost")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_api_error_returns_none(self):
+        """API error returns None gracefully."""
+        connector = _make_matrix_connector()
+        connector._client = AsyncMock()
+        connector._client.joined_members = AsyncMock(side_effect=Exception("network error"))
+
+        result = await connector._detect_bridge_room("!room:localhost")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_detects_bridge_bots(self):
+        """Bridge bots are identified separately from ghost users."""
+        connector = _make_matrix_connector()
+
+        mock_response = SimpleNamespace(
+            members={
+                "@parachute:localhost": {},
+                "@metabot:localhost": {},
+                "@meta_123:localhost": {},
+            }
+        )
+        connector._client = AsyncMock()
+        connector._client.joined_members = AsyncMock(return_value=mock_response)
+
+        result = await connector._detect_bridge_room("!room:localhost")
+        assert result is not None
+        assert "@metabot:localhost" in result["bridge_bots"]
+        assert "@metabot:localhost" not in result["ghost_users"]
+
+
+# ---------------------------------------------------------------------------
+# Allowlist room-based approval tests
+# ---------------------------------------------------------------------------
+
+
+class TestAllowlistRoomApproval:
+    @pytest.mark.asyncio
+    async def test_add_room_to_allowlist(self, tmp_path):
+        """_add_to_allowlist with is_room=True adds to allowed_rooms."""
+        from parachute.api.bots import _add_to_allowlist, _write_bots_config, init_bots_api
+        from parachute.connectors.config import BotsConfig, MatrixConfig
+
+        parachute_dir = tmp_path / ".parachute"
+        parachute_dir.mkdir()
+
+        # Write initial config with matrix enabled
+        initial_config = BotsConfig(
+            matrix=MatrixConfig(
+                enabled=True,
+                homeserver_url="http://localhost:6167",
+                user_id="@parachute:localhost",
+                access_token="test-token",
+                allowed_rooms=["!existing:localhost"],
+            )
+        )
+        import parachute.api.bots as bots_module
+        old_vault = bots_module._vault_path
+        bots_module._vault_path = tmp_path
+        _write_bots_config(initial_config)
+
+        try:
+            await _add_to_allowlist("matrix", "!new_room:localhost", is_room=True)
+
+            # Verify it was written
+            updated_config = load_bots_config(tmp_path)
+            assert "!existing:localhost" in updated_config.matrix.allowed_rooms
+            assert "!new_room:localhost" in updated_config.matrix.allowed_rooms
+        finally:
+            bots_module._vault_path = old_vault
+
+    @pytest.mark.asyncio
+    async def test_add_room_idempotent(self, tmp_path):
+        """Adding the same room twice doesn't duplicate."""
+        from parachute.api.bots import _add_to_allowlist, _write_bots_config
+        from parachute.connectors.config import BotsConfig, MatrixConfig
+
+        parachute_dir = tmp_path / ".parachute"
+        parachute_dir.mkdir()
+
+        initial_config = BotsConfig(
+            matrix=MatrixConfig(
+                enabled=True,
+                homeserver_url="http://localhost:6167",
+                user_id="@parachute:localhost",
+                access_token="test-token",
+                allowed_rooms=["!room:localhost"],
+            )
+        )
+        import parachute.api.bots as bots_module
+        old_vault = bots_module._vault_path
+        bots_module._vault_path = tmp_path
+        _write_bots_config(initial_config)
+
+        try:
+            await _add_to_allowlist("matrix", "!room:localhost", is_room=True)
+
+            updated_config = load_bots_config(tmp_path)
+            assert updated_config.matrix.allowed_rooms.count("!room:localhost") == 1
+        finally:
+            bots_module._vault_path = old_vault
+
+    @pytest.mark.asyncio
+    async def test_add_user_still_works(self, tmp_path):
+        """Regular user-based allowlist still works."""
+        from parachute.api.bots import _add_to_allowlist, _write_bots_config
+        from parachute.connectors.config import BotsConfig, DiscordConfig
+
+        parachute_dir = tmp_path / ".parachute"
+        parachute_dir.mkdir()
+
+        initial_config = BotsConfig(
+            discord=DiscordConfig(
+                enabled=True,
+                bot_token="test-token",
+                allowed_users=["user1"],
+            )
+        )
+        import parachute.api.bots as bots_module
+        old_vault = bots_module._vault_path
+        bots_module._vault_path = tmp_path
+        _write_bots_config(initial_config)
+
+        try:
+            await _add_to_allowlist("discord", "user2")
+
+            updated_config = load_bots_config(tmp_path)
+            assert "user1" in updated_config.discord.allowed_users
+            assert "user2" in updated_config.discord.allowed_users
+        finally:
+            bots_module._vault_path = old_vault
