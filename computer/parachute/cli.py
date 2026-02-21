@@ -1671,8 +1671,8 @@ def _bot_config_show() -> None:
         print(f"    enabled: {enabled}")
         print(f"    token: {'configured' if has_token else 'not set'}")
 
-        dm_trust = cfg.get("dm_trust_level", "untrusted")
-        group_trust = cfg.get("group_trust_level", "untrusted")
+        dm_trust = cfg.get("dm_trust_level", "sandboxed")
+        group_trust = cfg.get("group_trust_level", "sandboxed")
         print(f"    dm_trust_level: {dm_trust}")
         print(f"    group_trust_level: {group_trust}")
 
@@ -1739,9 +1739,9 @@ def _bot_config_set(key: str, value: str) -> None:
     elif field == "device_id":
         update["device_id"] = value
     elif field in ("dm_trust_level", "group_trust_level"):
-        if value not in ("trusted", "untrusted"):
+        if value not in ("direct", "sandboxed"):
             print(f"Invalid trust level: {value}")
-            print("Valid levels: trusted, untrusted")
+            print("Valid levels: direct, sandboxed")
             sys.exit(1)
         update[field] = value
 
@@ -1813,7 +1813,7 @@ def _bot_approve(request_id: str | None) -> None:
 
     # Approve specific request
     try:
-        result = _api_post(f"{server_url}/api/bots/pairing/{request_id}/approve", {"trust_level": "untrusted"})
+        result = _api_post(f"{server_url}/api/bots/pairing/{request_id}/approve", {"trust_level": "sandboxed"})
         if result.get("success"):
             print(f"Approved: {request_id}")
         else:

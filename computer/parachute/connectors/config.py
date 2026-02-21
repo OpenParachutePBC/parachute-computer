@@ -11,15 +11,7 @@ from typing import Literal, Optional
 import yaml
 from pydantic import BaseModel, Field, field_validator
 
-TrustLevelStr = Literal["trusted", "untrusted"]
-
-# Legacy 3-tier → binary mapping (matches rest of codebase)
-_LEGACY_TRUST_MAP = {"full": "trusted", "vault": "trusted", "sandboxed": "untrusted"}
-
-
-def _normalize_trust_level(v: str) -> str:
-    """Map legacy trust level values to binary trusted/untrusted."""
-    return _LEGACY_TRUST_MAP.get(v, v)
+from parachute.core.trust import TrustLevelStr, normalize_trust_level
 
 logger = logging.getLogger(__name__)
 
@@ -30,16 +22,16 @@ class TelegramConfig(BaseModel):
     enabled: bool = False
     bot_token: str = ""
     allowed_users: list[int] = Field(default_factory=list)
-    default_trust_level: TrustLevelStr = "untrusted"
-    dm_trust_level: TrustLevelStr = "untrusted"
-    group_trust_level: TrustLevelStr = "untrusted"
+    default_trust_level: TrustLevelStr = "sandboxed"
+    dm_trust_level: TrustLevelStr = "sandboxed"
+    group_trust_level: TrustLevelStr = "sandboxed"
     group_mention_mode: Literal["mention_only", "all_messages"] = "mention_only"
     ack_emoji: Optional[str] = "👀"
 
     @field_validator("default_trust_level", "dm_trust_level", "group_trust_level", mode="before")
     @classmethod
     def normalize_trust(cls, v: str) -> str:
-        return _normalize_trust_level(v)
+        return normalize_trust_level(v)
 
 
 class DiscordConfig(BaseModel):
@@ -48,16 +40,16 @@ class DiscordConfig(BaseModel):
     enabled: bool = False
     bot_token: str = ""
     allowed_users: list[str] = Field(default_factory=list)
-    default_trust_level: TrustLevelStr = "untrusted"
-    dm_trust_level: TrustLevelStr = "untrusted"
-    group_trust_level: TrustLevelStr = "untrusted"
+    default_trust_level: TrustLevelStr = "sandboxed"
+    dm_trust_level: TrustLevelStr = "sandboxed"
+    group_trust_level: TrustLevelStr = "sandboxed"
     group_mention_mode: Literal["mention_only", "all_messages"] = "mention_only"
     ack_emoji: Optional[str] = "👀"
 
     @field_validator("default_trust_level", "dm_trust_level", "group_trust_level", mode="before")
     @classmethod
     def normalize_trust(cls, v: str) -> str:
-        return _normalize_trust_level(v)
+        return normalize_trust_level(v)
 
 
 class MatrixConfig(BaseModel):
@@ -69,15 +61,16 @@ class MatrixConfig(BaseModel):
     access_token: str = ""
     device_id: str = "PARACHUTE01"
     allowed_rooms: list[str] = Field(default_factory=list)
-    dm_trust_level: TrustLevelStr = "untrusted"
-    group_trust_level: TrustLevelStr = "untrusted"
+    default_trust_level: TrustLevelStr = "sandboxed"
+    dm_trust_level: TrustLevelStr = "sandboxed"
+    group_trust_level: TrustLevelStr = "sandboxed"
     group_mention_mode: Literal["mention_only", "all_messages"] = "mention_only"
     ack_emoji: Optional[str] = "👀"
 
-    @field_validator("dm_trust_level", "group_trust_level", mode="before")
+    @field_validator("default_trust_level", "dm_trust_level", "group_trust_level", mode="before")
     @classmethod
     def normalize_trust(cls, v: str) -> str:
-        return _normalize_trust_level(v)
+        return normalize_trust_level(v)
 
 
 class BotsConfig(BaseModel):

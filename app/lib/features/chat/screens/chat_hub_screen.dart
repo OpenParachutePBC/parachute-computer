@@ -197,7 +197,7 @@ class _ChatHubScreenState extends ConsumerState<ChatHubScreen> {
 
   void _showApprovalDialog(BuildContext context, ChatSession session) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    var selectedTrust = TrustLevel.untrusted;
+    var selectedTrust = TrustLevel.sandboxed;
 
     showModalBottomSheet(
       context: context,

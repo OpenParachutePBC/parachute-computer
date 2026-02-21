@@ -3,43 +3,44 @@ import 'package:parachute/core/theme/design_tokens.dart';
 
 /// Trust level for agent execution, matching server TrustLevel enum.
 ///
-/// Binary model: trusted (bare metal) or untrusted (Docker sandbox).
+/// Binary model: direct (bare metal) or sandboxed (Docker sandbox).
 enum TrustLevel {
-  trusted,
-  untrusted;
+  direct,
+  sandboxed;
 
   String get displayName => switch (this) {
-        trusted => 'Trusted',
-        untrusted => 'Untrusted',
+        direct => 'Direct',
+        sandboxed => 'Sandboxed',
       };
 
   String get description => switch (this) {
-        trusted => 'Full access to tools and vault files',
-        untrusted => 'Runs in isolated Docker container',
+        direct => 'Full access to tools and vault files',
+        sandboxed => 'Runs in isolated Docker container',
       };
 
   IconData get icon => switch (this) {
-        trusted => Icons.shield_outlined,
-        untrusted => Icons.security_outlined,
+        direct => Icons.shield_outlined,
+        sandboxed => Icons.security_outlined,
       };
 
   Color iconColor(bool isDark) => switch (this) {
-        trusted => isDark ? BrandColors.nightForest : BrandColors.forest,
-        untrusted => Colors.blue,
+        direct => isDark ? BrandColors.nightForest : BrandColors.forest,
+        sandboxed => Colors.blue,
       };
 
   static TrustLevel fromString(String? value) {
-    if (value == null) return TrustLevel.trusted;
-    // Legacy mapping: full/vault → trusted, sandboxed → untrusted
+    if (value == null) return TrustLevel.direct;
+    // Legacy mapping: full/vault/trusted → direct, untrusted → sandboxed
     const legacy = {
-      'full': 'trusted',
-      'vault': 'trusted',
-      'sandboxed': 'untrusted',
+      'full': 'direct',
+      'vault': 'direct',
+      'trusted': 'direct',
+      'untrusted': 'sandboxed',
     };
     final mapped = legacy[value] ?? value;
     return TrustLevel.values.firstWhere(
       (e) => e.name == mapped,
-      orElse: () => TrustLevel.trusted,
+      orElse: () => TrustLevel.direct,
     );
   }
 }

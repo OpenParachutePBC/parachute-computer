@@ -78,7 +78,7 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
         // Set default trust from workspace (user can still change freely)
         if (_selectedTrustLevel == null) {
           final wsTrust = TrustLevel.fromString(workspace.defaultTrustLevel);
-          _selectedTrustLevel = wsTrust == TrustLevel.trusted ? null : wsTrust;
+          _selectedTrustLevel = wsTrust == TrustLevel.direct ? null : wsTrust;
         }
       }
     });

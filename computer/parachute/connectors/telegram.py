@@ -47,9 +47,9 @@ class TelegramConnector(BotConnector):
         bot_token: str,
         server: Any,
         allowed_users: list[int],
-        default_trust_level: str = "untrusted",
-        dm_trust_level: str = "untrusted",
-        group_trust_level: str = "untrusted",
+        default_trust_level: str = "sandboxed",
+        dm_trust_level: str = "sandboxed",
+        group_trust_level: str = "sandboxed",
         group_mention_mode: str = "mention_only",
         ack_emoji: str | None = "👀",
     ):

@@ -91,8 +91,9 @@ class MatrixConnector(BotConnector):
         server: Any,
         allowed_users: list[str],
         allowed_rooms: list[str],
-        dm_trust_level: str = "untrusted",
-        group_trust_level: str = "untrusted",
+        default_trust_level: str = "sandboxed",
+        dm_trust_level: str = "sandboxed",
+        group_trust_level: str = "sandboxed",
         group_mention_mode: str = "mention_only",
         ack_emoji: str | None = "👀",
     ):
@@ -100,6 +101,7 @@ class MatrixConnector(BotConnector):
             bot_token=access_token,  # base class stores as bot_token
             server=server,
             allowed_users=allowed_users,
+            default_trust_level=default_trust_level,
             dm_trust_level=dm_trust_level,
             group_trust_level=group_trust_level,
             group_mention_mode=group_mention_mode,

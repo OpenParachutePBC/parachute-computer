@@ -110,7 +110,7 @@ class ChatMessagesState {
   /// Map contains: requestId, sessionId, questions
   final Map<String, dynamic>? pendingUserQuestion;
 
-  /// Trust level for this session (trusted, untrusted)
+  /// Trust level for this session (direct, sandboxed)
   /// Set from SSE session event so config sheet can display it immediately
   final String? trustLevel;
 

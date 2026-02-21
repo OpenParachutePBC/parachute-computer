@@ -317,7 +317,7 @@ class _WorkspaceSidebar extends ConsumerWidget {
 
   IconData _workspaceIcon(Workspace ws) {
     final tl = TrustLevel.fromString(ws.defaultTrustLevel);
-    return tl == TrustLevel.untrusted ? Icons.shield_outlined : Icons.workspaces_outline;
+    return tl == TrustLevel.sandboxed ? Icons.shield_outlined : Icons.workspaces_outline;
   }
 
   void _showCreateWorkspaceDialog(BuildContext context, WidgetRef ref) {

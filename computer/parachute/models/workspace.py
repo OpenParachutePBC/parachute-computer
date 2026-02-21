@@ -10,7 +10,7 @@ from typing import Any, Literal, Optional, Union
 
 from pydantic import BaseModel, Field, field_validator
 
-TrustLevelStr = Literal["trusted", "untrusted"]
+from parachute.core.trust import TrustLevelStr
 
 
 class PluginConfig(BaseModel):
@@ -86,7 +86,7 @@ class WorkspaceConfig(BaseModel):
     slug: str = Field(description="URL-safe identifier (kebab-case)")
     description: str = Field(default="", description="Description")
     default_trust_level: TrustLevelStr = Field(
-        default="trusted",
+        default="direct",
         description="Default trust level for new sessions in this workspace",
     )
     working_directory: Optional[str] = Field(
@@ -106,6 +106,17 @@ class WorkspaceConfig(BaseModel):
         description="Docker sandbox config (only for sandboxed trust)",
     )
 
+    @field_validator("default_trust_level", mode="before")
+    @classmethod
+    def normalize_trust(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            from parachute.core.trust import normalize_trust_level
+            try:
+                return normalize_trust_level(v)
+            except ValueError:
+                return v
+        return v
+
     def to_api_dict(self) -> dict[str, Any]:
         """Serialize for API response."""
         return self.model_dump(by_alias=False)
@@ -122,11 +133,22 @@ class WorkspaceCreate(BaseModel):
 
     name: str = Field(description="Display name")
     description: str = Field(default="", description="Description")
-    default_trust_level: TrustLevelStr = Field(default="trusted", description="Default trust level")
+    default_trust_level: TrustLevelStr = Field(default="direct", description="Default trust level")
     working_directory: Optional[str] = Field(default=None)
     model: Optional[str] = Field(default=None)
     capabilities: Optional[WorkspaceCapabilities] = Field(default=None)
     sandbox: Optional[SandboxConfig] = Field(default=None)
+
+    @field_validator("default_trust_level", mode="before")
+    @classmethod
+    def normalize_trust(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            from parachute.core.trust import normalize_trust_level
+            try:
+                return normalize_trust_level(v)
+            except ValueError:
+                return v
+        return v
 
 
 class WorkspaceUpdate(BaseModel):
@@ -139,3 +161,14 @@ class WorkspaceUpdate(BaseModel):
     model: Optional[str] = Field(default=None)
     capabilities: Optional[WorkspaceCapabilities] = Field(default=None)
     sandbox: Optional[SandboxConfig] = Field(default=None)
+
+    @field_validator("default_trust_level", mode="before")
+    @classmethod
+    def normalize_trust(cls, v: Any) -> Any:
+        if v is None or not isinstance(v, str):
+            return v
+        from parachute.core.trust import normalize_trust_level
+        try:
+            return normalize_trust_level(v)
+        except ValueError:
+            return v

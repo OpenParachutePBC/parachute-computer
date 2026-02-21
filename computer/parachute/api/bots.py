@@ -20,7 +20,7 @@ from parachute.connectors.config import BotsConfig, TelegramConfig, DiscordConfi
 
 class PairingApproval(BaseModel):
     """Request body for approving a pairing request."""
-    trust_level: TrustLevelStr = "untrusted"
+    trust_level: TrustLevelStr = "sandboxed"
 
 
 class TelegramConfigUpdate(BaseModel):
@@ -274,6 +274,7 @@ async def _start_platform(platform: str) -> None:
                 server=_server_ref,
                 allowed_users=[],
                 allowed_rooms=platform_config.allowed_rooms,
+                default_trust_level=platform_config.default_trust_level,
                 dm_trust_level=platform_config.dm_trust_level,
                 group_trust_level=platform_config.group_trust_level,
                 group_mention_mode=platform_config.group_mention_mode,

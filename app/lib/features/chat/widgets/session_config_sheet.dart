@@ -46,7 +46,7 @@ class _SessionConfigSheetState extends ConsumerState<SessionConfigSheet> {
   bool _isSaving = false;
   String? _error;
 
-  static const _trustLevels = ['trusted', 'untrusted'];
+  static const _trustLevels = ['direct', 'sandboxed'];
 
   bool get _isActivation => widget.session.isPendingInitialization;
   bool get _isBotSession => widget.session.source.isBotSession;
@@ -332,8 +332,8 @@ class _SessionConfigSheetState extends ConsumerState<SessionConfigSheet> {
           SizedBox(height: Spacing.md),
           _buildWorkspacePicker(isDark, workspacesAsync),
 
-          // Workspace info for untrusted sessions
-          if (_trustLevel == 'untrusted') ...[
+          // Workspace info for sandboxed sessions
+          if (_trustLevel == 'sandboxed') ...[
             SizedBox(height: Spacing.md),
             _buildWorkspaceInfo(isDark, session),
           ],

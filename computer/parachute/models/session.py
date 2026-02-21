@@ -17,8 +17,13 @@ class TrustLevel(str, Enum):
     Binary model: either you trust the agent (bare metal) or you don't (Docker).
     """
 
-    TRUSTED = "trusted"  # Bare metal execution, bypass SDK permissions
-    UNTRUSTED = "untrusted"  # Docker container, scoped mounts
+    DIRECT = "direct"  # Bare metal execution, bypass SDK permissions
+    SANDBOXED = "sandboxed"  # Docker container, scoped mounts
+
+    # Legacy aliases — kept so any code referencing TrustLevel.TRUSTED/UNTRUSTED
+    # still works without a hard break. Will be removed in a future cleanup.
+    TRUSTED = "direct"
+    UNTRUSTED = "sandboxed"
 
 
 class SessionPermissions(BaseModel):
@@ -31,10 +36,10 @@ class SessionPermissions(BaseModel):
 
     # Trust level (binary model)
     trust_level: TrustLevel = Field(
-        default=TrustLevel.TRUSTED,
+        default=TrustLevel.DIRECT,
         alias="trustLevel",
         serialization_alias="trustLevel",
-        description="Trust level: trusted (bare metal) or untrusted (Docker)",
+        description="Trust level: direct (bare metal) or sandboxed (Docker)",
     )
 
     # File access patterns (glob-style, relative to vault)
@@ -65,16 +70,16 @@ class SessionPermissions(BaseModel):
 
     def can_read(self, path: str) -> bool:
         """Check if reading the given path is allowed."""
-        if self.trust_level == TrustLevel.TRUSTED:
+        if self.trust_level == TrustLevel.DIRECT:
             return True
-        # Untrusted: Docker handles isolation, but check allowed_paths if set
+        # Sandboxed: Docker handles isolation, but check allowed_paths if set
         if self.allowed_paths:
             return self._matches_any_pattern(path, self.allowed_paths)
         return self._matches_any_pattern(path, self.read)
 
     def can_write(self, path: str) -> bool:
         """Check if writing to the given path is allowed."""
-        if self.trust_level == TrustLevel.TRUSTED:
+        if self.trust_level == TrustLevel.DIRECT:
             return True
         if self.allowed_paths:
             return self._matches_any_pattern(path, self.allowed_paths)
@@ -82,9 +87,9 @@ class SessionPermissions(BaseModel):
 
     def can_bash(self, command: str) -> bool:
         """Check if running the given bash command is allowed."""
-        if self.trust_level == TrustLevel.TRUSTED:
+        if self.trust_level == TrustLevel.DIRECT:
             return True
-        # Untrusted runs in Docker — no host bash
+        # Sandboxed runs in Docker — no host bash
         return False
 
     def _matches_any_pattern(self, path: str, patterns: list[str]) -> bool:
@@ -205,16 +210,16 @@ class Session(BaseModel):
     model_config = {"from_attributes": True, "populate_by_name": True}
 
     def get_trust_level(self) -> TrustLevel:
-        """Get effective trust level, defaulting to TRUSTED for backward compat."""
+        """Get effective trust level, defaulting to DIRECT for backward compat."""
+        from parachute.core.trust import normalize_trust_level
+
         if self.trust_level:
-            # Map legacy 3-tier values to binary model
-            legacy_map = {"full": "trusted", "vault": "trusted", "sandboxed": "untrusted"}
-            mapped = legacy_map.get(self.trust_level, self.trust_level)
             try:
-                return TrustLevel(mapped)
+                canonical = normalize_trust_level(self.trust_level)
+                return TrustLevel(canonical)
             except ValueError:
-                return TrustLevel.TRUSTED
-        return TrustLevel.TRUSTED
+                return TrustLevel.DIRECT
+        return TrustLevel.DIRECT
 
     @property
     def permissions(self) -> SessionPermissions:

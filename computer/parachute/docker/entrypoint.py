@@ -97,16 +97,30 @@ async def run():
     # Get environment configuration
     session_id = os.environ.get("PARACHUTE_SESSION_ID", "")
 
+    # Validate session_id is safe (alphanumeric + hyphens only — no path traversal)
+    if session_id and not re.match(r'^[a-zA-Z0-9_-]+$', session_id):
+        emit({"type": "error", "error": f"Invalid PARACHUTE_SESSION_ID format"})
+        sys.exit(1)
+
+    # Create per-session scratch directory under /scratch (tmpfs)
+    # Gives agent an isolated writable workspace without polluting /tmp
+    scratch_dir = None
+    if session_id and os.path.isdir("/scratch"):
+        scratch_dir = f"/scratch/{session_id}"
+        os.makedirs(scratch_dir, exist_ok=True)
+
     # Token: prefer stdin payload (persistent mode), fall back to env var (ephemeral mode)
     oauth_token = request.get("claude_token") or os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
 
-    # Set working directory if provided
+    # Set working directory: prefer explicit PARACHUTE_CWD, else session scratch dir
     cwd = os.environ.get("PARACHUTE_CWD")
     if cwd:
         if os.path.isdir(cwd):
             os.chdir(cwd)
         else:
             emit({"type": "warning", "message": f"PARACHUTE_CWD={cwd} does not exist in container, staying at {os.getcwd()}"})
+    elif scratch_dir:
+        os.chdir(scratch_dir)
 
     if not oauth_token:
         emit({"type": "error", "error": "CLAUDE_CODE_OAUTH_TOKEN not set"})

@@ -593,16 +593,15 @@ class Orchestrator:
             agents_dict = None
 
             # Determine effective trust level early (needed for capability filtering)
-            # Priority: client param > session stored > workspace default > trusted
-            _legacy = {"full": "trusted", "vault": "trusted", "sandboxed": "untrusted"}
+            # Priority: client param > session stored > workspace default > sandboxed (new default)
+            from parachute.core.trust import normalize_trust_level
 
             logger.info(f"Trust resolution: client={trust_level}, session.trust_level={session.trust_level}, ws_default={workspace_config.default_trust_level if workspace_config else None}")
 
             if trust_level:
                 # Client explicitly set trust level — use it
                 try:
-                    mapped = _legacy.get(trust_level, trust_level)
-                    session_trust = TrustLevel(mapped)
+                    session_trust = TrustLevel(normalize_trust_level(trust_level))
                     logger.info(f"Using client trust: {trust_level} -> {session_trust.value}")
                 except ValueError:
                     logger.warning(f"Invalid trust_level from client: {trust_level}")
@@ -613,17 +612,13 @@ class Orchestrator:
             elif workspace_config and workspace_config.default_trust_level:
                 # Workspace provides default
                 try:
-                    ws_trust_str = _legacy.get(
-                        workspace_config.default_trust_level,
-                        workspace_config.default_trust_level,
-                    )
-                    session_trust = TrustLevel(ws_trust_str)
+                    session_trust = TrustLevel(normalize_trust_level(workspace_config.default_trust_level))
                     logger.info(f"Using workspace default trust: {session_trust.value}")
                 except ValueError:
                     logger.warning(f"Invalid workspace default_trust_level: {workspace_config.default_trust_level}")
-                    session_trust = TrustLevel.TRUSTED
+                    session_trust = TrustLevel.SANDBOXED
             else:
-                session_trust = TrustLevel.TRUSTED
+                session_trust = TrustLevel.SANDBOXED
 
             effective_trust = session_trust.value
 
@@ -674,7 +669,7 @@ class Orchestrator:
                 available_mcps=list(resolved_mcps.keys()) if resolved_mcps else [],
                 base_prompt_tokens=prompt_metadata["base_prompt_tokens"],
                 total_prompt_tokens=prompt_metadata["total_prompt_tokens"],
-                trust_mode=(session.permissions.trust_level == TrustLevel.TRUSTED),
+                trust_mode=(session.permissions.trust_level == TrustLevel.DIRECT),
                 working_directory_claude_md=prompt_metadata.get("working_directory_claude_md"),
             ).model_dump(by_alias=True)
 
@@ -742,7 +737,7 @@ class Orchestrator:
             # Use session-based permission handler for tool access control
             # Trust mode (default): Use bypassPermissions for backwards compatibility
             # Restricted mode: Uses can_use_tool callback for interactive permission checks
-            trust_mode = session.permissions.trust_level == TrustLevel.TRUSTED
+            trust_mode = session.permissions.trust_level == TrustLevel.DIRECT
             logger.debug(f"Session trust_mode={trust_mode}: {session.id}")
 
             # Create SDK callback for tool permission checks
@@ -756,7 +751,7 @@ class Orchestrator:
             # vault-agent returns append content only (uses preset + CLAUDE.md hierarchy)
             is_full_prompt = prompt_metadata.get("prompt_source") in ("custom", "agent")
 
-            if effective_trust == "untrusted":
+            if effective_trust == "sandboxed":
                 if await self._sandbox.is_available():
                     # Use a real session ID for sandbox — "pending" would cause the SDK
                     # inside the container to try resuming a nonexistent session
@@ -841,7 +836,7 @@ class Orchestrator:
                     sandbox_response_text = ""
 
                     # Use persistent container for workspace sessions,
-                    # ephemeral for workspace-less sessions
+                    # default persistent container for workspace-less sessions
                     if workspace_id:
                         sandbox_stream = self._sandbox.run_persistent(
                             workspace_slug=workspace_id,
@@ -850,8 +845,10 @@ class Orchestrator:
                             resume_session_id=resume_session_id,
                         )
                     else:
-                        sandbox_stream = self._sandbox.run_agent(
-                            sandbox_config, sandbox_message,
+                        sandbox_stream = self._sandbox.run_default(
+                            config=sandbox_config,
+                            message=sandbox_message,
+                            resume_session_id=resume_session_id,
                         )
 
                     # Mutable state container for sandbox event processing
@@ -962,11 +959,11 @@ class Orchestrator:
                             logger.warning(f"Failed to increment message count for {sandbox_sid[:8]}: {e}")
                     return
                 else:
-                    # No fallback — Docker is required for untrusted sessions
-                    logger.error("Docker not available for untrusted session")
+                    # No fallback — Docker is required for sandboxed sessions
+                    logger.error("Docker not available for sandboxed session")
                     yield ErrorEvent(
                         error="Docker is required for sandboxed sessions but is not available. "
-                              "Either install Docker (brew install orbstack) or change trust level to 'full'.",
+                              "Either install Docker (brew install orbstack) or change trust level to 'direct'.",
                     ).model_dump(by_alias=True)
                     return
 
