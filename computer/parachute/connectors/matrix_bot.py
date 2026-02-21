@@ -9,8 +9,10 @@ Install: pip install 'matrix-nio>=0.25.0'
 
 import asyncio
 import logging
+import re
 import time
-from typing import Any, Optional
+from datetime import datetime, timezone
+from typing import Any, Optional, TypedDict
 
 from parachute.connectors.base import BotConnector, ConnectorState, GroupMessage
 from parachute.connectors.message_formatter import claude_to_matrix
@@ -35,6 +37,44 @@ except ImportError:
 
 # Matrix event limit is 65KB; 25K text leaves room for HTML + metadata
 MATRIX_MAX_MESSAGE_LENGTH = 25000
+
+# Ghost user prefixes for bridge detection (mautrix bridges)
+BRIDGE_GHOST_PREFIXES = ["meta", "telegram", "discord", "signal", "whatsapp"]
+
+# Module-level patterns match any homeserver (used by tests and as fallback)
+BRIDGE_GHOST_PATTERNS = [
+    re.compile(rf"^@{prefix}_\d+:.+$") for prefix in BRIDGE_GHOST_PREFIXES
+]
+
+# Bridge bot user patterns
+BRIDGE_BOT_PATTERNS = [
+    re.compile(r"^@(meta|telegram|discord|signal|whatsapp)bot:.+$"),
+]
+
+
+class BridgeInfo(TypedDict):
+    """Structured bridge detection result."""
+    bridge_type: str
+    ghost_users: list[str]
+    bridge_bots: list[str]
+    remote_chat_type: str  # "dm" | "group"
+
+
+def _compile_ghost_patterns(homeserver_url: str) -> list[re.Pattern]:
+    """Compile ghost patterns scoped to the local homeserver domain.
+
+    This prevents federated users with bridge-like prefixes from being
+    misclassified as bridge ghosts.
+    """
+    # Extract domain from homeserver URL (e.g., "localhost" from "http://localhost:6167")
+    from urllib.parse import urlparse
+    parsed = urlparse(homeserver_url)
+    domain = parsed.hostname or "localhost"
+    escaped = re.escape(domain)
+    return [
+        re.compile(rf"^@{prefix}_\d+:{escaped}(:\d+)?$")
+        for prefix in BRIDGE_GHOST_PREFIXES
+    ]
 
 
 class MatrixConnector(BotConnector):
@@ -72,6 +112,8 @@ class MatrixConnector(BotConnector):
         self.allowed_rooms = allowed_rooms
         self._client: Optional[Any] = None
         self._initial_sync_done = False
+        # Scope ghost patterns to local homeserver to prevent federated spoofing
+        self._ghost_patterns = _compile_ghost_patterns(homeserver_url)
 
     async def start(self) -> None:
         """Start Matrix bot."""
@@ -164,11 +206,17 @@ class MatrixConnector(BotConnector):
         )
 
     async def _on_invite(self, room: Any, event: Any) -> None:
-        """Handle room invites."""
+        """Handle room invites.
+
+        For allowed rooms: join immediately.
+        For non-allowed rooms: join, check for bridge patterns, and create
+        a pairing request if bridged.
+        """
         if event.state_key != self.user_id:
             return
 
         room_id = room.room_id
+
         if self._is_room_allowed(room_id):
             # Auto-join allowed rooms
             if self._client:
@@ -177,16 +225,126 @@ class MatrixConnector(BotConnector):
                     logger.info(f"Auto-joined allowed Matrix room: {room_id}")
                 except Exception as e:
                     logger.error(f"Failed to join room {room_id}: {e}")
+            return
+
+        # Join the room first (needed to inspect members for bridge detection)
+        if not self._client:
+            return
+        try:
+            await self._client.join(room_id)
+            logger.info(f"Joined Matrix room for bridge detection: {room_id}")
+        except Exception as e:
+            logger.warning(f"Failed to join room {room_id}: {e}")
+            return
+
+        # Detect if bridged
+        bridge_info = await self._detect_bridge_room(room_id)
+
+        if bridge_info:
+            room_name = await self._get_room_display_name(room_id)
+            await self._handle_bridged_room(room_id, room_name, bridge_info)
         else:
-            # Join and notify — creates a "pending room" notification
-            if self._client:
-                try:
-                    await self._client.join(room_id)
-                    logger.info(f"Joined non-allowed Matrix room (pending): {room_id}")
-                except Exception as e:
-                    logger.warning(f"Failed to join invite-only room {room_id}: {e}")
+            # Not bridged and not allowed — leave to avoid accumulating memberships
+            logger.info(f"Non-bridged, non-allowed room {room_id} — leaving")
+            try:
+                await self._client.room_leave(room_id)
+            except Exception as e:
+                logger.warning(f"Failed to leave room {room_id}: {e}")
+
+    async def _handle_bridged_room(
+        self, room_id: str, room_name: str, bridge_info: BridgeInfo
+    ) -> None:
+        """Create pairing request for a bridged room.
+
+        Intentionally separate from base handle_unknown_user() because room-based
+        pairing is semantically different (room_id as identifier, bridge metadata).
+        """
+        import uuid
+        from parachute.models.session import SessionCreate
+
+        db = getattr(self.server, "database", None)
+        if not db:
+            return
+
+        # Check for existing pending request for this room
+        existing = await db.get_pairing_request_for_user("matrix", room_id)
+        if existing and existing.status == "pending":
+            logger.info(f"Pairing request already pending for bridged room {room_id}")
+            return
+
+        # Create pairing request (room_id as platform_user_id for room-based pairing)
+        request_id = str(uuid.uuid4())
+        bridge_type = bridge_info.get("bridge_type", "unknown")
+        display_name = f"{room_name} ({bridge_type.title()} Bridge)"
+
+        await db.create_pairing_request(
+            id=request_id,
+            platform="matrix",
+            platform_user_id=room_id,
+            platform_user_display=display_name,
+            platform_chat_id=room_id,
+        )
+        logger.info(f"Created pairing request {request_id[:8]} for bridged room {room_id}")
+
+        # Create pending session so it appears in the Chat list
+        session_id = str(uuid.uuid4())
+        chat_type = bridge_info["remote_chat_type"]
+        trust_level = await self.get_trust_level(chat_type)
+
+        create_data = SessionCreate(
+            id=session_id,
+            title=display_name,
+            module="chat",
+            source="matrix",
+            trust_level=trust_level,
+            linked_bot_platform="matrix",
+            linked_bot_chat_id=room_id,
+            linked_bot_chat_type=chat_type,
+            metadata={
+                "linked_bot": {
+                    "platform": "matrix",
+                    "chat_id": room_id,
+                    "chat_type": chat_type,
+                    "user_display": display_name,
+                    "linked_at": datetime.now(timezone.utc).isoformat(),
+                },
+                "pending_approval": True,
+                "pairing_request_id": request_id,
+                "bridge_metadata": bridge_info,
+            },
+        )
+        await db.create_session(create_data)
+        logger.info(f"Created pending session {session_id[:8]} for bridged room {room_id}")
+
+        # Notify in the room
+        await self._send_room_message(
+            room_id,
+            "I've joined this bridged room. Waiting for approval in the Parachute app.",
+        )
 
     # ── Message handling ─────────────────────────────────────────────
+
+    async def _resolve_bridge_auth(
+        self, room_id: str, sender: str, room: Any
+    ) -> tuple[str, bool, Any]:
+        """Resolve chat type and authorization for bridge-aware rooms.
+
+        Returns (chat_type, is_authorized, session).
+        """
+        db = getattr(self.server, "database", None)
+        session = await db.get_session_by_bot_link("matrix", room_id) if db else None
+        bridge_meta = (session.metadata or {}).get("bridge_metadata") if session else None
+
+        if bridge_meta and bridge_meta.get("remote_chat_type"):
+            chat_type = bridge_meta["remote_chat_type"]
+        else:
+            member_count = getattr(room, "member_count", 0) or getattr(room, "joined_count", 0) or 2
+            chat_type = "dm" if member_count <= 2 else "group"
+
+        if chat_type == "group" or bridge_meta:
+            return chat_type, self._is_room_allowed(room_id), session
+        else:
+            return chat_type, self.is_user_allowed(sender), session
 
     async def on_text_message(self, update: Any, context: Any) -> None:
         """Handle incoming text message from Matrix."""
@@ -197,17 +355,12 @@ class MatrixConnector(BotConnector):
         sender = event.sender
         message_text = event.body
 
-        # Determine chat type — DM if room has exactly 2 members (us + sender)
-        member_count = getattr(room, "member_count", 0) or getattr(room, "joined_count", 0) or 2
-        chat_type = "dm" if member_count <= 2 else "group"
+        # Bridge-aware auth check (single DB query, reused below)
+        chat_type, is_authorized, session = await self._resolve_bridge_auth(room_id, sender, room)
 
-        # Authorization check
-        if chat_type == "group":
-            if not self._is_room_allowed(room_id):
-                return  # Silently ignore messages from non-allowed rooms
-        else:
-            # DM: check user allowlist
-            if not self.is_user_allowed(sender):
+        if not is_authorized:
+            # For DMs to unknown users, trigger the pairing flow
+            if chat_type == "dm":
                 user_display = self._get_display_name(room, sender)
                 response = await self.handle_unknown_user(
                     platform="matrix",
@@ -218,12 +371,10 @@ class MatrixConnector(BotConnector):
                     message_text=message_text,
                 )
                 await self._send_room_message(room_id, response)
-                return
+            return
 
         # Record message for group history
         if chat_type == "group":
-            from datetime import datetime, timezone
-
             self.group_history.record(
                 room_id,
                 GroupMessage(
@@ -233,10 +384,6 @@ class MatrixConnector(BotConnector):
                     message_id=event.event_id,
                 ),
             )
-
-        # Session-aware response mode gating
-        db = getattr(self.server, "database", None)
-        session = await db.get_session_by_bot_link("matrix", room_id) if db else None
 
         default_mode = "all_messages" if chat_type == "dm" else self.group_mention_mode
         if session and session.metadata:
@@ -362,13 +509,9 @@ class MatrixConnector(BotConnector):
         room_id = room.room_id
         sender = event.sender
 
-        # Authorization checks (same as text)
-        member_count = getattr(room, "member_count", 0) or getattr(room, "joined_count", 0) or 2
-        chat_type = "dm" if member_count <= 2 else "group"
-
-        if chat_type == "group" and not self._is_room_allowed(room_id):
-            return
-        if chat_type == "dm" and not self.is_user_allowed(sender):
+        # Bridge-aware auth check (shared with text handler)
+        _chat_type, is_authorized, _session = await self._resolve_bridge_auth(room_id, sender, room)
+        if not is_authorized:
             return
 
         # Download audio from homeserver
@@ -464,6 +607,72 @@ class MatrixConnector(BotConnector):
             return True
 
         return False
+
+    # ── Bridge detection ─────────────────────────────────────────────
+
+    async def _detect_bridge_room(self, room_id: str) -> Optional[BridgeInfo]:
+        """Detect if a room is bridged by checking member patterns.
+
+        Returns BridgeInfo with bridge_type, ghost_users, remote_chat_type or None.
+        Uses homeserver-scoped patterns to prevent federated user spoofing.
+        """
+        if not self._client:
+            return None
+
+        try:
+            resp = await self._client.joined_members(room_id)
+            if not hasattr(resp, "members"):
+                return None
+            members = resp.members
+        except Exception as e:
+            logger.warning(f"Failed to get members for bridge detection in {room_id}: {e}")
+            return None
+
+        ghost_users: list[str] = []
+        bridge_bots: list[str] = []
+        bridge_type: Optional[str] = None
+
+        for member_id in members:
+            # Check if ghost user (scoped to local homeserver)
+            for pattern in self._ghost_patterns:
+                if pattern.match(member_id):
+                    ghost_users.append(member_id)
+                    # Extract bridge type from pattern (e.g., "meta" from "@meta_123:...")
+                    bridge_type = member_id.split("_")[0].lstrip("@")
+                    break
+            # Check if bridge bot
+            for pattern in BRIDGE_BOT_PATTERNS:
+                if pattern.match(member_id):
+                    bridge_bots.append(member_id)
+                    break
+
+        if not ghost_users:
+            return None
+
+        # 1 ghost user = bridged DM, 2+ = bridged group
+        remote_chat_type = "dm" if len(ghost_users) == 1 else "group"
+
+        return BridgeInfo(
+            bridge_type=bridge_type or "unknown",
+            ghost_users=ghost_users,
+            bridge_bots=bridge_bots,
+            remote_chat_type=remote_chat_type,
+        )
+
+    async def _get_room_display_name(self, room_id: str) -> str:
+        """Get a display name for a room (room name or first ghost user's display name)."""
+        if not self._client:
+            return room_id
+
+        # Try to get the room name from synced state
+        room = self._client.rooms.get(room_id)
+        if room:
+            name = getattr(room, "name", None) or getattr(room, "display_name", None)
+            if name:
+                return name
+
+        # Fallback: use room_id
+        return room_id
 
     # ── Helpers ───────────────────────────────────────────────────────
 
