@@ -464,35 +464,33 @@ async def approve_pairing(request_id: str, body: PairingApproval):
         request_id, approved=True, trust_level=body.trust_level
     )
 
-    # Determine if this is a room-based approval (Matrix bridged rooms use room IDs)
-    is_room_approval = pr.platform == "matrix" and pr.platform_user_id.startswith("!")
+    # Single connector lookup, reused throughout
+    connector = _connectors.get(pr.platform)
+
+    # Check session metadata for explicit is_room_pairing flag, fall back to room ID format
+    linked_session = await db.get_session_by_bot_link(pr.platform, pr.platform_chat_id)
+    is_room_approval = False
+    if linked_session and linked_session.metadata:
+        bridge_meta = linked_session.metadata.get("bridge_metadata")
+        if bridge_meta:
+            is_room_approval = True
+    # Fallback: Matrix room IDs start with "!" per spec
+    if not is_room_approval and pr.platform == "matrix" and pr.platform_user_id.startswith("!"):
+        is_room_approval = True
 
     if is_room_approval:
-        # Room-based approval — add to allowed_rooms
-        await _add_to_allowlist("matrix", pr.platform_user_id, is_room=True)
-
-        # Update running connector's in-memory allowed_rooms
-        connector = _connectors.get("matrix")
-        if connector and hasattr(connector, "allowed_rooms"):
-            if pr.platform_user_id not in connector.allowed_rooms:
-                connector.allowed_rooms.append(pr.platform_user_id)
+        # Room-based approval — add to allowed_rooms (in-memory update inside lock)
+        await _add_to_allowlist(
+            "matrix", pr.platform_user_id, is_room=True, connector=connector,
+        )
     else:
         # User-based approval (Telegram/Discord/Matrix DM)
-        await _add_to_allowlist(pr.platform, pr.platform_user_id)
+        await _add_to_allowlist(pr.platform, pr.platform_user_id, connector=connector)
 
-        # Update running connector's in-memory allowlist and trust cache
-        connector = _connectors.get(pr.platform)
-        if connector and hasattr(connector, "allowed_users"):
-            if pr.platform_user_id not in [str(u) for u in connector.allowed_users]:
-                typed_id = int(pr.platform_user_id) if pr.platform == "telegram" else pr.platform_user_id
-                connector.allowed_users.append(typed_id)
-
-    connector = _connectors.get(pr.platform)
     if connector and hasattr(connector, "update_trust_override"):
         connector.update_trust_override(pr.platform_user_id, body.trust_level)
 
     # Activate the pending session: clear pending_approval, update trust level
-    linked_session = await db.get_session_by_bot_link(pr.platform, pr.platform_chat_id)
     if linked_session and linked_session.metadata and linked_session.metadata.get("pending_approval"):
         updated_metadata = dict(linked_session.metadata)
         updated_metadata.pop("pending_approval", None)
@@ -504,7 +502,6 @@ async def approve_pairing(request_id: str, body: PairingApproval):
         logger.info(f"Activated pending session {linked_session.id[:8]} for approved user")
 
     # Send approval message to user
-    connector = _connectors.get(pr.platform)
     if connector and hasattr(connector, "send_approval_message"):
         try:
             await connector.send_approval_message(pr.platform_chat_id)
@@ -560,8 +557,18 @@ async def deny_pairing(request_id: str):
     return {"success": True}
 
 
-async def _add_to_allowlist(platform: str, identifier: str, *, is_room: bool = False) -> None:
-    """Persist a user or room addition to the platform's allowlist in bots.yaml."""
+async def _add_to_allowlist(
+    platform: str,
+    identifier: str,
+    *,
+    is_room: bool = False,
+    connector: Any = None,
+) -> None:
+    """Persist a user or room addition to the platform's allowlist in bots.yaml.
+
+    Also updates the connector's in-memory list under the same lock to keep
+    YAML and in-memory state in sync atomically.
+    """
     if not _vault_path:
         return
 
@@ -576,6 +583,10 @@ async def _add_to_allowlist(platform: str, identifier: str, *, is_room: bool = F
                 platform_config.allowed_rooms.append(identifier)
                 _write_bots_config(config)
                 logger.info(f"Added room {identifier} to {platform} allowed_rooms")
+            # Sync in-memory state under the same lock
+            if connector and hasattr(connector, "allowed_rooms"):
+                if identifier not in connector.allowed_rooms:
+                    connector.allowed_rooms.append(identifier)
         else:
             current_users = [str(u) for u in platform_config.allowed_users]
             if identifier in current_users:
@@ -585,3 +596,7 @@ async def _add_to_allowlist(platform: str, identifier: str, *, is_room: bool = F
             platform_config.allowed_users.append(typed_id)
             _write_bots_config(config)
             logger.info(f"Added user {identifier} to {platform} allowlist")
+            # Sync in-memory state under the same lock
+            if connector and hasattr(connector, "allowed_users"):
+                if identifier not in [str(u) for u in connector.allowed_users]:
+                    connector.allowed_users.append(typed_id)

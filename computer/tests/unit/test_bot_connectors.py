@@ -867,7 +867,6 @@ class TestDetectBridgeRoom:
         assert result["bridge_type"] == "meta"
         assert result["remote_chat_type"] == "dm"
         assert len(result["ghost_users"]) == 1
-        assert result["is_bridged"] is True
 
     @pytest.mark.asyncio
     async def test_detects_telegram_bridge_group(self):
@@ -948,6 +947,86 @@ class TestDetectBridgeRoom:
         assert result is not None
         assert "@metabot:localhost" in result["bridge_bots"]
         assert "@metabot:localhost" not in result["ghost_users"]
+
+    @pytest.mark.asyncio
+    async def test_rejects_federated_ghost_users(self):
+        """Ghost users from a foreign homeserver are not detected as bridges."""
+        connector = _make_matrix_connector(homeserver_url="http://localhost:6167")
+
+        mock_response = SimpleNamespace(
+            members={
+                "@parachute:localhost": {},
+                "@meta_999:evil.com": {},  # Federated user mimicking ghost pattern
+            }
+        )
+        connector._client = AsyncMock()
+        connector._client.joined_members = AsyncMock(return_value=mock_response)
+
+        result = await connector._detect_bridge_room("!room:localhost")
+        assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Handle bridged room tests
+# ---------------------------------------------------------------------------
+
+
+class TestHandleBridgedRoom:
+    @pytest.mark.asyncio
+    async def test_creates_pairing_request_and_session(self):
+        """_handle_bridged_room creates a pairing request and pending session."""
+        connector = _make_matrix_connector()
+
+        mock_db = AsyncMock()
+        mock_db.get_pairing_request_for_user = AsyncMock(return_value=None)
+        mock_db.create_pairing_request = AsyncMock()
+        mock_db.create_session = AsyncMock()
+        connector.server = SimpleNamespace(database=mock_db)
+        connector._client = AsyncMock()
+
+        bridge_info = {
+            "bridge_type": "meta",
+            "ghost_users": ["@meta_123:localhost"],
+            "bridge_bots": ["@metabot:localhost"],
+            "remote_chat_type": "dm",
+        }
+
+        await connector._handle_bridged_room("!room:localhost", "Test Room", bridge_info)
+
+        # Pairing request created with room_id as platform_user_id
+        mock_db.create_pairing_request.assert_called_once()
+        call_kwargs = mock_db.create_pairing_request.call_args[1]
+        assert call_kwargs["platform"] == "matrix"
+        assert call_kwargs["platform_user_id"] == "!room:localhost"
+        assert "Meta Bridge" in call_kwargs["platform_user_display"]
+
+        # Pending session created with bridge metadata
+        mock_db.create_session.assert_called_once()
+        session_create = mock_db.create_session.call_args[0][0]
+        assert session_create.metadata["pending_approval"] is True
+        assert session_create.metadata["bridge_metadata"] == bridge_info
+
+    @pytest.mark.asyncio
+    async def test_skips_duplicate_pairing_request(self):
+        """_handle_bridged_room skips if a pending request already exists."""
+        connector = _make_matrix_connector()
+
+        existing_pr = SimpleNamespace(status="pending")
+        mock_db = AsyncMock()
+        mock_db.get_pairing_request_for_user = AsyncMock(return_value=existing_pr)
+        mock_db.create_pairing_request = AsyncMock()
+        connector.server = SimpleNamespace(database=mock_db)
+
+        bridge_info = {
+            "bridge_type": "meta",
+            "ghost_users": ["@meta_123:localhost"],
+            "bridge_bots": [],
+            "remote_chat_type": "dm",
+        }
+
+        await connector._handle_bridged_room("!room:localhost", "Test Room", bridge_info)
+
+        mock_db.create_pairing_request.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
