@@ -221,10 +221,11 @@ class LaunchdDaemon(DaemonManager):
             raise RuntimeError(f"Failed to bootstrap after retries: {last_stderr}")
 
         # Kickstart ensures the process actually runs (handles both fresh bootstrap
-        # and already-loaded cases)
+        # and already-loaded cases). Needs generous timeout because -k waits for
+        # the old process to exit (which may include docker-compose down).
         result = subprocess.run(
             ["launchctl", "kickstart", "-k", service],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True, text=True, timeout=30,
         )
         if result.returncode != 0:
             raise RuntimeError(f"Failed to kickstart: {result.stderr.strip()}")
