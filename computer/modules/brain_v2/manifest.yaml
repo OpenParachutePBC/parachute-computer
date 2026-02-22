@@ -1,0 +1,9 @@
+name: brain_v2
+version: "0.1.0"
+description: "Brain v2 with TerminusDB knowledge graph"
+trust_level: trusted
+provides:
+  - BrainV2Interface
+dependencies:
+  - terminusdb-client>=10.2.6
+  - aiofiles>=23.0.0
