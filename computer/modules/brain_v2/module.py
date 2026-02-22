@@ -115,6 +115,22 @@ class BrainV2Module:
                 logger.error(f"Error deleting entity: {e}", exc_info=True)
                 raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
+        @router.get("/entities/by_id")
+        async def get_entity_by_id(id: str):
+            """Get a single entity by IRI"""
+            kg = await self._ensure_kg_service()
+
+            try:
+                entity = await kg.get_entity(entity_id=id)
+                if entity is None:
+                    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Entity not found: {id}")
+                return entity
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"Error fetching entity: {e}", exc_info=True)
+                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
+
         @router.get("/entities/{entity_type}", response_model=QueryEntitiesResponse)
         async def query_entities(
             entity_type: str,

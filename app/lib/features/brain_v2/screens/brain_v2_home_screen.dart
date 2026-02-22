@@ -17,8 +17,21 @@ class _BrainV2HomeScreenState extends ConsumerState<BrainV2HomeScreen>
     with SingleTickerProviderStateMixin {
   TabController? _tabController;
 
+  void _onTabChanged() {
+    if (_tabController != null && _tabController!.indexIsChanging) {
+      final schemasAsync = ref.read(brainV2SchemaListProvider);
+      schemasAsync.whenData((schemas) {
+        if (_tabController!.index < schemas.length) {
+          final schema = schemas[_tabController!.index];
+          ref.read(brainV2SelectedTypeProvider.notifier).state = schema.name;
+        }
+      });
+    }
+  }
+
   @override
   void dispose() {
+    _tabController?.removeListener(_onTabChanged);
     _tabController?.dispose();
     super.dispose();
   }
@@ -128,15 +141,10 @@ class _BrainV2HomeScreenState extends ConsumerState<BrainV2HomeScreen>
         // Initialize tab controller when schemas are available
         if (_tabController == null ||
             _tabController!.length != schemas.length) {
+          _tabController?.removeListener(_onTabChanged);
           _tabController?.dispose();
           _tabController = TabController(length: schemas.length, vsync: this);
-          _tabController!.addListener(() {
-            if (_tabController!.indexIsChanging) {
-              final schema = schemas[_tabController!.index];
-              ref.read(brainV2SelectedTypeProvider.notifier).state =
-                  schema.name;
-            }
-          });
+          _tabController!.addListener(_onTabChanged);
 
           // Set initial selected type
           WidgetsBinding.instance.addPostFrameCallback((_) {

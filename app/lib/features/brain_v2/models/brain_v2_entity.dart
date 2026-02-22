@@ -67,4 +67,16 @@ class BrainV2Entity {
 
   /// Check if entity has a field.
   bool has(String key) => fields.containsKey(key);
+
+  /// Safely get field value with type checking and default value.
+  T? getField<T>(String key, [T? defaultValue]) {
+    final value = fields[key];
+    if (value == null) return defaultValue;
+    if (value is T) return value;
+
+    // Try to convert to string if T is String
+    if (T == String) return value.toString() as T;
+
+    return defaultValue;
+  }
 }

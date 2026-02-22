@@ -115,9 +115,14 @@ class BrainV2EntityDetailScreen extends ConsumerWidget {
           }
 
           // Get schema for this entity type
+          final schemas = schemasAsync.valueOrNull ?? [];
           final entitySchema = schema ??
-              schemasAsync.valueOrNull
-                  ?.firstWhere((s) => s.name == entity.type, orElse: () => schemasAsync.valueOrNull!.first);
+              (schemas.isNotEmpty
+                  ? schemas.firstWhere(
+                      (s) => s.name == entity.type,
+                      orElse: () => schemas.first,
+                    )
+                  : null);
 
           return CustomScrollView(
             slivers: [
@@ -326,6 +331,8 @@ class BrainV2EntityDetailScreen extends ConsumerWidget {
 
   Future<void> _showDeleteConfirmation(BuildContext context, WidgetRef ref) async {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final navigator = Navigator.of(context);
+    final messenger = ScaffoldMessenger.of(context);
 
     final confirmed = await showDialog<bool>(
       context: context,
@@ -355,7 +362,7 @@ class BrainV2EntityDetailScreen extends ConsumerWidget {
       ),
     );
 
-    if (confirmed == true && context.mounted) {
+    if (confirmed == true) {
       try {
         final service = ref.read(brainV2ServiceProvider);
         if (service != null) {
@@ -366,15 +373,15 @@ class BrainV2EntityDetailScreen extends ConsumerWidget {
           ref.invalidate(brainV2EntityDetailProvider(entityId));
 
           if (context.mounted) {
-            Navigator.of(context).pop(); // Return to list
-            ScaffoldMessenger.of(context).showSnackBar(
+            navigator.pop(); // Return to list
+            messenger.showSnackBar(
               const SnackBar(content: Text('Entity deleted successfully')),
             );
           }
         }
       } catch (e) {
         if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
+          messenger.showSnackBar(
             SnackBar(content: Text('Failed to delete entity: $e')),
           );
         }

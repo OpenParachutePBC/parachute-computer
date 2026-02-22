@@ -58,26 +58,32 @@ class _BrainV2FormBuilderState extends State<BrainV2FormBuilder> {
   }
 
   void _updateFormData() {
-    setState(() {
-      for (final field in widget.schema.fields) {
-        if (_controllers.containsKey(field.name)) {
-          final text = _controllers[field.name]!.text;
+    // Schedule state update for after current frame to avoid setState during build
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        setState(() {
+          for (final field in widget.schema.fields) {
+            if (_controllers.containsKey(field.name)) {
+              final text = _controllers[field.name]!.text;
 
-          if (field.type == 'integer') {
-            _formData[field.name] = text.isEmpty ? null : int.tryParse(text);
-          } else if (field.type == 'array' && field.itemsType == 'string') {
-            _formData[field.name] = text
-                .split(',')
-                .map((s) => s.trim())
-                .where((s) => s.isNotEmpty)
-                .toList();
-          } else {
-            _formData[field.name] = text.isEmpty ? null : text;
+              if (field.type == 'integer') {
+                _formData[field.name] = text.isEmpty ? null : int.tryParse(text);
+              } else if (field.type == 'array' && field.itemsType == 'string') {
+                _formData[field.name] = text
+                    .split(',')
+                    .map((s) => s.trim())
+                    .where((s) => s.isNotEmpty)
+                    .toList();
+              } else {
+                _formData[field.name] = text.isEmpty ? null : text;
+              }
+            }
           }
-        }
-      }
+        });
 
-      widget.onDataChanged(_formData);
+        // Notify parent after setState completes
+        widget.onDataChanged(_formData);
+      }
     });
   }
 

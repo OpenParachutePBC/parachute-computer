@@ -17,7 +17,7 @@ final brainV2EntityListProvider = FutureProvider.autoDispose
 ///
 /// Usage: ref.watch(brainV2EntityDetailProvider('Person/Alice'))
 final brainV2EntityDetailProvider =
-    FutureProvider.family<BrainV2Entity?, String>((ref, id) async {
+    FutureProvider.autoDispose.family<BrainV2Entity?, String>((ref, id) async {
   final service = ref.watch(brainV2ServiceProvider);
   if (service == null) return null;
 
