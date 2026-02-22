@@ -4,7 +4,12 @@ Docker sandbox for agent execution.
 Provides per-agent Docker containers with scoped filesystem mounts
 and credential propagation for the Claude Agent SDK.
 
-Used for all untrusted sessions. Docker must be available — no fallback.
+Used for all sandboxed sessions. Docker must be available — no fallback.
+
+Two container modes:
+- Workspace containers (parachute-ws-<slug>): persistent, per-workspace
+- Default container (parachute-default): persistent, full vault read-only,
+  used for sandboxed sessions with no workspace configured
 """
 
 import asyncio
@@ -28,6 +33,9 @@ logger = logging.getLogger(__name__)
 
 # Default sandbox image (pre-built with Claude SDK + Python)
 SANDBOX_IMAGE = "parachute-sandbox:latest"
+
+# Default container for sandboxed sessions with no workspace
+DEFAULT_CONTAINER_NAME = "parachute-default"
 
 # Container resource limits
 CONTAINER_MEMORY_LIMIT = "512m"
@@ -200,6 +208,8 @@ class DockerSandbox:
             "--cap-drop", "ALL",
             "--security-opt", "no-new-privileges",
             "--pids-limit", "100",
+            # Per-session scratch space (tmpfs — no disk persistence)
+            "--tmpfs", "/scratch:size=512m,uid=1000,gid=1000",
         ]
 
         # Network isolation
@@ -352,14 +362,10 @@ class DockerSandbox:
             logger.error(f"{label.capitalize()} exited {proc.returncode}: {stderr_data.decode()}")
             yield {"type": "exit_error", "returncode": proc.returncode}
 
-    async def run_agent(
-        self,
-        config: AgentSandboxConfig,
-        message: str,
-    ) -> AsyncGenerator[dict, None]:
-        """Run an agent in a Docker container, yielding streaming events.
+    async def _validate_docker_ready(self) -> None:
+        """Validate Docker and sandbox image are available.
 
-        Events are JSON objects written to stdout, one per line (JSONL).
+        Raises RuntimeError if Docker is not available or image is missing.
         """
         if not await self.is_available():
             raise RuntimeError("Docker not available for sandboxed execution")
@@ -370,6 +376,17 @@ class DockerSandbox:
                 "Build it from Settings > Capabilities or run: "
                 "docker build -t parachute-sandbox:latest parachute-computer/parachute/docker/"
             )
+
+    async def run_agent(
+        self,
+        config: AgentSandboxConfig,
+        message: str,
+    ) -> AsyncGenerator[dict, None]:
+        """Run an agent in a Docker container, yielding streaming events.
+
+        Events are JSON objects written to stdout, one per line (JSONL).
+        """
+        await self._validate_docker_ready()
 
         args, temp_files = self._build_run_args(config)
 
@@ -485,10 +502,26 @@ class DockerSandbox:
             return None
         return stdout.decode().strip()
 
-    async def _create_persistent_container(
-        self, container_name: str, workspace_slug: str, config: AgentSandboxConfig
-    ) -> None:
-        """Create and start a persistent container for a workspace."""
+    def _build_persistent_container_args(
+        self,
+        container_name: str,
+        config: AgentSandboxConfig,
+        labels: dict[str, str],
+        claude_dir: Path,
+        vault_mounts: list[str],
+    ) -> list[str]:
+        """Build docker run arguments for a persistent container.
+
+        Args:
+            container_name: Name for the container
+            config: Sandbox configuration
+            labels: Docker labels for discovery
+            claude_dir: Host .claude/ directory to mount for SDK persistence
+            vault_mounts: Vault volume mount arguments (from _build_mounts or custom)
+
+        Returns:
+            Complete docker run command arguments
+        """
         args = [
             "docker", "run", "-d",
             "--init",  # tini as PID 1 — reaps zombies, forwards signals
@@ -499,26 +532,46 @@ class DockerSandbox:
             "--cap-drop", "ALL",
             "--security-opt", "no-new-privileges",
             "--pids-limit", "100",
-            # Labels for discovery
-            "--label", "app=parachute",
-            "--label", f"workspace={workspace_slug}",
+            # Per-session scratch space (tmpfs — no disk persistence)
+            "--tmpfs", "/scratch:size=512m,uid=1000,gid=1000",
         ]
 
-        # Network — persistent containers need network for SDK API calls
+        # Add labels
+        for key, value in labels.items():
+            args.extend(["--label", f"{key}={value}"])
+
+        # Network isolation
         if not config.network_enabled:
             args.extend(["--network", "none"])
 
-        # Volume mounts (reuse existing _build_mounts)
-        args.extend(self._build_mounts(config))
+        # Vault mounts
+        args.extend(vault_mounts)
 
-        # Mount host .claude/ directory for SDK session persistence
-        sandbox_claude_dir = self.get_sandbox_claude_dir(workspace_slug)
-        sandbox_claude_dir.mkdir(parents=True, exist_ok=True)
-        sandbox_claude_dir.chmod(0o700)
-        args.extend(["-v", f"{sandbox_claude_dir}:/home/sandbox/.claude:rw"])
+        # SDK session persistence
+        claude_dir.mkdir(parents=True, exist_ok=True)
+        claude_dir.chmod(0o700)
+        args.extend(["-v", f"{claude_dir}:/home/sandbox/.claude:rw"])
 
         # Image + keep-alive command
         args.extend([SANDBOX_IMAGE, "sleep", "infinity"])
+
+        return args
+
+    async def _create_persistent_container(
+        self, container_name: str, workspace_slug: str, config: AgentSandboxConfig
+    ) -> None:
+        """Create and start a persistent container for a workspace."""
+        sandbox_claude_dir = self.get_sandbox_claude_dir(workspace_slug)
+        vault_mounts = self._build_mounts(config)
+        labels = {"app": "parachute", "workspace": workspace_slug}
+
+        args = self._build_persistent_container_args(
+            container_name,
+            config,
+            labels,
+            sandbox_claude_dir,
+            vault_mounts,
+        )
 
         proc = await asyncio.create_subprocess_exec(
             *args,
@@ -535,34 +588,26 @@ class DockerSandbox:
             f"for workspace {workspace_slug}"
         )
 
-    async def run_persistent(
+    async def _run_in_container(
         self,
-        workspace_slug: str,
+        container_name: str,
         config: AgentSandboxConfig,
         message: str,
-        resume_session_id: str | None = None,
+        resume_session_id: str | None,
+        label: str,
     ) -> AsyncGenerator[dict, None]:
-        """Run an agent session in a persistent workspace container.
+        """Execute an agent session in a running container via docker exec.
 
-        Uses docker exec to spawn a process in the running container.
-        Per-session data (capabilities, system_prompt, token) is passed
-        via enriched stdin JSON payload since docker exec cannot mount volumes.
+        Shared by run_persistent and run_default. Handles exec args, stdin payload
+        construction, streaming, and OOM cleanup.
 
-        If resume_session_id is set, the entrypoint will attempt SDK resume
-        from the persisted transcript on the mounted .claude/ directory.
+        Args:
+            container_name: Running container to exec into
+            config: Sandbox configuration
+            message: User message to send
+            resume_session_id: Optional SDK session ID to resume
+            label: Label for logging (e.g., "persistent sandbox", "default sandbox")
         """
-        if not await self.is_available():
-            raise RuntimeError("Docker not available for sandboxed execution")
-
-        if not await self.image_exists():
-            raise RuntimeError(
-                f"Sandbox image '{SANDBOX_IMAGE}' not found. "
-                "Build it from Settings > Capabilities or run: "
-                "docker build -t parachute-sandbox:latest parachute-computer/parachute/docker/"
-            )
-
-        container_name = await self.ensure_container(workspace_slug, config)
-
         # Build exec args — env vars for non-sensitive config only
         exec_args = [
             "docker", "exec", "-i",
@@ -615,7 +660,7 @@ class DockerSandbox:
                 stdin_payload["capabilities"] = capabilities
 
             async for event in self._stream_process(
-                proc, stdin_payload, config, label="persistent sandbox"
+                proc, stdin_payload, config, label=label
             ):
                 if event.get("type") == "exit_error":
                     returncode = event["returncode"]
@@ -640,7 +685,7 @@ class DockerSandbox:
                     yield event
 
         except OSError as e:
-            logger.error(f"Failed to exec in persistent sandbox: {e}")
+            logger.error(f"Failed to exec in {label}: {e}")
             yield {"type": "error", "error": f"Failed to exec in sandbox: {e}"}
         finally:
             if proc.returncode is None:
@@ -649,6 +694,100 @@ class DockerSandbox:
                     await proc.wait()
                 except ProcessLookupError:
                     pass
+
+    async def run_persistent(
+        self,
+        workspace_slug: str,
+        config: AgentSandboxConfig,
+        message: str,
+        resume_session_id: str | None = None,
+    ) -> AsyncGenerator[dict, None]:
+        """Run an agent session in a persistent workspace container.
+
+        Uses docker exec to spawn a process in the running container.
+        Per-session data (capabilities, system_prompt, token) is passed
+        via enriched stdin JSON payload since docker exec cannot mount volumes.
+
+        If resume_session_id is set, the entrypoint will attempt SDK resume
+        from the persisted transcript on the mounted .claude/ directory.
+        """
+        await self._validate_docker_ready()
+        container_name = await self.ensure_container(workspace_slug, config)
+
+        async for event in self._run_in_container(
+            container_name, config, message, resume_session_id, "persistent sandbox"
+        ):
+            yield event
+
+    async def ensure_default_container(self, config: AgentSandboxConfig) -> str:
+        """Ensure the default sandbox container is running.
+
+        The default container (parachute-default) is used for sandboxed sessions
+        with no workspace. It mounts the full vault read-only.
+
+        Separate from ensure_container() to avoid validate_workspace_slug().
+        """
+        container_name = DEFAULT_CONTAINER_NAME
+
+        async with self._slug_locks[container_name]:
+            status = await self._inspect_status(container_name)
+
+            if status == "running":
+                return container_name
+            elif status in ("exited", "created"):
+                await self._start_container(container_name)
+                return container_name
+            elif status is not None:
+                # Bad state — force remove and recreate
+                await self._remove_container(container_name)
+
+            # Create the default container
+            default_claude_dir = self.vault_path / SANDBOX_DATA_DIR / "_default" / ".claude"
+
+            # Full vault read-only + capability mounts
+            vault_mounts = ["-v", f"{self.vault_path}:/vault:ro"]
+            vault_mounts.extend(self._build_capability_mounts(config))
+
+            labels = {"app": "parachute", "type": "default"}
+
+            args = self._build_persistent_container_args(
+                container_name,
+                config,
+                labels,
+                default_claude_dir,
+                vault_mounts,
+            )
+
+            proc = await asyncio.create_subprocess_exec(
+                *args,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            _, stderr = await proc.communicate()
+            if proc.returncode != 0:
+                raise RuntimeError(
+                    f"Failed to create default container: {stderr.decode()}"
+                )
+            logger.info("Created default sandbox container (parachute-default)")
+            return container_name
+
+    async def run_default(
+        self,
+        config: AgentSandboxConfig,
+        message: str,
+        resume_session_id: str | None = None,
+    ) -> AsyncGenerator[dict, None]:
+        """Run an agent session in the default sandbox container.
+
+        Used for sandboxed sessions with no workspace configured.
+        """
+        await self._validate_docker_ready()
+        container_name = await self.ensure_default_container(config)
+
+        async for event in self._run_in_container(
+            container_name, config, message, resume_session_id, "default sandbox"
+        ):
+            yield event
 
     async def stop_container(self, workspace_slug: str) -> None:
         """Stop and remove a workspace's persistent container."""
@@ -714,13 +853,18 @@ class DockerSandbox:
             return
 
         count = 0
+        has_default = False
         for line in stdout.decode().strip().split("\n"):
             if not line:
                 continue
             parts = line.split("\t")
-            if len(parts) >= 1 and parts[0].startswith("parachute-ws-"):
-                count += 1
+            if len(parts) >= 1:
+                name = parts[0]
+                if name.startswith("parachute-ws-"):
+                    count += 1
+                elif name == DEFAULT_CONTAINER_NAME:
+                    has_default = True
         if count:
-            logger.info(
-                f"Reconciled {count} existing workspace container(s)"
-            )
+            logger.info(f"Reconciled {count} existing workspace container(s)")
+        if has_default:
+            logger.info("Default sandbox container (parachute-default) is present")

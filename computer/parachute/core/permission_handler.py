@@ -254,16 +254,16 @@ class PermissionHandler:
 
         # Resolve trust level
         trust_level = self._permissions.trust_level
-        trust_mode = trust_level == TrustLevel.TRUSTED
+        trust_mode = trust_level == TrustLevel.DIRECT
 
-        # Untrusted agents: deny all host tools - they run in Docker containers
-        if trust_level == TrustLevel.UNTRUSTED:
+        # Sandboxed agents: deny all host tools - they run in Docker containers
+        if trust_level == TrustLevel.SANDBOXED:
             # Only allow MCP tools and web tools in sandboxed mode
             if tool_name.startswith("mcp__") or tool_name in ALWAYS_ALLOWED_TOOLS:
                 return PermissionDecision(behavior="allow", updated_input=input_data)
             return PermissionDecision(
                 behavior="deny",
-                message=f"Untrusted agents cannot use host tool: {tool_name}",
+                message=f"Sandboxed agents cannot use host tool: {tool_name}",
             )
 
         # Always allow MCP tools (they provide structured access)

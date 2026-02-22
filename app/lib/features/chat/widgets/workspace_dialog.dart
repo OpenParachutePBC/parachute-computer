@@ -93,7 +93,7 @@ class _WorkspaceForm extends StatelessWidget {
                       ),
                     ))
                 .toList(),
-            onChanged: (val) => onTrustChanged(val ?? 'trusted'),
+            onChanged: (val) => onTrustChanged(val ?? 'direct'),
           ),
           SizedBox(height: Spacing.md),
           DropdownButtonFormField<String?>(
@@ -147,7 +147,7 @@ class _CreateWorkspaceDialogState extends ConsumerState<CreateWorkspaceDialog> {
   final _nameController = TextEditingController();
   final _descController = TextEditingController();
   final _dirController = TextEditingController();
-  String _trustLevel = 'trusted';
+  String _trustLevel = 'direct';
   String? _model;
   WorkspaceCapabilities _capabilities = const WorkspaceCapabilities();
   bool _isSubmitting = false;

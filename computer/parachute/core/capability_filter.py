@@ -3,7 +3,7 @@ Capability filtering for workspaces and trust levels.
 
 Two-stage filtering:
 1. Trust-level filter: MCPs annotated with trust_level are only available at
-   that trust level or above (untrusted < trusted).
+   that trust level or above (sandboxed < direct).
 2. Workspace filter: applies workspace capability sets ("all"/"none"/[list]).
 """
 
@@ -17,17 +17,18 @@ from parachute.models.workspace import WorkspaceCapabilities
 logger = logging.getLogger(__name__)
 
 # Trust level restrictiveness order: higher number = more restricted
-TRUST_ORDER: dict[str, int] = {"trusted": 0, "untrusted": 1}
-
-# Legacy mapping for old trust level values
-_LEGACY_TRUST_MAP: dict[str, str] = {"full": "trusted", "vault": "trusted", "sandboxed": "untrusted"}
+TRUST_ORDER: dict[str, int] = {"direct": 0, "sandboxed": 1}
 
 
 def trust_rank(level: Any) -> int:
     """Get the numeric rank for a trust level (str or enum with .value)."""
+    from parachute.core.trust import normalize_trust_level
+
     key = level.value if hasattr(level, "value") else str(level)
-    # Map legacy values
-    key = _LEGACY_TRUST_MAP.get(key, key)
+    try:
+        key = normalize_trust_level(key)
+    except ValueError:
+        key = "direct"
     return TRUST_ORDER.get(key, 0)
 
 
@@ -49,12 +50,12 @@ def filter_by_trust_level(
 
     An MCP is available if its declared trust_level is at least as restrictive
     as the session's trust level. For example:
-    - MCP with trust_level="untrusted" is available in all sessions
-    - MCP with trust_level="trusted" (or no annotation) is only available in trusted sessions
+    - MCP with trust_level="sandboxed" is available in all sessions
+    - MCP with trust_level="direct" (or no annotation) is only available in direct sessions
 
     Args:
         mcps: MCP server configs (may include a "trust_level" key)
-        session_trust: The effective session trust level ("trusted", "untrusted")
+        session_trust: The effective session trust level ("direct", "sandboxed")
 
     Returns:
         Filtered MCP dict with only trust-compatible servers
@@ -62,17 +63,13 @@ def filter_by_trust_level(
     if not mcps:
         return {}
 
-    # Map legacy session trust values
-    mapped_session = _LEGACY_TRUST_MAP.get(session_trust, session_trust)
-    session_order = TRUST_ORDER.get(mapped_session, 0)
+    session_order = trust_rank(session_trust)
     filtered = {}
 
     for name, config in mcps.items():
-        # MCPs without trust_level default to "trusted" (most privileged access)
-        mcp_trust = config.get("trust_level", "trusted")
-        # Map legacy MCP trust annotations
-        mcp_trust = _LEGACY_TRUST_MAP.get(mcp_trust, mcp_trust)
-        mcp_order = TRUST_ORDER.get(mcp_trust, 0)
+        # MCPs without trust_level default to "direct" (most privileged access)
+        mcp_trust = config.get("trust_level", "direct")
+        mcp_order = trust_rank(mcp_trust)
 
         # MCP is available if its trust_level is >= session trust (more or equally restrictive)
         # i.e., an MCP declared "sandboxed" (order=2) is available everywhere

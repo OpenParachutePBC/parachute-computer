@@ -314,6 +314,38 @@ class Database:
             await self._connection.commit()
             logger.info("Migrated working_directory paths to /vault/... format (v15)")
 
+        # Migration: Trust level rename (v16)
+        # Rename trusted → direct, untrusted → sandboxed
+        # Also mark v14 as applied to prevent it from un-renaming our data.
+        async with self._connection.execute(
+            "SELECT version FROM schema_version WHERE version = 16"
+        ) as cursor:
+            row = await cursor.fetchone()
+        if not row:
+            await self._connection.execute(
+                "UPDATE sessions SET trust_level = 'direct' WHERE trust_level = 'trusted'"
+            )
+            await self._connection.execute(
+                "UPDATE sessions SET trust_level = 'sandboxed' WHERE trust_level = 'untrusted'"
+            )
+            await self._connection.execute(
+                "UPDATE pairing_requests SET approved_trust_level = 'direct' "
+                "WHERE approved_trust_level = 'trusted'"
+            )
+            await self._connection.execute(
+                "UPDATE pairing_requests SET approved_trust_level = 'sandboxed' "
+                "WHERE approved_trust_level = 'untrusted'"
+            )
+            # Prevent v14 from running on a fresh DB that never had old trust levels
+            await self._connection.execute(
+                "INSERT OR IGNORE INTO schema_version (version, applied_at) VALUES (14, datetime('now'))"
+            )
+            await self._connection.execute(
+                "INSERT OR IGNORE INTO schema_version (version, applied_at) VALUES (16, datetime('now'))"
+            )
+            await self._connection.commit()
+            logger.info("Migrated trust levels: trusted → direct, untrusted → sandboxed (v16)")
+
     async def close(self) -> None:
         """Close database connection."""
         if self._connection:

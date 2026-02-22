@@ -105,7 +105,22 @@ class GroupHistoryBuffer:
 
 
 class BotConnector(ABC):
-    """Base class for bot connectors."""
+    """Base class for bot connectors.
+
+    SECURITY WARNING: Bot connectors expose your Parachute instance to external users.
+    Use sandboxed trust level for all bots unless you fully understand the security
+    implications. See computer/parachute/connectors/SECURITY.md for detailed guidance.
+
+    Args:
+        bot_token: Platform-specific bot token/secret
+        server: Parachute server instance
+        allowed_users: List of user IDs permitted to use the bot
+        default_trust_level: Trust level for new sessions ("sandboxed" or "direct")
+        dm_trust_level: Override trust level for direct messages
+        group_trust_level: Override trust level for group chats
+        group_mention_mode: Group chat trigger mode ("mention_only" or "all_messages")
+        ack_emoji: Emoji to react with while processing (None to disable)
+    """
 
     platform: str = "unknown"
 
@@ -114,9 +129,9 @@ class BotConnector(ABC):
         bot_token: str,
         server: Any,
         allowed_users: list[int | str],
-        default_trust_level: str = "untrusted",
-        dm_trust_level: str = "untrusted",
-        group_trust_level: str = "untrusted",
+        default_trust_level: str = "sandboxed",
+        dm_trust_level: str = "sandboxed",
+        group_trust_level: str = "sandboxed",
         group_mention_mode: str = "mention_only",
         ack_emoji: str | None = "👀",
     ):
@@ -133,6 +148,21 @@ class BotConnector(ABC):
         self._trust_overrides: dict[str, str] = {}  # user_id -> trust_level cache
         self._init_nudge_sent: dict[str, int] = {}
         self.group_history = GroupHistoryBuffer(max_messages=50)
+
+        # Security: Warn about risky trust level configurations
+        if default_trust_level == "direct":
+            logger.warning(
+                f"{self.platform} connector configured with DIRECT trust level. "
+                "This allows arbitrary code execution by bot users. "
+                "Only use for private, single-user bots. "
+                "See computer/parachute/connectors/SECURITY.md for guidance."
+            )
+        if dm_trust_level == "direct" or group_trust_level == "direct":
+            logger.warning(
+                f"{self.platform} connector has DIRECT trust for DMs or groups. "
+                "This allows arbitrary code execution. "
+                "See computer/parachute/connectors/SECURITY.md for security implications."
+            )
 
         # Health tracking
         self._status: ConnectorState = ConnectorState.STOPPED

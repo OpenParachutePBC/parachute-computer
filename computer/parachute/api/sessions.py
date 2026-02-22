@@ -205,12 +205,11 @@ async def activate_session(
     update = SessionUpdate(metadata=meta)
 
     if body.trust_level is not None:
-        # Accept both new and legacy trust values
-        _legacy = {"full": "trusted", "vault": "trusted", "sandboxed": "untrusted"}
-        mapped_trust = _legacy.get(body.trust_level, body.trust_level)
-        if mapped_trust not in ("trusted", "untrusted"):
+        from parachute.core.trust import normalize_trust_level
+        try:
+            body.trust_level = normalize_trust_level(body.trust_level)
+        except ValueError:
             raise HTTPException(status_code=400, detail="Invalid trust level")
-        body.trust_level = mapped_trust
         update.trust_level = body.trust_level
 
     if body.workspace_id is not None:
@@ -263,12 +262,11 @@ async def update_session_config(
     has_changes = False
 
     if body.trust_level is not None:
-        # Accept both new and legacy trust values
-        _legacy = {"full": "trusted", "vault": "trusted", "sandboxed": "untrusted"}
-        mapped_trust = _legacy.get(body.trust_level, body.trust_level)
-        if mapped_trust not in ("trusted", "untrusted"):
+        from parachute.core.trust import normalize_trust_level
+        try:
+            body.trust_level = normalize_trust_level(body.trust_level)
+        except ValueError:
             raise HTTPException(status_code=400, detail="Invalid trust level")
-        body.trust_level = mapped_trust
         update.trust_level = body.trust_level
         has_changes = True
 

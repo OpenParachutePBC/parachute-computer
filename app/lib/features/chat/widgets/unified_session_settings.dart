@@ -338,7 +338,7 @@ class _UnifiedSessionSettingsState
   // ---- Trust Level Section ----
 
   Widget _buildTrustSection(bool isDark) {
-    const levels = ['trusted', 'untrusted'];
+    const levels = ['direct', 'sandboxed'];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [

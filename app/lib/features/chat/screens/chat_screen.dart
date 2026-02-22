@@ -1094,7 +1094,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             if (_pendingTrustLevel == null) {
               final wsTrust = TrustLevel.fromString(workspace.defaultTrustLevel);
               setState(() {
-                _pendingTrustLevel = wsTrust == TrustLevel.trusted ? null : wsTrust.name;
+                _pendingTrustLevel = wsTrust == TrustLevel.direct ? null : wsTrust.name;
               });
             }
             // Auto-fill working directory
@@ -1144,7 +1144,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   Widget _buildTrustLevelSelector(bool isDark) {
     final currentLevel = _pendingTrustLevel != null
         ? TrustLevel.fromString(_pendingTrustLevel)
-        : TrustLevel.trusted;
+        : TrustLevel.direct;
 
     return Column(
       children: [
@@ -1169,7 +1169,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                 message: tl.description,
                 child: GestureDetector(
                   onTap: () => setState(() {
-                    _pendingTrustLevel = tl == TrustLevel.trusted ? null : tl.name;
+                    _pendingTrustLevel = tl == TrustLevel.direct ? null : tl.name;
                   }),
                   child: Container(
                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
@@ -1215,8 +1215,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
           ),
         ),
-        // Sandbox config panel (shown when Untrusted is selected)
-        if (currentLevel == TrustLevel.untrusted)
+        // Sandbox config panel (shown when Sandboxed is selected)
+        if (currentLevel == TrustLevel.sandboxed)
           _buildSandboxConfigPanel(isDark),
       ],
     );

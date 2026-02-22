@@ -137,8 +137,8 @@ class SessionListItem extends StatelessWidget {
                                       : BrandColors.driftwood,
                                   themeDark,
                                 ),
-                              // Trust level badge (shown when not default 'trusted')
-                              if (session.trustLevel != null && session.trustLevel != 'trusted')
+                              // Trust level badge (shown when not default 'direct')
+                              if (session.trustLevel != null && session.trustLevel != 'direct')
                                 _buildTrustBadge(session.trustLevel!, themeDark),
                             ],
                           ),

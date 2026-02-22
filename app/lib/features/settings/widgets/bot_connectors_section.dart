@@ -25,16 +25,16 @@ class _BotConnectorsSectionState extends ConsumerState<BotConnectorsSection> {
   final _tgTokenController = TextEditingController();
   final _tgAllowedUsersController = TextEditingController();
   bool _tgEnabled = false;
-  String _tgDmTrust = 'untrusted';
-  String _tgGroupTrust = 'untrusted';
+  String _tgDmTrust = 'sandboxed';
+  String _tgGroupTrust = 'sandboxed';
   bool _tgTokenVisible = false;
 
   // Discord controllers
   final _dcTokenController = TextEditingController();
   final _dcAllowedUsersController = TextEditingController();
   bool _dcEnabled = false;
-  String _dcDmTrust = 'untrusted';
-  String _dcGroupTrust = 'untrusted';
+  String _dcDmTrust = 'sandboxed';
+  String _dcGroupTrust = 'sandboxed';
   bool _dcTokenVisible = false;
 
   // Matrix controllers
@@ -43,11 +43,11 @@ class _BotConnectorsSectionState extends ConsumerState<BotConnectorsSection> {
   final _mxUserIdController = TextEditingController();
   final _mxAllowedRoomsController = TextEditingController();
   bool _mxEnabled = false;
-  String _mxDmTrust = 'untrusted';
-  String _mxGroupTrust = 'untrusted';
+  String _mxDmTrust = 'sandboxed';
+  String _mxGroupTrust = 'sandboxed';
   bool _mxTokenVisible = false;
 
-  static const _trustLevels = ['trusted', 'untrusted'];
+  static const _trustLevels = ['direct', 'sandboxed'];
 
   @override
   void initState() {
@@ -73,22 +73,22 @@ class _BotConnectorsSectionState extends ConsumerState<BotConnectorsSection> {
     final dc = config['discord'] as Map<String, dynamic>? ?? {};
 
     _tgEnabled = tg['enabled'] == true;
-    _tgDmTrust = (tg['dm_trust_level'] as String?) ?? 'untrusted';
-    _tgGroupTrust = (tg['group_trust_level'] as String?) ?? 'untrusted';
+    _tgDmTrust = (tg['dm_trust_level'] as String?) ?? 'sandboxed';
+    _tgGroupTrust = (tg['group_trust_level'] as String?) ?? 'sandboxed';
     final tgUsers = tg['allowed_users'] as List<dynamic>? ?? [];
     _tgAllowedUsersController.text = tgUsers.join(', ');
     // Don't populate token - server doesn't return it for security
 
     _dcEnabled = dc['enabled'] == true;
-    _dcDmTrust = (dc['dm_trust_level'] as String?) ?? 'untrusted';
-    _dcGroupTrust = (dc['group_trust_level'] as String?) ?? 'untrusted';
+    _dcDmTrust = (dc['dm_trust_level'] as String?) ?? 'sandboxed';
+    _dcGroupTrust = (dc['group_trust_level'] as String?) ?? 'sandboxed';
     final dcUsers = dc['allowed_users'] as List<dynamic>? ?? [];
     _dcAllowedUsersController.text = dcUsers.join(', ');
 
     final mx = config['matrix'] as Map<String, dynamic>? ?? {};
     _mxEnabled = mx['enabled'] == true;
-    _mxDmTrust = (mx['dm_trust_level'] as String?) ?? 'untrusted';
-    _mxGroupTrust = (mx['group_trust_level'] as String?) ?? 'untrusted';
+    _mxDmTrust = (mx['dm_trust_level'] as String?) ?? 'sandboxed';
+    _mxGroupTrust = (mx['group_trust_level'] as String?) ?? 'sandboxed';
     _mxHomeserverController.text = (mx['homeserver_url'] as String?) ?? '';
     _mxUserIdController.text = (mx['user_id'] as String?) ?? '';
     final mxRooms = mx['allowed_rooms'] as List<dynamic>? ?? [];
@@ -862,7 +862,7 @@ class _BotConnectorsSectionState extends ConsumerState<BotConnectorsSection> {
             borderRadius: BorderRadius.circular(Spacing.xs),
           ),
           child: DropdownButton<String>(
-            value: _trustLevels.contains(value) ? value : 'untrusted',
+            value: _trustLevels.contains(value) ? value : 'sandboxed',
             isDense: true,
             isExpanded: true,
             underline: const SizedBox.shrink(),
