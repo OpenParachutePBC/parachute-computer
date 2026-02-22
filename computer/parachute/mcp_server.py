@@ -24,6 +24,7 @@ Run with:
 import argparse
 import asyncio
 import json
+import asyncio
 import logging
 import os
 import re
@@ -63,13 +64,32 @@ class SessionContext:
         """Read session context from environment variables.
 
         Normalizes trust level to canonical TrustLevelStr values.
+        Validates session_id and workspace_id formats.
         """
         from parachute.core.trust import normalize_trust_level
 
+        # Session ID validation (sess_{hex16} or full UUID)
+        session_id = os.getenv("PARACHUTE_SESSION_ID")
+        if session_id:
+            session_pattern = re.compile(
+                r'^sess_[a-f0-9]{16}$|^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$'
+            )
+            if not session_pattern.match(session_id):
+                logger.warning(f"Invalid session_id format from env: {session_id!r}")
+                session_id = None
+
+        # Workspace ID validation (alphanumeric + hyphens, lowercase)
+        workspace_id = os.getenv("PARACHUTE_WORKSPACE_ID")
+        if workspace_id:
+            workspace_pattern = re.compile(r'^[a-z0-9-]+$')
+            if not workspace_pattern.match(workspace_id):
+                logger.warning(f"Invalid workspace_id format from env: {workspace_id!r}")
+                workspace_id = None
+
         raw_trust = os.getenv("PARACHUTE_TRUST_LEVEL")
         return cls(
-            session_id=os.getenv("PARACHUTE_SESSION_ID"),
-            workspace_id=os.getenv("PARACHUTE_WORKSPACE_ID"),
+            session_id=session_id,
+            workspace_id=workspace_id,
             trust_level=normalize_trust_level(raw_trust) if raw_trust else None,
         )
 
@@ -690,14 +710,13 @@ async def send_message(
 
     # TODO: Implement actual message injection into SDK session
     # This requires extending the SDK to support mid-stream message injection
-    # For now, return success with a note
+    # Return error until delivery is implemented to maintain honest contract
     return {
-        "success": True,
+        "error": "Message delivery not yet implemented. Validation passed, but delivery requires SDK mid-stream message injection support.",
+        "validation_passed": True,
         "sender_session_id": sender_session_id,
         "recipient_session_id": session_id,
-        "message_length": len(message),
         "workspace_id": sender_workspace_id,
-        "note": "Message validated and logged. SDK message injection not yet implemented.",
     }
 
 
@@ -718,18 +737,17 @@ async def list_workspace_sessions() -> dict[str, Any]:
     workspace_id = _session_context.workspace_id
     trust_level = _session_context.trust_level
 
-    # Get all sessions in the workspace
-    all_sessions = await db.list_sessions(workspace_id=workspace_id, limit=1000)
-
-    # Filter by trust level (sandboxed only sees sandboxed)
-    sessions = []
-    for session in all_sessions:
-        session_trust = session.get_trust_level().value
-        # Sandboxed sessions can only see other sandboxed sessions
-        if trust_level == "sandboxed" and session_trust != "sandboxed":
-            continue
-        # Direct sessions can see all sessions
-        sessions.append(session)
+    # Get sessions in the workspace with trust level filtering at SQL level
+    if trust_level == "sandboxed":
+        # Sandboxed sessions only see other sandboxed sessions
+        sessions = await db.list_sessions(
+            workspace_id=workspace_id,
+            trust_level="sandboxed",
+            limit=1000
+        )
+    else:
+        # Direct sessions see all sessions
+        sessions = await db.list_sessions(workspace_id=workspace_id, limit=1000)
 
     # Format response
     result_sessions = []
@@ -798,7 +816,7 @@ async def search_journals(
             break
 
         try:
-            content = journal_file.read_text(encoding="utf-8")
+            content = await asyncio.to_thread(journal_file.read_text, encoding="utf-8")
 
             # Search in content
             if query_lower in content.lower():
@@ -857,7 +875,7 @@ async def list_recent_journals(limit: int = 14) -> list[dict[str, Any]]:
     results = []
     for journal_file in journal_files:
         try:
-            content = journal_file.read_text(encoding="utf-8")
+            content = await asyncio.to_thread(journal_file.read_text, encoding="utf-8")
             # Count entries (each starts with # para:daily:)
             entry_count = content.count("# para:daily:")
 
@@ -887,7 +905,7 @@ async def get_journal(date: str) -> Optional[dict[str, Any]]:
         return None
 
     try:
-        content = journal_file.read_text(encoding="utf-8")
+        content = await asyncio.to_thread(journal_file.read_text, encoding="utf-8")
 
         # Parse entries
         entries = []

@@ -560,6 +560,7 @@ class Database:
         agent_type: Optional[str] = None,
         search: Optional[str] = None,
         workspace_id: Optional[str] = None,
+        trust_level: Optional[str] = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[Session]:
@@ -586,6 +587,10 @@ class Database:
         if workspace_id is not None:
             query += " AND workspace_id = ?"
             params.append(workspace_id)
+
+        if trust_level is not None:
+            query += " AND trust_level = ?"
+            params.append(trust_level)
 
         query += " ORDER BY last_accessed DESC LIMIT ? OFFSET ?"
         params.extend([limit, offset])
