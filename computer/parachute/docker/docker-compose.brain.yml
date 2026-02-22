@@ -5,13 +5,8 @@ services:
     image: terminusdb/terminusdb-server:v12.0.0
     container_name: parachute-brain-terminusdb
     hostname: terminusdb-server
-    # SECURITY: Run as non-root user
-    user: "1000:1000"
-    # SECURITY: Read-only root filesystem (only data volume writable)
-    read_only: true
-    tmpfs:
-      - /tmp:size=100M,mode=1777
-      - /run:size=10M,mode=755
+    # SECURITY: Run as non-root user (uses host user's UID:GID)
+    user: "${UID:-1000}:${GID:-1000}"
     ports:
       # SECURITY: Bind to localhost only, not 0.0.0.0
       - "127.0.0.1:6363:6363"

@@ -64,6 +64,9 @@ async def start_terminusdb(vault_path: Path):
     # Issue: env parameter REPLACES environ, losing PATH/DOCKER_HOST
     full_env = os.environ.copy()
     full_env["VAULT_PATH"] = str(vault_path)
+    # Set UID/GID for docker-compose (needed for user directive)
+    full_env["UID"] = str(os.getuid())
+    full_env["GID"] = str(os.getgid())
 
     # Ensure data directory exists
     data_dir = vault_path / ".brain" / "data"
@@ -111,6 +114,8 @@ async def stop_terminusdb(vault_path: Path):
 
     full_env = os.environ.copy()
     full_env["VAULT_PATH"] = str(vault_path)
+    full_env["UID"] = str(os.getuid())
+    full_env["GID"] = str(os.getgid())
 
     proc = await asyncio.create_subprocess_exec(
         "docker-compose",
