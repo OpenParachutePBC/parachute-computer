@@ -138,5 +138,6 @@ Next: Run `/para-plan #NN` when ready to implement.
 - **Ask one question at a time** - Don't overwhelm
 - **Apply YAGNI** - Prefer simpler approaches
 - **Keep outputs concise** - 200-300 words per section max
+- **Brainstorm file and issue body must stay in sync** - The GitHub issue body IS the brainstorm content. Whenever the brainstorm file is updated (during this session or later), sync it to the issue: `gh issue edit NN --body-file docs/brainstorms/YYYY-MM-DD-<topic>-brainstorm.md`. Update the issue title too if the topic changed. This applies to pivots, refinements, or any substantive change to the brainstorm.
 
 NEVER CODE! Just explore and document decisions.
