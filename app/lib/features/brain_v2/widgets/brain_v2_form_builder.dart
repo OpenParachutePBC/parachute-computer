@@ -210,8 +210,8 @@ class _BrainV2FormBuilderState extends State<BrainV2FormBuilder> {
       onChanged: (value) {
         setState(() {
           _formData[field.name] = value;
-          widget.onDataChanged(_formData);
         });
+        widget.onDataChanged(_formData);
       },
       activeColor: isDark ? BrandColors.nightForest : BrandColors.forest,
       contentPadding: EdgeInsets.zero,
@@ -239,8 +239,8 @@ class _BrainV2FormBuilderState extends State<BrainV2FormBuilder> {
       onChanged: (value) {
         setState(() {
           _formData[field.name] = value;
-          widget.onDataChanged(_formData);
         });
+        widget.onDataChanged(_formData);
       },
     );
   }

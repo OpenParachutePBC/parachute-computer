@@ -240,7 +240,7 @@ class _BrainV2EntityFormScreenState
         .toList();
 
     if (missingFields.isNotEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
         SnackBar(
           content: Text('Missing required fields: ${missingFields.join(', ')}'),
           backgroundColor: Colors.red,
@@ -277,7 +277,7 @@ class _BrainV2EntityFormScreenState
 
         if (mounted) {
           Navigator.of(context).pop();
-          ScaffoldMessenger.of(context).showSnackBar(
+          ScaffoldMessenger.maybeOf(context)?.showSnackBar(
             const SnackBar(content: Text('Entity updated successfully')),
           );
         }
@@ -294,14 +294,14 @@ class _BrainV2EntityFormScreenState
 
         if (mounted) {
           Navigator.of(context).pop();
-          ScaffoldMessenger.of(context).showSnackBar(
+          ScaffoldMessenger.maybeOf(context)?.showSnackBar(
             SnackBar(content: Text('Created entity: $entityId')),
           );
         }
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        ScaffoldMessenger.maybeOf(context)?.showSnackBar(
           SnackBar(
             content: Text('Error: $e'),
             backgroundColor: Colors.red,

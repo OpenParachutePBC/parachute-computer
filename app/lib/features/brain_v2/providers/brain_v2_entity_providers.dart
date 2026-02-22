@@ -8,8 +8,6 @@ import 'brain_v2_service_provider.dart';
 final brainV2EntityListProvider = FutureProvider.autoDispose
     .family<List<BrainV2Entity>, String>((ref, type) async {
   final service = ref.watch(brainV2ServiceProvider);
-  if (service == null) return [];
-
   return service.queryEntities(type, limit: 100);
 });
 
@@ -19,7 +17,5 @@ final brainV2EntityListProvider = FutureProvider.autoDispose
 final brainV2EntityDetailProvider =
     FutureProvider.autoDispose.family<BrainV2Entity?, String>((ref, id) async {
   final service = ref.watch(brainV2ServiceProvider);
-  if (service == null) return null;
-
   return service.getEntity(id);
 });
