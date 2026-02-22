@@ -189,6 +189,23 @@ class BrainV2Module:
             "schemas_dir": str(self.schemas_dir),
         }
 
+    def get_mcp_tools(self) -> list[dict]:
+        """Return MCP tools for agent-native access to Brain v2"""
+        from .mcp_tools import BRAIN_V2_TOOLS, TOOL_HANDLERS
+
+        # Bind handlers to this module instance
+        tools = []
+        for tool_def in BRAIN_V2_TOOLS:
+            tool = tool_def.copy()
+            tool_name = tool["name"]
+            if tool_name in TOOL_HANDLERS:
+                # Create bound handler with module context
+                handler = TOOL_HANDLERS[tool_name]
+                tool["handler"] = lambda args, h=handler: h(self, args)
+            tools.append(tool)
+
+        return tools
+
     # --- BrainInterface compatibility methods ---
 
     async def search(self, query: str) -> list[dict[str, Any]]:
