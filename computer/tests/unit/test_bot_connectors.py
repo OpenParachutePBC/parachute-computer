@@ -159,12 +159,48 @@ class TestClaudeToTelegram:
 
 
 class TestBotsConfig:
+    @pytest.mark.parametrize("config_class,field,input_value,expected", [
+        # Telegram normalization tests
+        (TelegramConfig, "dm_trust_level", "full", "direct"),
+        (TelegramConfig, "dm_trust_level", "vault", "direct"),
+        (TelegramConfig, "dm_trust_level", "untrusted", "sandboxed"),
+        (TelegramConfig, "dm_trust_level", "direct", "direct"),  # Canonical passthrough
+        (TelegramConfig, "dm_trust_level", "sandboxed", "sandboxed"),  # Canonical
+        (TelegramConfig, "group_trust_level", "full", "direct"),
+        (TelegramConfig, "group_trust_level", "untrusted", "sandboxed"),
+        # Discord normalization tests
+        (DiscordConfig, "dm_trust_level", "full", "direct"),
+        (DiscordConfig, "dm_trust_level", "vault", "direct"),
+        (DiscordConfig, "dm_trust_level", "sandboxed", "sandboxed"),
+        (DiscordConfig, "group_trust_level", "untrusted", "sandboxed"),
+        # Matrix normalization tests
+        (MatrixConfig, "dm_trust_level", "full", "direct"),
+        (MatrixConfig, "dm_trust_level", "vault", "direct"),
+        (MatrixConfig, "dm_trust_level", "trusted", "direct"),
+        (MatrixConfig, "dm_trust_level", "direct", "direct"),  # Canonical
+        (MatrixConfig, "group_trust_level", "untrusted", "sandboxed"),
+        (MatrixConfig, "group_trust_level", "sandboxed", "sandboxed"),  # Canonical
+    ])
+    def test_trust_level_normalization_across_platforms(
+        self, config_class, field, input_value, expected
+    ):
+        """All platform configs normalize trust levels consistently via Pydantic validators.
+
+        This parametrized test consolidates trust level normalization testing across
+        all bot platforms (Telegram, Discord, Matrix) to ensure consistent behavior.
+        """
+        # Create config with the input value
+        config = config_class(**{field: input_value})
+        actual = getattr(config, field)
+        assert actual == expected, \
+            f"{config_class.__name__}.{field}: Legacy {input_value!r} should normalize to {expected!r}, got {actual!r}"
+
     def test_default_config(self):
         config = BotsConfig()
         assert not config.telegram.enabled
         assert not config.discord.enabled
-        assert config.telegram.dm_trust_level == "sandboxed", \
-            "Default dm_trust_level should be normalized to 'sandboxed'"
+        # Default normalization is now tested in parametrized test above
+        assert config.telegram.dm_trust_level == "sandboxed"
         assert config.telegram.group_trust_level == "sandboxed"
 
     def test_telegram_config(self):
@@ -178,19 +214,18 @@ class TestBotsConfig:
         assert len(config.allowed_users) == 2
 
     def test_discord_config(self):
-        """Test Discord configuration with user allowlist and normalization."""
+        """Test Discord configuration with user allowlist."""
         config = DiscordConfig(
             enabled=True,
             bot_token="test-token",
             allowed_users=["discord_user_1", "discord_user_2"],
-            dm_trust_level="full",  # Legacy value to test normalization
             group_mention_mode="all_messages",
         )
         assert config.enabled
         assert config.bot_token == "test-token"
         assert len(config.allowed_users) == 2
-        assert config.dm_trust_level == "direct", "Legacy 'full' should normalize to 'direct'"
         assert config.group_mention_mode == "all_messages"
+        # Normalization testing is handled by test_trust_level_normalization_across_platforms
 
     def test_full_config_parsing(self):
         config = BotsConfig(**{
@@ -198,7 +233,6 @@ class TestBotsConfig:
                 "enabled": True,
                 "bot_token": "tg-token",
                 "allowed_users": [111],
-                "dm_trust_level": "full",
                 "group_trust_level": "sandboxed",
             },
             "discord": {
@@ -208,9 +242,8 @@ class TestBotsConfig:
             },
         })
         assert config.telegram.enabled
-        assert config.telegram.dm_trust_level == "direct", \
-            "Legacy 'full' should normalize to 'direct'"
         assert config.discord.enabled
+        # Normalization testing is handled by test_trust_level_normalization_across_platforms
 
     def test_load_from_missing_file(self, tmp_path):
         config = load_bots_config(tmp_path)
@@ -249,15 +282,8 @@ class TestBotsConfig:
 
 
 class TestBotConnectorBase:
-    def test_is_user_allowed_int(self):
-        class TestConnector(BotConnector):
-            platform = "test"
-            async def start(self): pass
-            async def stop(self): pass
-            async def on_text_message(self, update, context): pass
-            async def _run_loop(self): pass
-
-        connector = TestConnector(
+    def test_is_user_allowed_int(self, minimal_bot_connector):
+        connector = minimal_bot_connector(
             bot_token="test",
             server=None,
             allowed_users=[123, 456],
@@ -266,15 +292,8 @@ class TestBotConnectorBase:
         assert connector.is_user_allowed(456)
         assert not connector.is_user_allowed(789)
 
-    def test_is_user_allowed_string(self):
-        class TestConnector(BotConnector):
-            platform = "test"
-            async def start(self): pass
-            async def stop(self): pass
-            async def on_text_message(self, update, context): pass
-            async def _run_loop(self): pass
-
-        connector = TestConnector(
+    def test_is_user_allowed_string(self, minimal_bot_connector):
+        connector = minimal_bot_connector(
             bot_token="test",
             server=None,
             allowed_users=["123", "456"],
@@ -283,16 +302,9 @@ class TestBotConnectorBase:
         assert connector.is_user_allowed(123)  # int matches string
 
     @pytest.mark.asyncio
-    async def test_get_trust_level(self):
+    async def test_get_trust_level(self, minimal_bot_connector):
         """Test trust level retrieval for different chat types."""
-        class TestConnector(BotConnector):
-            platform = "test"
-            async def start(self): pass
-            async def stop(self): pass
-            async def on_text_message(self, update, context): pass
-            async def _run_loop(self): pass
-
-        connector = TestConnector(
+        connector = minimal_bot_connector(
             bot_token="test",
             server=None,
             allowed_users=[],
@@ -310,15 +322,8 @@ class TestBotConnectorBase:
         group_level = await connector.get_trust_level("group")
         assert group_level == "sandboxed", f"Expected 'sandboxed' for group, got {group_level!r}"
 
-    def test_status_enriched_fields(self):
-        class TestConnector(BotConnector):
-            platform = "test"
-            async def start(self): pass
-            async def stop(self): pass
-            async def on_text_message(self, update, context): pass
-            async def _run_loop(self): pass
-
-        connector = TestConnector(
+    def test_status_enriched_fields(self, minimal_bot_connector):
+        connector = minimal_bot_connector(
             bot_token="test",
             server=None,
             allowed_users=[1, 2, 3],
@@ -622,10 +627,9 @@ class TestMatrixConfig:
         assert config.access_token == ""
         assert config.device_id == "PARACHUTE01"
         assert config.allowed_rooms == []
-        assert config.dm_trust_level == "sandboxed", \
-            "Default should normalize legacy 'untrusted' to 'sandboxed'"
-        assert config.group_trust_level == "sandboxed", \
-            "Default should normalize legacy 'untrusted' to 'sandboxed'"
+        # Normalization testing is handled by TestBotsConfig.test_trust_level_normalization_across_platforms
+        assert config.dm_trust_level == "sandboxed"
+        assert config.group_trust_level == "sandboxed"
         assert config.group_mention_mode == "mention_only"
         assert config.ack_emoji == "👀"
 
@@ -642,27 +646,6 @@ class TestMatrixConfig:
         assert config.homeserver_url == "https://matrix.example.org"
         assert config.user_id == "@bot:example.org"
         assert len(config.allowed_rooms) == 2
-
-    def test_trust_level_normalization(self):
-        """Test legacy trust level strings normalize to canonical values."""
-        config = MatrixConfig(
-            dm_trust_level="full",          # Legacy → normalizes to "direct"
-            group_trust_level="sandboxed",  # Already canonical
-        )
-        assert config.dm_trust_level == "direct", \
-            "Legacy 'full' should normalize to 'direct'"
-        assert config.group_trust_level == "sandboxed", \
-            "'sandboxed' is already canonical"
-
-        # Test other legacy mappings for completeness
-        config2 = MatrixConfig(
-            dm_trust_level="vault",         # Legacy → "direct"
-            group_trust_level="untrusted",  # Legacy → "sandboxed"
-        )
-        assert config2.dm_trust_level == "direct", \
-            "Legacy 'vault' should normalize to 'direct'"
-        assert config2.group_trust_level == "sandboxed", \
-            "Legacy 'untrusted' should normalize to 'sandboxed'"
 
     def test_bots_config_includes_matrix(self):
         config = BotsConfig()
