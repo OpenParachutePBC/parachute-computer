@@ -164,10 +164,10 @@ vault/.brain/
 #### Phase 1.1: TerminusDB Docker Setup
 
 **Tasks:**
-- [ ] Create `computer/parachute/docker/docker-compose.brain.yml` with TerminusDB v12.0.0 service
-- [ ] Configure volume mount to `vault/.brain/data/`
-- [ ] Add health check endpoint (`http://localhost:6363/api/info`)
-- [ ] Integrate into server startup lifespan manager (`parachute/server.py`)
+- [x] Create `computer/parachute/docker/docker-compose.brain.yml` with TerminusDB v12.0.0 service
+- [x] Configure volume mount to `vault/.brain/data/`
+- [x] Add health check endpoint (`http://localhost:6363/api/info`)
+- [x] Integrate into server startup lifespan manager (`parachute/server.py`)
 - [ ] Test container starts/stops with server lifecycle
 
 **Files to create:**
@@ -330,10 +330,10 @@ async def lifespan(app: FastAPI):
 #### Phase 1.2: Schema System
 
 **Tasks:**
-- [ ] Design YAML schema format for entity types (Person, Project, Note)
-- [ ] Implement `SchemaCompiler` class to parse YAML → TerminusDB JSON schema
-- [ ] Create initial schemas: `person.yaml`, `project.yaml`, `note.yaml`
-- [ ] Add schema validation on module startup
+- [x] Design YAML schema format for entity types (Person, Project, Note)
+- [x] Implement `SchemaCompiler` class to parse YAML → TerminusDB JSON schema
+- [x] Create initial schemas: `person.yaml`, `project.yaml`, `note.yaml`
+- [x] Add schema validation on module startup
 - [ ] Test schema compilation and loading into TerminusDB
 
 **Files to create:**
@@ -694,9 +694,9 @@ class BrainV2Module:
 #### Phase 1.3: Knowledge Graph Service
 
 **Tasks:**
-- [ ] Install `terminusdb-client` Python library
-- [ ] Create `KnowledgeGraphService` class with async wrappers
-- [ ] Implement core operations: connect, create_entity, query_entities, create_relationship
+- [x] Install `terminusdb-client` Python library
+- [x] Create `KnowledgeGraphService` class with async wrappers
+- [x] Implement core operations: connect, create_entity, query_entities, create_relationship
 - [ ] Test basic CRUD operations
 - [ ] Validate schema enforcement on writes
 
