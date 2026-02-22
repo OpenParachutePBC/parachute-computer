@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  terminusdb:
+    image: terminusdb/terminusdb-server:v12.0.0
+    container_name: parachute-brain-terminusdb
+    hostname: terminusdb-server
+    # SECURITY: Run as non-root user
+    user: "1000:1000"
+    # SECURITY: Read-only root filesystem (only data volume writable)
+    read_only: true
+    tmpfs:
+      - /tmp:size=100M,mode=1777
+      - /run:size=10M,mode=755
+    ports:
+      # SECURITY: Bind to localhost only, not 0.0.0.0
+      - "127.0.0.1:6363:6363"
+    volumes:
+      - ${VAULT_PATH}/.brain/data:/app/terminusdb/storage
+    environment:
+      - TERMINUSDB_SERVER_NAME=localhost
+      - TERMINUSDB_ADMIN_PASS=${TERMINUSDB_ADMIN_PASS}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6363/api/info"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+      - apparmor=docker-default
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    # SECURITY: Resource limits (prevent DoS)
+    mem_limit: 512m
+    cpus: 1.0
