@@ -5,6 +5,7 @@ Main FastAPI application entry point with modular architecture.
 Discovers and loads modules from vault/.modules/ directory.
 """
 
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -19,6 +20,7 @@ if not os.environ.get("SSL_CERT_FILE"):
 from pathlib import Path
 from typing import Optional
 
+import httpx
 import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -39,6 +41,92 @@ from parachute.lib.server_config import (
 )
 
 logger = get_logger(__name__)
+
+
+async def validate_terminusdb_password():
+    """Validate TerminusDB admin password before startup."""
+    admin_pass = os.getenv("TERMINUSDB_ADMIN_PASS")
+
+    if admin_pass is None or admin_pass == "root":
+        if os.getenv("ENVIRONMENT") != "development":
+            raise RuntimeError(
+                "TERMINUSDB_ADMIN_PASS must be set to a secure password in production. "
+                "Generate one with: python -c 'import secrets; print(secrets.token_urlsafe(32))'"
+            )
+        logger.warning("Using default TerminusDB password - acceptable only in development")
+
+
+async def start_terminusdb(vault_path: Path):
+    """Start TerminusDB container if not running."""
+    compose_file = Path(__file__).parent / "docker" / "docker-compose.brain.yml"
+
+    # CRITICAL FIX: Copy environment and add VAULT_PATH
+    # Issue: env parameter REPLACES environ, losing PATH/DOCKER_HOST
+    full_env = os.environ.copy()
+    full_env["VAULT_PATH"] = str(vault_path)
+
+    # Ensure data directory exists
+    data_dir = vault_path / ".brain" / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+
+    # Use asyncio.create_subprocess_exec (NOT subprocess.run - blocks event loop!)
+    proc = await asyncio.create_subprocess_exec(
+        "docker-compose",
+        "-f", str(compose_file),
+        "--project-directory", str(vault_path),
+        "up", "-d",
+        env=full_env,  # FIXED: Use full environment
+        stdout=asyncio.subprocess.DEVNULL,  # Don't capture stdout (faster)
+        stderr=asyncio.subprocess.PIPE,
+    )
+
+    returncode = await proc.wait()
+
+    if returncode != 0:
+        stderr = await proc.stderr.read() if proc.stderr else b""
+        raise RuntimeError(f"Failed to start TerminusDB: {stderr.decode()}")
+
+    # Wait for health check (OPTIMIZED: 15 retries × 1s = 15s max)
+    for attempt in range(1, 16):
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.get("http://localhost:6363/api/info", timeout=1.0)
+                if resp.status_code == 200:
+                    logger.info(f"TerminusDB ready after {attempt}s")
+                    return
+        except httpx.RequestError as e:
+            logger.debug(f"Health check attempt {attempt}/15: {e}")
+        except Exception as e:
+            logger.warning(f"Unexpected health check error: {e}", exc_info=True)
+
+        if attempt < 15:
+            await asyncio.sleep(1)
+
+    raise RuntimeError("TerminusDB health check timed out after 15s")
+
+
+async def stop_terminusdb(vault_path: Path):
+    """Stop TerminusDB container."""
+    compose_file = Path(__file__).parent / "docker" / "docker-compose.brain.yml"
+
+    full_env = os.environ.copy()
+    full_env["VAULT_PATH"] = str(vault_path)
+
+    proc = await asyncio.create_subprocess_exec(
+        "docker-compose",
+        "-f", str(compose_file),
+        "--project-directory", str(vault_path),
+        "down",
+        env=full_env,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.PIPE,
+    )
+
+    returncode = await proc.wait()
+
+    if returncode != 0:
+        stderr = await proc.stderr.read() if proc.stderr else b""
+        logger.warning(f"Failed to stop TerminusDB cleanly: {stderr.decode()}")
 
 
 @asynccontextmanager
@@ -152,6 +240,15 @@ async def lifespan(app: FastAPI):
     # Auto-start enabled bot connectors (errors logged, never crash server)
     await auto_start_connectors()
 
+    # Start TerminusDB for Brain v2 module
+    try:
+        await validate_terminusdb_password()
+        await start_terminusdb(settings.vault_path)
+        logger.info("TerminusDB started successfully")
+    except Exception as e:
+        logger.warning(f"Failed to start TerminusDB (Brain v2 will be unavailable): {e}")
+        # Don't crash server if TerminusDB fails - Brain v2 will gracefully degrade
+
     logger.info("Server ready")
 
     yield
@@ -177,6 +274,13 @@ async def lifespan(app: FastAPI):
             except Exception as e:
                 logger.warning("Error cleaning permissions for %s during shutdown: %s", session_id, e)
         app.state.orchestrator.pending_permissions.clear()
+
+    # Stop TerminusDB
+    try:
+        await stop_terminusdb(settings.vault_path)
+        logger.info("TerminusDB stopped")
+    except Exception as e:
+        logger.warning(f"Error stopping TerminusDB: {e}")
 
     await stop_scheduler()
     await close_database()
