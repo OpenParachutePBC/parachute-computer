@@ -656,6 +656,24 @@ class Orchestrator:
                     f"agents={len(agents_dict) if agents_dict else 0}"
                 )
 
+            # Inject session context into MCP server env vars
+            if resolved_mcps:
+                session_id = session.id
+                workspace_id_str = workspace_id or ""
+                trust_level_str = effective_trust
+
+                for mcp_name, mcp_config in resolved_mcps.items():
+                    # Shallow copy to avoid cache pollution across sessions
+                    env = {**mcp_config.get("env", {})}
+                    # Direct assignment - orchestrator is authoritative source
+                    env["PARACHUTE_SESSION_ID"] = session_id
+                    env["PARACHUTE_WORKSPACE_ID"] = workspace_id_str
+                    env["PARACHUTE_TRUST_LEVEL"] = trust_level_str
+                    # Update config with new env dict
+                    resolved_mcps[mcp_name] = {**mcp_config, "env": env}
+
+                logger.info(f"Injected session context into {len(resolved_mcps)} MCP servers")
+
             # Yield prompt metadata event (after capability discovery + filtering)
             yield PromptMetadataEvent(
                 prompt_source=prompt_metadata["prompt_source"],
