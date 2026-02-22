@@ -32,7 +32,7 @@ class BrainV2Module:
     """Brain v2 module with TerminusDB knowledge graph"""
 
     name = "brain_v2"
-    provides = ["BrainV2Interface"]
+    provides = ["BrainV2Interface", "BrainInterface"]  # Provides both for compatibility
 
     def __init__(self, vault_path: Path, **kwargs):
         self.vault_path = vault_path
@@ -188,3 +188,65 @@ class BrainV2Module:
             "schemas_loaded": len(self.schemas),
             "schemas_dir": str(self.schemas_dir),
         }
+
+    # --- BrainInterface compatibility methods ---
+
+    async def search(self, query: str) -> list[dict]:
+        """Search entities by name or content (BrainInterface compatibility).
+
+        Provides full-text search across all entity types for chat/daily integration.
+        Returns results in BrainInterface format for backwards compatibility.
+        """
+        kg = await self._ensure_kg_service()
+
+        results = []
+        query_lower = query.lower()
+
+        # Search across all entity types
+        # Note: This is a simple implementation. Phase 2 will add proper full-text search.
+        for schema in self.schemas:
+            entity_type = schema.get("@id", "")
+            if not entity_type:
+                continue
+
+            try:
+                # Query all entities of this type
+                response = await kg.query_entities(entity_type, limit=100)
+
+                for entity in response.get("results", []):
+                    # Check if query matches any field
+                    entity_id = entity.get("@id", "")
+                    entity_type_name = entity.get("@type", "")
+
+                    # Simple substring search across all string fields
+                    matched = False
+                    if query_lower in entity_id.lower():
+                        matched = True
+                    else:
+                        for key, value in entity.items():
+                            if key.startswith("@"):
+                                continue
+                            if isinstance(value, str) and query_lower in value.lower():
+                                matched = True
+                                break
+                            elif isinstance(value, list):
+                                for item in value:
+                                    if isinstance(item, str) and query_lower in item.lower():
+                                        matched = True
+                                        break
+
+                    if matched:
+                        # Format as BrainInterface expects
+                        results.append({
+                            "para_id": entity_id,  # Use TerminusDB IRI as para_id
+                            "name": entity.get("name", entity.get("title", entity_id)),
+                            "type": entity_type_name,
+                            "tags": entity.get("tags", []),
+                            "content": str(entity),  # Full entity as JSON string
+                        })
+
+            except Exception as e:
+                logger.warning(f"Search failed for {entity_type}: {e}")
+                continue
+
+        return results[:20]  # Limit to top 20 results

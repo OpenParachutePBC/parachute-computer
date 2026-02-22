@@ -4,6 +4,7 @@ description: "Brain v2 with TerminusDB knowledge graph"
 trust_level: trusted
 provides:
   - BrainV2Interface
+  - BrainInterface  # Backwards compatibility with chat/daily modules
 dependencies:
   - terminusdb-client>=10.2.6
   - aiofiles>=23.0.0
