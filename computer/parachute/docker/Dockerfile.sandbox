@@ -16,34 +16,38 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libffi-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Node.js 22 (TODO: Add checksum verification in production)
-RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
-    && apt-get install -y --no-install-recommends nodejs \
+# Node.js 22 (GPG-signed repository for supply chain security)
+RUN apt-get update && apt-get install -y --no-install-recommends gnupg \
+    && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+       | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg \
+    && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main" \
+       > /etc/apt/sources.list.d/nodesource.list \
+    && apt-get update && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
 # Upgrade pip to ensure concurrent cache safety (pip >= 24.0)
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --upgrade "pip>=24.0"
 
-# Claude Code CLI
-RUN npm install -g @anthropic-ai/claude-code
+# Claude Code CLI (pinned version for reproducibility)
+RUN npm install -g @anthropic-ai/claude-code@2.1.44
 
 # Claude Agent SDK
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --no-cache-dir claude-agent-sdk
+    pip install claude-agent-sdk
 
 # Document/data processing libraries (pinned versions for reproducibility)
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --no-cache-dir \
+    pip install \
     pandas==2.2.3 \
     openpyxl==3.1.5 \
-    PyPDF2==3.0.1 \
+    pypdf==4.3.1 \
     python-docx==1.1.2 \
     reportlab==4.2.5
 
 # Web automation libraries (pinned versions)
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --no-cache-dir \
+    pip install \
     requests==2.32.3 \
     beautifulsoup4==4.12.3
 

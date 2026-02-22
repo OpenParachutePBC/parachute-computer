@@ -185,22 +185,22 @@ class DockerSandbox:
         # Mount vault MCP config (read-only)
         mcp_json = self.vault_path / ".mcp.json"
         if mcp_json.exists():
-            mounts.extend(["-v", f"{mcp_json}:/vault/.mcp.json:ro"])
+            mounts.extend(["-v", f"{mcp_json}:/home/sandbox/Parachute/.mcp.json:ro"])
 
         # Mount skills directory (read-only)
         skills_dir = self.vault_path / ".skills"
         if skills_dir.is_dir():
-            mounts.extend(["-v", f"{skills_dir}:/vault/.skills:ro"])
+            mounts.extend(["-v", f"{skills_dir}:/home/sandbox/Parachute/.skills:ro"])
 
         # Mount custom agents (read-only)
         agents_dir = self.vault_path / ".parachute" / "agents"
         if agents_dir.is_dir():
-            mounts.extend(["-v", f"{agents_dir}:/vault/.parachute/agents:ro"])
+            mounts.extend(["-v", f"{agents_dir}:/home/sandbox/Parachute/.parachute/agents:ro"])
 
         # Mount vault CLAUDE.md (read-only)
         claude_md = self.vault_path / "CLAUDE.md"
         if claude_md.exists():
-            mounts.extend(["-v", f"{claude_md}:/vault/CLAUDE.md:ro"])
+            mounts.extend(["-v", f"{claude_md}:/home/sandbox/Parachute/CLAUDE.md:ro"])
 
         # Mount plugin directories (read-only)
         for i, plugin_dir in enumerate(config.plugin_dirs):
@@ -484,29 +484,10 @@ class DockerSandbox:
         elif sandbox_dir.exists():
             shutil.rmtree(sandbox_dir)
 
-    async def _ensure_cache_volumes(self) -> None:
-        """Create shared package cache volumes if they don't exist."""
-        volumes = ["parachute-pip-cache", "parachute-npm-cache"]
-
-        for volume_name in volumes:
-            # Use async subprocess (not blocking subprocess.run)
-            proc = await asyncio.create_subprocess_exec(
-                "docker", "volume", "inspect", volume_name,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, stderr = await proc.communicate()
-
-            if proc.returncode != 0:
-                # Volume doesn't exist, create it with labels
-                proc = await asyncio.create_subprocess_exec(
-                    "docker", "volume", "create",
-                    "--label", "app=parachute",
-                    "--label", "type=cache",
-                    volume_name,
-                )
-                await proc.wait()
-                logger.info(f"Created shared cache volume: {volume_name}")
+    # TODO: Implement shared package cache volumes
+    # Requires: (1) PIP_CACHE_DIR and NPM_CONFIG_CACHE env vars in container
+    #           (2) Either :rw mounts or a cache-warming strategy for :ro
+    # See: todos/125-pending-p2-pip-cache-volume-not-wired.md
 
     async def ensure_container(
         self, workspace_slug: str, config: AgentSandboxConfig
@@ -594,11 +575,8 @@ class DockerSandbox:
         # Vault mounts
         args.extend(vault_mounts)
 
-        # Shared package cache volumes (read-only to prevent poisoning)
-        args.extend([
-            "-v", "parachute-pip-cache:/cache/pip:ro",
-            "-v", "parachute-npm-cache:/cache/npm:ro",
-        ])
+        # TODO: Add shared package cache volumes when properly wired
+        # See: todos/125-pending-p2-pip-cache-volume-not-wired.md
 
         # SDK session persistence
         claude_dir.mkdir(parents=True, exist_ok=True)
@@ -614,9 +592,6 @@ class DockerSandbox:
         self, container_name: str, workspace_slug: str, config: AgentSandboxConfig
     ) -> None:
         """Create and start a persistent container for a workspace."""
-        # Ensure shared cache volumes exist
-        await self._ensure_cache_volumes()
-
         sandbox_claude_dir = self.get_sandbox_claude_dir(workspace_slug)
         vault_mounts = self._build_mounts(config)
         labels = {
@@ -802,9 +777,6 @@ class DockerSandbox:
                 await self._remove_container(container_name)
 
             # Create the default container
-            # Ensure shared cache volumes exist
-            await self._ensure_cache_volumes()
-
             default_claude_dir = self.vault_path / SANDBOX_DATA_DIR / "_default" / ".claude"
 
             # Full vault read-only + capability mounts
@@ -924,7 +896,7 @@ class DockerSandbox:
 
         count = 0
         has_default = False
-        removed_count = 0
+        containers_to_remove = []
 
         for line in stdout.decode().strip().split("\n"):
             if not line:
@@ -933,6 +905,7 @@ class DockerSandbox:
             try:
                 container = json.loads(line)
                 name = container.get("Names", "")
+                state = container.get("State", "")
                 labels = container.get("Labels", "")
 
                 # Parse labels (format: "key1=val1,key2=val2,...")
@@ -947,12 +920,21 @@ class DockerSandbox:
 
                 # Check if config hash matches
                 if config_hash and config_hash != current_hash:
+                    # Skip running containers — they may have active sessions
+                    # They'll be reconciled when stopped or on next server restart
+                    if state.lower() == "running":
+                        logger.warning(
+                            f"Skipping running container {name} with outdated config "
+                            f"(hash: {config_hash[:8]}... != {current_hash[:8]}...) — "
+                            f"will be reconciled when stopped"
+                        )
+                        continue
+
                     logger.info(
-                        f"Removing container {name} with outdated config "
+                        f"Will remove container {name} with outdated config "
                         f"(hash: {config_hash[:8]}... != {current_hash[:8]}...)"
                     )
-                    await self._remove_container(name)
-                    removed_count += 1
+                    containers_to_remove.append(name)
                     continue
 
                 # Count valid containers
@@ -965,8 +947,13 @@ class DockerSandbox:
                 logger.warning(f"Failed to parse container JSON: {line[:100]}")
                 continue
 
-        if removed_count:
-            logger.info(f"Removed {removed_count} container(s) with outdated configuration")
+        # Remove stale containers in parallel
+        if containers_to_remove:
+            await asyncio.gather(*[
+                self._remove_container(name)
+                for name in containers_to_remove
+            ], return_exceptions=True)
+            logger.info(f"Removed {len(containers_to_remove)} container(s) with outdated configuration")
         if count:
             logger.info(f"Reconciled {count} existing workspace container(s)")
         if has_default:
