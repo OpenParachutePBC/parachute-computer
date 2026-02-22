@@ -30,7 +30,19 @@ async def run_query_and_emit(message: str, options) -> str | None:
     captured_session_id = None
     captured_model = None
 
-    async for event in query(prompt=message, options=options):
+    # Use manual iteration to handle SDK MessageParseError for unknown event
+    # types (e.g. rate_limit_event) without crashing the entire session
+    event_iter = query(prompt=message, options=options).__aiter__()
+    while True:
+        try:
+            event = await event_iter.__anext__()
+        except StopAsyncIteration:
+            break
+        except Exception as e:
+            if "Unknown message type" in str(e):
+                continue  # Skip unsupported SDK event types
+            raise
+
         event_type = type(event).__name__
 
         if event_type == "SystemMessage":
@@ -73,6 +85,8 @@ async def run_query_and_emit(message: str, options) -> str | None:
             sid = getattr(event, "session_id", None)
             if sid:
                 captured_session_id = sid
+
+        # Silently ignore other SDK event types (RateLimitEvent, UsageEvent, etc.)
 
     return captured_session_id
 
@@ -178,15 +192,11 @@ async def run():
         if capabilities.get("agents"):
             options_kwargs["agents"] = capabilities["agents"]
 
-        # plugin_dirs may not be supported by all SDK versions — probe first
+        # Convert plugin_dirs to SDK plugins format
         if capabilities.get("plugin_dirs"):
-            import inspect
-            sig = inspect.signature(ClaudeAgentOptions.__init__)
-            if "plugin_dirs" in sig.parameters:
-                from pathlib import Path
-                options_kwargs["plugin_dirs"] = [Path(d) for d in capabilities["plugin_dirs"]]
-            else:
-                emit({"type": "warning", "message": "SDK does not support plugin_dirs, skipping"})
+            options_kwargs["plugins"] = [
+                {"type": "local", "path": str(d)} for d in capabilities["plugin_dirs"]
+            ]
 
         # Pass model if configured
         parachute_model = os.environ.get("PARACHUTE_MODEL")

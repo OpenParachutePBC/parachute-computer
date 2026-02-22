@@ -241,7 +241,19 @@ async def query_streaming(
             done_event = asyncio.Event()
             effective_prompt = _string_to_async_iterable(prompt, done_event, message_queue)
 
-        async for event in sdk_query(prompt=effective_prompt, options=options):
+        # Use manual iteration to handle SDK MessageParseError for unknown
+        # event types (e.g. rate_limit_event) without crashing the session
+        event_iter = sdk_query(prompt=effective_prompt, options=options).__aiter__()
+        while True:
+            try:
+                event = await event_iter.__anext__()
+            except StopAsyncIteration:
+                break
+            except Exception as iter_err:
+                if "Unknown message type" in str(iter_err):
+                    logger.debug(f"Skipping unknown SDK event type: {iter_err}")
+                    continue
+                raise
             event_dict = _event_to_dict(event)
             # Signal the iterable to finish once the turn is complete so
             # stream_input can close stdin and the CLI process can exit.

@@ -774,10 +774,20 @@ class Orchestrator:
                     # Use a real session ID for sandbox — "pending" would cause the SDK
                     # inside the container to try resuming a nonexistent session
                     sandbox_sid = session.id if session.id != "pending" else str(uuid.uuid4())
-                    # Ensure working directory has /home/sandbox/Parachute/ prefix for container paths
-                    sandbox_wd = str(effective_working_dir) if effective_working_dir else None
-                    if sandbox_wd and not sandbox_wd.startswith("/home/sandbox/Parachute/"):
-                        sandbox_wd = f"/home/sandbox/Parachute/{sandbox_wd}"
+                    # Convert working directory to container path (/home/sandbox/Parachute/...)
+                    sandbox_wd = None
+                    if effective_working_dir:
+                        wd = str(effective_working_dir)
+                        if wd.startswith("/home/sandbox/Parachute/"):
+                            sandbox_wd = wd
+                        elif wd.startswith("/vault/"):
+                            sandbox_wd = f"/home/sandbox/Parachute/{wd[len('/vault/'):]}"
+                        elif wd.startswith(str(self.vault_path)):
+                            relative = wd[len(str(self.vault_path)):].lstrip("/")
+                            sandbox_wd = f"/home/sandbox/Parachute/{relative}"
+                        else:
+                            # Relative path or unknown — treat as relative to vault
+                            sandbox_wd = f"/home/sandbox/Parachute/{wd.lstrip('/')}"
 
                     sandbox_paths = list(session.permissions.allowed_paths)
                     # Auto-add working directory to allowed_paths so it gets mounted

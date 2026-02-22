@@ -66,7 +66,7 @@ class BrainV2Module:
 
     def get_router(self) -> APIRouter:
         """Return FastAPI router for Brain v2 routes"""
-        router = APIRouter(prefix="/api/brain_v2", tags=["brain_v2"])
+        router = APIRouter(tags=["brain_v2"])
 
         @router.post("/entities", response_model=CreateEntityResponse, status_code=status.HTTP_201_CREATED)
         async def create_entity(request: CreateEntityRequest):
