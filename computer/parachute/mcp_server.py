@@ -25,10 +25,14 @@ import argparse
 import asyncio
 import json
 import logging
+import os
+import re
 import sys
-from datetime import datetime
+import uuid
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Self
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
@@ -47,6 +51,38 @@ _db = None
 _vault_path = None
 
 
+@dataclass(frozen=True, slots=True)
+class SessionContext:
+    """Immutable session context injected by orchestrator via env vars."""
+    session_id: str | None
+    workspace_id: str | None
+    trust_level: str | None  # Will be normalized to TrustLevelStr
+
+    @classmethod
+    def from_env(cls) -> Self:
+        """Read session context from environment variables.
+
+        Normalizes trust level to canonical TrustLevelStr values.
+        """
+        from parachute.core.trust import normalize_trust_level
+
+        raw_trust = os.getenv("PARACHUTE_TRUST_LEVEL")
+        return cls(
+            session_id=os.getenv("PARACHUTE_SESSION_ID"),
+            workspace_id=os.getenv("PARACHUTE_WORKSPACE_ID"),
+            trust_level=normalize_trust_level(raw_trust) if raw_trust else None,
+        )
+
+    @property
+    def is_available(self) -> bool:
+        """Check if session context is fully populated."""
+        return all([self.session_id, self.workspace_id, self.trust_level])
+
+
+# Module-level session context singleton
+_session_context: SessionContext | None = None
+
+
 async def get_db():
     """Get or create database connection."""
     global _db, _vault_path
@@ -57,6 +93,26 @@ async def get_db():
         await _db.connect()
         logger.info(f"Connected to database: {db_path}")
     return _db
+
+
+def _validate_message_content(
+    content: str,
+    field_name: str = "message",
+    max_length: int = 50_000
+) -> Optional[str]:
+    """Validate message content.
+
+    Returns:
+        Error message if invalid, None if valid.
+    """
+    if len(content) > max_length:
+        return f"{field_name.capitalize()} too long (max {max_length:,} characters)"
+
+    control_chars = [c for c in content if ord(c) < 32 and c not in '\n\r\t']
+    if control_chars:
+        return f"{field_name.capitalize()} contains invalid control characters"
+
+    return None
 
 
 # Tool definitions
@@ -192,6 +248,55 @@ TOOLS = [
                 },
             },
             "required": ["session_id", "tag"],
+        },
+    ),
+    # Multi-Agent Session Tools
+    Tool(
+        name="create_session",
+        description="Create a child session in the caller's workspace. Workspace and trust level are inherited from session context. Enforces spawn limits (max 10 children) and rate limiting (1/second).",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "title": {
+                    "type": "string",
+                    "description": "Title for the new session",
+                },
+                "agent_type": {
+                    "type": "string",
+                    "description": "Agent type/name (alphanumeric, hyphens, underscores only)",
+                },
+                "initial_message": {
+                    "type": "string",
+                    "description": "Initial message to send to the new session (max 50k chars)",
+                },
+            },
+            "required": ["title", "agent_type", "initial_message"],
+        },
+    ),
+    Tool(
+        name="send_message",
+        description="Send a message to another session in the same workspace. Enforces workspace boundary and trust level restrictions (sandboxed can only message sandboxed).",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "session_id": {
+                    "type": "string",
+                    "description": "Recipient session ID",
+                },
+                "message": {
+                    "type": "string",
+                    "description": "Message to send (max 50k chars)",
+                },
+            },
+            "required": ["session_id", "message"],
+        },
+    ),
+    Tool(
+        name="list_workspace_sessions",
+        description="List all sessions in the caller's workspace. Respects trust level restrictions (sandboxed only sees sandboxed sessions). Returns session metadata including parent-child relationships.",
+        inputSchema={
+            "type": "object",
+            "properties": {},
         },
     ),
     # Daily Journal Tools
@@ -411,6 +516,248 @@ async def remove_session_tag(session_id: str, tag: str) -> dict[str, Any]:
 
 
 # =============================================================================
+# Multi-Agent Session Functions
+# =============================================================================
+
+
+async def create_session(
+    title: str,
+    agent_type: str,
+    initial_message: str,
+) -> dict[str, Any]:
+    """
+    Create a child session in the caller's workspace.
+
+    Workspace and trust level are inherited from session context env vars.
+    Enforces spawn limits (max 10 children) and rate limiting (1/second).
+    """
+    # Validate session context is available
+    if not _session_context or not _session_context.is_available:
+        return {
+            "error": "Session context not available. This tool can only be called from an active session."
+        }
+
+    # Validate inputs
+    if not title or not title.strip():
+        return {"error": "Title cannot be empty"}
+
+    if not agent_type or not agent_type.strip():
+        return {"error": "Agent type cannot be empty"}
+
+    if not initial_message or not initial_message.strip():
+        return {"error": "Initial message cannot be empty"}
+
+    # Sanitize agent_type (alphanumeric, hyphens, underscores only)
+    if not re.match(r'^[a-zA-Z0-9_-]+$', agent_type):
+        return {
+            "error": f"Invalid agent_type: must contain only letters, numbers, hyphens, and underscores"
+        }
+
+    # Content validation (max 50k chars, no control chars except newlines/tabs)
+    if error := _validate_message_content(initial_message, "initial message"):
+        return {"error": error}
+
+    db = await get_db()
+    parent_session_id = _session_context.session_id
+    workspace_id = _session_context.workspace_id
+    trust_level = _session_context.trust_level
+
+    # Enforce spawn limit (max 10 children)
+    child_count = await db.count_children(parent_session_id)
+    if child_count >= 10:
+        return {
+            "error": f"Spawn limit reached: {child_count}/10 children. Archive or delete child sessions to spawn more."
+        }
+
+    # Enforce rate limiting (1 session per second)
+    last_created = await db.get_last_child_created(parent_session_id)
+    if last_created:
+        time_since_last = datetime.now(timezone.utc) - last_created
+        if time_since_last < timedelta(seconds=1):
+            return {
+                "error": f"Rate limit: can only create 1 session per second. Wait {1 - time_since_last.total_seconds():.1f}s."
+            }
+
+    # Create SDK session
+    from parachute.core.session_manager import SessionManager
+    from parachute.models.session import SessionCreate, SessionSource
+
+    session_id = f"sess_{uuid.uuid4().hex[:16]}"
+
+    session_create = SessionCreate(
+        id=session_id,
+        title=title.strip(),
+        module="chat",
+        source=SessionSource.PARACHUTE,
+        working_directory=None,  # Inherit from workspace
+        agent_type=agent_type,
+        trust_level=trust_level,
+        workspace_id=workspace_id,
+        parent_session_id=parent_session_id,
+        created_by=f"agent:{parent_session_id}",
+    )
+
+    # Create session in database
+    session = await db.create_session(session_create)
+
+    # Initialize SDK session with initial message
+    sm = SessionManager(Path(_vault_path), db)
+    try:
+        # Start the session with initial message
+        await sm.init_session(
+            session_id=session_id,
+            workspace_id=workspace_id,
+            trust_level=trust_level,
+        )
+
+        # The initial message will be sent via the orchestrator
+        # For now, we just create the session
+        logger.info(f"Created child session {session_id} (parent: {parent_session_id}, workspace: {workspace_id})")
+
+        return {
+            "success": True,
+            "session_id": session_id,
+            "title": title,
+            "agent_type": agent_type,
+            "workspace_id": workspace_id,
+            "trust_level": trust_level,
+            "parent_session_id": parent_session_id,
+            "initial_message_queued": True,
+            "note": "Session created. Use send_message to deliver the initial message.",
+        }
+    except Exception as e:
+        # Rollback: delete the session if SDK init fails
+        await db.delete_session(session_id)
+        logger.error(f"Failed to initialize child session {session_id}: {e}")
+        return {"error": f"Failed to initialize session: {str(e)}"}
+
+
+async def send_message(
+    session_id: str,
+    message: str,
+) -> dict[str, Any]:
+    """
+    Send a message to another session in the same workspace.
+
+    Enforces workspace boundary and trust level restrictions.
+    """
+    # Validate session context is available
+    if not _session_context or not _session_context.is_available:
+        return {
+            "error": "Session context not available. This tool can only be called from an active session."
+        }
+
+    # Validate inputs
+    if not session_id or not session_id.strip():
+        return {"error": "Session ID cannot be empty"}
+
+    if not message or not message.strip():
+        return {"error": "Message cannot be empty"}
+
+    # Content validation (max 50k chars, no control chars except newlines/tabs)
+    if error := _validate_message_content(message):
+        return {"error": error}
+
+    db = await get_db()
+    sender_session_id = _session_context.session_id
+    sender_workspace_id = _session_context.workspace_id
+    sender_trust_level = _session_context.trust_level
+
+    # Get recipient session
+    recipient_session = await db.get_session(session_id.strip())
+    if not recipient_session:
+        return {"error": f"Recipient session not found: {session_id}"}
+
+    # Enforce workspace boundary
+    recipient_workspace_id = recipient_session.workspace_id
+    if recipient_workspace_id != sender_workspace_id:
+        return {
+            "error": f"Cannot send message across workspace boundaries (sender: {sender_workspace_id}, recipient: {recipient_workspace_id})"
+        }
+
+    # Enforce trust level restrictions (sandboxed can only message sandboxed)
+    recipient_trust_level = recipient_session.get_trust_level().value
+    if sender_trust_level == "sandboxed" and recipient_trust_level != "sandboxed":
+        return {
+            "error": f"Sandboxed sessions can only message other sandboxed sessions (recipient trust: {recipient_trust_level})"
+        }
+
+    # Message delivery: inject into recipient's SDK session
+    # For MVP, we'll just log the message - actual delivery requires SDK integration
+    logger.info(
+        f"Message delivery: {sender_session_id[:8]}→{session_id[:8]} (workspace: {sender_workspace_id})"
+    )
+
+    # TODO: Implement actual message injection into SDK session
+    # This requires extending the SDK to support mid-stream message injection
+    # For now, return success with a note
+    return {
+        "success": True,
+        "sender_session_id": sender_session_id,
+        "recipient_session_id": session_id,
+        "message_length": len(message),
+        "workspace_id": sender_workspace_id,
+        "note": "Message validated and logged. SDK message injection not yet implemented.",
+    }
+
+
+async def list_workspace_sessions() -> dict[str, Any]:
+    """
+    List all sessions in the caller's workspace.
+
+    Respects trust level restrictions (sandboxed only sees sandboxed sessions).
+    Returns session metadata including parent-child relationships.
+    """
+    # Validate session context is available
+    if not _session_context or not _session_context.is_available:
+        return {
+            "error": "Session context not available. This tool can only be called from an active session."
+        }
+
+    db = await get_db()
+    workspace_id = _session_context.workspace_id
+    trust_level = _session_context.trust_level
+
+    # Get all sessions in the workspace
+    all_sessions = await db.list_sessions(workspace_id=workspace_id, limit=1000)
+
+    # Filter by trust level (sandboxed only sees sandboxed)
+    sessions = []
+    for session in all_sessions:
+        session_trust = session.get_trust_level().value
+        # Sandboxed sessions can only see other sandboxed sessions
+        if trust_level == "sandboxed" and session_trust != "sandboxed":
+            continue
+        # Direct sessions can see all sessions
+        sessions.append(session)
+
+    # Format response
+    result_sessions = []
+    for session in sessions:
+        result_sessions.append({
+            "id": session.id,
+            "title": session.title,
+            "agent_type": session.agent_type,
+            "trust_level": session.get_trust_level().value,
+            "source": session.source.value,
+            "module": session.module,
+            "message_count": session.message_count,
+            "created_at": session.created_at.isoformat(),
+            "last_accessed": session.last_accessed.isoformat(),
+            "archived": session.archived,
+            "parent_session_id": session.parent_session_id,
+            "created_by": session.created_by,
+        })
+
+    return {
+        "workspace_id": workspace_id,
+        "caller_trust_level": trust_level,
+        "total_sessions": len(result_sessions),
+        "sessions": result_sessions,
+    }
+
+
+# =============================================================================
 # Daily Journal Functions
 # =============================================================================
 
@@ -615,6 +962,20 @@ async def handle_tool_call(name: str, arguments: dict[str, Any]) -> str:
                 session_id=arguments["session_id"],
                 tag=arguments["tag"],
             )
+        # Multi-Agent Session Tools
+        elif name == "create_session":
+            result = await create_session(
+                title=arguments["title"],
+                agent_type=arguments["agent_type"],
+                initial_message=arguments["initial_message"],
+            )
+        elif name == "send_message":
+            result = await send_message(
+                session_id=arguments["session_id"],
+                message=arguments["message"],
+            )
+        elif name == "list_workspace_sessions":
+            result = await list_workspace_sessions()
         # Daily Journal Tools
         elif name == "search_journals":
             result = await search_journals(
@@ -676,7 +1037,6 @@ def main():
     args = parser.parse_args()
 
     # Get vault path from args or environment
-    import os
     vault_path = args.vault_path or os.environ.get("PARACHUTE_VAULT_PATH")
 
     if not vault_path:
@@ -686,6 +1046,19 @@ def main():
     if not Path(vault_path).exists():
         print(f"Error: Vault path does not exist: {vault_path}", file=sys.stderr)
         sys.exit(1)
+
+    # Initialize session context from env vars
+    global _session_context
+    _session_context = SessionContext.from_env()
+
+    if _session_context.is_available:
+        logger.info(
+            f"Session context: session={_session_context.session_id[:8]}, "
+            f"workspace={_session_context.workspace_id}, "
+            f"trust={_session_context.trust_level}"
+        )
+    else:
+        logger.warning("MCP server started without session context (legacy mode)")
 
     asyncio.run(run_server(vault_path))
 

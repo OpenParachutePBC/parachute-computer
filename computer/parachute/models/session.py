@@ -203,6 +203,18 @@ class Session(BaseModel):
         serialization_alias="workspaceId",
         description="Workspace slug this session belongs to",
     )
+    parent_session_id: Optional[str] = Field(
+        default=None,
+        alias="parentSessionId",
+        serialization_alias="parentSessionId",
+        description="Session that spawned this one (if agent-created)",
+    )
+    created_by: str = Field(
+        default="user",
+        alias="createdBy",
+        serialization_alias="createdBy",
+        description="Session creator: 'user' or 'agent:<session_id>'",
+    )
     metadata: Optional[dict[str, Any]] = Field(
         default=None, description="Additional metadata"
     )
@@ -260,6 +272,8 @@ class SessionCreate(BaseModel):
     linked_bot_chat_id: Optional[str] = None
     linked_bot_chat_type: Optional[str] = None
     workspace_id: Optional[str] = None
+    parent_session_id: Optional[str] = None
+    created_by: str = "user"
     metadata: Optional[dict[str, Any]] = None
 
 

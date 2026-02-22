@@ -346,6 +346,48 @@ class Database:
             await self._connection.commit()
             logger.info("Migrated trust levels: trusted → direct, untrusted → sandboxed (v16)")
 
+        # Migration: Add parent_session_id and created_by for multi-agent (v17)
+        async with self._connection.execute(
+            "SELECT version FROM schema_version WHERE version = 17"
+        ) as cursor:
+            row = await cursor.fetchone()
+        if not row:
+            try:
+                async with self._connection.execute(
+                    "SELECT parent_session_id FROM sessions LIMIT 1"
+                ):
+                    pass  # Column exists
+            except Exception:
+                await self._connection.execute(
+                    "ALTER TABLE sessions ADD COLUMN parent_session_id TEXT"
+                )
+                logger.info("Added parent_session_id column to sessions")
+
+            try:
+                async with self._connection.execute(
+                    "SELECT created_by FROM sessions LIMIT 1"
+                ):
+                    pass  # Column exists
+            except Exception:
+                await self._connection.execute(
+                    "ALTER TABLE sessions ADD COLUMN created_by TEXT DEFAULT 'user'"
+                )
+                logger.info("Added created_by column to sessions")
+
+            # Add indexes for multi-agent queries
+            await self._connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_sessions_parent_session ON sessions(parent_session_id)"
+            )
+            # Composite index for efficient spawn limit and rate limiting queries
+            await self._connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_sessions_parent_active ON sessions(parent_session_id, archived)"
+            )
+            await self._connection.execute(
+                "INSERT OR IGNORE INTO schema_version (version, applied_at) VALUES (17, datetime('now'))"
+            )
+            await self._connection.commit()
+            logger.info("Added multi-agent session fields (v17)")
+
     async def close(self) -> None:
         """Close database connection."""
         if self._connection:
@@ -393,6 +435,8 @@ class Database:
         linked_bot_chat_id = getattr(session, 'linked_bot_chat_id', None)
         linked_bot_chat_type = getattr(session, 'linked_bot_chat_type', None)
         workspace_id = getattr(session, 'workspace_id', None)
+        parent_session_id = getattr(session, 'parent_session_id', None)
+        created_by = getattr(session, 'created_by', 'user')
 
         await self.connection.execute(
             """
@@ -401,8 +445,8 @@ class Database:
                 message_count, archived, created_at, last_accessed,
                 continued_from, agent_type, trust_level,
                 linked_bot_platform, linked_bot_chat_id, linked_bot_chat_type,
-                workspace_id, metadata
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                workspace_id, parent_session_id, created_by, metadata
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 session.id,
@@ -423,6 +467,8 @@ class Database:
                 linked_bot_chat_id,
                 linked_bot_chat_type,
                 workspace_id,
+                parent_session_id,
+                created_by,
                 metadata_json,
             ),
         )
@@ -759,6 +805,40 @@ class Database:
             if row:
                 return self._row_to_session(row)
         return None
+
+    # =========================================================================
+    # Multi-Agent Session Helpers
+    # =========================================================================
+
+    async def count_children(self, parent_session_id: str) -> int:
+        """Count active (non-archived) child sessions for rate limiting."""
+        async with self.connection.execute(
+            """
+            SELECT COUNT(*) FROM sessions
+            WHERE parent_session_id = ? AND archived = 0
+            """,
+            (parent_session_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else 0
+
+    async def get_last_child_created(
+        self, parent_session_id: str
+    ) -> Optional[datetime]:
+        """Get timestamp of most recent child session for rate limiting."""
+        async with self.connection.execute(
+            """
+            SELECT created_at FROM sessions
+            WHERE parent_session_id = ?
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (parent_session_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                return datetime.fromisoformat(row["created_at"])
+            return None
 
     # =========================================================================
     # Pairing Requests
@@ -1118,6 +1198,8 @@ class Database:
             linked_bot_chat_id=row["linked_bot_chat_id"] if "linked_bot_chat_id" in keys else None,
             linked_bot_chat_type=row["linked_bot_chat_type"] if "linked_bot_chat_type" in keys else None,
             workspace_id=row["workspace_id"] if "workspace_id" in keys else None,
+            parent_session_id=row["parent_session_id"] if "parent_session_id" in keys else None,
+            created_by=row["created_by"] if "created_by" in keys else "user",
             metadata=metadata,
         )
 
