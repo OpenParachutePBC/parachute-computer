@@ -2,29 +2,29 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
-import '../models/brain_v2_schema.dart';
-import '../providers/brain_v2_providers.dart';
-import '../widgets/brain_v2_entity_card.dart';
-import 'brain_v2_entity_detail_screen.dart';
+import '../models/brain_schema.dart';
+import '../providers/brain_providers.dart';
+import '../widgets/brain_entity_card.dart';
+import 'brain_entity_detail_screen.dart';
 
 /// Entity list screen for a specific entity type.
-class BrainV2EntityListScreen extends ConsumerStatefulWidget {
+class BrainEntityListScreen extends ConsumerStatefulWidget {
   final String entityType;
-  final BrainV2Schema schema;
+  final BrainSchema schema;
 
-  const BrainV2EntityListScreen({
+  const BrainEntityListScreen({
     required this.entityType,
     required this.schema,
     super.key,
   });
 
   @override
-  ConsumerState<BrainV2EntityListScreen> createState() =>
-      _BrainV2EntityListScreenState();
+  ConsumerState<BrainEntityListScreen> createState() =>
+      _BrainEntityListScreenState();
 }
 
-class _BrainV2EntityListScreenState
-    extends ConsumerState<BrainV2EntityListScreen> {
+class _BrainEntityListScreenState
+    extends ConsumerState<BrainEntityListScreen> {
   Timer? _debounce;
   final TextEditingController _searchController = TextEditingController();
 
@@ -44,7 +44,7 @@ class _BrainV2EntityListScreenState
   void _onSearchChanged() {
     if (_debounce?.isActive ?? false) _debounce!.cancel();
     _debounce = Timer(const Duration(milliseconds: 300), () {
-      ref.read(brainV2SearchQueryProvider.notifier).state =
+      ref.read(brainSearchQueryProvider.notifier).state =
           _searchController.text;
     });
   }
@@ -52,8 +52,8 @@ class _BrainV2EntityListScreenState
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final entitiesAsync = ref.watch(brainV2EntityListProvider(widget.entityType));
-    final searchQuery = ref.watch(brainV2SearchQueryProvider);
+    final entitiesAsync = ref.watch(brainEntityListProvider(widget.entityType));
+    final searchQuery = ref.watch(brainSearchQueryProvider);
 
     return Column(
       children: [
@@ -70,7 +70,7 @@ class _BrainV2EntityListScreenState
                       icon: const Icon(Icons.clear),
                       onPressed: () {
                         _searchController.clear();
-                        ref.read(brainV2SearchQueryProvider.notifier).state = '';
+                        ref.read(brainSearchQueryProvider.notifier).state = '';
                       },
                     )
                   : null,
@@ -120,7 +120,7 @@ class _BrainV2EntityListScreenState
                   const SizedBox(height: 16),
                   ElevatedButton(
                     onPressed: () {
-                      ref.invalidate(brainV2EntityListProvider(widget.entityType));
+                      ref.invalidate(brainEntityListProvider(widget.entityType));
                     },
                     child: const Text('Retry'),
                   ),
@@ -192,8 +192,8 @@ class _BrainV2EntityListScreenState
 
               return RefreshIndicator(
                 onRefresh: () async {
-                  ref.invalidate(brainV2EntityListProvider(widget.entityType));
-                  await ref.read(brainV2EntityListProvider(widget.entityType).future);
+                  ref.invalidate(brainEntityListProvider(widget.entityType));
+                  await ref.read(brainEntityListProvider(widget.entityType).future);
                 },
                 child: ListView.separated(
                   padding: const EdgeInsets.only(bottom: 80),
@@ -201,13 +201,13 @@ class _BrainV2EntityListScreenState
                   separatorBuilder: (context, index) => const SizedBox(height: 0),
                   itemBuilder: (context, index) {
                     final entity = filteredEntities[index];
-                    return BrainV2EntityCard(
+                    return BrainEntityCard(
                       entity: entity,
                       schema: widget.schema,
                       onTap: () {
                         Navigator.of(context).push(
                           MaterialPageRoute(
-                            builder: (context) => BrainV2EntityDetailScreen(
+                            builder: (context) => BrainEntityDetailScreen(
                               entityId: entity.id,
                               schema: widget.schema,
                             ),

@@ -1,28 +1,28 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
-import '../models/brain_v2_schema.dart';
-import '../providers/brain_v2_providers.dart';
-import '../widgets/brain_v2_form_builder.dart';
+import '../models/brain_schema.dart';
+import '../providers/brain_providers.dart';
+import '../widgets/brain_form_builder.dart';
 
 /// Entity create/edit form screen.
-class BrainV2EntityFormScreen extends ConsumerStatefulWidget {
+class BrainEntityFormScreen extends ConsumerStatefulWidget {
   final String entityType;
   final String? entityId; // Null for create mode, non-null for edit mode
 
-  const BrainV2EntityFormScreen({
+  const BrainEntityFormScreen({
     required this.entityType,
     this.entityId,
     super.key,
   });
 
   @override
-  ConsumerState<BrainV2EntityFormScreen> createState() =>
-      _BrainV2EntityFormScreenState();
+  ConsumerState<BrainEntityFormScreen> createState() =>
+      _BrainEntityFormScreenState();
 }
 
-class _BrainV2EntityFormScreenState
-    extends ConsumerState<BrainV2EntityFormScreen> {
+class _BrainEntityFormScreenState
+    extends ConsumerState<BrainEntityFormScreen> {
   final _commitMsgController = TextEditingController();
   Map<String, dynamic> _formData = {};
   bool _isSubmitting = false;
@@ -46,9 +46,9 @@ class _BrainV2EntityFormScreenState
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final schemasAsync = ref.watch(brainV2SchemaListProvider);
+    final schemasAsync = ref.watch(brainSchemaListProvider);
     final existingEntityAsync = _isEditMode
-        ? ref.watch(brainV2EntityDetailProvider(widget.entityId!))
+        ? ref.watch(brainEntityDetailProvider(widget.entityId!))
         : null;
 
     return Scaffold(
@@ -139,7 +139,7 @@ class _BrainV2EntityFormScreenState
   }
 
   Widget _buildForm(
-    BrainV2Schema schema,
+    BrainSchema schema,
     bool isDark, {
     Map<String, dynamic>? initialData,
   }) {
@@ -149,7 +149,7 @@ class _BrainV2EntityFormScreenState
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           // Dynamic form fields
-          BrainV2FormBuilder(
+          BrainFormBuilder(
             schema: schema,
             initialData: initialData,
             onDataChanged: (data) {
@@ -232,7 +232,7 @@ class _BrainV2EntityFormScreenState
     );
   }
 
-  Future<void> _handleSubmit(BrainV2Schema schema) async {
+  Future<void> _handleSubmit(BrainSchema schema) async {
     // Validate required fields
     final missingFields = schema.fields
         .where((f) => f.required && (_formData[f.name] == null || _formData[f.name] == ''))
@@ -254,7 +254,7 @@ class _BrainV2EntityFormScreenState
     });
 
     try {
-      final service = ref.read(brainV2ServiceProvider);
+      final service = ref.read(brainServiceProvider);
       if (service == null) {
         throw Exception('Service not available');
       }
@@ -272,8 +272,8 @@ class _BrainV2EntityFormScreenState
         );
 
         // Invalidate providers to refresh
-        ref.invalidate(brainV2EntityDetailProvider(widget.entityId!));
-        ref.invalidate(brainV2EntityListProvider);
+        ref.invalidate(brainEntityDetailProvider(widget.entityId!));
+        ref.invalidate(brainEntityListProvider);
 
         if (mounted) {
           Navigator.of(context).pop();
@@ -290,7 +290,7 @@ class _BrainV2EntityFormScreenState
         );
 
         // Invalidate list provider to refresh
-        ref.invalidate(brainV2EntityListProvider);
+        ref.invalidate(brainEntityListProvider);
 
         if (mounted) {
           Navigator.of(context).pop();

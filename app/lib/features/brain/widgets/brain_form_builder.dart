@@ -1,16 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
-import '../models/brain_v2_schema.dart';
-import '../models/brain_v2_field.dart';
+import '../models/brain_schema.dart';
+import '../models/brain_field.dart';
 
 /// Dynamic form builder that generates form fields from schema.
-class BrainV2FormBuilder extends StatefulWidget {
-  final BrainV2Schema schema;
+class BrainFormBuilder extends StatefulWidget {
+  final BrainSchema schema;
   final Map<String, dynamic>? initialData; // For edit mode
   final void Function(Map<String, dynamic> data) onDataChanged;
 
-  const BrainV2FormBuilder({
+  const BrainFormBuilder({
     required this.schema,
     required this.onDataChanged,
     this.initialData,
@@ -18,10 +18,10 @@ class BrainV2FormBuilder extends StatefulWidget {
   });
 
   @override
-  State<BrainV2FormBuilder> createState() => _BrainV2FormBuilderState();
+  State<BrainFormBuilder> createState() => _BrainFormBuilderState();
 }
 
-class _BrainV2FormBuilderState extends State<BrainV2FormBuilder> {
+class _BrainFormBuilderState extends State<BrainFormBuilder> {
   final Map<String, TextEditingController> _controllers = {};
   final Map<String, dynamic> _formData = {};
 
@@ -154,7 +154,7 @@ class _BrainV2FormBuilderState extends State<BrainV2FormBuilder> {
     );
   }
 
-  Widget _buildFieldInput(BrainV2Field field, bool isDark) {
+  Widget _buildFieldInput(BrainField field, bool isDark) {
     if (field.type == 'boolean') {
       return _buildBooleanField(field, isDark);
     } else if (field.isEnum) {
@@ -170,7 +170,7 @@ class _BrainV2FormBuilderState extends State<BrainV2FormBuilder> {
     }
   }
 
-  Widget _buildTextField(BrainV2Field field, bool isDark) {
+  Widget _buildTextField(BrainField field, bool isDark) {
     return TextField(
       controller: _controllers[field.name],
       decoration: InputDecoration(
@@ -186,7 +186,7 @@ class _BrainV2FormBuilderState extends State<BrainV2FormBuilder> {
     );
   }
 
-  Widget _buildIntegerField(BrainV2Field field, bool isDark) {
+  Widget _buildIntegerField(BrainField field, bool isDark) {
     return TextField(
       controller: _controllers[field.name],
       decoration: InputDecoration(
@@ -203,7 +203,7 @@ class _BrainV2FormBuilderState extends State<BrainV2FormBuilder> {
     );
   }
 
-  Widget _buildBooleanField(BrainV2Field field, bool isDark) {
+  Widget _buildBooleanField(BrainField field, bool isDark) {
     return SwitchListTile(
       title: Text(_formData[field.name] == true ? 'Yes' : 'No'),
       value: _formData[field.name] == true,
@@ -218,7 +218,7 @@ class _BrainV2FormBuilderState extends State<BrainV2FormBuilder> {
     );
   }
 
-  Widget _buildEnumField(BrainV2Field field, bool isDark) {
+  Widget _buildEnumField(BrainField field, bool isDark) {
     return DropdownButtonFormField<String>(
       value: _formData[field.name],
       decoration: InputDecoration(
@@ -245,7 +245,7 @@ class _BrainV2FormBuilderState extends State<BrainV2FormBuilder> {
     );
   }
 
-  Widget _buildArrayField(BrainV2Field field, bool isDark) {
+  Widget _buildArrayField(BrainField field, bool isDark) {
     return TextField(
       controller: _controllers[field.name],
       decoration: InputDecoration(
@@ -262,7 +262,7 @@ class _BrainV2FormBuilderState extends State<BrainV2FormBuilder> {
     );
   }
 
-  Widget _buildDateTimeField(BrainV2Field field, bool isDark) {
+  Widget _buildDateTimeField(BrainField field, bool isDark) {
     return TextField(
       controller: _controllers[field.name],
       decoration: InputDecoration(
@@ -281,7 +281,7 @@ class _BrainV2FormBuilderState extends State<BrainV2FormBuilder> {
     );
   }
 
-  Future<void> _selectDateTime(BrainV2Field field, bool isDark) async {
+  Future<void> _selectDateTime(BrainField field, bool isDark) async {
     final date = await showDatePicker(
       context: context,
       initialDate: DateTime.now(),

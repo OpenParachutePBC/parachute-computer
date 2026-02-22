@@ -1,10 +1,10 @@
-# Brain v2 - TerminusDB Knowledge Graph
+# Brain - TerminusDB Knowledge Graph
 
 Strongly-typed, version-controlled knowledge graph for Parachute using TerminusDB.
 
 ## Overview
 
-Brain v2 provides:
+Brain provides:
 - **Declarative schemas** - YAML schema definitions compiled to TerminusDB
 - **Full CRUD operations** - Create, read, update, delete entities with validation
 - **Graph relationships** - Link entities and traverse connections
@@ -19,7 +19,7 @@ User/Agent Request
     ↓
 FastAPI Route (HTTP) or MCP Tool
     ↓
-BrainV2Module
+BrainModule
     ↓
 KnowledgeGraphService (async wrapper)
     ↓
@@ -83,7 +83,7 @@ TerminusDB container starts automatically. Check logs for "TerminusDB ready afte
 
 ```bash
 # Create entity
-curl -X POST http://localhost:3333/api/brain_v2/entities \
+curl -X POST http://localhost:3333/api/brain/entities \
   -H "Content-Type: application/json" \
   -d '{
     "entity_type": "Person",
@@ -95,10 +95,10 @@ curl -X POST http://localhost:3333/api/brain_v2/entities \
   }'
 
 # Query entities
-curl http://localhost:3333/api/brain_v2/entities/Person?limit=10
+curl http://localhost:3333/api/brain/entities/Person?limit=10
 
 # Create relationship
-curl -X POST http://localhost:3333/api/brain_v2/relationships \
+curl -X POST http://localhost:3333/api/brain/relationships \
   -H "Content-Type: application/json" \
   -d '{
     "from_id": "Person/Alice",
@@ -107,7 +107,7 @@ curl -X POST http://localhost:3333/api/brain_v2/relationships \
   }'
 
 # Traverse graph
-curl -X POST http://localhost:3333/api/brain_v2/traverse \
+curl -X POST http://localhost:3333/api/brain/traverse \
   -H "Content-Type: application/json" \
   -d '{
     "start_id": "Person/Alice",
@@ -146,13 +146,13 @@ See `~/Parachute/.brain/schemas/`:
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/brain_v2/entities` | Create entity |
-| GET | `/api/brain_v2/entities/{type}` | Query entities by type |
-| PUT | `/api/brain_v2/entities/{id}` | Update entity |
-| DELETE | `/api/brain_v2/entities/{id}` | Delete entity |
-| POST | `/api/brain_v2/relationships` | Create relationship |
-| POST | `/api/brain_v2/traverse` | Traverse graph |
-| GET | `/api/brain_v2/schemas` | List schemas |
+| POST | `/api/brain/entities` | Create entity |
+| GET | `/api/brain/entities/{type}` | Query entities by type |
+| PUT | `/api/brain/entities/{id}` | Update entity |
+| DELETE | `/api/brain/entities/{id}` | Delete entity |
+| POST | `/api/brain/relationships` | Create relationship |
+| POST | `/api/brain/traverse` | Traverse graph |
+| GET | `/api/brain/schemas` | List schemas |
 
 All routes support pagination (`limit`, `offset` query parameters).
 

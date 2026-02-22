@@ -1,6 +1,9 @@
 name: brain
-version: "0.1.0"
-description: "Knowledge graph entity management"
+version: "1.0.0"
+description: "TerminusDB knowledge graph"
 trust_level: trusted
 provides:
   - BrainInterface
+dependencies:
+  - terminusdb-client>=10.2.0
+  - aiofiles>=23.0.0

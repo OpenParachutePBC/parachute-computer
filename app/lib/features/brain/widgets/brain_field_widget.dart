@@ -1,14 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
-import '../models/brain_v2_field.dart';
-import 'brain_v2_relationship_chip.dart';
+import '../models/brain_field.dart';
+import 'brain_relationship_chip.dart';
 
 /// Dynamic field renderer based on field type.
-class BrainV2FieldWidget extends StatelessWidget {
-  final BrainV2Field field;
+class BrainFieldWidget extends StatelessWidget {
+  final BrainField field;
   final dynamic value;
 
-  const BrainV2FieldWidget({
+  const BrainFieldWidget({
     required this.field,
     required this.value,
     super.key,
@@ -120,7 +120,7 @@ class BrainV2FieldWidget extends StatelessWidget {
         spacing: 8,
         runSpacing: 8,
         children: value.map((item) {
-          return BrainV2RelationshipChip(entityId: item.toString());
+          return BrainRelationshipChip(entityId: item.toString());
         }).toList(),
       );
     }
@@ -155,12 +155,12 @@ class BrainV2FieldWidget extends StatelessWidget {
   Widget _buildEntityField(dynamic value, bool isDark) {
     // Single entity reference
     if (value is String) {
-      return BrainV2RelationshipChip(entityId: value);
+      return BrainRelationshipChip(entityId: value);
     }
 
     // Entity object with @id
     if (value is Map && value.containsKey('@id')) {
-      return BrainV2RelationshipChip(entityId: value['@id'].toString());
+      return BrainRelationshipChip(entityId: value['@id'].toString());
     }
 
     return _buildTextField(value, isDark);

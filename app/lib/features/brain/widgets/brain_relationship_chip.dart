@@ -1,16 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
-import '../providers/brain_v2_providers.dart';
-import '../screens/brain_v2_entity_detail_screen.dart';
+import '../providers/brain_providers.dart';
+import '../screens/brain_entity_detail_screen.dart';
 
 /// Clickable chip for entity relationships.
 ///
 /// Displays entity name and navigates to detail on tap.
-class BrainV2RelationshipChip extends ConsumerWidget {
+class BrainRelationshipChip extends ConsumerWidget {
   final String entityId; // Entity IRI (e.g., "Person/Alice")
 
-  const BrainV2RelationshipChip({
+  const BrainRelationshipChip({
     required this.entityId,
     super.key,
   });
@@ -18,7 +18,7 @@ class BrainV2RelationshipChip extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final entityAsync = ref.watch(brainV2EntityDetailProvider(entityId));
+    final entityAsync = ref.watch(brainEntityDetailProvider(entityId));
 
     return entityAsync.when(
       loading: () => _buildChip(
@@ -47,7 +47,7 @@ class BrainV2RelationshipChip extends ConsumerWidget {
                   // Navigate to entity detail
                   Navigator.of(context).push(
                     MaterialPageRoute(
-                      builder: (context) => BrainV2EntityDetailScreen(
+                      builder: (context) => BrainEntityDetailScreen(
                         entityId: entityId,
                         schema: null, // Will load schema in detail screen
                       ),

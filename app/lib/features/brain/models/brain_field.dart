@@ -1,5 +1,5 @@
-/// Field metadata from Brain v2 schema definition.
-class BrainV2Field {
+/// Field metadata from Brain schema definition.
+class BrainField {
   final String name;
   final String type;
   final bool required;
@@ -7,7 +7,7 @@ class BrainV2Field {
   final String? itemsType; // For array types
   final String? description;
 
-  const BrainV2Field({
+  const BrainField({
     required this.name,
     required this.type,
     this.required = false,
@@ -16,8 +16,8 @@ class BrainV2Field {
     this.description,
   });
 
-  factory BrainV2Field.fromJson(String name, Map<String, dynamic> json) {
-    return BrainV2Field(
+  factory BrainField.fromJson(String name, Map<String, dynamic> json) {
+    return BrainField(
       name: name,
       type: json['type'] as String? ?? 'string',
       required: json['required'] as bool? ?? false,

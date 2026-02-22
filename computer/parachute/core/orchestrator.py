@@ -593,7 +593,7 @@ class Orchestrator:
             agents_dict = None
 
             # Determine effective trust level early (needed for capability filtering)
-            # Priority: client param > session stored > workspace default > sandboxed (new default)
+            # Priority: client param > session stored > workspace default > direct (default)
             from parachute.core.trust import normalize_trust_level
 
             logger.info(f"Trust resolution: client={trust_level}, session.trust_level={session.trust_level}, ws_default={workspace_config.default_trust_level if workspace_config else None}")
@@ -616,9 +616,11 @@ class Orchestrator:
                     logger.info(f"Using workspace default trust: {session_trust.value}")
                 except ValueError:
                     logger.warning(f"Invalid workspace default_trust_level: {workspace_config.default_trust_level}")
-                    session_trust = TrustLevel.SANDBOXED
+                    session_trust = TrustLevel.DIRECT
             else:
-                session_trust = TrustLevel.SANDBOXED
+                # Default to direct (bare metal) — sandboxed requires explicit opt-in
+                # via client param, session config, workspace default, or bot connector
+                session_trust = TrustLevel.DIRECT
 
             effective_trust = session_trust.value
 

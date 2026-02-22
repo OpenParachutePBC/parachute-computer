@@ -1,5 +1,5 @@
 """
-Pydantic Models for Brain v2
+Pydantic Models for Brain
 
 Request/response models with strict validation for type safety.
 All models use Pydantic v2 patterns (model_config ConfigDict).

@@ -146,7 +146,13 @@ class ModuleLoader:
         return modules
 
     async def _load_module(self, module_dir: Path, manifest_path: Path) -> Any:
-        """Load a single module from its directory."""
+        """Load a single module from its directory.
+
+        Supports both single-file modules and multi-file packages (with __init__.py).
+        Multi-file packages can use relative imports (e.g., from .models import ...).
+        """
+        import sys
+
         with open(manifest_path) as f:
             manifest = yaml.safe_load(f)
 
@@ -157,12 +163,48 @@ class ModuleLoader:
         if not module_path.exists():
             raise FileNotFoundError(f"Module file not found: {module_path}")
 
-        spec = importlib.util.spec_from_file_location(name, module_path)
-        if not spec or not spec.loader:
-            raise ImportError(f"Cannot load module: {module_path}")
+        init_py = module_dir / "__init__.py"
+        is_package = init_py.exists()
 
-        py_module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(py_module)
+        if is_package:
+            # Multi-file package: register parent dir on sys.path and set up package
+            parent = str(module_dir.parent)
+            if parent not in sys.path:
+                sys.path.insert(0, parent)
+
+            package_name = module_dir.name
+
+            # Register the package so relative imports resolve
+            pkg_spec = importlib.util.spec_from_file_location(
+                package_name,
+                str(init_py),
+                submodule_search_locations=[str(module_dir)],
+            )
+            if not pkg_spec or not pkg_spec.loader:
+                raise ImportError(f"Cannot load package: {init_py}")
+
+            pkg = importlib.util.module_from_spec(pkg_spec)
+            sys.modules[package_name] = pkg
+            pkg_spec.loader.exec_module(pkg)
+
+            # Load the module entry point as a submodule
+            module_stem = module_file.removesuffix(".py")
+            module_fqn = f"{package_name}.{module_stem}"
+            spec = importlib.util.spec_from_file_location(module_fqn, module_path)
+            if not spec or not spec.loader:
+                raise ImportError(f"Cannot load module: {module_path}")
+
+            py_module = importlib.util.module_from_spec(spec)
+            sys.modules[module_fqn] = py_module
+            spec.loader.exec_module(py_module)
+        else:
+            # Single-file module
+            spec = importlib.util.spec_from_file_location(name, module_path)
+            if not spec or not spec.loader:
+                raise ImportError(f"Cannot load module: {module_path}")
+
+            py_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(py_module)
 
         # Find the Module class
         for attr_name in dir(py_module):

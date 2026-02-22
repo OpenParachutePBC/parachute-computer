@@ -1,29 +1,29 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
-import '../providers/brain_v2_providers.dart';
-import 'brain_v2_entity_list_screen.dart';
-import 'brain_v2_entity_form_screen.dart';
+import '../providers/brain_providers.dart';
+import 'brain_entity_list_screen.dart';
+import 'brain_entity_form_screen.dart';
 
-/// Brain v2 home screen with entity type tabs.
-class BrainV2HomeScreen extends ConsumerStatefulWidget {
-  const BrainV2HomeScreen({super.key});
+/// Brain home screen with entity type tabs.
+class BrainHomeScreen extends ConsumerStatefulWidget {
+  const BrainHomeScreen({super.key});
 
   @override
-  ConsumerState<BrainV2HomeScreen> createState() => _BrainV2HomeScreenState();
+  ConsumerState<BrainHomeScreen> createState() => _BrainHomeScreenState();
 }
 
-class _BrainV2HomeScreenState extends ConsumerState<BrainV2HomeScreen>
+class _BrainHomeScreenState extends ConsumerState<BrainHomeScreen>
     with SingleTickerProviderStateMixin {
   TabController? _tabController;
 
   void _onTabChanged() {
     if (_tabController != null && _tabController!.indexIsChanging) {
-      final schemasAsync = ref.read(brainV2SchemaListProvider);
+      final schemasAsync = ref.read(brainSchemaListProvider);
       schemasAsync.whenData((schemas) {
         if (_tabController!.index < schemas.length) {
           final schema = schemas[_tabController!.index];
-          ref.read(brainV2SelectedTypeProvider.notifier).state = schema.name;
+          ref.read(brainSelectedTypeProvider.notifier).state = schema.name;
         }
       });
     }
@@ -39,7 +39,7 @@ class _BrainV2HomeScreenState extends ConsumerState<BrainV2HomeScreen>
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final schemasAsync = ref.watch(brainV2SchemaListProvider);
+    final schemasAsync = ref.watch(brainSchemaListProvider);
 
     return schemasAsync.when(
       loading: () => Scaffold(
@@ -81,7 +81,7 @@ class _BrainV2HomeScreenState extends ConsumerState<BrainV2HomeScreen>
               ),
               const SizedBox(height: 24),
               ElevatedButton(
-                onPressed: () => ref.invalidate(brainV2SchemaListProvider),
+                onPressed: () => ref.invalidate(brainSchemaListProvider),
                 child: const Text('Retry'),
               ),
             ],
@@ -149,13 +149,13 @@ class _BrainV2HomeScreenState extends ConsumerState<BrainV2HomeScreen>
           // Set initial selected type
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted) {
-              ref.read(brainV2SelectedTypeProvider.notifier).state =
+              ref.read(brainSelectedTypeProvider.notifier).state =
                   schemas.first.name;
             }
           });
         }
 
-        final selectedType = ref.watch(brainV2SelectedTypeProvider);
+        final selectedType = ref.watch(brainSelectedTypeProvider);
 
         return Scaffold(
           appBar: AppBar(
@@ -183,7 +183,7 @@ class _BrainV2HomeScreenState extends ConsumerState<BrainV2HomeScreen>
           body: TabBarView(
             controller: _tabController,
             children: schemas
-                .map((schema) => BrainV2EntityListScreen(
+                .map((schema) => BrainEntityListScreen(
                       entityType: schema.name,
                       schema: schema,
                     ))
@@ -194,7 +194,7 @@ class _BrainV2HomeScreenState extends ConsumerState<BrainV2HomeScreen>
                   onPressed: () {
                     Navigator.of(context).push(
                       MaterialPageRoute(
-                        builder: (context) => BrainV2EntityFormScreen(
+                        builder: (context) => BrainEntityFormScreen(
                           entityType: selectedType,
                         ),
                       ),

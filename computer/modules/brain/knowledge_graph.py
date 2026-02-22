@@ -1,5 +1,5 @@
 """
-Knowledge Graph Service for Brain v2
+Knowledge Graph Service for Brain
 
 Async wrapper around TerminusDB client with WOQL-based graph traversal.
 All blocking operations use asyncio.to_thread() to prevent event loop blocking.
@@ -12,7 +12,7 @@ import os
 import logging
 from collections import deque
 from terminusdb_client import WOQLClient
-from terminusdb_client.errors import DatabaseError, ClientError
+from terminusdb_client.errors import DatabaseError, APIError, InterfaceError
 
 logger = logging.getLogger(__name__)
 
@@ -67,29 +67,28 @@ class KnowledgeGraphService:
 
             # Create database if not exists
             try:
-                client.connect(db=self.db_name)
+                client.connect(db=self.db_name, team="admin", user="admin", key=password)
                 logger.info(f"Connected to existing database: {self.db_name}")
-            except DatabaseError:
+            except (DatabaseError, InterfaceError):
                 # Database doesn't exist, create it
                 client.create_database(
                     dbid=self.db_name,
                     team="admin",
                     label="Parachute Brain Knowledge Graph",
-                    description="Brain v2 entities and relationships",
+                    description="Brain entities and relationships",
                     include_schema=True,
                 )
-                client.connect(db=self.db_name)
+                client.connect(db=self.db_name, team="admin", user="admin", key=password)
                 logger.info(f"Created new database: {self.db_name}")
 
-            # Load schemas (replace existing)
-            # TerminusDB allows schema evolution via weakening changes
-            # Use copy to avoid mutating caller's schemas
-            for schema in schemas:
-                client.insert_document(
-                    schema.copy(),
-                    graph_type="schema",
-                    commit_msg="Update schema from YAML definitions",
-                )
+            # Upsert all schemas (create if new, replace if existing)
+            schema_copies = [s.copy() for s in schemas]
+            client.replace_document(
+                schema_copies,
+                graph_type="schema",
+                commit_msg="Load schemas from YAML definitions",
+                create=True,
+            )
 
             logger.info(f"Loaded {len(schemas)} schemas into TerminusDB")
 
@@ -120,13 +119,14 @@ class KnowledgeGraphService:
                 doc,
                 commit_msg=commit_msg or f"Create {entity_type}",
             )
-            # TerminusDB returns IRI of created document
-            logger.debug(f"Created entity: {result}")
-            return result
+            # TerminusDB returns list of IRIs — extract first one
+            entity_id = result[0] if isinstance(result, list) else result
+            logger.debug(f"Created entity: {entity_id}")
+            return entity_id
 
         try:
             return await asyncio.to_thread(_create_sync)
-        except (DatabaseError, ClientError) as e:
+        except (DatabaseError, APIError) as e:
             logger.error(f"TerminusDB error creating {entity_type}", exc_info=True)
             raise
         except Exception as e:
@@ -157,11 +157,11 @@ class KnowledgeGraphService:
                 template.update(filters)
 
             # CRITICAL: Use limit for memory safety (cap at 1000)
-            results = self.client.query_document(
+            results = list(self.client.query_document(
                 template,
                 skip=offset,
                 count=min(limit, 1000),
-            )
+            ))
 
             logger.debug(f"Query returned {len(results)} results")
 
@@ -174,7 +174,7 @@ class KnowledgeGraphService:
 
         try:
             return await asyncio.to_thread(_query_sync)
-        except (DatabaseError, ClientError) as e:
+        except (DatabaseError, APIError) as e:
             logger.error(f"Query failed for {entity_type}", exc_info=True)
             raise
 
@@ -185,7 +185,7 @@ class KnowledgeGraphService:
         def _get_sync():
             try:
                 return self.client.get_document(entity_id)
-            except (DatabaseError, ClientError) as e:
+            except (DatabaseError, APIError) as e:
                 logger.warning(f"Entity not found: {entity_id}", exc_info=True)
                 return None
             except Exception:
@@ -219,7 +219,7 @@ class KnowledgeGraphService:
 
         try:
             await asyncio.to_thread(_update_sync)
-        except (DatabaseError, ClientError) as e:
+        except (DatabaseError, APIError) as e:
             logger.error(f"Failed to update {entity_id}", exc_info=True)
             raise
 
@@ -238,7 +238,7 @@ class KnowledgeGraphService:
 
         try:
             await asyncio.to_thread(_delete_sync)
-        except (DatabaseError, ClientError) as e:
+        except (DatabaseError, APIError) as e:
             logger.error(f"Failed to delete {entity_id}", exc_info=True)
             raise
 
@@ -256,7 +256,7 @@ class KnowledgeGraphService:
 
         try:
             return await asyncio.to_thread(_list_sync)
-        except (DatabaseError, ClientError) as e:
+        except (DatabaseError, APIError) as e:
             logger.error("Failed to list schemas", exc_info=True)
             raise
 
@@ -295,7 +295,7 @@ class KnowledgeGraphService:
 
         try:
             await asyncio.to_thread(_create_rel_sync)
-        except (DatabaseError, ClientError) as e:
+        except (DatabaseError, APIError) as e:
             logger.error(f"Failed to create relationship", exc_info=True)
             raise
 

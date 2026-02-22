@@ -43,17 +43,36 @@ from parachute.lib.server_config import (
 logger = get_logger(__name__)
 
 
-async def validate_terminusdb_password():
-    """Validate TerminusDB admin password before startup."""
-    admin_pass = os.getenv("TERMINUSDB_ADMIN_PASS")
+async def validate_terminusdb_password(vault_path: Path):
+    """Ensure TerminusDB admin password is set.
 
-    if admin_pass is None or admin_pass == "root":
-        if os.getenv("ENVIRONMENT") != "development":
-            raise RuntimeError(
-                "TERMINUSDB_ADMIN_PASS must be set to a secure password in production. "
-                "Generate one with: python -c 'import secrets; print(secrets.token_urlsafe(32))'"
-            )
-        logger.warning("Using default TerminusDB password - acceptable only in development")
+    Generates and persists a password for local development if not set.
+    TerminusDB is localhost-only (127.0.0.1), so a local file password is safe.
+    """
+    import secrets
+
+    admin_pass = os.getenv("TERMINUSDB_ADMIN_PASS")
+    if admin_pass and admin_pass != "root":
+        return
+
+    # Persist password in vault so it survives server restarts
+    # (TerminusDB container keeps its password across docker-compose up -d)
+    password_file = vault_path / ".brain" / ".terminusdb_pass"
+    password_file.parent.mkdir(parents=True, exist_ok=True)
+
+    if password_file.exists():
+        admin_pass = password_file.read_text().strip()
+        if admin_pass:
+            os.environ["TERMINUSDB_ADMIN_PASS"] = admin_pass
+            logger.info("Loaded TerminusDB password from vault")
+            return
+
+    # First run: generate and save
+    generated = secrets.token_urlsafe(32)
+    password_file.write_text(generated)
+    password_file.chmod(0o600)
+    os.environ["TERMINUSDB_ADMIN_PASS"] = generated
+    logger.info("Generated and saved TerminusDB admin password")
 
 
 async def start_terminusdb(vault_path: Path):
@@ -245,14 +264,14 @@ async def lifespan(app: FastAPI):
     # Auto-start enabled bot connectors (errors logged, never crash server)
     await auto_start_connectors()
 
-    # Start TerminusDB for Brain v2 module
+    # Start TerminusDB for Brain module
     try:
-        await validate_terminusdb_password()
+        await validate_terminusdb_password(settings.vault_path)
         await start_terminusdb(settings.vault_path)
         logger.info("TerminusDB started successfully")
     except Exception as e:
-        logger.warning(f"Failed to start TerminusDB (Brain v2 will be unavailable): {e}")
-        # Don't crash server if TerminusDB fails - Brain v2 will gracefully degrade
+        logger.warning(f"Failed to start TerminusDB (Brain will be unavailable): {e}")
+        # Don't crash server if TerminusDB fails - Brain will gracefully degrade
 
     logger.info("Server ready")
 

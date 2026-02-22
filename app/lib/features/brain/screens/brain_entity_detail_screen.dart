@@ -1,17 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
-import '../models/brain_v2_schema.dart';
-import '../providers/brain_v2_providers.dart';
-import '../widgets/brain_v2_field_widget.dart';
-import 'brain_v2_entity_form_screen.dart';
+import '../models/brain_schema.dart';
+import '../providers/brain_providers.dart';
+import '../widgets/brain_field_widget.dart';
+import 'brain_entity_form_screen.dart';
 
 /// Entity detail screen showing all fields and relationships.
-class BrainV2EntityDetailScreen extends ConsumerWidget {
+class BrainEntityDetailScreen extends ConsumerWidget {
   final String entityId;
-  final BrainV2Schema? schema; // Null when navigating from relationship chip
+  final BrainSchema? schema; // Null when navigating from relationship chip
 
-  const BrainV2EntityDetailScreen({
+  const BrainEntityDetailScreen({
     required this.entityId,
     this.schema,
     super.key,
@@ -20,8 +20,8 @@ class BrainV2EntityDetailScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final entityAsync = ref.watch(brainV2EntityDetailProvider(entityId));
-    final schemasAsync = ref.watch(brainV2SchemaListProvider);
+    final entityAsync = ref.watch(brainEntityDetailProvider(entityId));
+    final schemasAsync = ref.watch(brainSchemaListProvider);
 
     return Scaffold(
       backgroundColor: isDark ? BrandColors.nightSurface : BrandColors.cream,
@@ -63,7 +63,7 @@ class BrainV2EntityDetailScreen extends ConsumerWidget {
                   const SizedBox(width: 12),
                   ElevatedButton(
                     onPressed: () {
-                      ref.invalidate(brainV2EntityDetailProvider(entityId));
+                      ref.invalidate(brainEntityDetailProvider(entityId));
                     },
                     child: const Text('Retry'),
                   ),
@@ -145,7 +145,7 @@ class BrainV2EntityDetailScreen extends ConsumerWidget {
                     onPressed: () {
                       Navigator.of(context).push(
                         MaterialPageRoute(
-                          builder: (context) => BrainV2EntityFormScreen(
+                          builder: (context) => BrainEntityFormScreen(
                             entityType: entity.type,
                             entityId: entityId,
                           ),
@@ -242,7 +242,7 @@ class BrainV2EntityDetailScreen extends ConsumerWidget {
                                 ],
                               ),
                               const SizedBox(height: 8),
-                              BrainV2FieldWidget(field: field, value: value),
+                              BrainFieldWidget(field: field, value: value),
                             ],
                           ),
                         );
@@ -364,13 +364,13 @@ class BrainV2EntityDetailScreen extends ConsumerWidget {
 
     if (confirmed == true) {
       try {
-        final service = ref.read(brainV2ServiceProvider);
+        final service = ref.read(brainServiceProvider);
         if (service != null) {
           await service.deleteEntity(entityId, commitMsg: 'Delete entity via UI');
 
           // Invalidate providers to refresh lists
-          ref.invalidate(brainV2EntityListProvider);
-          ref.invalidate(brainV2EntityDetailProvider(entityId));
+          ref.invalidate(brainEntityListProvider);
+          ref.invalidate(brainEntityDetailProvider(entityId));
 
           if (context.mounted) {
             navigator.pop(); // Return to list

@@ -1,15 +1,15 @@
-import 'brain_v2_field.dart';
+import 'brain_field.dart';
 
-/// Schema definition for an entity type in Brain v2.
-class BrainV2Schema {
+/// Schema definition for an entity type in Brain.
+class BrainSchema {
   final String id;
   final String name;
   final String? description;
-  final List<BrainV2Field> fields;
+  final List<BrainField> fields;
   final String? keyStrategy;
   final List<String>? keyFields;
 
-  const BrainV2Schema({
+  const BrainSchema({
     required this.id,
     required this.name,
     this.description,
@@ -18,13 +18,13 @@ class BrainV2Schema {
     this.keyFields,
   });
 
-  factory BrainV2Schema.fromJson(Map<String, dynamic> json) {
+  factory BrainSchema.fromJson(Map<String, dynamic> json) {
     final fieldsMap = json['fields'] as Map<String, dynamic>? ?? {};
     final fields = fieldsMap.entries
-        .map((e) => BrainV2Field.fromJson(e.key, e.value as Map<String, dynamic>))
+        .map((e) => BrainField.fromJson(e.key, e.value as Map<String, dynamic>))
         .toList();
 
-    return BrainV2Schema(
+    return BrainSchema(
       id: json['id'] as String? ?? json['name'] as String? ?? '',
       name: json['name'] as String? ?? '',
       description: json['description'] as String?,
@@ -48,7 +48,7 @@ class BrainV2Schema {
   }
 
   /// Get fields that should be shown in list view (first 2-3 non-array fields).
-  List<BrainV2Field> get primaryFields {
+  List<BrainField> get primaryFields {
     return fields
         .where((f) => !f.isArray && f.name != 'tags')
         .take(3)

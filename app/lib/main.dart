@@ -32,7 +32,7 @@ import 'features/chat/widgets/message_bubble.dart' show currentlyRenderingMarkdo
 import 'features/daily/journal/providers/journal_providers.dart';
 import 'features/vault/screens/vault_browser_screen.dart';
 import 'features/vault/screens/remote_files_screen.dart';
-import 'features/brain_v2/screens/brain_v2_home_screen.dart';
+import 'features/brain/screens/brain_home_screen.dart';
 import 'features/settings/screens/settings_screen.dart';
 import 'features/onboarding/screens/onboarding_screen.dart';
 
@@ -652,7 +652,7 @@ class _TabShellState extends ConsumerState<_TabShell> with WidgetsBindingObserve
                   key: _brainNavigatorKey,
                   onGenerateRoute: (settings) {
                     return MaterialPageRoute(
-                      builder: (context) => const BrainV2HomeScreen(),
+                      builder: (context) => const BrainHomeScreen(),
                       settings: settings,
                     );
                   },

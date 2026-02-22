@@ -1,5 +1,5 @@
 """
-Brain v2 MCP Tools
+Brain MCP Tools
 
 Provides agent-native access to the knowledge graph via MCP tools.
 All 7 CRUD operations exposed for full agent autonomy.
@@ -11,10 +11,10 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-# MCP Tool Definitions for Brain v2
-BRAIN_V2_TOOLS = [
+# MCP Tool Definitions for Brain
+BRAIN_TOOLS = [
     {
-        "name": "brain_v2_create_entity",
+        "name": "brain_create_entity",
         "description": "Create a new entity in the knowledge graph with schema validation. Returns the entity IRI.",
         "inputSchema": {
             "type": "object",
@@ -36,7 +36,7 @@ BRAIN_V2_TOOLS = [
         },
     },
     {
-        "name": "brain_v2_query_entities",
+        "name": "brain_query_entities",
         "description": "Query entities by type with optional filtering and pagination. Returns list of matching entities.",
         "inputSchema": {
             "type": "object",
@@ -65,7 +65,7 @@ BRAIN_V2_TOOLS = [
         },
     },
     {
-        "name": "brain_v2_get_entity",
+        "name": "brain_get_entity",
         "description": "Retrieve a specific entity by its IRI. Returns the complete entity with all fields.",
         "inputSchema": {
             "type": "object",
@@ -79,7 +79,7 @@ BRAIN_V2_TOOLS = [
         },
     },
     {
-        "name": "brain_v2_update_entity",
+        "name": "brain_update_entity",
         "description": "Update an existing entity's fields. Performs partial update (only specified fields changed).",
         "inputSchema": {
             "type": "object",
@@ -101,7 +101,7 @@ BRAIN_V2_TOOLS = [
         },
     },
     {
-        "name": "brain_v2_delete_entity",
+        "name": "brain_delete_entity",
         "description": "Delete an entity from the knowledge graph. Removes all relationships to/from this entity.",
         "inputSchema": {
             "type": "object",
@@ -119,7 +119,7 @@ BRAIN_V2_TOOLS = [
         },
     },
     {
-        "name": "brain_v2_create_relationship",
+        "name": "brain_create_relationship",
         "description": "Create a relationship between two entities. Links source entity to target via named relationship.",
         "inputSchema": {
             "type": "object",
@@ -141,7 +141,7 @@ BRAIN_V2_TOOLS = [
         },
     },
     {
-        "name": "brain_v2_traverse_graph",
+        "name": "brain_traverse_graph",
         "description": "Traverse the knowledge graph from a starting entity following relationships. Returns connected entities up to max_depth hops.",
         "inputSchema": {
             "type": "object",
@@ -165,7 +165,7 @@ BRAIN_V2_TOOLS = [
         },
     },
     {
-        "name": "brain_v2_list_schemas",
+        "name": "brain_list_schemas",
         "description": "List all available entity schemas. Returns schema definitions with field types and descriptions.",
         "inputSchema": {
             "type": "object",
@@ -177,7 +177,7 @@ BRAIN_V2_TOOLS = [
 
 # Tool handler implementations
 async def handle_create_entity(module, arguments: dict[str, Any]) -> dict[str, Any]:
-    """Handle brain_v2_create_entity tool call"""
+    """Handle brain_create_entity tool call"""
     kg = await module._ensure_kg_service()
 
     entity_type = arguments["entity_type"]
@@ -204,7 +204,7 @@ async def handle_create_entity(module, arguments: dict[str, Any]) -> dict[str, A
 
 
 async def handle_query_entities(module, arguments: dict[str, Any]) -> dict[str, Any]:
-    """Handle brain_v2_query_entities tool call"""
+    """Handle brain_query_entities tool call"""
     kg = await module._ensure_kg_service()
 
     entity_type = arguments["entity_type"]
@@ -232,7 +232,7 @@ async def handle_query_entities(module, arguments: dict[str, Any]) -> dict[str, 
 
 
 async def handle_get_entity(module, arguments: dict[str, Any]) -> dict[str, Any]:
-    """Handle brain_v2_get_entity tool call"""
+    """Handle brain_get_entity tool call"""
     kg = await module._ensure_kg_service()
 
     entity_id = arguments["entity_id"]
@@ -257,7 +257,7 @@ async def handle_get_entity(module, arguments: dict[str, Any]) -> dict[str, Any]
 
 
 async def handle_update_entity(module, arguments: dict[str, Any]) -> dict[str, Any]:
-    """Handle brain_v2_update_entity tool call"""
+    """Handle brain_update_entity tool call"""
     kg = await module._ensure_kg_service()
 
     entity_id = arguments["entity_id"]
@@ -284,7 +284,7 @@ async def handle_update_entity(module, arguments: dict[str, Any]) -> dict[str, A
 
 
 async def handle_delete_entity(module, arguments: dict[str, Any]) -> dict[str, Any]:
-    """Handle brain_v2_delete_entity tool call"""
+    """Handle brain_delete_entity tool call"""
     kg = await module._ensure_kg_service()
 
     entity_id = arguments["entity_id"]
@@ -309,7 +309,7 @@ async def handle_delete_entity(module, arguments: dict[str, Any]) -> dict[str, A
 
 
 async def handle_create_relationship(module, arguments: dict[str, Any]) -> dict[str, Any]:
-    """Handle brain_v2_create_relationship tool call"""
+    """Handle brain_create_relationship tool call"""
     kg = await module._ensure_kg_service()
 
     from_id = arguments["from_id"]
@@ -335,7 +335,7 @@ async def handle_create_relationship(module, arguments: dict[str, Any]) -> dict[
 
 
 async def handle_traverse_graph(module, arguments: dict[str, Any]) -> dict[str, Any]:
-    """Handle brain_v2_traverse_graph tool call"""
+    """Handle brain_traverse_graph tool call"""
     kg = await module._ensure_kg_service()
 
     start_id = arguments["start_id"]
@@ -362,7 +362,7 @@ async def handle_traverse_graph(module, arguments: dict[str, Any]) -> dict[str, 
 
 
 async def handle_list_schemas(module, arguments: dict[str, Any]) -> dict[str, Any]:
-    """Handle brain_v2_list_schemas tool call"""
+    """Handle brain_list_schemas tool call"""
     kg = await module._ensure_kg_service()
 
     try:
@@ -382,12 +382,12 @@ async def handle_list_schemas(module, arguments: dict[str, Any]) -> dict[str, An
 
 # Handler registry
 TOOL_HANDLERS = {
-    "brain_v2_create_entity": handle_create_entity,
-    "brain_v2_query_entities": handle_query_entities,
-    "brain_v2_get_entity": handle_get_entity,
-    "brain_v2_update_entity": handle_update_entity,
-    "brain_v2_delete_entity": handle_delete_entity,
-    "brain_v2_create_relationship": handle_create_relationship,
-    "brain_v2_traverse_graph": handle_traverse_graph,
-    "brain_v2_list_schemas": handle_list_schemas,
+    "brain_create_entity": handle_create_entity,
+    "brain_query_entities": handle_query_entities,
+    "brain_get_entity": handle_get_entity,
+    "brain_update_entity": handle_update_entity,
+    "brain_delete_entity": handle_delete_entity,
+    "brain_create_relationship": handle_create_relationship,
+    "brain_traverse_graph": handle_traverse_graph,
+    "brain_list_schemas": handle_list_schemas,
 }

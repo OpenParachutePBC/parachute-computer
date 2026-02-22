@@ -1,9 +1,9 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../models/brain_entity.dart';
-import '../models/brain_search_result.dart';
+import '../models/brain_schema.dart';
 
-/// Service for communicating with the Brain module API.
+/// Service for communicating with the Brain API.
 class BrainService {
   final String baseUrl;
   final String? apiKey;
@@ -20,66 +20,185 @@ class BrainService {
           'Authorization': 'Bearer $apiKey',
       };
 
-  /// Search brain entities by query string.
-  Future<BrainSearchResult> search(String query) async {
-    final uri = Uri.parse('$baseUrl/api/brain/search').replace(
-      queryParameters: {'q': query},
-    );
-    final response = await _client
-        .get(uri, headers: _headers)
-        .timeout(_requestTimeout);
+  /// List all available schemas.
+  Future<List<BrainSchema>> listSchemas() async {
+    try {
+      final uri = Uri.parse('$baseUrl/api/brain/schemas');
+      final response = await _client
+          .get(uri, headers: _headers)
+          .timeout(_requestTimeout);
 
-    if (response.statusCode != 200) {
-      throw Exception('Brain search failed: ${response.statusCode}');
+      if (response.statusCode != 200) {
+        throw BrainException('Failed to fetch schemas: ${response.statusCode}');
+      }
+
+      final data = json.decode(response.body) as Map<String, dynamic>;
+      final schemas = (data['schemas'] as List<dynamic>? ?? [])
+          .map((s) => BrainSchema.fromJson(s as Map<String, dynamic>))
+          .toList();
+
+      return schemas;
+    } catch (e) {
+      if (e is BrainException) rethrow;
+      throw BrainException('Error fetching schemas: $e');
     }
-
-    final data = json.decode(response.body) as Map<String, dynamic>;
-    return BrainSearchResult.fromJson(data);
   }
 
-  /// Get a single entity by para ID.
-  Future<BrainEntity> getEntity(String paraId) async {
-    final uri = Uri.parse('$baseUrl/api/brain/entities/$paraId');
-    final response = await _client
-        .get(uri, headers: _headers)
-        .timeout(_requestTimeout);
+  /// Query entities by type with optional pagination.
+  Future<List<BrainEntity>> queryEntities(
+    String type, {
+    int limit = 100,
+    int offset = 0,
+  }) async {
+    try {
+      final uri = Uri.parse('$baseUrl/api/brain/entities/$type').replace(
+        queryParameters: {
+          'limit': limit.toString(),
+          'offset': offset.toString(),
+        },
+      );
 
-    if (response.statusCode != 200) {
-      throw Exception('Brain entity fetch failed: ${response.statusCode}');
+      final response = await _client
+          .get(uri, headers: _headers)
+          .timeout(_requestTimeout);
+
+      if (response.statusCode != 200) {
+        throw BrainException('Failed to query entities: ${response.statusCode}');
+      }
+
+      final data = json.decode(response.body) as Map<String, dynamic>;
+      final results = (data['results'] as List<dynamic>? ?? [])
+          .map((e) => BrainEntity.fromJson(e as Map<String, dynamic>))
+          .toList();
+
+      return results;
+    } catch (e) {
+      if (e is BrainException) rethrow;
+      throw BrainException('Error querying entities: $e');
     }
-
-    final data = json.decode(response.body) as Map<String, dynamic>;
-    return BrainEntity.fromJson(data);
   }
 
-  /// Resolve an entity by name.
-  Future<BrainEntity> resolveByName(String name) async {
-    final uri = Uri.parse('$baseUrl/api/brain/resolve/$name');
-    final response = await _client
-        .get(uri, headers: _headers)
-        .timeout(_requestTimeout);
+  /// Get a single entity by ID.
+  Future<BrainEntity?> getEntity(String id) async {
+    try {
+      final uri = Uri.parse('$baseUrl/api/brain/entities/by_id').replace(
+        queryParameters: {'id': id},
+      );
 
-    if (response.statusCode != 200) {
-      throw Exception('Brain resolve failed: ${response.statusCode}');
+      final response = await _client
+          .get(uri, headers: _headers)
+          .timeout(_requestTimeout);
+
+      if (response.statusCode == 404) {
+        return null;
+      }
+
+      if (response.statusCode != 200) {
+        throw BrainException('Failed to fetch entity: ${response.statusCode}');
+      }
+
+      final data = json.decode(response.body) as Map<String, dynamic>;
+      return BrainEntity.fromJson(data);
+    } catch (e) {
+      if (e is BrainException) rethrow;
+      throw BrainException('Error fetching entity: $e');
     }
-
-    final data = json.decode(response.body) as Map<String, dynamic>;
-    return BrainEntity.fromJson(data);
   }
 
-  /// Trigger a reload of the brain index.
-  Future<void> reload() async {
-    final uri = Uri.parse('$baseUrl/api/brain/reload');
-    final response = await _client
-        .post(uri, headers: _headers)
-        .timeout(_requestTimeout);
+  /// Create a new entity.
+  Future<String> createEntity(
+    String type,
+    Map<String, dynamic> data, {
+    String? commitMsg,
+  }) async {
+    try {
+      final uri = Uri.parse('$baseUrl/api/brain/entities');
+      final body = json.encode({
+        'entity_type': type,
+        'data': data,
+        if (commitMsg != null) 'commit_msg': commitMsg,
+      });
 
-    if (response.statusCode != 200) {
-      throw Exception('Brain reload failed: ${response.statusCode}');
+      final response = await _client
+          .post(uri, headers: _headers, body: body)
+          .timeout(_requestTimeout);
+
+      if (response.statusCode != 200 && response.statusCode != 201) {
+        final errorData = json.decode(response.body) as Map<String, dynamic>;
+        final errorMsg = errorData['detail'] ?? 'Unknown error';
+        throw BrainException('Failed to create entity: $errorMsg');
+      }
+
+      final responseData = json.decode(response.body) as Map<String, dynamic>;
+      return responseData['entity_id'] as String;
+    } catch (e) {
+      if (e is BrainException) rethrow;
+      throw BrainException('Error creating entity: $e');
+    }
+  }
+
+  /// Update an existing entity.
+  Future<void> updateEntity(
+    String id,
+    Map<String, dynamic> data, {
+    String? commitMsg,
+  }) async {
+    try {
+      final uri = Uri.parse('$baseUrl/api/brain/entities/$id');
+      final body = json.encode({
+        'data': data,
+        if (commitMsg != null) 'commit_msg': commitMsg,
+      });
+
+      final response = await _client
+          .put(uri, headers: _headers, body: body)
+          .timeout(_requestTimeout);
+
+      if (response.statusCode != 200) {
+        final errorData = json.decode(response.body) as Map<String, dynamic>;
+        final errorMsg = errorData['detail'] ?? 'Unknown error';
+        throw BrainException('Failed to update entity: $errorMsg');
+      }
+    } catch (e) {
+      if (e is BrainException) rethrow;
+      throw BrainException('Error updating entity: $e');
+    }
+  }
+
+  /// Delete an entity.
+  Future<void> deleteEntity(String id, {String? commitMsg}) async {
+    try {
+      final uri = Uri.parse('$baseUrl/api/brain/entities/$id').replace(
+        queryParameters: {
+          if (commitMsg != null) 'commit_msg': commitMsg,
+        },
+      );
+
+      final response = await _client
+          .delete(uri, headers: _headers)
+          .timeout(_requestTimeout);
+
+      if (response.statusCode != 200 && response.statusCode != 204) {
+        final errorData = json.decode(response.body) as Map<String, dynamic>;
+        final errorMsg = errorData['detail'] ?? 'Unknown error';
+        throw BrainException('Failed to delete entity: $errorMsg');
+      }
+    } catch (e) {
+      if (e is BrainException) rethrow;
+      throw BrainException('Error deleting entity: $e');
     }
   }
 
   void dispose() {
     _client.close();
   }
+}
+
+/// Exception thrown by BrainService operations.
+class BrainException implements Exception {
+  final String message;
+  BrainException(this.message);
+
+  @override
+  String toString() => message;
 }

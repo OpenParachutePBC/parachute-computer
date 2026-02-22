@@ -1,32 +1,82 @@
-/// A Brain entity (person, concept, project, etc.) from the knowledge graph.
+/// A Brain entity from the knowledge graph.
+///
+/// Entities have an @id (IRI like "Person/Alice"), @type (entity type),
+/// and dynamic fields based on the schema definition.
 class BrainEntity {
-  final String paraId;
-  final String name;
-  final List<String> tags;
-  final String? content;
-  final String? snippet;
-  final String? path;
+  final String id; // Entity IRI (e.g., "Person/Alice")
+  final String type; // Entity type (e.g., "Person")
+  final Map<String, dynamic> fields; // All entity data fields
 
   const BrainEntity({
-    required this.paraId,
-    required this.name,
-    this.tags = const [],
-    this.content,
-    this.snippet,
-    this.path,
+    required this.id,
+    required this.type,
+    this.fields = const {},
   });
 
   factory BrainEntity.fromJson(Map<String, dynamic> json) {
+    // TerminusDB uses '@id' and '@type' for system fields
+    final id = json['@id'] as String? ?? json['id'] as String? ?? '';
+    final type = json['@type'] as String? ?? json['type'] as String? ?? '';
+
+    // All other fields are entity data
+    final fields = Map<String, dynamic>.from(json);
+    fields.remove('@id');
+    fields.remove('@type');
+    fields.remove('id');
+    fields.remove('type');
+
     return BrainEntity(
-      paraId: json['para_id'] as String? ?? '',
-      name: json['name'] as String? ?? '',
-      tags: (json['tags'] as List<dynamic>?)
-              ?.map((e) => e.toString())
-              .toList() ??
-          [],
-      content: json['content'] as String?,
-      snippet: json['snippet'] as String?,
-      path: json['path'] as String?,
+      id: id,
+      type: type,
+      fields: fields,
     );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      '@id': id,
+      '@type': type,
+      ...fields,
+    };
+  }
+
+  /// Get display name from 'name' or 'title' field, fallback to ID.
+  String get displayName {
+    final name = fields['name'] ?? fields['title'];
+    if (name != null) return name.toString();
+
+    // Fallback: extract name from IRI (e.g., "Person/Alice" -> "Alice")
+    if (id.contains('/')) {
+      return id.split('/').last;
+    }
+
+    return id;
+  }
+
+  /// Get tags if present.
+  List<String> get tags {
+    final tagsField = fields['tags'];
+    if (tagsField is List) {
+      return tagsField.map((e) => e.toString()).toList();
+    }
+    return [];
+  }
+
+  /// Get field value by name.
+  dynamic operator [](String key) => fields[key];
+
+  /// Check if entity has a field.
+  bool has(String key) => fields.containsKey(key);
+
+  /// Safely get field value with type checking and default value.
+  T? getField<T>(String key, [T? defaultValue]) {
+    final value = fields[key];
+    if (value == null) return defaultValue;
+    if (value is T) return value;
+
+    // Try to convert to string if T is String
+    if (T == String) return value.toString() as T;
+
+    return defaultValue;
   }
 }
