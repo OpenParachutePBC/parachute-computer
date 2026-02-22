@@ -6,6 +6,8 @@ They control what MCPs, skills, agents, and plugins are available
 in sessions created under them.
 """
 
+import hashlib
+import json
 from typing import Any, Literal, Optional, Union
 
 from pydantic import BaseModel, Field, field_validator
@@ -172,3 +174,22 @@ class WorkspaceUpdate(BaseModel):
             return normalize_trust_level(v)
         except ValueError:
             return v
+
+
+def calculate_sandbox_config_hash(config: SandboxConfig) -> str:
+    """Calculate a stable hash of sandbox configuration.
+
+    Used for container reconciliation — containers with different config hashes
+    are rebuilt rather than reused. Ensures all running containers match the
+    current sandbox image and resource limits.
+
+    Returns:
+        12-character hex hash (48 bits entropy, collision-resistant for ~16M configs)
+    """
+    # Serialize config to deterministic JSON (sorted keys)
+    config_dict = config.model_dump(mode="json")
+    config_json = json.dumps(config_dict, sort_keys=True)
+
+    # SHA-256 hash, truncate to 12 chars (48 bits)
+    hash_digest = hashlib.sha256(config_json.encode()).hexdigest()
+    return hash_digest[:12]

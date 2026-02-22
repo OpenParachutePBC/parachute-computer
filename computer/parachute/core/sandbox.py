@@ -13,6 +13,7 @@ Two container modes:
 """
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -118,6 +119,23 @@ class DockerSandbox:
         except (asyncio.TimeoutError, OSError):
             return False
 
+    def _calculate_config_hash(self) -> str:
+        """Calculate a stable hash of sandbox configuration.
+
+        Used for container reconciliation — containers with different config hashes
+        are rebuilt rather than reused. Ensures all running containers match the
+        current sandbox image and resource limits.
+
+        Returns:
+            12-character hex hash (48 bits entropy, collision-resistant for ~16M configs)
+        """
+        # Combine image tag and resource limits into deterministic string
+        config_str = f"{SANDBOX_IMAGE}:{CONTAINER_MEMORY_LIMIT}:{CONTAINER_CPU_LIMIT}"
+
+        # SHA-256 hash, truncate to 12 chars (48 bits)
+        hash_digest = hashlib.sha256(config_str.encode()).hexdigest()
+        return hash_digest[:12]
+
     def _build_mounts(self, config: AgentSandboxConfig) -> list[str]:
         """Build Docker volume mount flags based on config."""
         mounts = []
@@ -128,16 +146,21 @@ class DockerSandbox:
             clean = re.sub(r'(/\*\*?)*$', '', path_pattern)
             if not clean:
                 continue
-            # Paths may be /vault/... absolute or legacy relative
-            if clean.startswith("/vault/"):
-                # Already absolute /vault/ path — resolve to host path
+            # Paths may be ~/Parachute/... or legacy /vault/ or relative
+            if clean.startswith("~/Parachute/"):
+                # New format - convert to absolute path
+                relative = clean[len("~/Parachute/"):]
+                full_path = self.vault_path / relative
+                container_path = f"/home/sandbox/Parachute/{relative}"
+            elif clean.startswith("/vault/"):
+                # Legacy absolute /vault/ path — migrate to /home/sandbox/Parachute/
                 relative = clean[len("/vault/"):]
                 full_path = self.vault_path / relative
-                container_path = clean
+                container_path = f"/home/sandbox/Parachute/{relative}"
             else:
                 # Legacy relative path
                 full_path = self.vault_path / clean
-                container_path = f"/vault/{clean}"
+                container_path = f"/home/sandbox/Parachute/{clean}"
             if full_path.exists():
                 mounts.extend(["-v", f"{full_path}:{container_path}:rw"])
                 logger.debug(f"Mounting {full_path} -> {container_path}:rw")
@@ -146,8 +169,8 @@ class DockerSandbox:
 
         # If no specific paths, mount entire vault read-only
         if not config.allowed_paths:
-            mounts.extend(["-v", f"{self.vault_path}:/vault:ro"])
-            logger.debug(f"Mounting entire vault read-only: {self.vault_path} -> /vault:ro")
+            mounts.extend(["-v", f"{self.vault_path}:/home/sandbox/Parachute:ro"])
+            logger.debug(f"Mounting entire vault read-only: {self.vault_path} -> /home/sandbox/Parachute:ro")
 
         # Mount capability files/dirs
         mounts.extend(self._build_capability_mounts(config))
@@ -461,6 +484,30 @@ class DockerSandbox:
         elif sandbox_dir.exists():
             shutil.rmtree(sandbox_dir)
 
+    async def _ensure_cache_volumes(self) -> None:
+        """Create shared package cache volumes if they don't exist."""
+        volumes = ["parachute-pip-cache", "parachute-npm-cache"]
+
+        for volume_name in volumes:
+            # Use async subprocess (not blocking subprocess.run)
+            proc = await asyncio.create_subprocess_exec(
+                "docker", "volume", "inspect", volume_name,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await proc.communicate()
+
+            if proc.returncode != 0:
+                # Volume doesn't exist, create it with labels
+                proc = await asyncio.create_subprocess_exec(
+                    "docker", "volume", "create",
+                    "--label", "app=parachute",
+                    "--label", "type=cache",
+                    volume_name,
+                )
+                await proc.wait()
+                logger.info(f"Created shared cache volume: {volume_name}")
+
     async def ensure_container(
         self, workspace_slug: str, config: AgentSandboxConfig
     ) -> str:
@@ -547,6 +594,12 @@ class DockerSandbox:
         # Vault mounts
         args.extend(vault_mounts)
 
+        # Shared package cache volumes (read-only to prevent poisoning)
+        args.extend([
+            "-v", "parachute-pip-cache:/cache/pip:ro",
+            "-v", "parachute-npm-cache:/cache/npm:ro",
+        ])
+
         # SDK session persistence
         claude_dir.mkdir(parents=True, exist_ok=True)
         claude_dir.chmod(0o700)
@@ -561,9 +614,16 @@ class DockerSandbox:
         self, container_name: str, workspace_slug: str, config: AgentSandboxConfig
     ) -> None:
         """Create and start a persistent container for a workspace."""
+        # Ensure shared cache volumes exist
+        await self._ensure_cache_volumes()
+
         sandbox_claude_dir = self.get_sandbox_claude_dir(workspace_slug)
         vault_mounts = self._build_mounts(config)
-        labels = {"app": "parachute", "workspace": workspace_slug}
+        labels = {
+            "app": "parachute",
+            "workspace": workspace_slug,
+            "config_hash": self._calculate_config_hash(),
+        }
 
         args = self._build_persistent_container_args(
             container_name,
@@ -742,13 +802,20 @@ class DockerSandbox:
                 await self._remove_container(container_name)
 
             # Create the default container
+            # Ensure shared cache volumes exist
+            await self._ensure_cache_volumes()
+
             default_claude_dir = self.vault_path / SANDBOX_DATA_DIR / "_default" / ".claude"
 
             # Full vault read-only + capability mounts
-            vault_mounts = ["-v", f"{self.vault_path}:/vault:ro"]
+            vault_mounts = ["-v", f"{self.vault_path}:/home/sandbox/Parachute:ro"]
             vault_mounts.extend(self._build_capability_mounts(config))
 
-            labels = {"app": "parachute", "type": "default"}
+            labels = {
+                "app": "parachute",
+                "type": "default",
+                "config_hash": self._calculate_config_hash(),
+            }
 
             args = self._build_persistent_container_args(
                 container_name,
@@ -832,18 +899,21 @@ class DockerSandbox:
         await proc.wait()
 
     async def reconcile(self) -> None:
-        """Discover existing parachute-ws-* containers on server startup.
+        """Discover existing parachute containers on server startup.
 
-        Logs the count of existing workspace containers. Does not remove
-        orphans — that's deferred to a future cleanup task.
+        Removes containers with mismatched config_hash (outdated image/resources).
+        Logs the count of existing workspace containers.
         """
         if not await self.is_available():
             return
 
+        # Get current config hash for comparison
+        current_hash = self._calculate_config_hash()
+
         proc = await asyncio.create_subprocess_exec(
             "docker", "ps", "-a",
             "--filter", "label=app=parachute",
-            "--format", "{{.Names}}\t{{.Status}}",
+            "--format", "{{json .}}",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
         )
@@ -854,16 +924,49 @@ class DockerSandbox:
 
         count = 0
         has_default = False
+        removed_count = 0
+
         for line in stdout.decode().strip().split("\n"):
             if not line:
                 continue
-            parts = line.split("\t")
-            if len(parts) >= 1:
-                name = parts[0]
+
+            try:
+                container = json.loads(line)
+                name = container.get("Names", "")
+                labels = container.get("Labels", "")
+
+                # Parse labels (format: "key1=val1,key2=val2,...")
+                label_dict = {}
+                if labels:
+                    for pair in labels.split(","):
+                        if "=" in pair:
+                            key, val = pair.split("=", 1)
+                            label_dict[key] = val
+
+                config_hash = label_dict.get("config_hash", "")
+
+                # Check if config hash matches
+                if config_hash and config_hash != current_hash:
+                    logger.info(
+                        f"Removing container {name} with outdated config "
+                        f"(hash: {config_hash[:8]}... != {current_hash[:8]}...)"
+                    )
+                    await self._remove_container(name)
+                    removed_count += 1
+                    continue
+
+                # Count valid containers
                 if name.startswith("parachute-ws-"):
                     count += 1
                 elif name == DEFAULT_CONTAINER_NAME:
                     has_default = True
+
+            except json.JSONDecodeError:
+                logger.warning(f"Failed to parse container JSON: {line[:100]}")
+                continue
+
+        if removed_count:
+            logger.info(f"Removed {removed_count} container(s) with outdated configuration")
         if count:
             logger.info(f"Reconciled {count} existing workspace container(s)")
         if has_default:

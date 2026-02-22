@@ -1,30 +1,75 @@
 FROM python:3.13-slim
 
-# Install Node.js (required for Claude Code CLI) and curl
+# System packages with security hardening
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    # Development tools
+    git \
+    build-essential \
     curl \
+    wget \
+    jq \
+    tree \
     ca-certificates \
-    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    # Python headers for native extensions
+    libpython3-dev \
+    libssl-dev \
+    libffi-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Node.js 22 (TODO: Add checksum verification in production)
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Claude Code CLI globally
+# Upgrade pip to ensure concurrent cache safety (pip >= 24.0)
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --upgrade "pip>=24.0"
+
+# Claude Code CLI
 RUN npm install -g @anthropic-ai/claude-code
 
-# Install Claude Agent SDK (Python wrapper that calls the CLI)
-RUN pip install --no-cache-dir claude-agent-sdk
+# Claude Agent SDK
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --no-cache-dir claude-agent-sdk
+
+# Document/data processing libraries (pinned versions for reproducibility)
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --no-cache-dir \
+    pandas==2.2.3 \
+    openpyxl==3.1.5 \
+    PyPDF2==3.0.1 \
+    python-docx==1.1.2 \
+    reportlab==4.2.5
+
+# Web automation libraries (pinned versions)
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --no-cache-dir \
+    requests==2.32.3 \
+    beautifulsoup4==4.12.3
+
+# OPTIONAL: Playwright + Chromium (enable via build arg)
+# Adds ~350MB to image size and browser attack surface
+ARG INCLUDE_PLAYWRIGHT=false
+RUN if [ "$INCLUDE_PLAYWRIGHT" = "true" ]; then \
+    pip install playwright==1.48.0 && \
+    playwright install chromium --with-deps; \
+    fi
+
+# Create cache directories with correct ownership BEFORE switching users
+# These will be mounted as named volumes at runtime
+RUN mkdir -p /cache/pip /cache/npm && chown -R 1000:1000 /cache
 
 # Create non-root user for sandbox execution
-RUN useradd -m -s /bin/bash sandbox
+RUN useradd -m -u 1000 -s /bin/bash sandbox
+
+# Health check (verify Python is functional)
+HEALTHCHECK --interval=60s --timeout=10s --retries=2 \
+    CMD python -c "print('ok')" || exit 1
 
 WORKDIR /workspace
 
 # Copy entrypoint
 COPY entrypoint.py /workspace/entrypoint.py
-
-# Install parachute MCP server if available (mounted at runtime via /app)
-# The host can bind-mount the package at /app for `python -m parachute.mcp_server`
-# This is optional — the entrypoint works without it
 
 USER sandbox
 

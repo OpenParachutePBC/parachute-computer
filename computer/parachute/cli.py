@@ -28,6 +28,8 @@ Usage:
     parachute bot approve [ID]         # Approve pending user (list if no ID)
     parachute bot deny ID              # Deny a pending user
     parachute bot users                # List approved users
+    parachute sandbox clean-cache      # Remove shared package cache volumes
+    parachute sandbox inspect          # Inspect sandbox configuration and containers
 """
 
 import argparse
@@ -950,6 +952,112 @@ def cmd_status(args: argparse.Namespace) -> None:
         print("  status: not running")
 
     print()
+
+
+# --- Sandbox command ---
+
+
+def cmd_sandbox(args: argparse.Namespace) -> None:
+    """Manage Docker sandbox environment."""
+    action = getattr(args, "action", None)
+
+    try:
+        if action == "clean-cache":
+            # Remove shared package cache volumes
+            result = subprocess.run(
+                ["docker", "volume", "ls", "-q", "--filter", "label=app=parachute", "--filter", "label=type=cache"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            if result.returncode != 0:
+                print("Error: Docker not available or failed to list volumes")
+                sys.exit(1)
+
+            volumes = [v.strip() for v in result.stdout.splitlines() if v.strip()]
+
+            if not volumes:
+                print("No cache volumes found.")
+                return
+
+            print(f"Found {len(volumes)} cache volume(s):")
+            for vol in volumes:
+                print(f"  - {vol}")
+
+            # Confirm deletion
+            response = input("\nRemove these volumes? [y/N]: ").strip().lower()
+            if response not in ("y", "yes"):
+                print("Cancelled.")
+                return
+
+            # Remove volumes
+            for vol in volumes:
+                result = subprocess.run(
+                    ["docker", "volume", "rm", vol],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if result.returncode == 0:
+                    print(f"  ✓ Removed {vol}")
+                else:
+                    print(f"  ✗ Failed to remove {vol}: {result.stderr}")
+
+        elif action == "inspect":
+            # Show sandbox configuration and container status
+            from parachute.core.sandbox import SANDBOX_IMAGE, CONTAINER_MEMORY_LIMIT, CONTAINER_CPU_LIMIT
+
+            print("Sandbox Configuration:")
+            print(f"  Image: {SANDBOX_IMAGE}")
+            print(f"  Memory limit: {CONTAINER_MEMORY_LIMIT}")
+            print(f"  CPU limit: {CONTAINER_CPU_LIMIT}")
+
+            # Check if image exists
+            result = subprocess.run(
+                ["docker", "image", "inspect", SANDBOX_IMAGE],
+                capture_output=True,
+                check=False,
+            )
+            print(f"  Image status: {'exists' if result.returncode == 0 else 'not built'}")
+
+            # List cache volumes
+            result = subprocess.run(
+                ["docker", "volume", "ls", "--filter", "label=app=parachute", "--filter", "label=type=cache", "--format", "{{.Name}}"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            volumes = [v.strip() for v in result.stdout.splitlines() if v.strip()]
+            print(f"\nCache Volumes: {len(volumes)}")
+            for vol in volumes:
+                print(f"  - {vol}")
+
+            # List running containers
+            result = subprocess.run(
+                ["docker", "ps", "--filter", "label=app=parachute", "--format", "{{.Names}}\t{{.Status}}\t{{.Label \"workspace\"}}\t{{.Label \"config_hash\"}}"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            lines = [l.strip() for l in result.stdout.splitlines() if l.strip()]
+            print(f"\nRunning Containers: {len(lines)}")
+            if lines:
+                print(f"  {'Name':<30} {'Status':<20} {'Workspace':<20} {'Config Hash':<15}")
+                print(f"  {'-'*30} {'-'*20} {'-'*20} {'-'*15}")
+                for line in lines:
+                    parts = line.split('\t')
+                    name = parts[0] if len(parts) > 0 else ""
+                    status = parts[1] if len(parts) > 1 else ""
+                    workspace = parts[2] if len(parts) > 2 else ""
+                    config_hash = parts[3] if len(parts) > 3 else ""
+                    print(f"  {name:<30} {status:<20} {workspace:<20} {config_hash:<15}")
+        else:
+            print("Usage: parachute sandbox {clean-cache|inspect}")
+
+    except Exception as e:
+        print(f"Error: {e}")
+        sys.exit(1)
 
 
 # --- Supervisor command ---
@@ -1970,6 +2078,12 @@ def main() -> None:
     supervisor_sub.add_parser("install", help="Install supervisor daemon")
     supervisor_sub.add_parser("uninstall", help="Remove supervisor daemon")
 
+    # sandbox subcommand
+    sandbox_parser = subparsers.add_parser("sandbox", help="Sandbox management")
+    sandbox_sub = sandbox_parser.add_subparsers(dest="action")
+    sandbox_sub.add_parser("clean-cache", help="Remove shared package cache volumes")
+    sandbox_sub.add_parser("inspect", help="Inspect sandbox configuration and containers")
+
     # help (alias for --help)
     subparsers.add_parser("help", help="Show this help message")
 
@@ -2005,5 +2119,7 @@ def main() -> None:
         cmd_bot(args)
     elif args.command == "supervisor":
         cmd_supervisor(args)
+    elif args.command == "sandbox":
+        cmd_sandbox(args)
     else:
         parser.print_help()
