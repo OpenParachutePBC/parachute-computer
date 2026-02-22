@@ -38,6 +38,11 @@ class KnowledgeGraphService:
         self.client: WOQLClient | None = None
         self._connected = False
 
+    def _ensure_connected(self) -> None:
+        """Raise RuntimeError if not connected to TerminusDB."""
+        if not self._connected:
+            raise RuntimeError("Not connected. Call connect() first.")
+
     async def connect(self, schemas: list[dict[str, Any]]) -> None:
         """
         Connect to TerminusDB and initialize database with schemas.
@@ -46,11 +51,18 @@ class KnowledgeGraphService:
         CRITICAL: Never use subprocess.run() or blocking calls in async context!
         """
         def _connect_sync():
+            password: str | None = os.getenv("TERMINUSDB_ADMIN_PASS")
+            if not password:
+                raise ValueError(
+                    "TERMINUSDB_ADMIN_PASS environment variable required. "
+                    "Generate with: python -c 'import secrets; print(secrets.token_urlsafe(32))'"
+                )
+
             client = WOQLClient(self.server_url)
             client.connect(
                 team="admin",
                 user="admin",
-                key=os.getenv("TERMINUSDB_ADMIN_PASS", "root"),
+                key=password,
             )
 
             # Create database if not exists
@@ -98,8 +110,7 @@ class KnowledgeGraphService:
         commit_msg: str | None = None,
     ) -> str:
         """Create entity, returns IRI"""
-        if not self._connected:
-            raise RuntimeError("Not connected to TerminusDB")
+        self._ensure_connected()
 
         logger.info(f"Creating {entity_type} entity", extra={"entity_type": entity_type})
 
@@ -133,8 +144,7 @@ class KnowledgeGraphService:
 
         PERFORMANCE: Added pagination to prevent OOM on large result sets
         """
-        if not self._connected:
-            raise RuntimeError("Not connected to TerminusDB")
+        self._ensure_connected()
 
         logger.info(
             f"Querying {entity_type} entities",
@@ -170,8 +180,7 @@ class KnowledgeGraphService:
 
     async def get_entity(self, entity_id: str) -> dict[str, Any] | None:
         """Retrieve single entity by IRI"""
-        if not self._connected:
-            raise RuntimeError("Not connected to TerminusDB")
+        self._ensure_connected()
 
         def _get_sync():
             try:
@@ -191,8 +200,7 @@ class KnowledgeGraphService:
         commit_msg: str | None = None,
     ) -> None:
         """Update entity fields"""
-        if not self._connected:
-            raise RuntimeError("Not connected to TerminusDB")
+        self._ensure_connected()
 
         logger.info(f"Updating entity: {entity_id}")
 
@@ -221,8 +229,7 @@ class KnowledgeGraphService:
         commit_msg: str | None = None,
     ) -> None:
         """Delete entity from knowledge graph"""
-        if not self._connected:
-            raise RuntimeError("Not connected to TerminusDB")
+        self._ensure_connected()
 
         logger.info(f"Deleting entity: {entity_id}")
 
@@ -237,8 +244,7 @@ class KnowledgeGraphService:
 
     async def list_schemas(self) -> list[dict[str, Any]]:
         """List all available entity schemas with field definitions"""
-        if not self._connected:
-            raise RuntimeError("Not connected to TerminusDB")
+        self._ensure_connected()
 
         def _list_sync():
             # Query TerminusDB schema graph
@@ -267,8 +273,7 @@ class KnowledgeGraphService:
         Adds to_id to from_entity's relationship field (array).
         Creates bidirectional link if schema defines inverse.
         """
-        if not self._connected:
-            raise RuntimeError("Not connected to TerminusDB")
+        self._ensure_connected()
 
         logger.info(f"Creating relationship: {from_id} --[{relationship}]--> {to_id}")
 
@@ -306,8 +311,7 @@ class KnowledgeGraphService:
         PERFORMANCE: Uses WOQL path query for server-side traversal (not N+1)
         Returns list of connected entities up to max_depth hops.
         """
-        if not self._connected:
-            raise RuntimeError("Not connected to TerminusDB")
+        self._ensure_connected()
 
         # SECURITY: Enforce max_depth ceiling
         if max_depth < 1 or max_depth > 5:

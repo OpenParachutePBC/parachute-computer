@@ -160,22 +160,28 @@ class SchemaCompiler:
     async def compile_all_schemas(self, schemas_dir: Path) -> list[dict[str, Any]]:
         """Compile all YAML schemas in directory
 
-        PERFORMANCE: Uses async I/O to avoid blocking
+        PERFORMANCE: Compiles all schemas in parallel using asyncio.gather()
         """
-        schemas = []
+        import asyncio
+
         yaml_files = list(schemas_dir.glob("*.yaml"))
 
         if not yaml_files:
             logger.warning(f"No schema files found in {schemas_dir}")
-            return schemas
+            return []
 
-        for yaml_file in yaml_files:
-            try:
-                schema = await self.compile_schema(yaml_file)
+        # PERFORMANCE: Compile all schemas in parallel
+        tasks = [self.compile_schema(yaml_file) for yaml_file in yaml_files]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Filter out exceptions and log errors
+        schemas = []
+        for schema, yaml_file in zip(results, yaml_files):
+            if isinstance(schema, Exception):
+                logger.error(f"Failed to compile schema {yaml_file.name}: {schema}")
+                # Continue compiling other schemas instead of crashing
+            else:
                 schemas.append(schema)
                 logger.info(f"Compiled schema: {yaml_file.name} -> {schema['@id']}")
-            except Exception as e:
-                logger.error(f"Failed to compile schema {yaml_file.name}: {e}")
-                raise
 
         return schemas

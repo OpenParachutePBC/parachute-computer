@@ -7,7 +7,7 @@ Provides strongly-typed, version-controlled knowledge graph with agent-native MC
 import asyncio
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Any
 
 from fastapi import APIRouter, HTTPException, status
 from pydantic import ValidationError
@@ -45,7 +45,7 @@ class BrainV2Module:
 
         # Lazy-loaded service
         self.kg_service: Optional[KnowledgeGraphService] = None
-        self.schemas: list[dict] = []
+        self.schemas: list[dict[str, Any]] = []
         self._init_lock = asyncio.Lock()  # CRITICAL: Race condition protection
 
     async def _ensure_kg_service(self) -> KnowledgeGraphService:
@@ -84,7 +84,7 @@ class BrainV2Module:
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
             except Exception as e:
                 logger.error(f"Error creating entity: {e}", exc_info=True)
-                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
         @router.put("/entities/{entity_id}", response_model=CreateEntityResponse)
         async def update_entity(entity_id: str, request: UpdateEntityRequest):
@@ -98,7 +98,7 @@ class BrainV2Module:
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
             except Exception as e:
                 logger.error(f"Error updating entity: {e}", exc_info=True)
-                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
         @router.delete("/entities/{entity_id}")
         async def delete_entity(entity_id: str, request: Optional[DeleteEntityRequest] = None):
@@ -113,7 +113,7 @@ class BrainV2Module:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
             except Exception as e:
                 logger.error(f"Error deleting entity: {e}", exc_info=True)
-                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
         @router.get("/entities/{entity_type}", response_model=QueryEntitiesResponse)
         async def query_entities(
@@ -133,7 +133,7 @@ class BrainV2Module:
                 return QueryEntitiesResponse(success=True, **results)
             except Exception as e:
                 logger.error(f"Error querying entities: {e}", exc_info=True)
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to query entities")
 
         @router.post("/relationships")
         async def create_relationship(request: CreateRelationshipRequest):
@@ -149,7 +149,7 @@ class BrainV2Module:
                 return {"success": True}
             except Exception as e:
                 logger.error(f"Error creating relationship: {e}", exc_info=True)
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to create relationship")
 
         @router.post("/traverse")
         async def traverse_graph(request: TraverseGraphRequest):
@@ -165,7 +165,7 @@ class BrainV2Module:
                 return {"success": True, "results": results, "count": len(results)}
             except Exception as e:
                 logger.error(f"Error traversing graph: {e}", exc_info=True)
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to traverse graph")
 
         @router.get("/schemas")
         async def list_schemas():
@@ -176,7 +176,7 @@ class BrainV2Module:
                 return {"success": True, "schemas": schemas}
             except Exception as e:
                 logger.error(f"Error listing schemas: {e}", exc_info=True)
-                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
         return router
 
@@ -191,7 +191,7 @@ class BrainV2Module:
 
     # --- BrainInterface compatibility methods ---
 
-    async def search(self, query: str) -> list[dict]:
+    async def search(self, query: str) -> list[dict[str, Any]]:
         """Search entities by name or content (BrainInterface compatibility).
 
         Provides full-text search across all entity types for chat/daily integration.
@@ -203,17 +203,24 @@ class BrainV2Module:
         query_lower = query.lower()
 
         # Search across all entity types
-        # Note: This is a simple implementation. Phase 2 will add proper full-text search.
+        # PERFORMANCE: Execute queries in parallel (not sequential)
+        # Phase 2 will replace with proper WOQL full-text search
+        tasks = []
         for schema in self.schemas:
             entity_type = schema.get("@id", "")
-            if not entity_type:
+            if entity_type:
+                tasks.append(kg.query_entities(entity_type, limit=100))
+
+        # Execute all queries in parallel
+        responses = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Process results from all entity types
+        for response in responses:
+            if isinstance(response, Exception):
+                logger.warning(f"Search query failed: {response}")
                 continue
 
-            try:
-                # Query all entities of this type
-                response = await kg.query_entities(entity_type, limit=100)
-
-                for entity in response.get("results", []):
+            for entity in response.get("results", []):
                     # Check if query matches any field
                     entity_id = entity.get("@id", "")
                     entity_type_name = entity.get("@type", "")
@@ -244,9 +251,5 @@ class BrainV2Module:
                             "tags": entity.get("tags", []),
                             "content": str(entity),  # Full entity as JSON string
                         })
-
-            except Exception as e:
-                logger.warning(f"Search failed for {entity_type}: {e}")
-                continue
 
         return results[:20]  # Limit to top 20 results
