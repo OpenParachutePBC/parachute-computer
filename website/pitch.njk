@@ -1,0 +1,481 @@
+---
+layout: base.njk
+title: "Pitch"
+description: "Parachute — open source personal AI. Two products, one extended mind."
+permalink: /pitch/
+---
+
+<style>
+    .deck {
+        max-width: none;
+        padding: 0;
+        margin: 0;
+    }
+
+    .slide {
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        padding: 5rem 3rem;
+        position: relative;
+        border-bottom: 1px solid var(--border);
+        max-width: 900px;
+        margin: 0 auto;
+    }
+
+    .slide-num {
+        position: absolute;
+        top: 2rem;
+        right: 0;
+        font-size: 0.75rem;
+        color: var(--fg-dim);
+        letter-spacing: 0.08em;
+        font-family: var(--mono);
+    }
+
+    .slide-label {
+        font-size: 0.75rem;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--accent);
+        margin-bottom: 1rem;
+        font-weight: 500;
+    }
+
+    .slide h1 {
+        font-family: var(--serif);
+        font-size: clamp(2.5rem, 5vw, 4rem);
+        font-weight: 400;
+        letter-spacing: -0.02em;
+        line-height: 1.1;
+        color: var(--fg);
+        margin-bottom: 2rem;
+        max-width: 720px;
+    }
+
+    .slide h2 {
+        font-family: var(--serif);
+        font-size: clamp(1.5rem, 3vw, 2.25rem);
+        font-weight: 400;
+        letter-spacing: -0.01em;
+        line-height: 1.2;
+        color: var(--fg);
+        margin-bottom: 1.75rem;
+        padding-bottom: 0;
+        border-bottom: none;
+    }
+
+    .slide p {
+        font-size: 1.05rem;
+        color: var(--fg-muted);
+        line-height: 1.75;
+        max-width: 620px;
+        margin-bottom: 1rem;
+    }
+
+    .slide ul {
+        list-style: none;
+        margin: 0;
+    }
+
+    .slide li {
+        color: var(--fg-muted);
+        padding: 0.6rem 0;
+        padding-left: 1.75rem;
+        position: relative;
+        line-height: 1.6;
+        font-size: 1rem;
+        max-width: 620px;
+    }
+
+    .slide li::before {
+        content: "\203A";
+        position: absolute;
+        left: 0.25rem;
+        color: var(--accent-light);
+        font-size: 1.1em;
+    }
+
+    .slide li strong {
+        color: var(--fg);
+        font-weight: 500;
+    }
+
+    /* Two-column layout for product slides */
+    .two-col {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 2rem;
+        margin-top: 1rem;
+    }
+
+    .col-card {
+        background: var(--card-bg);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 1.75rem;
+    }
+
+    .col-card h3 {
+        font-family: var(--serif);
+        font-size: 1.2rem;
+        font-weight: 400;
+        color: var(--fg);
+        margin-bottom: 0.75rem;
+    }
+
+    .col-card p {
+        font-size: 0.9rem;
+        margin-bottom: 0.75rem;
+    }
+
+    .col-card ul {
+        margin: 0;
+    }
+
+    .col-card li {
+        font-size: 0.9rem;
+        padding: 0.35rem 0;
+        padding-left: 1.5rem;
+        max-width: none;
+    }
+
+    /* Stat callouts */
+    .stats {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 1.5rem;
+        margin: 2rem 0;
+    }
+
+    .stat {
+        text-align: left;
+    }
+
+    .stat-num {
+        font-family: var(--serif);
+        font-size: 2.75rem;
+        font-weight: 400;
+        color: var(--accent);
+        line-height: 1;
+        margin-bottom: 0.35rem;
+        letter-spacing: -0.02em;
+    }
+
+    .stat-label {
+        font-size: 0.85rem;
+        color: var(--fg-muted);
+        line-height: 1.4;
+    }
+
+    /* Flywheel diagram */
+    .flywheel {
+        background: var(--accent-soft);
+        border: 1px solid rgba(74,124,89,0.15);
+        border-radius: 10px;
+        padding: 2rem 2.5rem;
+        margin: 1.5rem 0;
+        max-width: 560px;
+        font-family: var(--serif);
+        font-size: 1.1rem;
+        color: var(--fg);
+        line-height: 2;
+    }
+
+    .flywheel span {
+        color: var(--fg-dim);
+        font-family: var(--sans);
+        font-size: 0.8rem;
+        letter-spacing: 0.05em;
+    }
+
+    /* Team grid */
+    .team-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1rem;
+        margin-top: 1rem;
+    }
+
+    .team-member {
+        padding: 1rem 0;
+        border-top: 1px solid var(--border-light);
+    }
+
+    .team-member strong {
+        display: block;
+        color: var(--fg);
+        font-weight: 500;
+        margin-bottom: 0.2rem;
+    }
+
+    .team-member span {
+        font-size: 0.875rem;
+        color: var(--fg-muted);
+    }
+
+    /* Ask slide */
+    .ask-box {
+        background: var(--card-bg);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 2rem 2.5rem;
+        max-width: 540px;
+        margin: 1.5rem 0;
+    }
+
+    .ask-line {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        padding: 0.65rem 0;
+        border-bottom: 1px solid var(--border-light);
+        font-size: 0.95rem;
+    }
+
+    .ask-line:last-child {
+        border-bottom: none;
+    }
+
+    .ask-line .label {
+        color: var(--fg-muted);
+    }
+
+    .ask-line .value {
+        color: var(--fg);
+        font-weight: 500;
+        font-family: var(--serif);
+        font-size: 1.05rem;
+    }
+
+    .nvc-note {
+        font-size: 0.85rem;
+        color: var(--fg-muted);
+        margin-top: 1rem;
+        padding: 0.75rem 1rem;
+        background: var(--accent-soft);
+        border-radius: 6px;
+        max-width: 540px;
+    }
+
+    @media (max-width: 640px) {
+        .slide {
+            padding: 4rem 1.5rem;
+            min-height: auto;
+            padding-top: 5rem;
+            padding-bottom: 4rem;
+        }
+        .two-col { grid-template-columns: 1fr; }
+        .stats { grid-template-columns: 1fr 1fr; }
+        .team-grid { grid-template-columns: 1fr; }
+    }
+</style>
+
+<main class="deck">
+
+    <!-- 01 Hook -->
+    <div class="slide">
+        <span class="slide-num">01 / 11</span>
+        <div class="slide-label">Parachute &mdash; Open Parachute, PBC</div>
+        <h1>Your AI doesn't know you.</h1>
+        <p>Every conversation starts fresh. Your real thinking is scattered across a dozen apps. The tool that could actually help you think better has never heard of you.</p>
+        <p>We're building the extended mind that changes that.</p>
+    </div>
+
+    <!-- 02 Problem -->
+    <div class="slide">
+        <span class="slide-num">02 / 11</span>
+        <div class="slide-label">The Problem</div>
+        <h2>Powerful AI. No memory. No trust.</h2>
+        <ul>
+            <li><strong>Scattered thinking</strong> &mdash; voice memos here, typed notes there, AI conversations that vanish</li>
+            <li><strong>No continuity</strong> &mdash; every AI session starts cold; you re-explain your context every time</li>
+            <li><strong>No trust</strong> &mdash; the only way to get real help is to share your real thinking, but you wouldn't trust most tools with that</li>
+            <li><strong>Wrong layer</strong> &mdash; existing tools ask you to learn the system; the system should learn you</li>
+        </ul>
+    </div>
+
+    <!-- 03 Why Now -->
+    <div class="slide">
+        <span class="slide-num">03 / 11</span>
+        <div class="slide-label">Why Now</div>
+        <h2>Three things converged.</h2>
+        <ul>
+            <li><strong>Models crossed a threshold</strong> &mdash; Claude and similar models are genuinely useful for personal thinking, not just coding tasks</li>
+            <li><strong>Local-first is viable</strong> &mdash; on-device voice transcription (Parakeet / Sherpa-ONNX) works offline, at quality</li>
+            <li><strong>Privacy is a real concern</strong> &mdash; people are increasingly aware of where their data goes; open source + local-first is the only honest answer</li>
+        </ul>
+        <p style="margin-top: 1.5rem;">The personal AI computer category is forming. The question is who builds it in a way people can actually trust.</p>
+    </div>
+
+    <!-- 04 Solution -->
+    <div class="slide">
+        <span class="slide-num">04 / 11</span>
+        <div class="slide-label">The Solution</div>
+        <h2>Two products. One extended mind.</h2>
+        <div class="two-col">
+            <div class="col-card">
+                <h3>Parachute Daily</h3>
+                <p>Journaling with gentle AI. For everyone.</p>
+                <ul>
+                    <li>Voice or text capture, wherever you think</li>
+                    <li>Daily AI reflections, weekly synthesis</li>
+                    <li>Pattern detection over time</li>
+                    <li>Hosted, subscription, no setup</li>
+                </ul>
+            </div>
+            <div class="col-card">
+                <h3>Parachute Computer</h3>
+                <p>Full agentic platform. For power users.</p>
+                <ul>
+                    <li>Brain knowledge graph + Chat + Daily</li>
+                    <li>Three trust tiers, Docker sandbox</li>
+                    <li>Telegram, Discord, Matrix bots</li>
+                    <li>Open source, self-hosted or managed</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <!-- 05 Flywheel -->
+    <div class="slide">
+        <span class="slide-num">05 / 11</span>
+        <div class="slide-label">The Flywheel</div>
+        <h2>Context compounds.</h2>
+        <p>Daily and Computer aren't parallel tracks &mdash; they're the same path at different stages.</p>
+        <div class="flywheel">
+            Start journaling in Daily<br>
+            <span>&darr;</span><br>
+            Build months of personal context<br>
+            <span>&darr;</span><br>
+            Upgrade to Computer<br>
+            <span>&darr;</span><br>
+            Brain ingests your history instantly<br>
+            <span>&darr;</span><br>
+            System already knows you
+        </div>
+        <p>Plain markdown files mean the data just works &mdash; no migration wizard, no cold start.</p>
+    </div>
+
+    <!-- 06 Demand -->
+    <div class="slide">
+        <span class="slide-num">06 / 11</span>
+        <div class="slide-label">Demand</div>
+        <h2>People are waiting.</h2>
+        <div class="stats">
+            <div class="stat">
+                <div class="stat-num">300+</div>
+                <div class="stat-label">Regen Hub community members ready to onboard</div>
+            </div>
+            <div class="stat">
+                <div class="stat-num">13</div>
+                <div class="stat-label">Learn Vibe Build cohort &mdash; all building with AI</div>
+            </div>
+            <div class="stat">
+                <div class="stat-num">111+</div>
+                <div class="stat-label">PRs merged in 6 weeks &mdash; proof of velocity</div>
+            </div>
+        </div>
+        <p>We've been intentionally pre-launch &mdash; polishing before onboarding real users rather than churning an early cohort through an unstable system. The demand is built. The product is ready.</p>
+    </div>
+
+    <!-- 07 What's Built -->
+    <div class="slide">
+        <span class="slide-num">07 / 11</span>
+        <div class="slide-label">What Exists Today</div>
+        <h2>This is a working product.</h2>
+        <ul>
+            <li><strong>Python/FastAPI server</strong> &mdash; full session management, streaming, module system, CLI</li>
+            <li><strong>Flutter app</strong> &mdash; macOS, Android, web; adaptive multi-panel layout</li>
+            <li><strong>Brain v2</strong> &mdash; TerminusDB knowledge graph with Tana-inspired schema UI</li>
+            <li><strong>Local voice transcription</strong> &mdash; Sherpa-ONNX + Parakeet, works fully offline</li>
+            <li><strong>Multi-agent teams</strong> &mdash; agents spawning and coordinating sub-agents in your vault</li>
+            <li><strong>Three bot connectors</strong> &mdash; Telegram, Discord, Matrix with per-platform trust levels</li>
+            <li><strong>Docker sandbox</strong> &mdash; untrusted sessions fully isolated, pre-warmed with shared caches</li>
+        </ul>
+    </div>
+
+    <!-- 08 Business Model -->
+    <div class="slide">
+        <span class="slide-num">08 / 11</span>
+        <div class="slide-label">Business Model</div>
+        <h2>Open source as growth engine. Hosted services as revenue.</h2>
+        <ul>
+            <li><strong>Parachute Daily &mdash; subscription</strong> &mdash; accessible tiers: sync, AI daily reflections, weekly synthesis. The wide funnel.</li>
+            <li><strong>Hosted Parachute Computer</strong> &mdash; managed service for power users who don't want to run infrastructure. Higher margin, lower volume.</li>
+            <li><strong>Hardware pendant</strong> &mdash; wearable voice capture device in development; future hardware revenue.</li>
+        </ul>
+        <p style="margin-top: 1.5rem;">Open source keeps acquisition cost near zero. The upgrade path keeps users in the ecosystem. Retention compounds on both sides.</p>
+        <p>Target: path to $1,000 MRR identified by April 22.</p>
+    </div>
+
+    <!-- 09 Team -->
+    <div class="slide">
+        <span class="slide-num">09 / 11</span>
+        <div class="slide-label">Team</div>
+        <h2>Small, capable, and committed.</h2>
+        <div class="team-grid">
+            <div class="team-member">
+                <strong>Aaron Gabriel Neyer</strong>
+                <span>Founder &mdash; product vision, architecture. ATLAS CU Boulder.</span>
+            </div>
+            <div class="team-member">
+                <strong>Jon Bo</strong>
+                <span>Parachute Daily co-lead &mdash; the voice of simplicity in a complex system.</span>
+            </div>
+            <div class="team-member">
+                <strong>Lucian Hymer</strong>
+                <span>Parachute Computer co-lead &mdash; architecture and deep systems work.</span>
+            </div>
+            <div class="team-member">
+                <strong>Marvin Melzer</strong>
+                <span>Hardware pendant &mdash; ATLAS grad student, wearable voice capture as independent study.</span>
+            </div>
+            <div class="team-member">
+                <strong>Neil Yarnal</strong>
+                <span>Brand &amp; design &mdash; gives Parachute its visual identity.</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- 10 Ask -->
+    <div class="slide">
+        <span class="slide-num">10 / 11</span>
+        <div class="slide-label">The Ask</div>
+        <h2>Seed round to accelerate to launch.</h2>
+        <div class="ask-box">
+            <div class="ask-line">
+                <span class="label">Instrument</span>
+                <span class="value">SAFE (YC standard)</span>
+            </div>
+            <div class="ask-line">
+                <span class="label">Valuation cap</span>
+                <span class="value">$5,000,000</span>
+            </div>
+            <div class="ask-line">
+                <span class="label">Check size</span>
+                <span class="value">$5k &ndash; $50k</span>
+            </div>
+            <div class="ask-line">
+                <span class="label">Use of funds</span>
+                <span class="value">Pay team to ship faster</span>
+            </div>
+        </div>
+        <p class="nvc-note">&#9432;&nbsp; Applying to CU New Venture Challenge &mdash; $144k investment at the same $5M cap for finalists. Early investors get in at NVC terms before the competition.</p>
+    </div>
+
+    <!-- 11 Close -->
+    <div class="slide">
+        <span class="slide-num">11 / 11</span>
+        <div class="slide-label">Open Parachute, PBC</div>
+        <h1>The extended mind, open source.</h1>
+        <p>A Colorado Public Benefit Corporation. Open source not as a distribution strategy but as a commitment &mdash; the only way to deserve trust with personal thinking is transparency.</p>
+        <p style="margin-top: 2rem;">
+            <a href="https://github.com/OpenParachutePBC/parachute-computer" target="_blank" style="color: var(--accent);">github.com/OpenParachutePBC</a><br>
+            <a href="/vision/" style="color: var(--accent);">parachute.computer/vision</a><br>
+            <a href="/roadmap/" style="color: var(--accent);">parachute.computer/roadmap</a>
+        </p>
+    </div>
+
+</main>
