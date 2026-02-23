@@ -150,7 +150,7 @@ class KnowledgeGraphService:
 
             # Additive-only: only insert seed types that don't already exist.
             # User-created types (via API) must survive server restarts.
-            existing_docs = list(client.query_document({"@type": "Class"}, graph_type="schema"))
+            existing_docs = list(client.get_all_documents(graph_type="schema"))
             existing_ids = {d.get("@id") for d in existing_docs}
             new_schemas = [
                 s for s in schemas
@@ -356,22 +356,17 @@ class KnowledgeGraphService:
         """
         self._ensure_connected()
 
-        def _list_class_docs_sync() -> list[dict[str, Any]]:
+        def _list_schema_docs_sync() -> tuple[list[dict[str, Any]], dict[str, list[str]]]:
             with self._client_lock:
-                docs = list(self.client.query_document({"@type": "Class"}, graph_type="schema"))
-            return docs
+                all_docs = list(self.client.get_all_documents(graph_type="schema"))
+            class_docs = [d for d in all_docs if d.get("@type") == "Class"]
+            enum_map = {
+                d["@id"]: d.get("@value", [])
+                for d in all_docs if d.get("@type") == "Enum"
+            }
+            return class_docs, enum_map
 
-        class_docs = await asyncio.to_thread(_list_class_docs_sync)
-
-        # Build enum lookup from schema graph
-        def _list_enum_docs_sync() -> dict[str, list[str]]:
-            with self._client_lock:
-                enum_docs = list(self.client.query_document(
-                    {"@type": "Enum"}, graph_type="schema"
-                ))
-            return {d["@id"]: d.get("@value", []) for d in enum_docs}
-
-        enum_values = await asyncio.to_thread(_list_enum_docs_sync)
+        class_docs, enum_values = await asyncio.to_thread(_list_schema_docs_sync)
 
         # Format class docs to Flutter-friendly field list
         types: list[dict[str, Any]] = []
@@ -420,9 +415,8 @@ class KnowledgeGraphService:
 
         def _fetch():
             with self._client_lock:
-                class_docs = list(self.client.query_document({"@type": "Class"}, graph_type="schema"))
-                enum_docs = list(self.client.query_document({"@type": "Enum"}, graph_type="schema"))
-                return enum_docs + class_docs
+                all_docs = list(self.client.get_all_documents(graph_type="schema"))
+            return all_docs
 
         return await asyncio.to_thread(_fetch)
 
