@@ -1,15 +1,18 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:parachute/core/config/app_config.dart';
-import 'package:parachute/core/providers/app_state_provider.dart' show apiKeyProvider;
+import 'package:parachute/core/providers/feature_flags_provider.dart'
+    show aiServerUrlProvider;
+import 'package:parachute/core/providers/app_state_provider.dart'
+    show apiKeyProvider;
 import '../services/brain_service.dart';
 import '../services/brain_query_service.dart';
 
 /// Provider for BrainService.
 ///
-/// Uses AppConfig.serverBaseUrl which supports environment-based configuration.
-/// Can be overridden at build time with --dart-define=SERVER_URL=<url>
+/// Uses the same user-configured server URL as the chat service
+/// (aiServerUrlProvider) so remote devices connect to the right host.
 final brainServiceProvider = Provider<BrainService>((ref) {
-  final baseUrl = AppConfig.serverBaseUrl;
+  final urlAsync = ref.watch(aiServerUrlProvider);
+  final baseUrl = urlAsync.valueOrNull ?? 'http://localhost:3333';
   final apiKeyAsync = ref.watch(apiKeyProvider);
   final apiKey = apiKeyAsync.valueOrNull;
 
