@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
 import '../models/chat_message.dart';
@@ -26,14 +27,18 @@ class _InlineUserQuestionCardState
   final Map<String, TextEditingController> _otherControllers = {};
   final Map<String, bool> _otherSelected = {};
   bool _isSubmitting = false;
-  bool _submitted = false; // locally submitted — waiting for stream to confirm
+  bool _isAnswered = false; // locally answered — waiting for stream to confirm
   String? _errorMessage;
+  late final List<UserQuestion> _questions;
 
   @override
   void initState() {
     super.initState();
+    _questions = widget.data.questions
+        .map((j) => UserQuestion.fromJson(j))
+        .toList();
     if (widget.data.status == UserQuestionStatus.pending) {
-      for (final q in _parsedQuestions) {
+      for (final q in _questions) {
         _selectedAnswers[q.question] = {};
         _otherControllers[q.question] = TextEditingController();
         _otherSelected[q.question] = false;
@@ -49,16 +54,28 @@ class _InlineUserQuestionCardState
     super.dispose();
   }
 
-  List<UserQuestion> get _parsedQuestions =>
-      widget.data.questions.map((j) => UserQuestion.fromJson(j)).toList();
+  @override
+  void didUpdateWidget(InlineUserQuestionCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Reset local state when the question status changes out of pending
+    // (e.g., answered or timeout arrives via stream). This prevents stale
+    // border colour / header icon when the same State instance is reused
+    // by AutomaticKeepAliveClientMixin.
+    if (oldWidget.data.status != widget.data.status &&
+        widget.data.status != UserQuestionStatus.pending) {
+      _isAnswered = false;
+      _isSubmitting = false;
+      _errorMessage = null;
+    }
+  }
 
   /// The card is interactable while the underlying data is pending and we
   /// haven't already submitted locally.
   bool get _isInteractive =>
-      widget.data.status == UserQuestionStatus.pending && !_submitted;
+      widget.data.status == UserQuestionStatus.pending && !_isAnswered && !_isSubmitting;
 
   void _toggleOption(UserQuestion question, String label) {
-    if (!_isInteractive || _isSubmitting) return;
+    if (!_isInteractive) return;
     setState(() {
       final selected = _selectedAnswers[question.question]!;
       if (question.multiSelect) {
@@ -76,7 +93,7 @@ class _InlineUserQuestionCardState
   }
 
   void _toggleOther(UserQuestion question) {
-    if (!_isInteractive || _isSubmitting) return;
+    if (!_isInteractive) return;
     setState(() {
       final isOther = !(_otherSelected[question.question] ?? false);
       _otherSelected[question.question] = isOther;
@@ -87,8 +104,8 @@ class _InlineUserQuestionCardState
   }
 
   bool get _canSubmit {
-    if (!_isInteractive || _isSubmitting) return false;
-    return _parsedQuestions.every((q) {
+    if (!_isInteractive) return false;
+    return _questions.every((q) {
       final selected = _selectedAnswers[q.question] ?? {};
       final otherActive = _otherSelected[q.question] ?? false;
       final otherText = _otherControllers[q.question]?.text.trim() ?? '';
@@ -105,7 +122,7 @@ class _InlineUserQuestionCardState
     });
 
     final answers = <String, dynamic>{};
-    for (final q in _parsedQuestions) {
+    for (final q in _questions) {
       final selected = _selectedAnswers[q.question]!;
       final otherActive = _otherSelected[q.question] ?? false;
       final otherText = _otherControllers[q.question]?.text.trim() ?? '';
@@ -125,10 +142,27 @@ class _InlineUserQuestionCardState
     setState(() {
       _isSubmitting = false;
       if (success) {
-        _submitted = true;
+        _isAnswered = true;
         _errorMessage = null;
       } else {
         _errorMessage = 'Failed to submit — tap to retry.';
+      }
+    });
+  }
+
+  Future<void> _dismissQuestion() async {
+    setState(() {
+      _isSubmitting = true;
+      _errorMessage = null;
+    });
+    final success = await ref.read(chatMessagesProvider.notifier).answerQuestion({});
+    if (!mounted) return;
+    setState(() {
+      _isSubmitting = false;
+      if (success) {
+        _isAnswered = true;
+      } else {
+        _errorMessage = 'Failed to dismiss — tap to retry.';
       }
     });
   }
@@ -156,10 +190,10 @@ class _InlineUserQuestionCardState
           children: [
             _buildHeader(isDark),
             const SizedBox(height: Spacing.xs),
-            ..._parsedQuestions
+            ..._questions
                 .map((q) => _buildQuestion(context, q, isDark)),
             if (_errorMessage != null) ...[
-              const SizedBox(height: 4),
+              const SizedBox(height: Spacing.xs),
               Text(
                 _errorMessage!,
                 style: TextStyle(
@@ -168,15 +202,15 @@ class _InlineUserQuestionCardState
                 ),
               ),
             ],
-            if (_isInteractive) ...[
+            if (_isInteractive || _isSubmitting) ...[
               const SizedBox(height: Spacing.xs),
               SizedBox(
                 width: double.infinity,
                 child: FilledButton(
                   onPressed:
-                      (_canSubmit && !_isSubmitting) ? _submitAnswers : null,
+                      _canSubmit ? _submitAnswers : null,
                   style: FilledButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    padding: const EdgeInsets.symmetric(vertical: Spacing.sm),
                     minimumSize: const Size(0, 32),
                     textStyle: const TextStyle(fontSize: 13),
                   ),
@@ -190,6 +224,16 @@ class _InlineUserQuestionCardState
                       : const Text('Submit'),
                 ),
               ),
+              TextButton(
+                onPressed: _isSubmitting ? null : _dismissQuestion,
+                style: TextButton.styleFrom(
+                  padding: EdgeInsets.zero,
+                  minimumSize: const Size(0, 28),
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  textStyle: const TextStyle(fontSize: 12),
+                ),
+                child: const Text('Skip'),
+              ),
             ],
           ],
         ),
@@ -198,11 +242,11 @@ class _InlineUserQuestionCardState
   }
 
   Color _borderColor(bool isDark) {
-    if (_isInteractive) {
+    if (_isInteractive || _isSubmitting) {
       return isDark ? BrandColors.nightTurquoise : BrandColors.turquoise;
     }
-    if (_submitted) {
-      // Locally submitted — show answered colour while stream confirms
+    if (_isAnswered) {
+      // Locally answered — show answered colour while stream confirms
       return isDark ? BrandColors.nightForest : BrandColors.forest;
     }
     switch (widget.data.status) {
@@ -221,7 +265,7 @@ class _InlineUserQuestionCardState
     final String label;
     final Color color;
 
-    if (_submitted) {
+    if (_isAnswered) {
       icon = Icons.check_circle_outline;
       label = 'Answered';
       color = isDark ? BrandColors.nightForest : BrandColors.forest;
@@ -249,7 +293,7 @@ class _InlineUserQuestionCardState
     return Row(
       children: [
         Icon(icon, size: 14, color: color),
-        const SizedBox(width: 4),
+        const SizedBox(width: Spacing.xs),
         Text(
           label,
           style: TextStyle(
@@ -280,10 +324,10 @@ class _InlineUserQuestionCardState
               color: isDark ? BrandColors.nightText : BrandColors.charcoal,
             ),
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: Spacing.xs),
           Wrap(
-            spacing: 4,
-            runSpacing: 4,
+            spacing: Spacing.xs,
+            runSpacing: Spacing.xs,
             children: [
               ...question.options.map((option) {
                 if (_isInteractive) {
@@ -328,7 +372,7 @@ class _InlineUserQuestionCardState
             ],
           ),
           if (_isInteractive && otherActive) ...[
-            const SizedBox(height: 6),
+            const SizedBox(height: Spacing.xs),
             TextField(
               controller: _otherControllers[question.question],
               enabled: !_isSubmitting,
@@ -336,12 +380,14 @@ class _InlineUserQuestionCardState
                 hintText: 'Type your answer...',
                 isDense: true,
                 border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10)),
+                    borderRadius: BorderRadius.circular(Radii.sm)),
                 contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 10, vertical: 8),
+                    horizontal: Spacing.md, vertical: Spacing.sm),
               ),
               style: const TextStyle(fontSize: 13),
-              maxLines: null,
+              maxLines: 3,
+              maxLength: 500,
+              maxLengthEnforcement: MaxLengthEnforcement.enforced,
               textInputAction: TextInputAction.done,
               onChanged: (_) => setState(() {}),
             ),
@@ -383,14 +429,14 @@ class _InlineUserQuestionCardState
 
   Widget _buildReadOnlyChip(String label, bool isSelected, bool isDark) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      padding: EdgeInsets.symmetric(horizontal: Spacing.sm, vertical: Spacing.xxs),
       decoration: BoxDecoration(
         color: isSelected
             ? (isDark
                 ? BrandColors.nightForest.withValues(alpha: 0.3)
                 : BrandColors.forestMist)
             : Colors.transparent,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(Radii.md),
         border: Border.all(
           color: isSelected
               ? (isDark ? BrandColors.nightForest : BrandColors.forest)
@@ -407,7 +453,7 @@ class _InlineUserQuestionCardState
             Icon(Icons.check,
                 size: 12,
                 color: isDark ? BrandColors.nightForest : BrandColors.forest),
-            const SizedBox(width: 2),
+            const SizedBox(width: Spacing.xxs),
           ],
           Text(
             label,
