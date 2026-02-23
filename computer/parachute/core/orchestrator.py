@@ -753,8 +753,7 @@ class Orchestrator:
 
             # Run query
             current_text = ""
-            # Collect SDK events for transcript persistence (--resume support)
-            sdk_transcript_events: list[dict[str, Any]] = []
+            # (CLI writes its own transcript — no host-side collection needed)
 
             # Use session-based permission handler for tool access control
             # Trust mode (default): Use bypassPermissions for backwards compatibility
@@ -1055,9 +1054,7 @@ class Orchestrator:
                 event_type = event.get("type")
                 logger.debug(f"SDK Event: type={event_type} keys={list(event.keys())}")
 
-                # Collect events for transcript persistence
-                if event_type in ("user", "assistant", "result"):
-                    sdk_transcript_events.append(event)
+                # (CLI writes its own transcript — no event collection needed)
 
                 # Capture session ID and immediately save to database
                 if event.get("session_id"):
@@ -1257,22 +1254,10 @@ class Orchestrator:
             if final_session_id and final_session_id != "pending":
                 await self.session_manager.increment_message_count(final_session_id, 2 + inject_count)
 
-            # Persist SDK events to JSONL transcript for --resume support
-            # The CLI (v2.1.49+) no longer writes conversation data in SDK pipe mode
-            if final_session_id and final_session_id != "pending":
-                # Prepend initial user message (SDK doesn't echo it back)
-                user_event = {
-                    "type": "user",
-                    "message": {"role": "user", "content": actual_message},
-                }
-                all_events = [user_event] + sdk_transcript_events
-                self.session_manager.write_sdk_transcript(
-                    session_id=final_session_id,
-                    sdk_events=all_events,
-                    cwd=str(effective_cwd),
-                    working_directory=working_directory,
-                    model=captured_model,
-                )
+            # NOTE: The CLI writes its own transcript entries in SDK pipe mode.
+            # Do NOT call write_sdk_transcript here — it creates disconnected
+            # duplicate entries (parentUuid: None) that break the CLI's resume
+            # chain, causing the model to lose prior assistant responses.
 
             duration_ms = int((time.time() - start_time) * 1000)
 
