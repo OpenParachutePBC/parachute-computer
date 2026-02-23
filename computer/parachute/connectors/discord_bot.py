@@ -402,16 +402,8 @@ class DiscordConnector(BotConnector):
         await interaction.response.defer()
 
         chat_id = str(interaction.channel_id)
-        db = getattr(self.server, "database", None)
-        if db:
-            session = await db.get_session_by_bot_link("discord", chat_id)
-            if session:
-                await db.archive_session(session.id)
-                logger.info(f"Archived Discord session {session.id[:8]} for channel {chat_id}")
-
-        await interaction.followup.send(
-            "Starting fresh! Previous conversation archived."
-        )
+        response = await self.dispatch_command("new", chat_id, user_id, [])
+        await interaction.followup.send(response)
 
     async def _handle_chat(self, interaction: Any, message: str) -> None:
         """Handle /chat slash command."""
@@ -497,22 +489,11 @@ class DiscordConnector(BotConnector):
 
         await interaction.response.defer()
 
-        try:
-            daily_create = getattr(self.server, "create_journal_entry", None)
-            if not daily_create:
-                await interaction.followup.send("Daily module not available.")
-                return
-
-            result = await daily_create(
-                content=entry,
-                source="discord",
-                metadata={"discord_user": interaction.user.display_name},
-            )
-            title = getattr(result, "title", "Untitled")
-            await interaction.followup.send(f"Journal entry saved: {title}")
-        except Exception as e:
-            logger.error(f"Journal entry failed: {e}")
-            await interaction.followup.send("Failed to save journal entry.")
+        chat_id = str(interaction.channel_id)
+        response = await self.dispatch_command(
+            "journal", chat_id, user_id, entry.split() if entry else []
+        )
+        await interaction.followup.send(response)
 
     async def _route_to_chat(self, session_id: str, message: str) -> str:
         """Route a message through the Chat orchestrator and collect response."""

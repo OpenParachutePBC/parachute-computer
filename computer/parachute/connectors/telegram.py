@@ -65,6 +65,12 @@ class TelegramConnector(BotConnector):
         )
         self._app: Optional[Application] = None
 
+        # Register Telegram-specific commands for help visibility
+        # (dispatched via framework CommandHandler, not through dispatch_command)
+        self.register_command("start", None, "Start or link your account")
+        self.register_command("ask", None, "Send a one-off question")
+        self.register_command("init", None, "Re-initialise session")
+
     async def start(self) -> None:
         """Start Telegram long-polling."""
         if not TELEGRAM_AVAILABLE:
@@ -169,19 +175,11 @@ class TelegramConnector(BotConnector):
         """Handle /new command - archive current session and start fresh."""
         user_id = update.effective_user.id
         if not self.is_user_allowed(user_id):
-            return
+            return  # Silent — /new doesn't trigger pairing flow
 
         chat_id = str(update.effective_chat.id)
-        db = getattr(self.server, "database", None)
-        if db:
-            session = await db.get_session_by_bot_link("telegram", chat_id)
-            if session:
-                await db.archive_session(session.id)
-                logger.info(f"Archived Telegram session {session.id[:8]} for chat {chat_id}")
-
-        await update.message.reply_text(
-            "Starting fresh! Previous conversation archived."
-        )
+        response = await self.dispatch_command("new", chat_id, str(user_id), [])
+        await update.message.reply_text(response)
 
     async def _cmd_ask(self, update: Any, context: Any) -> None:
         """Handle /ask command - ask a question (especially useful in groups)."""
@@ -208,19 +206,10 @@ class TelegramConnector(BotConnector):
 
     async def _cmd_help(self, update: Any, context: Any) -> None:
         """Handle /help command."""
-        await update.message.reply_text(
-            "Parachute Bot Commands:\n\n"
-            "/start - Connect to Parachute\n"
-            "/new - Start a new conversation\n"
-            "/init - Re-initialize session (requires app configuration)\n"
-            "/ask <text> - Ask a question (works in groups)\n"
-            "/journal <text> - Create a journal entry\n"
-            "/j <text> - Shorthand for /journal\n"
-            "/help - Show this help\n\n"
-            "In DMs, just send a message to chat.\n"
-            "In groups, use /ask or reply to bot messages. "
-            "To enable @mentions, disable Privacy Mode via BotFather."
-        )
+        chat_id = str(update.effective_chat.id)
+        user_id = str(update.effective_user.id)
+        response = await self.dispatch_command("help", chat_id, user_id, [])
+        await update.message.reply_text(response)
 
     async def _cmd_journal(self, update: Any, context: Any) -> None:
         """Handle /journal command - route to Daily module."""
@@ -237,18 +226,9 @@ class TelegramConnector(BotConnector):
             await update.message.reply_text(response)
             return
 
-        text = " ".join(context.args) if context.args else ""
-        if not text:
-            await update.message.reply_text("Usage: /journal <your journal entry>")
-            return
-
-        # Route to Daily module via server
-        try:
-            result = await self._route_to_daily(text, update)
-            await update.message.reply_text(f"Journal entry saved. {result}")
-        except Exception as e:
-            logger.error(f"Journal entry failed: {e}")
-            await update.message.reply_text("Failed to save journal entry.")
+        chat_id = str(update.effective_chat.id)
+        response = await self.dispatch_command("journal", chat_id, str(user_id), context.args or [])
+        await update.message.reply_text(response)
 
     async def _cmd_init(self, update: Any, context: Any) -> None:
         """Handle /init command - archive current session and create fresh pending one."""

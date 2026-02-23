@@ -576,55 +576,16 @@ class MatrixConnector(BotConnector):
     ) -> bool:
         """Handle !command messages. Returns True if a command was handled."""
         parts = message_text.strip().split(maxsplit=1)
-        command = parts[0].lower()
+        command = parts[0].lstrip("!").lower()  # !new → new, !help → help
+        args = parts[1].split() if len(parts) > 1 else []
 
-        if command == "!new":
-            db = getattr(self.server, "database", None)
-            if db:
-                session = await db.get_session_by_bot_link("matrix", room_id)
-                if session:
-                    await db.archive_session(session.id)
-                    logger.info(f"Archived Matrix session {session.id[:8]} for room {room_id}")
-            await self._send_room_message(room_id, "Starting fresh! Previous conversation archived.")
-            return True
+        response = await self.dispatch_command(command, room_id, sender, args)
+        if response is None:
+            return False
 
-        elif command == "!help":
-            help_text = (
-                "Available commands:\n"
-                "!new — Start a new conversation (archives current)\n"
-                "!help — Show this message\n"
-                "!journal <entry> — Create a journal entry\n"
-                "\nYou can also just send a message to chat."
-            )
-            await self._send_room_message(room_id, help_text)
-            return True
-
-        elif command == "!journal":
-            entry = parts[1] if len(parts) > 1 else ""
-            if not entry:
-                await self._send_room_message(room_id, "Usage: !journal <your entry>")
-                return True
-
-            try:
-                daily_create = getattr(self.server, "create_journal_entry", None)
-                if not daily_create:
-                    await self._send_room_message(room_id, "Daily module not available.")
-                    return True
-
-                user_display = self._get_display_name_by_id(sender)
-                result = await daily_create(
-                    content=entry,
-                    source="matrix",
-                    metadata={"matrix_user": user_display},
-                )
-                title = getattr(result, "title", "Untitled")
-                await self._send_room_message(room_id, f"Journal entry saved: {title}")
-            except Exception as e:
-                logger.error(f"Journal entry failed: {e}")
-                await self._send_room_message(room_id, "Failed to save journal entry.")
-            return True
-
-        return False
+        plain, html = claude_to_matrix(response)
+        await self._send_room_message(room_id, plain, html)
+        return True
 
     # ── Bridge detection ─────────────────────────────────────────────
 

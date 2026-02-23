@@ -12,7 +12,7 @@ import re
 import time
 from abc import ABC, abstractmethod
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Any, ClassVar, Optional
@@ -43,6 +43,21 @@ class GroupMessage:
     text: str
     timestamp: datetime
     message_id: str | int
+
+
+@dataclass
+class _CommandEntry:
+    """Registry entry for a bot command.
+
+    handler may be None for display-only entries (listed in help but not
+    dispatched via dispatch_command, e.g. platform-specific commands registered
+    by subclasses for help-text visibility only).
+    """
+
+    name: str
+    handler: Any  # async (chat_id: str, sender: str, args: list[str]) -> str, or None
+    description: str
+    aliases: list[str] = field(default_factory=list)
 
 
 class GroupHistoryBuffer:
@@ -169,6 +184,10 @@ class BotConnector(ABC):
                 "This allows arbitrary code execution. "
                 "See computer/parachute/connectors/SECURITY.md for security implications."
             )
+
+        # Command registry — populated by _register_shared_commands() and subclass __init__
+        self._commands: dict[str, _CommandEntry] = {}
+        self._register_shared_commands()
 
         # Health tracking
         self._status: ConnectorState = ConnectorState.STOPPED
@@ -602,6 +621,94 @@ class BotConnector(ABC):
                 chunks.append(current.strip())
 
         return chunks
+
+    # ── Command registry ─────────────────────────────────────────────
+
+    def register_command(
+        self,
+        name: str,
+        handler: Any,
+        description: str,
+        aliases: list[str] | None = None,
+    ) -> None:
+        """Register a command handler.
+
+        Args:
+            name: Normalised command name (no prefix, e.g. "new").
+            handler: Async callable ``(chat_id, sender, args) -> str``, or None
+                for display-only entries that appear in help but are not
+                dispatched through the registry (e.g. platform-specific commands).
+            description: One-line description shown in /help output.
+            aliases: Additional names that dispatch to the same handler.
+        """
+        entry = _CommandEntry(
+            name=name, handler=handler, description=description, aliases=aliases or []
+        )
+        self._commands[name] = entry
+        for alias in aliases or []:
+            self._commands[alias] = entry
+
+    async def dispatch_command(
+        self, name: str, chat_id: str, sender: str, args: list[str]
+    ) -> str | None:
+        """Dispatch a normalised command name.
+
+        Returns the response string if a dispatchable handler was found,
+        or None if the command is unknown or display-only (handler is None).
+        """
+        entry = self._commands.get(name)
+        if entry is None or entry.handler is None:
+            return None
+        return await entry.handler(chat_id, sender, args)
+
+    def _register_shared_commands(self) -> None:
+        """Register commands shared across all platforms. Called from __init__."""
+        self.register_command("new", self._shared_cmd_new, "Start a new conversation")
+        self.register_command(
+            "journal", self._shared_cmd_journal, "Add a journal entry", aliases=["j"]
+        )
+        self.register_command("help", self._shared_cmd_help, "Show available commands")
+
+    async def _shared_cmd_new(self, chat_id: str, sender: str, args: list[str]) -> str:
+        """Archive current session and start fresh."""
+        db = getattr(self.server, "database", None)
+        if db:
+            session = await db.get_session_by_bot_link(self.platform, chat_id)
+            if session:
+                await db.archive_session(session.id)
+                logger.info(f"Archived {self.platform} session {session.id[:8]} for chat {chat_id}")
+        return "Starting fresh! Previous conversation archived."
+
+    async def _shared_cmd_journal(self, chat_id: str, sender: str, args: list[str]) -> str:
+        """Create a journal entry via the Daily module."""
+        content = " ".join(args) if args else ""
+        if not content:
+            return "Please provide content: `journal your entry here`"
+        daily_create = getattr(self.server, "create_journal_entry", None)
+        if not daily_create:
+            return "Daily module not available."
+        try:
+            result = await daily_create(
+                content=content,
+                source=self.platform,
+                metadata={"sender": sender, "chat_id": chat_id},
+            )
+            title = getattr(result, "title", "Untitled")
+            return f"Journal entry saved: {title}"
+        except Exception as e:
+            logger.error(f"Journal entry failed: {e}")
+            return "Failed to save journal entry."
+
+    async def _shared_cmd_help(self, chat_id: str, sender: str, args: list[str]) -> str:
+        """List all registered commands."""
+        lines = ["**Available commands:**"]
+        seen: set[int] = set()
+        for entry in self._commands.values():
+            if id(entry) not in seen:
+                seen.add(id(entry))
+                alias_str = f" ({', '.join(entry.aliases)})" if entry.aliases else ""
+                lines.append(f"• **{entry.name}**{alias_str} — {entry.description}")
+        return "\n".join(lines)
 
     @property
     def status(self) -> dict:
