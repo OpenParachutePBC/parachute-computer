@@ -5,7 +5,10 @@ Provides agent-native access to the knowledge graph via MCP tools.
 All 7 CRUD operations exposed for full agent autonomy.
 """
 
+import asyncio
+import json
 import logging
+import uuid
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -165,11 +168,158 @@ BRAIN_TOOLS = [
         },
     },
     {
-        "name": "brain_list_schemas",
-        "description": "List all available entity schemas. Returns schema definitions with field types and descriptions.",
+        "name": "brain_list_types",
+        "description": "List all schema types with field definitions and entity counts. Preferred over brain_list_schemas for newer workflows.",
         "inputSchema": {
             "type": "object",
             "properties": {},
+        },
+    },
+    {
+        "name": "brain_create_type",
+        "description": "Create a new schema type (TerminusDB Class) with field definitions. Returns success status.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "PascalCase type name (e.g. 'Project', 'Person'). Must not be a reserved TerminusDB name.",
+                },
+                "fields": {
+                    "type": "object",
+                    "description": "Field definitions keyed by snake_case field name",
+                    "additionalProperties": {
+                        "type": "object",
+                        "properties": {
+                            "type": {
+                                "type": "string",
+                                "enum": ["string", "integer", "boolean", "datetime", "enum", "link"],
+                            },
+                            "required": {"type": "boolean"},
+                            "values": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "Allowed values for enum fields",
+                            },
+                            "link_type": {
+                                "type": "string",
+                                "description": "Target type name for link fields (e.g. 'Person')",
+                            },
+                            "description": {"type": "string"},
+                        },
+                        "required": ["type"],
+                    },
+                },
+                "key_strategy": {
+                    "type": "string",
+                    "enum": ["Random", "Lexical", "Hash", "ValueHash"],
+                    "description": "Key generation strategy (default: Random)",
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Optional description for this type",
+                },
+            },
+            "required": ["name", "fields"],
+        },
+    },
+    {
+        "name": "brain_update_type",
+        "description": "Update an existing schema type's fields (full field replacement). Additive changes (new fields) are safe. Making a field required when data exists may fail.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Type name to update",
+                },
+                "fields": {
+                    "type": "object",
+                    "description": "New field definitions (replaces all existing fields)",
+                    "additionalProperties": {
+                        "type": "object",
+                        "properties": {
+                            "type": {
+                                "type": "string",
+                                "enum": ["string", "integer", "boolean", "datetime", "enum", "link"],
+                            },
+                            "required": {"type": "boolean"},
+                            "values": {"type": "array", "items": {"type": "string"}},
+                            "link_type": {"type": "string"},
+                            "description": {"type": "string"},
+                        },
+                        "required": ["type"],
+                    },
+                },
+            },
+            "required": ["name", "fields"],
+        },
+    },
+    {
+        "name": "brain_delete_type",
+        "description": "Delete a schema type. Blocked with an error if entities of this type exist — delete all entities first.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Type name to delete",
+                },
+            },
+            "required": ["name"],
+        },
+    },
+    {
+        "name": "brain_list_saved_queries",
+        "description": "List all saved filter queries for the Brain module.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+    {
+        "name": "brain_save_query",
+        "description": "Save a named filter query for later reuse.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Human-readable name for this saved query",
+                },
+                "entity_type": {
+                    "type": "string",
+                    "description": "The entity type this query applies to",
+                },
+                "filters": {
+                    "type": "array",
+                    "description": "List of filter conditions",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "field_name": {"type": "string"},
+                            "operator": {"type": "string", "enum": ["eq", "neq", "contains"]},
+                            "value": {},
+                        },
+                        "required": ["field_name", "operator", "value"],
+                    },
+                },
+            },
+            "required": ["name", "entity_type", "filters"],
+        },
+    },
+    {
+        "name": "brain_delete_saved_query",
+        "description": "Delete a saved query by its ID.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query_id": {
+                    "type": "string",
+                    "description": "UUID of the saved query to delete",
+                },
+            },
+            "required": ["query_id"],
         },
     },
 ]
@@ -362,11 +512,11 @@ async def handle_traverse_graph(module, arguments: dict[str, Any]) -> dict[str, 
 
 
 async def handle_list_schemas(module, arguments: dict[str, Any]) -> dict[str, Any]:
-    """Handle brain_list_schemas tool call"""
-    kg = await module._ensure_kg_service()
+    """Handle brain_list_schemas tool call — returns normalized schema format."""
+    await module._ensure_kg_service()
 
     try:
-        schemas = await kg.list_schemas()
+        schemas = module._format_schemas_for_api()
         return {
             "success": True,
             "schemas": schemas,
@@ -380,6 +530,163 @@ async def handle_list_schemas(module, arguments: dict[str, Any]) -> dict[str, An
         }
 
 
+async def handle_list_types(module, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Handle brain_list_types tool call."""
+    kg = await module._ensure_kg_service()
+
+    try:
+        types = await kg.list_schema_types_with_counts()
+        return {
+            "success": True,
+            "types": types,
+            "count": len(types),
+        }
+    except Exception as e:
+        logger.error(f"Failed to list types: {e}", exc_info=True)
+        return {"success": False, "error": str(e)}
+
+
+async def handle_create_type(module, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Handle brain_create_type tool call."""
+    kg = await module._ensure_kg_service()
+
+    name = arguments["name"]
+    fields = arguments["fields"]
+    key_strategy = arguments.get("key_strategy", "Random")
+    description = arguments.get("description")
+
+    try:
+        await kg.create_schema_type(
+            name=name,
+            fields=fields,
+            key_strategy=key_strategy,
+            description=description,
+        )
+        await module._reload_schemas()
+        return {"success": True, "name": name, "message": f"Created type '{name}'"}
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
+    except Exception as e:
+        logger.error(f"Failed to create type: {e}", exc_info=True)
+        return {"success": False, "error": str(e)}
+
+
+async def handle_update_type(module, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Handle brain_update_type tool call."""
+    kg = await module._ensure_kg_service()
+
+    name = arguments["name"]
+    fields = arguments["fields"]
+
+    try:
+        await kg.update_schema_type(name=name, fields=fields)
+        await module._reload_schemas()
+        return {"success": True, "name": name, "message": f"Updated type '{name}'"}
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
+    except Exception as e:
+        logger.error(f"Failed to update type: {e}", exc_info=True)
+        return {"success": False, "error": str(e)}
+
+
+async def handle_delete_type(module, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Handle brain_delete_type tool call."""
+    kg = await module._ensure_kg_service()
+
+    name = arguments["name"]
+
+    try:
+        has_data = await kg.has_entities(name)
+        if has_data:
+            return {
+                "success": False,
+                "error": f"Type '{name}' has entities. Delete all entities first.",
+            }
+        await kg.delete_schema_type(name)
+        # Purge orphaned saved queries for this type
+        queries_path = module.vault_path / ".brain" / "queries.json"
+        async with module._queries_lock:
+            if queries_path.exists():
+                text = await asyncio.to_thread(queries_path.read_text)
+                data = json.loads(text)
+                data["queries"] = [
+                    q for q in data.get("queries", [])
+                    if q.get("entity_type") != name
+                ]
+                await asyncio.to_thread(queries_path.write_text, json.dumps(data, indent=2))
+        await module._reload_schemas()
+        return {"success": True, "message": f"Deleted type '{name}'"}
+    except Exception as e:
+        logger.error(f"Failed to delete type: {e}", exc_info=True)
+        return {"success": False, "error": str(e)}
+
+
+async def handle_list_saved_queries(module, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Handle brain_list_saved_queries tool call."""
+    queries_path = module.vault_path / ".brain" / "queries.json"
+
+    try:
+        async with module._queries_lock:
+            if queries_path.exists():
+                text = await asyncio.to_thread(queries_path.read_text)
+                data = json.loads(text)
+                queries = data.get("queries", [])
+            else:
+                queries = []
+        return {"success": True, "queries": queries, "count": len(queries)}
+    except Exception as e:
+        logger.error(f"Failed to list saved queries: {e}", exc_info=True)
+        return {"success": False, "error": str(e)}
+
+
+async def handle_save_query(module, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Handle brain_save_query tool call."""
+    queries_path = module.vault_path / ".brain" / "queries.json"
+    queries_path.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        async with module._queries_lock:
+            if queries_path.exists():
+                text = await asyncio.to_thread(queries_path.read_text)
+                data = json.loads(text)
+            else:
+                data = {"queries": []}
+            query_id = str(uuid.uuid4())
+            data["queries"].append({
+                "id": query_id,
+                "name": arguments["name"],
+                "entity_type": arguments["entity_type"],
+                "filters": arguments["filters"],
+            })
+            await asyncio.to_thread(queries_path.write_text, json.dumps(data, indent=2))
+        return {"success": True, "id": query_id, "message": f"Saved query '{arguments['name']}'"}
+    except Exception as e:
+        logger.error(f"Failed to save query: {e}", exc_info=True)
+        return {"success": False, "error": str(e)}
+
+
+async def handle_delete_saved_query(module, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Handle brain_delete_saved_query tool call."""
+    query_id = arguments["query_id"]
+    queries_path = module.vault_path / ".brain" / "queries.json"
+
+    try:
+        async with module._queries_lock:
+            if not queries_path.exists():
+                return {"success": False, "error": "No saved queries found"}
+            text = await asyncio.to_thread(queries_path.read_text)
+            data = json.loads(text)
+            original_count = len(data.get("queries", []))
+            data["queries"] = [q for q in data.get("queries", []) if q.get("id") != query_id]
+            if len(data["queries"]) == original_count:
+                return {"success": False, "error": f"Query '{query_id}' not found"}
+            await asyncio.to_thread(queries_path.write_text, json.dumps(data, indent=2))
+        return {"success": True, "message": f"Deleted query '{query_id}'"}
+    except Exception as e:
+        logger.error(f"Failed to delete saved query: {e}", exc_info=True)
+        return {"success": False, "error": str(e)}
+
+
 # Handler registry
 TOOL_HANDLERS = {
     "brain_create_entity": handle_create_entity,
@@ -389,5 +696,11 @@ TOOL_HANDLERS = {
     "brain_delete_entity": handle_delete_entity,
     "brain_create_relationship": handle_create_relationship,
     "brain_traverse_graph": handle_traverse_graph,
-    "brain_list_schemas": handle_list_schemas,
+    "brain_list_types": handle_list_types,
+    "brain_create_type": handle_create_type,
+    "brain_update_type": handle_update_type,
+    "brain_delete_type": handle_delete_type,
+    "brain_list_saved_queries": handle_list_saved_queries,
+    "brain_save_query": handle_save_query,
+    "brain_delete_saved_query": handle_delete_saved_query,
 }

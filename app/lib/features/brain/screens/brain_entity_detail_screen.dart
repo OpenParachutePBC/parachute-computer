@@ -7,13 +7,21 @@ import '../widgets/brain_field_widget.dart';
 import 'brain_entity_form_screen.dart';
 
 /// Entity detail screen showing all fields and relationships.
+///
+/// When [embedded] is true, rendered without Scaffold/AppBar as an inline
+/// detail pane in the wide layout. [onDeleted] is called instead of
+/// Navigator.pop() when the entity is deleted in embedded mode.
 class BrainEntityDetailScreen extends ConsumerWidget {
   final String entityId;
   final BrainSchema? schema; // Null when navigating from relationship chip
+  final bool embedded;
+  final VoidCallback? onDeleted;
 
   const BrainEntityDetailScreen({
     required this.entityId,
     this.schema,
+    this.embedded = false,
+    this.onDeleted,
     super.key,
   });
 
@@ -23,9 +31,7 @@ class BrainEntityDetailScreen extends ConsumerWidget {
     final entityAsync = ref.watch(brainEntityDetailProvider(entityId));
     final schemasAsync = ref.watch(brainSchemaListProvider);
 
-    return Scaffold(
-      backgroundColor: isDark ? BrandColors.nightSurface : BrandColors.cream,
-      body: entityAsync.when(
+    final content = entityAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (error, stack) => Center(
           child: Column(
@@ -138,6 +144,15 @@ class BrainEntityDetailScreen extends ConsumerWidget {
                     isDark ? BrandColors.nightSurface : BrandColors.softWhite,
                 elevation: 0,
                 pinned: true,
+                // In embedded mode, show a close button instead of back button
+                leading: embedded
+                    ? IconButton(
+                        icon: const Icon(Icons.close),
+                        onPressed: onDeleted, // closes the detail pane
+                        tooltip: 'Close',
+                      )
+                    : null,
+                automaticallyImplyLeading: !embedded,
                 actions: [
                   // Edit button
                   IconButton(
@@ -325,7 +340,23 @@ class BrainEntityDetailScreen extends ConsumerWidget {
             ],
           );
         },
-      ),
+      );
+
+    // In embedded mode, don't add an outer Scaffold (the detail pane is
+    // already inside the wide-layout Scaffold).
+    if (embedded) {
+      return ColoredBox(
+        color: Theme.of(context).brightness == Brightness.dark
+            ? BrandColors.nightSurface
+            : BrandColors.cream,
+        child: content,
+      );
+    }
+    return Scaffold(
+      backgroundColor: Theme.of(context).brightness == Brightness.dark
+          ? BrandColors.nightSurface
+          : BrandColors.cream,
+      body: content,
     );
   }
 
@@ -365,19 +396,21 @@ class BrainEntityDetailScreen extends ConsumerWidget {
     if (confirmed == true) {
       try {
         final service = ref.read(brainServiceProvider);
-        if (service != null) {
-          await service.deleteEntity(entityId, commitMsg: 'Delete entity via UI');
+        await service.deleteEntity(entityId, commitMsg: 'Delete entity via UI');
 
-          // Invalidate providers to refresh lists
-          ref.invalidate(brainEntityListProvider);
-          ref.invalidate(brainEntityDetailProvider(entityId));
+        // Invalidate providers to refresh lists
+        ref.invalidate(brainEntityListProvider);
+        ref.invalidate(brainEntityDetailProvider(entityId));
 
-          if (context.mounted) {
-            navigator.pop(); // Return to list
-            messenger.showSnackBar(
-              const SnackBar(content: Text('Entity deleted successfully')),
-            );
+        if (context.mounted) {
+          if (embedded && onDeleted != null) {
+            onDeleted!(); // Clear selected entity in wide pane
+          } else {
+            navigator.pop(); // Return to list on mobile
           }
+          messenger.showSnackBar(
+            const SnackBar(content: Text('Entity deleted successfully')),
+          );
         }
       } catch (e) {
         if (context.mounted) {

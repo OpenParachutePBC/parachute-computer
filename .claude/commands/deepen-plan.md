@@ -492,6 +492,22 @@ At the top of the plan, add a summary section:
 - Add `-deepened` suffix if user prefers a new file
 - Update any timestamps or metadata
 
+### 10. Sync to GitHub Issue
+
+After writing the enhanced plan, check the YAML frontmatter for an issue number:
+
+```bash
+grep "^issue:" <plan-path>
+```
+
+If `issue: NN` exists, sync the deepened plan to the GitHub issue body:
+
+```bash
+gh issue edit NN --body-file <plan-path>
+```
+
+This ensures the GitHub issue always reflects the latest local state after deepening.
+
 ## Output Format
 
 Update the plan file in place (or if user requests a separate file, append `-deepened` after `-plan`, e.g., `2026-01-15-feat-auth-plan-deepened.md`).
