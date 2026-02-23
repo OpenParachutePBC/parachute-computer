@@ -199,7 +199,7 @@ def read_last_exchange(transcript_path: Path) -> Optional[dict]:
         if msg.get("type") == "user":
             exchange_number += 1
 
-    # Find last user message by iterating backwards
+    # Find last human text message by iterating backwards (skip tool-result-only entries)
     for i, msg in enumerate(reversed(messages)):
         if msg.get("type") == "user":
             # Extract text content from user message
@@ -213,6 +213,10 @@ def read_last_exchange(transcript_path: Path) -> Optional[dict]:
                     for block in content
                     if isinstance(block, dict) and block.get("type") == "text"
                 )
+
+            # Skip tool-result-only user entries (no human text) and keep searching
+            if not user_message:
+                continue
 
             # Now look at messages after this for assistant response
             actual_index = len(messages) - 1 - i
