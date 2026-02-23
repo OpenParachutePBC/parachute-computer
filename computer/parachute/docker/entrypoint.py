@@ -22,6 +22,33 @@ def emit(event: dict):
     print(json.dumps(event, default=str), flush=True)
 
 
+def _patch_sdk_parse_message() -> None:
+    """Patch the SDK's parse_message to handle unknown event types gracefully.
+
+    The CLI emits event types (e.g. rate_limit_event) that the SDK's parser
+    doesn't recognise, causing MessageParseError. This kills the async generator
+    and drops all subsequent events (tool results, final text, etc.).
+    """
+    try:
+        from claude_agent_sdk._internal import client as _sdk_client
+        from claude_agent_sdk._internal.message_parser import parse_message as _original
+
+        _original_ref = _original
+
+        def _safe_parse(data):
+            try:
+                return _original_ref(data)
+            except Exception:
+                return data  # Return raw dict for unknown types
+
+        _sdk_client.parse_message = _safe_parse
+    except Exception:
+        pass  # SDK not installed or structure changed — non-fatal
+
+
+_patch_sdk_parse_message()
+
+
 async def run_query_and_emit(message: str, options) -> str | None:
     """Run SDK query, emit JSONL events to stdout. Returns captured session ID."""
     from claude_agent_sdk import query
@@ -30,18 +57,10 @@ async def run_query_and_emit(message: str, options) -> str | None:
     captured_session_id = None
     captured_model = None
 
-    # Use manual iteration to handle SDK MessageParseError for unknown event
-    # types (e.g. rate_limit_event) without crashing the entire session
-    event_iter = query(prompt=message, options=options).__aiter__()
-    while True:
-        try:
-            event = await event_iter.__anext__()
-        except StopAsyncIteration:
-            break
-        except Exception as e:
-            if "Unknown message type" in str(e):
-                continue  # Skip unsupported SDK event types
-            raise
+    async for event in query(prompt=message, options=options):
+        # Raw dicts come from patched parse_message (unknown event types)
+        if isinstance(event, dict):
+            continue  # Skip unknown events (rate_limit_event, etc.)
 
         event_type = type(event).__name__
 
@@ -59,11 +78,27 @@ async def run_query_and_emit(message: str, options) -> str | None:
                 captured_model = model
                 emit({"type": "model", "model": captured_model})
 
-            # Process content blocks — these are objects with .type and .text attrs
+            # Process content blocks — SDK objects don't have a reliable .type;
+            # detect block kind by checking for characteristic attributes.
             content = getattr(event, "content", []) or []
             for block in content:
-                block_type = getattr(block, "type", None)
-                if block_type == "text":
+                if hasattr(block, "thinking"):
+                    thinking_text = getattr(block, "thinking", "")
+                    if thinking_text:
+                        emit({"type": "thinking", "content": thinking_text})
+
+                elif hasattr(block, "name") and hasattr(block, "input"):
+                    # Tool use block
+                    tool_call = {
+                        "id": getattr(block, "id", ""),
+                        "name": getattr(block, "name", ""),
+                        "input": getattr(block, "input", {}),
+                    }
+                    emit({"type": "tool_use", "tool": tool_call})
+                    # Reset text tracking — new text block follows tool results
+                    current_text = ""
+
+                elif hasattr(block, "text"):
                     new_text = getattr(block, "text", "")
                     if new_text and new_text != current_text:
                         delta = new_text[len(current_text):]
@@ -74,6 +109,18 @@ async def run_query_and_emit(message: str, options) -> str | None:
             error = getattr(event, "error", None)
             if error:
                 emit({"type": "error", "error": str(error)})
+
+        elif event_type == "UserMessage":
+            # Tool results come back as ToolResultBlock objects
+            msg_content = getattr(event, "content", []) or []
+            for block in (msg_content if isinstance(msg_content, list) else []):
+                if hasattr(block, "tool_use_id"):
+                    emit({
+                        "type": "tool_result",
+                        "toolUseId": getattr(block, "tool_use_id", ""),
+                        "content": str(getattr(block, "content", "")),
+                        "isError": getattr(block, "is_error", False),
+                    })
 
         elif event_type == "ResultMessage":
             # Final result text
@@ -203,10 +250,6 @@ async def run():
         if parachute_model:
             options_kwargs["model"] = parachute_model
 
-        # Tell SDK to use our session ID so transcript filenames match our DB
-        if session_id:
-            options_kwargs.setdefault("extra_args", {})["session-id"] = session_id
-
         # Resume from prior transcript if requested by orchestrator
         resume_id = request.get("resume_session_id")
         if resume_id and re.match(r'^[a-zA-Z0-9_-]+$', resume_id):
@@ -214,6 +257,12 @@ async def run():
         elif resume_id:
             emit({"type": "warning", "message": f"Invalid resume_session_id format, ignoring"})
             resume_id = None
+
+        # Tell SDK to use our session ID so transcript filenames match our DB.
+        # Skip when resuming — CLI rejects --session-id + --resume without --fork-session,
+        # and --resume already implies the session ID from the transcript filename.
+        if session_id and not resume_id:
+            options_kwargs.setdefault("extra_args", {})["session-id"] = session_id
 
         options = ClaudeAgentOptions(**options_kwargs)
 

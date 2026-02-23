@@ -18,6 +18,38 @@ from typing import Any, AsyncGenerator, Awaitable, Callable, Optional
 logger = logging.getLogger(__name__)
 
 
+def _patch_sdk_parse_message() -> None:
+    """Patch the SDK's parse_message to handle unknown event types gracefully.
+
+    The CLI emits event types (e.g. rate_limit_event) that the SDK's parser
+    doesn't recognise, causing MessageParseError. This kills the async generator
+    and drops all subsequent events (tool results, final text, etc.).
+
+    The patch catches the error and returns the raw dict instead, which
+    _event_to_dict handles via isinstance(event, dict).
+    """
+    try:
+        from claude_agent_sdk._internal import client as _sdk_client
+        from claude_agent_sdk._internal.message_parser import parse_message as _original
+
+        _original_ref = _original  # capture in closure
+
+        def _safe_parse(data: dict[str, Any]) -> Any:
+            try:
+                return _original_ref(data)
+            except Exception:
+                logger.debug(f"SDK parse_message: passing through raw event type={data.get('type')}")
+                return data  # Return raw dict — _event_to_dict handles this
+
+        _sdk_client.parse_message = _safe_parse  # type: ignore[attr-defined]
+        logger.debug("Patched SDK parse_message for unknown event types")
+    except Exception as e:
+        logger.warning(f"Could not patch SDK parse_message: {e}")
+
+
+_patch_sdk_parse_message()
+
+
 class QueryInterrupt:
     """Handle for interrupting a running query."""
 
@@ -216,9 +248,18 @@ async def query_streaming(
     if model:
         options_kwargs["model"] = model
 
-    # Pass OAuth token as env var to the SDK subprocess
+    # Build env vars for the SDK subprocess
+    # Always clear CLAUDECODE to prevent "nested session" detection when the
+    # server itself runs inside Claude Code (e.g. during development).
+    sdk_env: dict[str, str] = {"CLAUDECODE": ""}
     if claude_token:
-        options_kwargs["env"] = {"CLAUDE_CODE_OAUTH_TOKEN": claude_token}
+        sdk_env["CLAUDE_CODE_OAUTH_TOKEN"] = claude_token
+    options_kwargs["env"] = sdk_env
+
+    # Capture CLI stderr for debugging tool execution issues
+    def _stderr_callback(line: str) -> None:
+        logger.debug(f"CLI stderr: {line.rstrip()}")
+    options_kwargs["stderr"] = _stderr_callback
 
     options = ClaudeAgentOptions(**options_kwargs)
 
@@ -237,23 +278,18 @@ async def query_streaming(
     done_event: Optional[asyncio.Event] = None
     try:
         effective_prompt: Any = prompt
-        if can_use_tool or message_queue:
-            done_event = asyncio.Event()
-            effective_prompt = _string_to_async_iterable(prompt, done_event, message_queue)
+        # Always use AsyncIterable to keep stdin open for the CLI subprocess.
+        # When prompt is passed as a string, the SDK calls end_input() immediately
+        # which closes stdin — preventing the CLI's internal tool execution loop
+        # from completing. The AsyncIterable wrapper keeps stdin alive until we
+        # see the "result" event (done_event), allowing multi-turn tool use.
+        done_event = asyncio.Event()
+        effective_prompt = _string_to_async_iterable(prompt, done_event, message_queue)
 
-        # Use manual iteration to handle SDK MessageParseError for unknown
-        # event types (e.g. rate_limit_event) without crashing the session
-        event_iter = sdk_query(prompt=effective_prompt, options=options).__aiter__()
-        while True:
-            try:
-                event = await event_iter.__anext__()
-            except StopAsyncIteration:
-                break
-            except Exception as iter_err:
-                if "Unknown message type" in str(iter_err):
-                    logger.debug(f"Skipping unknown SDK event type: {iter_err}")
-                    continue
-                raise
+        # The SDK's parse_message is patched (above) to return raw dicts
+        # for unknown event types instead of raising MessageParseError.
+        # This keeps the generator alive through rate_limit_event etc.
+        async for event in sdk_query(prompt=effective_prompt, options=options):
             event_dict = _event_to_dict(event)
             # Signal the iterable to finish once the turn is complete so
             # stream_input can close stdin and the CLI process can exit.
@@ -261,11 +297,11 @@ async def query_streaming(
                 done_event.set()
             yield event_dict
     except ClaudeSDKError as e:
-        logger.error(f"Claude SDK error: {e}")
+        logger.error(f"Claude SDK error: {e}", exc_info=True)
         yield {"type": "error", "error": str(e)}
     except Exception as e:
         error_msg = str(e)
-        logger.error(f"SDK query error: {error_msg}")
+        logger.error(f"SDK query error: {error_msg}", exc_info=True)
         yield {"type": "error", "error": error_msg}
     finally:
         # Safety net: always release the iterable on exit
@@ -275,6 +311,10 @@ async def query_streaming(
 
 def _event_to_dict(event: Any) -> dict[str, Any]:
     """Convert SDK event types to plain dictionaries."""
+    # Raw dicts come from the patched parse_message (unknown event types)
+    if isinstance(event, dict):
+        return event
+
     event_dict: dict[str, Any] = {}
 
     # Get the type name from the class

@@ -8,7 +8,8 @@ The actual message content lives in SDK JSONL files; we only store metadata.
 import json
 import logging
 import os
-from datetime import datetime
+import uuid as uuid_mod
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -679,6 +680,112 @@ class SessionManager:
             logger.info(f"Wrote sandbox transcript for session {session_id[:8]} at {transcript_path}")
         except Exception as e:
             logger.error(f"Failed to write sandbox transcript: {e}")
+
+    def write_sdk_transcript(
+        self,
+        session_id: str,
+        sdk_events: list[dict[str, Any]],
+        cwd: str,
+        working_directory: Optional[str] = None,
+        model: Optional[str] = None,
+    ) -> None:
+        """Write SDK events to JSONL transcript for session resume.
+
+        The Claude CLI (v2.1.49+) in SDK pipe mode no longer writes conversation
+        data to the JSONL file. This method writes the events in the CLI's
+        expected format so --resume can find the conversation.
+        """
+        transcript_path = self.get_sdk_transcript_path(session_id, working_directory)
+        if not transcript_path:
+            logger.warning(f"Could not compute transcript path for {session_id[:8]}")
+            return
+
+        try:
+            transcript_path.parent.mkdir(parents=True, exist_ok=True)
+
+            cli_version = "2.1.49"
+            prev_uuid: Optional[str] = None
+            entries: list[dict[str, Any]] = []
+
+            for event in sdk_events:
+                event_type = event.get("type")
+                now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.") + \
+                    f"{datetime.now(timezone.utc).microsecond // 1000:03d}Z"
+
+                if event_type == "user":
+                    msg_content = event.get("message", {}).get("content", "")
+                    entry_uuid = str(uuid_mod.uuid4())
+                    entry = {
+                        "parentUuid": prev_uuid,
+                        "isSidechain": False,
+                        "userType": "external",
+                        "cwd": cwd,
+                        "sessionId": session_id,
+                        "version": cli_version,
+                        "gitBranch": "HEAD",
+                        "type": "user",
+                        "message": {"role": "user", "content": msg_content},
+                        "uuid": entry_uuid,
+                        "timestamp": now,
+                        "permissionMode": "default",
+                    }
+                    entries.append(entry)
+                    prev_uuid = entry_uuid
+
+                elif event_type == "assistant":
+                    msg = event.get("message", {})
+                    entry_uuid = str(uuid_mod.uuid4())
+                    entry = {
+                        "parentUuid": prev_uuid,
+                        "isSidechain": False,
+                        "userType": "external",
+                        "cwd": cwd,
+                        "sessionId": session_id,
+                        "version": cli_version,
+                        "gitBranch": "HEAD",
+                        "message": {
+                            "model": msg.get("model") or model,
+                            "id": f"msg_{uuid_mod.uuid4().hex[:24]}",
+                            "type": "message",
+                            "role": "assistant",
+                            "content": msg.get("content", []),
+                            "stop_reason": "end_turn",
+                            "stop_sequence": None,
+                            "usage": {"input_tokens": 0, "output_tokens": 0},
+                        },
+                        "requestId": f"req_{uuid_mod.uuid4().hex[:24]}",
+                        "type": "assistant",
+                        "uuid": entry_uuid,
+                        "timestamp": now,
+                    }
+                    entries.append(entry)
+                    prev_uuid = entry_uuid
+
+                elif event_type == "result":
+                    entry = {
+                        "type": "result",
+                        "subtype": "success",
+                        "is_error": False,
+                        "session_id": session_id,
+                        "duration_ms": 0,
+                        "result": event.get("result", ""),
+                        "uuid": str(uuid_mod.uuid4()),
+                        "timestamp": now,
+                    }
+                    entries.append(entry)
+
+            if not entries:
+                return
+
+            with open(transcript_path, "a", encoding="utf-8") as f:
+                for entry in entries:
+                    f.write(json.dumps(entry) + "\n")
+
+            logger.info(
+                f"Wrote {len(entries)} transcript entries for session {session_id[:8]}"
+            )
+        except Exception as e:
+            logger.error(f"Failed to write SDK transcript: {e}")
 
     async def _load_sdk_messages(self, session: Session) -> list[dict[str, Any]]:
         """Load messages from SDK JSONL file."""

@@ -753,6 +753,8 @@ class Orchestrator:
 
             # Run query
             current_text = ""
+            # Collect SDK events for transcript persistence (--resume support)
+            sdk_transcript_events: list[dict[str, Any]] = []
 
             # Use session-based permission handler for tool access control
             # Trust mode (default): Use bypassPermissions for backwards compatibility
@@ -820,15 +822,28 @@ class Orchestrator:
                         system_prompt=sandbox_system_prompt,
                     )
                     # For continuing sandbox sessions, try SDK resume first
-                    # (full-fidelity), fall back to history injection (text-only)
+                    # (full-fidelity), fall back to history injection (text-only).
+                    # The CLI rejects --session-id when a transcript already exists,
+                    # so we MUST use --resume for non-new sessions. If the transcript
+                    # is missing (e.g. container recreated), resume_failed → retry
+                    # with history injection handles it gracefully.
                     sandbox_message = actual_message
                     resume_session_id: str | None = None
-                    if not is_new and workspace_id:
-                        has_transcript = await asyncio.to_thread(
-                            self._sandbox.has_sdk_transcript, workspace_id, sandbox_sid
-                        )
-                        if has_transcript:
+                    if not is_new:
+                        # For workspace sessions, verify host-side transcript exists
+                        if workspace_id:
+                            has_transcript = await asyncio.to_thread(
+                                self._sandbox.has_sdk_transcript, workspace_id, sandbox_sid
+                            )
+                            if has_transcript:
+                                resume_session_id = sandbox_sid
+                        else:
+                            # Default sandbox: transcript lives inside the container
+                            # (no host mount to check). Always attempt resume — the
+                            # entrypoint's resume_failed handler provides the safety net.
                             resume_session_id = sandbox_sid
+
+                        if resume_session_id:
                             logger.info(
                                 f"Will resume sandbox session {sandbox_sid[:8]} "
                                 f"from SDK transcript"
@@ -951,7 +966,7 @@ class Orchestrator:
                                 yield yielded
 
                     # Retry with history injection if resume failed
-                    if retry_with_history and workspace_id:
+                    if retry_with_history:
                         retry_message = actual_message
                         prior_messages = await self.session_manager._load_sdk_messages(sbx["session"])
                         if prior_messages:
@@ -964,11 +979,17 @@ class Orchestrator:
                                 f"<conversation_history>\n{history_block}\n"
                                 f"</conversation_history>\n\n{actual_message}"
                             )
-                        retry_stream = self._sandbox.run_persistent(
-                            workspace_slug=workspace_id,
-                            config=sandbox_config,
-                            message=retry_message,
-                        )
+                        if workspace_id:
+                            retry_stream = self._sandbox.run_persistent(
+                                workspace_slug=workspace_id,
+                                config=sandbox_config,
+                                message=retry_message,
+                            )
+                        else:
+                            retry_stream = self._sandbox.run_default(
+                                config=sandbox_config,
+                                message=retry_message,
+                            )
                         async for event in retry_stream:
                             async for yielded in _process_sandbox_event(event):
                                 yield yielded
@@ -996,6 +1017,11 @@ class Orchestrator:
                               "Either install Docker (brew install orbstack) or change trust level to 'direct'.",
                     ).model_dump(by_alias=True)
                     return
+
+            logger.info(
+                f"SDK launch: cwd={effective_cwd}, resume={resume_id}, "
+                f"is_new={is_new}, session={session.id[:8] if session.id else None}"
+            )
 
             async for event in query_streaming(
                 prompt=actual_message,
@@ -1028,6 +1054,10 @@ class Orchestrator:
 
                 event_type = event.get("type")
                 logger.debug(f"SDK Event: type={event_type} keys={list(event.keys())}")
+
+                # Collect events for transcript persistence
+                if event_type in ("user", "assistant", "result"):
+                    sdk_transcript_events.append(event)
 
                 # Capture session ID and immediately save to database
                 if event.get("session_id"):
@@ -1074,6 +1104,7 @@ class Orchestrator:
 
                 elif event_type == "assistant":
                     message_content = event.get("message", {})
+                    content_blocks = message_content.get("content", [])
 
                     # Capture model
                     if not captured_model and message_content.get("model"):
@@ -1081,7 +1112,7 @@ class Orchestrator:
                         yield ModelEvent(model=captured_model).model_dump(by_alias=True)
 
                     # Process content blocks
-                    for block in message_content.get("content", []):
+                    for block in content_blocks:
                         block_type = block.get("type")
 
                         if block_type == "thinking":
@@ -1225,6 +1256,23 @@ class Orchestrator:
             final_session_id = captured_session_id or session.id
             if final_session_id and final_session_id != "pending":
                 await self.session_manager.increment_message_count(final_session_id, 2 + inject_count)
+
+            # Persist SDK events to JSONL transcript for --resume support
+            # The CLI (v2.1.49+) no longer writes conversation data in SDK pipe mode
+            if final_session_id and final_session_id != "pending":
+                # Prepend initial user message (SDK doesn't echo it back)
+                user_event = {
+                    "type": "user",
+                    "message": {"role": "user", "content": actual_message},
+                }
+                all_events = [user_event] + sdk_transcript_events
+                self.session_manager.write_sdk_transcript(
+                    session_id=final_session_id,
+                    sdk_events=all_events,
+                    cwd=str(effective_cwd),
+                    working_directory=working_directory,
+                    model=captured_model,
+                )
 
             duration_ms = int((time.time() - start_time) * 1000)
 
