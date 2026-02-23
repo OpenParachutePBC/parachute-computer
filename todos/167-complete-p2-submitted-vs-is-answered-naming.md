@@ -1,5 +1,5 @@
 ---
-status: ready
+status: complete
 priority: p2
 issue_id: 109
 tags: [code-review, flutter, cleanup, chat]
@@ -48,13 +48,14 @@ Update all references: `_isInteractive`, `_borderColor`, `_buildHeader`, `_submi
 
 ## Acceptance Criteria
 
-- [ ] `InlineUserQuestionCard` uses `_isAnswered` (not `_submitted`) for the local optimistic submission flag
-- [ ] Name matches `UserQuestionCard` convention
+- [x] `InlineUserQuestionCard` uses `_isAnswered` (not `_submitted`) for the local optimistic submission flag
+- [x] Name matches `UserQuestionCard` convention
 
 ## Work Log
 
 | Date | Action | Learnings |
 |------|--------|-----------|
+| 2026-02-22 | Renamed `_submitted` → `_isAnswered` everywhere in the file using replace_all. | Bundled with todos 150, 151, 154, 158, 165, 170 in single commit. |
 
 ## Resources
 

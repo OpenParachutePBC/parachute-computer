@@ -61,13 +61,14 @@ If a token doesn't exist for a value, add it to the token system rather than usi
 
 ## Acceptance Criteria
 
-- [ ] No bare numeric literals for spacing, radius, or sizing in `InlineUserQuestionCard`
+- [x] No bare numeric literals for spacing, radius, or sizing in `InlineUserQuestionCard`
 - [ ] `_buildTaskAgentCard` uses design tokens for padding and border radius
 
 ## Work Log
 
 | Date | Action | Learnings |
 |------|--------|-----------|
+| 2026-02-22 | Replaced all magic numbers in `InlineUserQuestionCard`: `height: 4` → `Spacing.xs`, `height: 6` → `Spacing.xs`, `vertical: 8` → `Spacing.sm`, `horizontal: 10` → `Spacing.md`, `circular(10)` → `Radii.sm`, `circular(12)` → `Radii.md`, `horizontal: 8, vertical: 3` → `Spacing.sm, Spacing.xxs`, `width: 4` → `Spacing.xs`, `width: 2` → `Spacing.xxs`. `collapsible_thinking_section.dart` left for a separate todo. | Bundled with todos 150, 151, 154, 158, 165, 167 in single commit. |
 
 ## Resources
 

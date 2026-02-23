@@ -1,5 +1,5 @@
 ---
-status: ready
+status: complete
 priority: p3
 issue_id: 109
 tags: [code-review, flutter, cleanup, chat]
@@ -49,13 +49,14 @@ Then simplify call sites from `!_isInteractive || _isSubmitting` to just `!_isIn
 
 ## Acceptance Criteria
 
-- [ ] `_isInteractive` fully encapsulates the "card can accept input" state
-- [ ] No call site needs to check `_isSubmitting` separately alongside `_isInteractive`
+- [x] `_isInteractive` fully encapsulates the "card can accept input" state
+- [x] No call site needs to check `_isSubmitting` separately alongside `_isInteractive`
 
 ## Work Log
 
 | Date | Action | Learnings |
 |------|--------|-----------|
+| 2026-02-22 | Added `&& !_isSubmitting` to `_isInteractive` getter. Removed redundant `|| _isSubmitting` guards from `_toggleOption`, `_toggleOther`, and `_canSubmit`. | Bundled with todos 150, 151, 154, 158, 167, 170 in single commit. |
 
 ## Resources
 
