@@ -271,7 +271,7 @@ class _SessionStub:
     def __init__(self, data: dict):
         self.title = data.get("title")
         self.metadata = data.get("metadata") or {}
-        self._agent_type = data.get("agent_type")
+        self._agent_type = data.get("agentType")
 
     def get_agent_type(self) -> Optional[str]:
         return self._agent_type or self.metadata.get("agent_type")
@@ -282,7 +282,7 @@ async def _get_session(session_id: str) -> Optional[Any]:
     try:
         import httpx
 
-        url = f"{_get_server_url()}/api/sessions/{session_id}"
+        url = f"{_get_server_url()}/api/chat/{session_id}"
         async with httpx.AsyncClient() as client:
             resp = await client.get(url, timeout=5.0)
         if resp.status_code == 200:
@@ -464,7 +464,7 @@ async def update_session_metadata(
     try:
         import httpx
 
-        url = f"{_get_server_url()}/api/sessions/{session_id}/metadata"
+        url = f"{_get_server_url()}/api/chat/{session_id}/metadata"
         async with httpx.AsyncClient() as client:
             await client.patch(url, json=payload, timeout=5.0)
     except Exception as e:
