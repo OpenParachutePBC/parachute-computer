@@ -226,6 +226,9 @@ class Session(BaseModel):
         serialization_alias="createdBy",
         description="Session creator: 'user' or 'agent:<session_id>'",
     )
+    summary: Optional[str] = Field(
+        default=None, description="AI-generated session summary"
+    )
     metadata: Optional[dict[str, Any]] = Field(
         default=None, description="Additional metadata"
     )
@@ -292,6 +295,7 @@ class SessionUpdate(BaseModel):
     """Data for updating a session."""
 
     title: Optional[str] = None
+    summary: Optional[str] = None
     archived: Optional[bool] = None
     message_count: Optional[int] = None
     model: Optional[str] = None

@@ -13,6 +13,17 @@
           }
         ]
       }
+    ],
+    "PreCompact": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -m parachute.hooks.context_hook"
+          }
+        ]
+      }
     ]
   }
 }

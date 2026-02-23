@@ -388,6 +388,28 @@ class Database:
             await self._connection.commit()
             logger.info("Added multi-agent session fields (v17)")
 
+        # Migration: Add summary column to sessions (v18)
+        async with self._connection.execute(
+            "SELECT version FROM schema_version WHERE version = 18"
+        ) as cursor:
+            row = await cursor.fetchone()
+        if not row:
+            try:
+                async with self._connection.execute(
+                    "SELECT summary FROM sessions LIMIT 1"
+                ):
+                    pass  # Column exists
+            except Exception:
+                await self._connection.execute(
+                    "ALTER TABLE sessions ADD COLUMN summary TEXT"
+                )
+                logger.info("Added summary column to sessions")
+            await self._connection.execute(
+                "INSERT OR IGNORE INTO schema_version (version, applied_at) VALUES (18, datetime('now'))"
+            )
+            await self._connection.commit()
+            logger.info("Added session summary column (v18)")
+
     async def close(self) -> None:
         """Close database connection."""
         if self._connection:
@@ -496,6 +518,10 @@ class Database:
         if update.title is not None:
             updates.append("title = ?")
             params.append(update.title)
+
+        if update.summary is not None:
+            updates.append("summary = ?")
+            params.append(update.summary)
 
         if update.archived is not None:
             updates.append("archived = ?")
@@ -1229,6 +1255,7 @@ class Database:
             workspace_id=row["workspace_id"] if "workspace_id" in keys else None,
             parent_session_id=row["parent_session_id"] if "parent_session_id" in keys else None,
             created_by=row["created_by"] if "created_by" in keys else "user",
+            summary=row["summary"] if "summary" in keys else None,
             metadata=metadata,
         )
 
