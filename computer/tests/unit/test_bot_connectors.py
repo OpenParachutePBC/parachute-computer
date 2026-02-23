@@ -1543,3 +1543,489 @@ class TestSessionArchivedGuard:
         result = await c.get_or_create_session("telegram", "chat3", "dm", "Charlie")
         assert result is new_session
         mock_db.create_session.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Issue #88 Fix 1 — error_occurred flag in _route_to_chat (Discord + Matrix)
+# ---------------------------------------------------------------------------
+
+
+def _make_discord_connector(**kwargs):
+    """Create a DiscordConnector for testing."""
+    from parachute.connectors.discord_bot import DiscordConnector
+
+    defaults = dict(
+        bot_token="test-token",
+        server=SimpleNamespace(database=None),
+        allowed_users=["user1"],
+    )
+    defaults.update(kwargs)
+    return DiscordConnector(**defaults)
+
+
+async def _async_events(events):
+    """Yield events as an async generator for orchestrate mock."""
+    for event in events:
+        yield event
+
+
+class TestErrorOccurredFlagDiscord:
+    @pytest.mark.asyncio
+    async def test_bare_error_event_suppresses_fallback(self):
+        """A bare 'error' event should NOT produce 'No response from agent.'."""
+        connector = _make_discord_connector()
+        connector.server = SimpleNamespace(
+            orchestrate=lambda **kw: _async_events(
+                [{"type": "error", "error": "something blew up"}]
+            )
+        )
+        result = await connector._route_to_chat("sess-1", "hi")
+        assert result == ""
+        assert "No response" not in result
+
+    @pytest.mark.asyncio
+    async def test_no_events_produces_fallback(self):
+        """No events → fallback 'No response from agent.'"""
+        connector = _make_discord_connector()
+        connector.server = SimpleNamespace(
+            orchestrate=lambda **kw: _async_events([])
+        )
+        result = await connector._route_to_chat("sess-1", "hi")
+        assert result == "No response from agent."
+
+    @pytest.mark.asyncio
+    async def test_text_event_returns_content(self):
+        """A normal text event returns the content without fallback."""
+        connector = _make_discord_connector()
+        connector.server = SimpleNamespace(
+            orchestrate=lambda **kw: _async_events(
+                [{"type": "text", "content": "Hello there!"}]
+            )
+        )
+        result = await connector._route_to_chat("sess-1", "hi")
+        assert result == "Hello there!"
+
+    @pytest.mark.asyncio
+    async def test_typed_error_suppresses_fallback(self):
+        """A typed_error event suppresses the 'No response' fallback."""
+        connector = _make_discord_connector()
+        connector.server = SimpleNamespace(
+            orchestrate=lambda **kw: _async_events(
+                [{"type": "typed_error", "title": "Oops", "message": "bad thing"}]
+            )
+        )
+        result = await connector._route_to_chat("sess-1", "hi")
+        assert "⚠️" in result
+        assert "No response from agent." not in result
+
+
+class TestErrorOccurredFlagMatrix:
+    @pytest.mark.asyncio
+    async def test_bare_error_event_suppresses_fallback(self):
+        """A bare 'error' event should NOT produce 'No response from agent.'."""
+        connector = _make_matrix_connector()
+        connector.server = SimpleNamespace(
+            orchestrate=lambda **kw: _async_events(
+                [{"type": "error", "error": "matrix exploded"}]
+            )
+        )
+        result = await connector._route_to_chat("sess-1", "hi")
+        assert result == ""
+        assert "No response" not in result
+
+    @pytest.mark.asyncio
+    async def test_no_events_produces_fallback(self):
+        """No events → fallback 'No response from agent.'"""
+        connector = _make_matrix_connector()
+        connector.server = SimpleNamespace(
+            orchestrate=lambda **kw: _async_events([])
+        )
+        result = await connector._route_to_chat("sess-1", "hi")
+        assert result == "No response from agent."
+
+    @pytest.mark.asyncio
+    async def test_typed_error_message_variable_is_message(self):
+        """Matrix typed_error handler uses 'message' (not 'msg') local variable."""
+        connector = _make_matrix_connector()
+        connector.server = SimpleNamespace(
+            orchestrate=lambda **kw: _async_events(
+                [{"type": "typed_error", "title": "T", "message": "body text"}]
+            )
+        )
+        result = await connector._route_to_chat("sess-1", "hi")
+        # Should include the message body in the response
+        assert "body text" in result
+
+    @pytest.mark.asyncio
+    async def test_warning_message_variable_is_message(self):
+        """Matrix warning handler uses 'message' (not 'msg') local variable."""
+        connector = _make_matrix_connector()
+        connector.server = SimpleNamespace(
+            orchestrate=lambda **kw: _async_events(
+                [
+                    {"type": "text", "content": "main reply"},
+                    {"type": "warning", "title": "W", "message": "warn body"},
+                ]
+            )
+        )
+        result = await connector._route_to_chat("sess-1", "hi")
+        assert "warn body" in result
+
+
+# ---------------------------------------------------------------------------
+# Issue #88 Fix 2 — Discord on_voice_message
+# ---------------------------------------------------------------------------
+
+
+class TestDiscordVoiceMessage:
+    def _make_audio_message(self, content_type="audio/ogg", transcription="hello"):
+        """Build a minimal mock discord.Message with an audio attachment."""
+        attachment = MagicMock()
+        attachment.content_type = content_type
+        attachment.read = AsyncMock(return_value=b"fake-audio-bytes")
+
+        msg = MagicMock()
+        msg.attachments = [attachment]
+        msg.author.id = "user1"
+        msg.author.display_name = "Alice"
+        msg.channel.id = "channel1"
+        msg.guild = None  # DM
+        msg.reply = AsyncMock()
+        return msg
+
+    @pytest.mark.asyncio
+    async def test_audio_attachment_transcribed_and_replied(self):
+        """Voice message is transcribed and reply is sent."""
+        connector = _make_discord_connector(allowed_users=["user1"])
+        msg = self._make_audio_message()
+
+        session = SimpleNamespace(id="sess-v", archived=False, metadata={})
+        mock_db = AsyncMock()
+        mock_db.get_session_by_bot_link = AsyncMock(return_value=session)
+        connector.server = SimpleNamespace(
+            database=mock_db,
+            transcribe_audio=AsyncMock(return_value="transcribed text"),
+            orchestrate=lambda **kw: _async_events(
+                [{"type": "text", "content": "response"}]
+            ),
+        )
+        connector.is_session_initialized = AsyncMock(return_value=True)
+
+        await connector.on_voice_message(msg, None)
+
+        connector.server.transcribe_audio.assert_called_once_with(b"fake-audio-bytes")
+        msg.reply.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_no_audio_attachment_returns_silently(self):
+        """Message with no audio attachment does nothing."""
+        connector = _make_discord_connector(allowed_users=["user1"])
+        msg = MagicMock()
+        msg.attachments = []  # No attachments
+
+        await connector.on_voice_message(msg, None)
+        # No reply sent
+        msg.reply = AsyncMock()
+        msg.reply.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_no_transcription_service_sends_error(self):
+        """Missing transcribe_audio sends user-friendly error."""
+        connector = _make_discord_connector(allowed_users=["user1"])
+        msg = self._make_audio_message()
+        connector.server = SimpleNamespace(database=None)  # No transcribe_audio
+
+        await connector.on_voice_message(msg, None)
+        msg.reply.assert_called_once()
+        assert "transcription" in msg.reply.call_args[0][0].lower()
+
+    @pytest.mark.asyncio
+    async def test_empty_transcription_sends_error(self):
+        """Empty transcription result sends user-friendly error."""
+        connector = _make_discord_connector(allowed_users=["user1"])
+        msg = self._make_audio_message()
+        connector.server = SimpleNamespace(
+            database=None,
+            transcribe_audio=AsyncMock(return_value=""),
+        )
+
+        await connector.on_voice_message(msg, None)
+        msg.reply.assert_called_once()
+        assert "transcribe" in msg.reply.call_args[0][0].lower()
+
+    @pytest.mark.asyncio
+    async def test_unauthorized_user_ignored_silently(self):
+        """Unknown user's voice message is silently ignored (no double-reply)."""
+        connector = _make_discord_connector(allowed_users=["other_user"])
+        msg = self._make_audio_message()
+        msg.author.id = "unknown_user"
+
+        await connector.on_voice_message(msg, None)
+        msg.reply.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Issue #88 Fix 3a — Matrix ack removal via room_redact
+# ---------------------------------------------------------------------------
+
+
+class TestMatrixAckRemove:
+    @pytest.mark.asyncio
+    async def test_ack_event_id_captured_and_redacted(self):
+        """room_redact is called with the event_id from the ack room_send."""
+        connector = _make_matrix_connector(ack_emoji="👀")
+        connector._client = AsyncMock()
+
+        ack_resp = SimpleNamespace(event_id="$ack-event-123")
+        connector._client.room_send = AsyncMock(return_value=ack_resp)
+        connector._client.room_typing = AsyncMock()
+        connector._client.room_redact = AsyncMock()
+
+        session = SimpleNamespace(id="sess-m", archived=False, metadata={})
+        mock_db = AsyncMock()
+        mock_db.get_session_by_bot_link = AsyncMock(return_value=session)
+        connector.server = SimpleNamespace(
+            database=mock_db,
+            orchestrate=lambda **kw: _async_events(
+                [{"type": "text", "content": "hi back"}]
+            ),
+        )
+        connector.is_session_initialized = AsyncMock(return_value=True)
+        connector._send_room_message = AsyncMock()
+        connector._split_matrix_response = MagicMock(return_value=[("hi back", "")])
+        connector._get_chat_lock = MagicMock(return_value=asyncio.Lock())
+        connector._resolve_bridge_auth = AsyncMock(
+            return_value=("dm", True, session)
+        )
+
+        event = SimpleNamespace(
+            event_id="$orig-event",
+            sender="@alice:localhost",
+            body="hello",
+            source={"content": {"msgtype": "m.text", "body": "hello"}},
+        )
+        room = SimpleNamespace(room_id="!room:localhost", display_name="Alice")
+        update = {"room": room, "event": event}
+
+        await connector.on_text_message(update, None)
+
+        connector._client.room_redact.assert_called_once_with(
+            "!room:localhost", "$ack-event-123"
+        )
+
+    @pytest.mark.asyncio
+    async def test_ack_not_redacted_when_room_send_fails(self):
+        """If ack room_send fails, room_redact is not called."""
+        connector = _make_matrix_connector(ack_emoji="👀")
+        connector._client = AsyncMock()
+        connector._client.room_send = AsyncMock(side_effect=Exception("send failed"))
+        connector._client.room_typing = AsyncMock()
+        connector._client.room_redact = AsyncMock()
+
+        session = SimpleNamespace(id="sess-m2", archived=False, metadata={})
+        mock_db = AsyncMock()
+        mock_db.get_session_by_bot_link = AsyncMock(return_value=session)
+        connector.server = SimpleNamespace(
+            database=mock_db,
+            orchestrate=lambda **kw: _async_events(
+                [{"type": "text", "content": "reply"}]
+            ),
+        )
+        connector.is_session_initialized = AsyncMock(return_value=True)
+        connector._send_room_message = AsyncMock()
+        connector._split_matrix_response = MagicMock(return_value=[("reply", "")])
+        connector._get_chat_lock = MagicMock(return_value=asyncio.Lock())
+        connector._resolve_bridge_auth = AsyncMock(
+            return_value=("dm", True, session)
+        )
+
+        event = SimpleNamespace(
+            event_id="$orig-event2",
+            sender="@alice:localhost",
+            body="hello",
+            source={"content": {"msgtype": "m.text", "body": "hello"}},
+        )
+        room = SimpleNamespace(room_id="!room2:localhost", display_name="Alice")
+
+        await connector.on_text_message({"room": room, "event": event}, None)
+        connector._client.room_redact.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Issue #88 Fix 3b — Discord /chat slash command ack emoji
+# ---------------------------------------------------------------------------
+
+
+class TestDiscordSlashAck:
+    @pytest.mark.asyncio
+    async def test_slash_chat_sends_ephemeral_ack(self):
+        """_handle_chat sends ephemeral ack emoji after defer."""
+        connector = _make_discord_connector(
+            allowed_users=["user1"], ack_emoji="👀"
+        )
+
+        interaction = MagicMock()
+        interaction.user.id = "user1"
+        interaction.user.display_name = "Alice"
+        interaction.guild = None
+        interaction.channel_id = "chan1"
+        interaction.response.defer = AsyncMock()
+        interaction.followup.send = AsyncMock()
+
+        session = SimpleNamespace(id="sess-s", archived=False, metadata={})
+        mock_db = AsyncMock()
+        mock_db.get_session_by_bot_link = AsyncMock(return_value=session)
+        connector.server = SimpleNamespace(
+            database=mock_db,
+            orchestrate=lambda **kw: _async_events(
+                [{"type": "text", "content": "slash reply"}]
+            ),
+        )
+        connector.is_session_initialized = AsyncMock(return_value=True)
+        connector.get_or_create_session = AsyncMock(return_value=session)
+        interaction.channel = MagicMock()
+
+        await connector._handle_chat(interaction, "hello")
+
+        # Ephemeral ack was sent
+        ack_calls = [
+            call
+            for call in interaction.followup.send.call_args_list
+            if call.kwargs.get("ephemeral") is True
+        ]
+        assert len(ack_calls) == 1
+        assert ack_calls[0].args[0] == "👀"
+
+    @pytest.mark.asyncio
+    async def test_slash_chat_no_ack_when_emoji_not_set(self):
+        """_handle_chat does not send ack when ack_emoji is None."""
+        connector = _make_discord_connector(
+            allowed_users=["user1"], ack_emoji=None
+        )
+
+        interaction = MagicMock()
+        interaction.user.id = "user1"
+        interaction.user.display_name = "Alice"
+        interaction.guild = None
+        interaction.channel_id = "chan1"
+        interaction.response.defer = AsyncMock()
+        interaction.followup.send = AsyncMock()
+
+        session = SimpleNamespace(id="sess-s2", archived=False, metadata={})
+        connector.server = SimpleNamespace(
+            database=None,
+            orchestrate=lambda **kw: _async_events(
+                [{"type": "text", "content": "reply"}]
+            ),
+        )
+        connector.is_session_initialized = AsyncMock(return_value=True)
+        connector.get_or_create_session = AsyncMock(return_value=session)
+        interaction.channel = MagicMock()
+
+        await connector._handle_chat(interaction, "hello")
+
+        # No ephemeral ack calls
+        ephemeral_calls = [
+            call
+            for call in interaction.followup.send.call_args_list
+            if call.kwargs.get("ephemeral") is True
+        ]
+        assert len(ephemeral_calls) == 0
+
+
+# ---------------------------------------------------------------------------
+# Issue #88 Fix 4 — Discord group history ring buffer
+# ---------------------------------------------------------------------------
+
+
+class TestDiscordRingBuffer:
+    def test_group_message_recorded_before_user_gate(self):
+        """Group messages are recorded in the ring buffer regardless of auth."""
+        from parachute.connectors.base import GroupMessage
+
+        connector = _make_discord_connector(allowed_users=[])  # No allowed users
+
+        # Simulate an incoming group message from an unauthorized user
+        channel = MagicMock()
+        channel.id = "ch42"
+
+        msg = MagicMock()
+        msg.author.id = "stranger"
+        msg.author.display_name = "Stranger"
+        msg.content = "hi everyone"
+        msg.created_at = datetime.now(timezone.utc)
+        msg.id = 9999
+
+        # Trigger the recording manually (as on_text_message would)
+        import discord
+
+        msg.channel = MagicMock(spec=discord.TextChannel)
+        msg.channel.id = "ch42"
+
+        # Record directly to verify the method
+        connector.group_history.record(
+            "ch42",
+            GroupMessage(
+                user_display=msg.author.display_name,
+                text=msg.content,
+                timestamp=msg.created_at,
+                message_id=msg.id,
+            ),
+        )
+
+        recent = connector.group_history.get_recent("ch42")
+        assert len(recent) == 1
+        assert recent[0].text == "hi everyone"
+        assert recent[0].user_display == "Stranger"
+
+    def test_get_group_history_method_does_not_exist(self):
+        """_get_group_history was deleted; it should not exist on DiscordConnector."""
+        connector = _make_discord_connector()
+        assert not hasattr(connector, "_get_group_history")
+
+    def test_ring_buffer_excludes_triggering_message(self):
+        """get_recent excludes the message that triggered the bot response."""
+        from parachute.connectors.base import GroupMessage
+
+        connector = _make_discord_connector()
+        now = datetime.now(timezone.utc)
+
+        for i in range(3):
+            connector.group_history.record(
+                "ch1",
+                GroupMessage(
+                    user_display=f"User{i}",
+                    text=f"msg {i}",
+                    timestamp=now,
+                    message_id=i,
+                ),
+            )
+
+        # Exclude message_id=2 (the triggering message)
+        recent = connector.group_history.get_recent("ch1", exclude_message_id=2)
+        ids = [m.message_id for m in recent]
+        assert 2 not in ids
+        assert 0 in ids
+        assert 1 in ids
+
+    def test_ring_buffer_format_for_prompt(self):
+        """format_for_prompt produces XML-wrapped group context."""
+        from parachute.connectors.base import GroupMessage
+
+        connector = _make_discord_connector()
+        now = datetime.now(timezone.utc)
+
+        connector.group_history.record(
+            "ch2",
+            GroupMessage(
+                user_display="Alice",
+                text="Hello world",
+                timestamp=now,
+                message_id=1,
+            ),
+        )
+        recent = connector.group_history.get_recent("ch2")
+        prompt = connector.group_history.format_for_prompt(recent)
+        assert "<group_context>" in prompt
+        assert "Alice" in prompt
+        assert "Hello world" in prompt

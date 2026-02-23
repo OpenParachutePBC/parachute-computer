@@ -12,7 +12,7 @@ import logging
 import time
 from typing import Any, Optional
 
-from parachute.connectors.base import BotConnector, ConnectorState
+from parachute.connectors.base import BotConnector, ConnectorState, GroupMessage
 from parachute.connectors.message_formatter import claude_to_discord
 
 logger = logging.getLogger(__name__)
@@ -105,7 +105,11 @@ class DiscordConnector(BotConnector):
         async def on_message(message: discord.Message):
             if message.author == self._client.user:
                 return
-            await self.on_text_message(message, None)
+            AUDIO_TYPES = {"audio/ogg", "audio/mpeg", "audio/wav", "audio/webm", "audio/mp4"}
+            if any(a.content_type in AUDIO_TYPES for a in message.attachments):
+                await self.on_voice_message(message, None)
+            else:
+                await self.on_text_message(message, None)
 
     async def _run_loop(self) -> None:
         """Run Discord gateway client. Returns on clean close, raises on error.
@@ -146,6 +150,19 @@ class DiscordConnector(BotConnector):
 
         user_id = str(message.author.id)
         chat_type = "dm" if isinstance(message.channel, discord.DMChannel) else "group"
+
+        # Record all group messages to ring buffer (before mention/user gating)
+        if chat_type == "group" and message.content:
+            self.group_history.record(
+                str(message.channel.id),
+                GroupMessage(
+                    user_display=message.author.display_name,
+                    text=message.content,
+                    timestamp=message.created_at,
+                    message_id=message.id,
+                ),
+            )
+
         if not self.is_user_allowed(user_id):
             response = await self.handle_unknown_user(
                 platform="discord",
@@ -223,14 +240,12 @@ class DiscordConnector(BotConnector):
         # Inject group history for context (wrapped in XML tags to resist prompt injection)
         effective_message = message_text
         if chat_type == "group":
-            history = await self._get_group_history(
-                message.channel, exclude_id=message.id
+            recent = self.group_history.get_recent(
+                str(message.channel.id), exclude_message_id=message.id
             )
-            if history:
-                effective_message = (
-                    f"{history}\n\n"
-                    f"{message_text}"
-                )
+            if recent:
+                history = self.group_history.format_for_prompt(recent)
+                effective_message = f"{history}\n\n{message_text}"
 
         # Show typing indicator with per-chat lock
         lock = self._get_chat_lock(chat_id)
@@ -241,15 +256,91 @@ class DiscordConnector(BotConnector):
                     message=effective_message,
                 )
 
-        if not response_text:
-            response_text = "No response from agent."
-
         # Format and send (handle 2000 char limit)
         formatted = claude_to_discord(response_text)
         for chunk in self.split_response(formatted, DISCORD_MAX_MESSAGE_LENGTH):
             await message.reply(chunk)
 
         # Remove ack reaction after response
+        if ack_sent:
+            try:
+                await message.remove_reaction(self.ack_emoji, self._client.user)
+            except Exception:
+                pass
+
+    async def on_voice_message(self, update: Any, context: Any = None) -> None:
+        """Handle incoming voice/audio message from Discord."""
+        message = update
+        AUDIO_TYPES = {"audio/ogg", "audio/mpeg", "audio/wav", "audio/webm", "audio/mp4"}
+        audio = next(
+            (a for a in message.attachments if a.content_type in AUDIO_TYPES),
+            None,
+        )
+        if not audio:
+            return
+
+        user_id = str(message.author.id)
+        chat_type = "dm" if isinstance(message.channel, discord.DMChannel) else "group"
+        if not self.is_user_allowed(user_id):
+            return  # Silently ignore — text path already handled unknown user reply
+
+        transcribe = getattr(self.server, "transcribe_audio", None)
+        if not transcribe:
+            await message.reply("Voice messages are not supported (no transcription service).")
+            return
+
+        try:
+            data = await audio.read()
+            text = await transcribe(data)
+        except Exception as e:
+            logger.error(f"Voice transcription failed: {e}")
+            await message.reply("Could not transcribe audio.")
+            return
+
+        if not text:
+            await message.reply("Could not transcribe audio.")
+            return
+
+        chat_id = str(message.channel.id)
+        session = await self.get_or_create_session(
+            platform="discord",
+            chat_id=chat_id,
+            chat_type=chat_type,
+            user_display=message.author.display_name,
+            user_id=user_id,
+        )
+        if not session:
+            await message.reply("Internal error: could not create session.")
+            return
+
+        if not await self.is_session_initialized(session):
+            await message.reply(
+                "Session not yet configured. Please activate it in the Parachute app."
+            )
+            return
+
+        self._last_message_time = time.time()
+
+        ack_sent = False
+        if self.ack_emoji:
+            try:
+                await message.add_reaction(self.ack_emoji)
+                ack_sent = True
+            except Exception as e:
+                logger.debug(f"Ack reaction failed (non-critical): {e}")
+
+        lock = self._get_chat_lock(chat_id)
+        async with lock:
+            async with message.channel.typing():
+                response_text = await self._route_to_chat(
+                    session_id=session.id,
+                    message=text,
+                )
+
+        formatted = claude_to_discord(response_text)
+        for chunk in self.split_response(formatted, DISCORD_MAX_MESSAGE_LENGTH):
+            await message.reply(chunk)
+
         if ack_sent:
             try:
                 await message.remove_reaction(self.ack_emoji, self._client.user)
@@ -297,6 +388,13 @@ class DiscordConnector(BotConnector):
 
         await interaction.response.defer()
 
+        # Ack emoji via ephemeral followup — auto-dismissed, no explicit remove needed
+        if self.ack_emoji:
+            try:
+                await interaction.followup.send(self.ack_emoji, ephemeral=True)
+            except Exception as e:
+                logger.debug(f"Slash ack failed (non-critical): {e}")
+
         chat_id = str(interaction.channel_id)
         chat_type = "dm" if interaction.guild is None else "group"
 
@@ -331,9 +429,6 @@ class DiscordConnector(BotConnector):
             session_id=session.id,
             message=message,
         )
-
-        if not response_text:
-            response_text = "No response from agent."
 
         formatted = claude_to_discord(response_text)
         for i, chunk in enumerate(self.split_response(formatted, DISCORD_MAX_MESSAGE_LENGTH)):
@@ -376,46 +471,10 @@ class DiscordConnector(BotConnector):
             logger.error(f"Journal entry failed: {e}")
             await interaction.followup.send("Failed to save journal entry.")
 
-    async def _get_group_history(
-        self, channel: Any, exclude_id: int, limit: int = 20
-    ) -> str:
-        """Fetch recent channel messages for group context injection.
-
-        Intentionally includes messages from ALL channel members (not just
-        allowed users) to give the AI full conversation context. Messages
-        can only trigger this code path when an allowed user mentions the bot.
-        Display names are sanitized to resist prompt injection.
-        """
-        if isinstance(channel, discord.DMChannel):
-            return ""
-        try:
-            messages = []
-            async for msg in channel.history(limit=limit + 5):
-                if msg.id == exclude_id or msg.author == self._client.user:
-                    continue
-                if not msg.content:
-                    continue
-                messages.append(msg)
-                if len(messages) >= limit:
-                    break
-            if not messages:
-                return ""
-            messages.reverse()  # Chronological order
-            from parachute.connectors.base import GroupHistoryBuffer
-            sanitize = GroupHistoryBuffer._sanitize_display_name
-            lines = []
-            for msg in messages:
-                name = sanitize(msg.author.display_name)
-                text = msg.content[:500]
-                lines.append(f"  {name}: {text}")
-            return "<group_context>\n" + "\n".join(lines) + "\n</group_context>"
-        except Exception as e:
-            logger.warning(f"Failed to fetch channel history: {e}")
-            return ""
-
     async def _route_to_chat(self, session_id: str, message: str) -> str:
         """Route a message through the Chat orchestrator and collect response."""
         response_text = ""
+        error_occurred = False
         orchestrate = getattr(self.server, "orchestrate", None)
         if not orchestrate:
             logger.error("Server has no orchestrate method")
@@ -439,6 +498,7 @@ class DiscordConnector(BotConnector):
                 elif event_type == "error":
                     error_msg = event.get("error", "") if isinstance(event, dict) else getattr(event, "error", "")
                     logger.error(f"Orchestrator error event: {error_msg}")
+                    error_occurred = True
 
                 elif event_type == "typed_error":
                     # Structured error with user-friendly message
@@ -447,6 +507,7 @@ class DiscordConnector(BotConnector):
                     error_text = f"{title}: {message}" if message else title
                     logger.error(f"Orchestrator typed error: {error_text}")
                     response_text += f"\n\n⚠️ {error_text}"
+                    error_occurred = True
 
                 elif event_type == "warning":
                     # Non-fatal warning — append to response
@@ -460,6 +521,8 @@ class DiscordConnector(BotConnector):
             logger.error(f"Chat orchestration failed: {e}", exc_info=True)
             return "Something went wrong. Please try again later."
 
+        if not response_text and not error_occurred:
+            response_text = "No response from agent."
         return response_text
 
     async def send_message(self, chat_id: str, text: str) -> None:
