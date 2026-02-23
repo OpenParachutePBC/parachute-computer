@@ -330,14 +330,13 @@ class BrainModule:
     async def _reload_schemas(self) -> None:
         """Reload in-memory schema cache from TerminusDB after mutations.
 
-        Called after create/update/delete type operations to keep self.schemas
-        in sync with the live TerminusDB schema graph.
+        Fetches both Class and Enum docs so _format_schemas_for_api() can
+        resolve enum field values correctly.
         """
         if self.kg_service is None:
             return
         try:
-            raw_schemas = await self.kg_service.list_schemas()
-            self.schemas = raw_schemas
+            self.schemas = await self.kg_service.list_all_schema_docs()
             logger.debug(f"Schema cache reloaded: {len(self.schemas)} documents")
         except Exception as e:
             logger.warning(f"Failed to reload schema cache: {e}")

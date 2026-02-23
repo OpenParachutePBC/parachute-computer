@@ -2,19 +2,25 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
+import '../models/brain_entity.dart';
+import '../models/brain_filter.dart';
 import '../models/brain_schema.dart';
 import '../providers/brain_providers.dart';
 import '../widgets/brain_entity_card.dart';
+import '../widgets/brain_query_bar.dart';
 import 'brain_entity_detail_screen.dart';
 
 /// Entity list screen for a specific entity type.
+///
+/// Used both as a standalone screen (mobile) and as an embedded panel
+/// in the wide-layout split view.
 class BrainEntityListScreen extends ConsumerStatefulWidget {
   final String entityType;
-  final BrainSchema schema;
+  final BrainSchema? schema;
 
   const BrainEntityListScreen({
     required this.entityType,
-    required this.schema,
+    this.schema,
     super.key,
   });
 
@@ -49,11 +55,51 @@ class _BrainEntityListScreenState
     });
   }
 
+  void _onEntityTap(BuildContext context, WidgetRef ref, BrainEntity entity) {
+    final mode = ref.read(brainLayoutModeProvider);
+    if (mode == BrainLayoutMode.wide) {
+      ref.read(brainSelectedEntityProvider.notifier).state = entity.id;
+    } else {
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => BrainEntityDetailScreen(
+            entityId: entity.id,
+            schema: widget.schema,
+          ),
+        ),
+      );
+    }
+  }
+
+  bool _matchesFilters(BrainEntity entity, List<BrainFilterCondition> filters) {
+    for (final condition in filters) {
+      final fieldValue = entity.fields[condition.fieldName];
+      final rawValue = fieldValue?.toString() ?? '';
+
+      final condValue = switch (condition.value) {
+        StringFilterValue v => v.value,
+        EnumFilterValue v => v.value,
+        LinkFilterValue v => v.entityId,
+        IntFilterValue v => v.value.toString(),
+      };
+
+      final matches = switch (condition.operator) {
+        'eq' => rawValue == condValue,
+        'neq' => rawValue != condValue,
+        'contains' => rawValue.toLowerCase().contains(condValue.toLowerCase()),
+        _ => true,
+      };
+      if (!matches) return false;
+    }
+    return true;
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final entitiesAsync = ref.watch(brainEntityListProvider(widget.entityType));
     final searchQuery = ref.watch(brainSearchQueryProvider);
+    final activeFilters = ref.watch(brainActiveFiltersProvider);
 
     return Column(
       children: [
@@ -85,6 +131,9 @@ class _BrainEntityListScreenState
             ),
           ),
         ),
+
+        // Query filter bar (shown when schema has fields)
+        BrainQueryBar(schema: widget.schema),
 
         // Entity list
         Expanded(
@@ -128,27 +177,28 @@ class _BrainEntityListScreenState
               ),
             ),
             data: (entities) {
-              // Filter entities by search query
-              final filteredEntities = searchQuery.isEmpty
+              // Apply text search filter
+              var filteredEntities = searchQuery.isEmpty
                   ? entities
                   : entities.where((entity) {
                       final name = entity.displayName.toLowerCase();
                       final query = searchQuery.toLowerCase();
-
-                      // Search in name
                       if (name.contains(query)) return true;
-
-                      // Search in tags
-                      if (entity.tags.any((tag) => tag.toLowerCase().contains(query))) {
-                        return true;
-                      }
-
-                      // Search in field values
+                      if (entity.tags.any((tag) => tag.toLowerCase().contains(query))) return true;
                       return entity.fields.values.any((value) {
                         if (value == null) return false;
                         return value.toString().toLowerCase().contains(query);
                       });
                     }).toList();
+
+              // Apply active filter conditions (client-side).
+              // O(N * filters) — safe at limit=100 (current cap).
+              // Move to server-side WOQL WHERE if limit exceeds 500.
+              if (activeFilters.isNotEmpty) {
+                filteredEntities = filteredEntities
+                    .where((e) => _matchesFilters(e, activeFilters))
+                    .toList();
+              }
 
               if (filteredEntities.isEmpty) {
                 return Center(
@@ -203,17 +253,12 @@ class _BrainEntityListScreenState
                     final entity = filteredEntities[index];
                     return BrainEntityCard(
                       entity: entity,
-                      schema: widget.schema,
-                      onTap: () {
-                        Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (context) => BrainEntityDetailScreen(
-                              entityId: entity.id,
-                              schema: widget.schema,
-                            ),
+                      schema: widget.schema ??
+                          BrainSchema(
+                            id: widget.entityType,
+                            name: widget.entityType,
                           ),
-                        );
-                      },
+                      onTap: () => _onEntityTap(context, ref, entity),
                     );
                   },
                 ),

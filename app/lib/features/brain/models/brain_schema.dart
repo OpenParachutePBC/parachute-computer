@@ -1,5 +1,46 @@
 import 'brain_field.dart';
 
+/// Richer schema detail returned by /api/brain/types.
+/// Includes entity count and is used by the sidebar and type manager.
+class BrainSchemaDetail {
+  final String name;
+  final String? description;
+  final String? keyStrategy;
+  final List<BrainField> fields;
+  /// -1 means "not fetched" (> 20 types). Flutter shows "—" as count.
+  final int entityCount;
+
+  const BrainSchemaDetail({
+    required this.name,
+    this.description,
+    this.keyStrategy,
+    required this.fields,
+    required this.entityCount,
+  });
+
+  factory BrainSchemaDetail.fromJson(Map<String, dynamic> json) {
+    final fieldsList = (json['fields'] as List<dynamic>? ?? [])
+        .map((f) => BrainField.fromListJson(f as Map<String, dynamic>))
+        .toList();
+    return BrainSchemaDetail(
+      name: json['name'] as String,
+      description: json['description'] as String?,
+      keyStrategy: json['key_strategy'] as String?,
+      fields: fieldsList,
+      entityCount: json['entity_count'] as int? ?? -1,
+    );
+  }
+
+  /// Convert to a [BrainSchema] for compatibility with existing widgets.
+  BrainSchema toSchema() => BrainSchema(
+        id: name,
+        name: name,
+        description: description,
+        fields: fields,
+        keyStrategy: keyStrategy,
+      );
+}
+
 /// Schema definition for an entity type in Brain.
 class BrainSchema {
   final String id;

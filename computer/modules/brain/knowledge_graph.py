@@ -354,7 +354,6 @@ class KnowledgeGraphService:
         Uses asyncio.gather() for concurrent count queries (O(1) parallel latency).
         If > 20 types, skips counts (returns -1) to avoid too many connections.
         """
-        from .module import BrainModule  # avoid circular — used only for _format_field
         self._ensure_connected()
 
         def _list_class_docs_sync() -> list[dict[str, Any]]:
@@ -414,6 +413,18 @@ class KnowledgeGraphService:
                 t["entity_count"] = count if isinstance(count, int) else -1
 
         return types
+
+    async def list_all_schema_docs(self) -> list[dict[str, Any]]:
+        """Return all schema graph documents (Enums + Classes) for cache reload."""
+        self._ensure_connected()
+
+        def _fetch():
+            with self._client_lock:
+                class_docs = list(self.client.query_document({"@type": "Class"}, graph_type="schema"))
+                enum_docs = list(self.client.query_document({"@type": "Enum"}, graph_type="schema"))
+                return enum_docs + class_docs
+
+        return await asyncio.to_thread(_fetch)
 
     def _validate_type_name(self, name: str) -> None:
         """Raise ValueError if name is reserved or malformed."""
