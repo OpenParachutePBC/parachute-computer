@@ -1682,6 +1682,8 @@ class TestDiscordVoiceMessage:
         """Build a minimal mock discord.Message with an audio attachment."""
         attachment = MagicMock()
         attachment.content_type = content_type
+        attachment.filename = "voice_message.ogg"  # required by _is_audio_attachment
+        attachment.size = 1024  # 1 KB — well within MAX_AUDIO_BYTES limit
         attachment.read = AsyncMock(return_value=b"fake-audio-bytes")
 
         msg = MagicMock()
@@ -1939,15 +1941,12 @@ class TestDiscordSlashAck:
 
 
 class TestDiscordRingBuffer:
-    def test_group_message_recorded_before_user_gate(self):
-        """Group messages are recorded in the ring buffer regardless of auth."""
-        from parachute.connectors.base import GroupMessage
+    @pytest.mark.asyncio
+    async def test_disallowed_user_message_not_recorded(self):
+        """Disallowed users' messages are NOT recorded in the ring buffer."""
+        import discord
 
         connector = _make_discord_connector(allowed_users=[])  # No allowed users
-
-        # Simulate an incoming group message from an unauthorized user
-        channel = MagicMock()
-        channel.id = "ch42"
 
         msg = MagicMock()
         msg.author.id = "stranger"
@@ -1955,28 +1954,49 @@ class TestDiscordRingBuffer:
         msg.content = "hi everyone"
         msg.created_at = datetime.now(timezone.utc)
         msg.id = 9999
-
-        # Trigger the recording manually (as on_text_message would)
-        import discord
-
         msg.channel = MagicMock(spec=discord.TextChannel)
         msg.channel.id = "ch42"
+        msg.reply = AsyncMock()
 
-        # Record directly to verify the method
-        connector.group_history.record(
-            "ch42",
-            GroupMessage(
-                user_display=msg.author.display_name,
-                text=msg.content,
-                timestamp=msg.created_at,
-                message_id=msg.id,
-            ),
-        )
+        await connector.on_text_message(msg, None)
 
+        # Disallowed user's message must not appear in the ring buffer
         recent = connector.group_history.get_recent("ch42")
+        assert len(recent) == 0
+
+    @pytest.mark.asyncio
+    async def test_allowed_user_message_recorded_before_mention_gate(self):
+        """Allowed users' messages are recorded even if bot isn't mentioned."""
+        import discord
+
+        connector = _make_discord_connector(
+            allowed_users=["user1"],
+            group_mention_mode="mention_only",
+        )
+        connector.server = SimpleNamespace(database=None)
+        # Mock the Discord client so the mention gate can evaluate
+        connector._client = MagicMock()
+        connector._client.user = MagicMock()
+
+        msg = MagicMock()
+        msg.author.id = "user1"
+        msg.author.display_name = "Alice"
+        msg.content = "hello channel"
+        msg.created_at = datetime.now(timezone.utc)
+        msg.id = 1234
+        msg.channel = MagicMock(spec=discord.TextChannel)
+        msg.channel.id = "ch99"
+        msg.guild = MagicMock()  # Group context
+        # Bot not mentioned — message will be silently ignored after recording
+        msg.mentions = []
+        msg.reply = AsyncMock()
+
+        await connector.on_text_message(msg, None)
+
+        # Message should be recorded even though bot wasn't mentioned
+        recent = connector.group_history.get_recent("ch99")
         assert len(recent) == 1
-        assert recent[0].text == "hi everyone"
-        assert recent[0].user_display == "Stranger"
+        assert recent[0].text == "hello channel"
 
     def test_get_group_history_method_does_not_exist(self):
         """_get_group_history was deleted; it should not exist on DiscordConnector."""

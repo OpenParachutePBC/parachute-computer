@@ -38,6 +38,9 @@ except ImportError:
 # Matrix event limit is 65KB; 25K text leaves room for HTML + metadata
 MATRIX_MAX_MESSAGE_LENGTH = 25000
 
+# Maximum audio download size — prevents memory exhaustion from large uploads
+MAX_AUDIO_BYTES = 10 * 1024 * 1024  # 10 MB
+
 # Ghost user prefixes for bridge detection (mautrix bridges)
 BRIDGE_GHOST_PREFIXES = ["meta", "telegram", "discord", "signal", "whatsapp"]
 
@@ -514,6 +517,21 @@ class MatrixConnector(BotConnector):
         if not is_authorized:
             return
 
+        # Check audio size before downloading (uses Matrix event info field)
+        event_content = getattr(event, "source", {})
+        if isinstance(event_content, dict):
+            event_content = event_content.get("content", {}) or {}
+        audio_info = event_content.get("info", {}) if isinstance(event_content, dict) else {}
+        audio_size = audio_info.get("size", 0) if isinstance(audio_info, dict) else 0
+        if audio_size and audio_size > MAX_AUDIO_BYTES:
+            limit_mb = MAX_AUDIO_BYTES // (1024 * 1024)
+            size_mb = audio_size // (1024 * 1024)
+            await self._send_room_message(
+                room_id,
+                f"Audio file too large ({size_mb} MB). Maximum is {limit_mb} MB.",
+            )
+            return
+
         # Download audio from homeserver
         if not self._client:
             return
@@ -816,16 +834,16 @@ class MatrixConnector(BotConnector):
 
                 elif event_type == "typed_error":
                     title = event.get("title", "Error") if isinstance(event, dict) else getattr(event, "title", "Error")
-                    message = event.get("message", "") if isinstance(event, dict) else getattr(event, "message", "")
-                    error_text = f"{title}: {message}" if message else title
+                    event_msg = event.get("message", "") if isinstance(event, dict) else getattr(event, "message", "")
+                    error_text = f"{title}: {event_msg}" if event_msg else title
                     logger.error(f"Orchestrator typed error: {error_text}")
                     response_text += f"\n\n⚠️ {error_text}"
                     error_occurred = True
 
                 elif event_type == "warning":
                     title = event.get("title", "Warning") if isinstance(event, dict) else getattr(event, "title", "Warning")
-                    message = event.get("message", "") if isinstance(event, dict) else getattr(event, "message", "")
-                    warning_text = f"{title}: {message}" if message else title
+                    event_msg = event.get("message", "") if isinstance(event, dict) else getattr(event, "message", "")
+                    warning_text = f"{title}: {event_msg}" if event_msg else title
                     logger.warning(f"Orchestrator warning: {warning_text}")
                     response_text += f"\n\n⚠️ {warning_text}"
             logger.info(f"Matrix orchestration: {event_count} events, {len(response_text)} chars response")

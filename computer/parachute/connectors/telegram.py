@@ -499,7 +499,7 @@ class TelegramConnector(BotConnector):
 
         try:
             voice_file = await voice.get_file()
-            transcriber = getattr(self.server, "transcribe", None)
+            transcriber = getattr(self.server, "transcribe_audio", None)
             if transcriber:
                 ogg_path = await voice_file.download_to_drive()
                 text = await transcriber(str(ogg_path))
