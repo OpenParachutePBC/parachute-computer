@@ -17,14 +17,25 @@ import yaml
 
 # Env vars that must never be overridden by user-supplied credentials.
 _BLOCKED_ENV_VARS: frozenset[str] = frozenset({
+    # Auth tokens
     "CLAUDE_CODE_OAUTH_TOKEN",
+    # Path / loader hijacking
     "PATH",
     "LD_PRELOAD",
     "LD_LIBRARY_PATH",
+    # User identity
     "HOME",
     "USER",
     "SHELL",
+    # Python interpreter control — prevent startup-file injection and mode forcing
     "PYTHONPATH",
+    "PYTHONSTARTUP",    # Executes a file at interpreter startup (before entrypoint runs)
+    "PYTHONINSPECT",    # Forces interactive mode after script completion
+    "PYTHONASYNCIODEBUG",
+    "PYTHONMALLOC",
+    "PYTHONFAULTHANDLER",
+    # Node.js execution control
+    "NODE_OPTIONS",
 })
 
 _cache: dict[str, str] | None = None
@@ -52,7 +63,7 @@ def load_credentials(vault_path: Path) -> dict[str, str]:
         return _cache
 
     try:
-        data = yaml.safe_load(path.read_text()) or {}
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     except Exception:
         # Parse error — return stale cache if available, else empty
         return _cache or {}

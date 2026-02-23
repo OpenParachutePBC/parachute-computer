@@ -24,7 +24,7 @@ import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import AsyncGenerator, Optional
+from typing import Any, AsyncGenerator
 
 from parachute.core.validation import validate_workspace_slug
 from parachute.lib.credentials import load_credentials
@@ -59,12 +59,12 @@ class AgentSandboxConfig:
     network_enabled: bool = False
     timeout_seconds: int = 300  # 5 minute default
     plugin_dirs: list[Path] = field(default_factory=list)
-    mcp_servers: Optional[dict] = None  # Filtered MCP configs to pass to container
-    agents: Optional[dict] = None
-    working_directory: Optional[str] = None  # /vault/... absolute path for container CWD
-    model: Optional[str] = None  # Model to use (e.g., "claude-opus-4-6")
-    system_prompt: Optional[str] = None  # System prompt to pass to SDK inside container
-    session_source: Optional[SessionSource] = None  # Used to gate credential injection
+    mcp_servers: dict[str, Any] | None = None  # Filtered MCP configs to pass to container
+    agents: dict[str, Any] | None = None
+    working_directory: str | None = None  # /vault/... absolute path for container CWD
+    model: str | None = None  # Model to use (e.g., "claude-opus-4-6")
+    system_prompt: str | None = None  # System prompt to pass to SDK inside container
+    session_source: SessionSource | None = None  # Used to gate credential injection
 
 
 class DockerSandbox:
@@ -73,10 +73,10 @@ class DockerSandbox:
     # Re-check Docker availability every 60 seconds
     _CACHE_TTL = 60
 
-    def __init__(self, vault_path: Path, claude_token: Optional[str] = None):
+    def __init__(self, vault_path: Path, claude_token: str | None = None):
         self.vault_path = vault_path
         self.claude_token = claude_token
-        self._docker_available: Optional[bool] = None
+        self._docker_available: bool | None = None
         self._checked_at: float = 0
         # Per-workspace locks to prevent race conditions in ensure_container
         self._slug_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
@@ -541,7 +541,7 @@ class DockerSandbox:
             )
             return container_name
 
-    async def _inspect_status(self, container_name: str) -> Optional[str]:
+    async def _inspect_status(self, container_name: str) -> str | None:
         """Get container status via docker inspect. Returns None if not found."""
         proc = await asyncio.create_subprocess_exec(
             "docker", "inspect", "-f", "{{.State.Status}}", container_name,
@@ -727,9 +727,10 @@ class DockerSandbox:
             if capabilities:
                 stdin_payload["capabilities"] = capabilities
 
-            # Inject credentials for non-bot sessions only.
-            # Bot sessions (Telegram/Discord/Matrix) never receive host credentials.
-            if config.session_source not in BOT_SOURCES:
+            # Inject credentials for known non-bot sources only.
+            # Require explicit non-bot confirmation: None (unknown caller) gets no credentials.
+            # Bot sessions (Telegram/Discord/Matrix) and unknown sources never receive host credentials.
+            if config.session_source is not None and config.session_source not in BOT_SOURCES:
                 creds = load_credentials(self.vault_path)
                 if creds:
                     logger.debug(

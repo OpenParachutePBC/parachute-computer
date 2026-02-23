@@ -127,12 +127,10 @@ BOT_SOURCES: frozenset[SessionSource] = frozenset({
     SessionSource.DISCORD,
     SessionSource.MATRIX,
 })
-"""Session sources that originate from bot connectors.
-
-Used to differentiate bot-initiated sessions from app-initiated ones,
-e.g. for Docker unavailability fallback: bot sessions fall back to direct
-execution while app sessions surface the error to the user.
-"""
+# Session sources that originate from external bot connectors.
+# Used for two security gates:
+# 1. Credential injection: bot sessions receive empty credentials (never host secrets).
+# 2. Docker unavailability: bot sessions hard-fail; app sessions fall through to direct execution.
 
 
 class Session(BaseModel):

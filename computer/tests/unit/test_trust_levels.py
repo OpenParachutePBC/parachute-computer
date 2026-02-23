@@ -20,7 +20,7 @@ from parachute.core.sandbox import (
     AgentSandboxConfig,
     DockerSandbox,
     SANDBOX_IMAGE,
-    CONTAINER_MEMORY_LIMIT,
+    CONTAINER_MEMORY_LIMIT_EPHEMERAL,
     CONTAINER_CPU_LIMIT,
 )
 from parachute.core.module_loader import (
@@ -232,7 +232,7 @@ class TestDockerSandbox:
         assert "--network" in args
         assert "none" in args
         assert "--memory" in args
-        assert CONTAINER_MEMORY_LIMIT in args
+        assert CONTAINER_MEMORY_LIMIT_EPHEMERAL in args
 
     def test_build_run_args_network_enabled(self, vault_path):
         sandbox = DockerSandbox(vault_path=vault_path)

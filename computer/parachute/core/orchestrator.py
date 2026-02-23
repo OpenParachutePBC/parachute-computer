@@ -373,12 +373,20 @@ class Orchestrator:
         effective_custom_prompt = system_prompt or override_system_prompt
 
         # Build system prompt (after loading prior conversation, with working dir)
+        # Only surface credential discoverability for non-bot sessions — bot sessions
+        # receive empty credentials, so advertising pre-authenticated tools would mislead the agent.
+        prompt_cred_keys = (
+            set(load_credentials(self.vault_path).keys())
+            if session.source not in BOT_SOURCES
+            else set()
+        )
         effective_prompt, prompt_metadata = await self._build_system_prompt(
             agent=agent,
             custom_prompt=effective_custom_prompt,
             contexts=contexts,
             prior_conversation=effective_prior_conversation,
             working_directory=effective_working_dir,
+            credential_keys=prompt_cred_keys,
         )
 
         logger.info(
@@ -1440,6 +1448,7 @@ class Orchestrator:
         contexts: Optional[list[str]] = None,
         prior_conversation: Optional[str] = None,
         working_directory: Optional[str] = None,
+        credential_keys: Optional[set[str]] = None,
     ) -> tuple[str, dict[str, Any]]:
         """
         Build the system prompt additions.
@@ -1597,7 +1606,8 @@ The user is now continuing this conversation with you. Respond naturally as if y
 
         # Credential discoverability — tell the agent which CLI tools are pre-authenticated
         # so it can use them proactively without being explicitly asked.
-        cred_keys = set(load_credentials(self.vault_path).keys())
+        # credential_keys is pre-filtered at the call site (empty for bot sessions).
+        cred_keys = credential_keys or set()
         if cred_keys:
             tools: list[str] = []
             if "GH_TOKEN" in cred_keys:
