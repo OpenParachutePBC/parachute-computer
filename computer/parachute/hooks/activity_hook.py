@@ -28,6 +28,7 @@ Hook Configuration (in .claude/settings.json):
 
 import asyncio
 import json
+import os
 import sys
 import logging
 from datetime import datetime
@@ -131,13 +132,18 @@ async def handle_stop_hook(hook_input: dict) -> None:
             summary=summary,
         )
 
-        # 6. Persist summary to session record
-        if summary:
-            await update_session_summary(session_id, summary)
-
-        # 7. Update session title if changed (and user hasn't renamed it)
-        if not user_renamed and new_title and new_title != "NO_CHANGE" and new_title != session_title:
-            await update_session_title(session_id, new_title, title_source="ai")
+        # 6. Persist title and/or summary via the server API
+        title_to_write = (
+            new_title
+            if not user_renamed and new_title and new_title != "NO_CHANGE" and new_title != session_title
+            else None
+        )
+        if title_to_write or summary:
+            await update_session_metadata(
+                session_id,
+                title=title_to_write,
+                summary=summary or None,
+            )
 
     except Exception as e:
         # Fire-and-forget - log but don't fail
@@ -247,34 +253,43 @@ def read_last_exchange(transcript_path: Path) -> Optional[dict]:
     }
 
 
-async def _get_db():
-    """Open a direct database connection for hook subprocess use.
+def _get_server_url() -> str:
+    """Return the Parachute server base URL reachable from this process.
 
-    The server process's get_database() singleton is not available in hook
-    subprocesses. We open our own connection directly to the DB file,
-    mirroring what mcp_server.py does.
+    Inside a Docker sandbox, localhost points to the container — use the
+    Docker host gateway instead. Outside Docker, localhost is correct.
     """
-    from parachute.config import get_settings
-    from parachute.db.database import Database
+    port = os.environ.get("PARACHUTE_SERVER_PORT", "3333")
+    if Path("/.dockerenv").exists():
+        return f"http://host.docker.internal:{port}"
+    return f"http://localhost:{port}"
 
-    settings = get_settings()
-    db_path = settings.vault_path / "Chat" / "sessions.db"
-    db = Database(db_path)
-    await db.connect()
-    return db
+
+class _SessionStub:
+    """Minimal session-like object built from the API GET response."""
+
+    def __init__(self, data: dict):
+        self.title = data.get("title")
+        self.metadata = data.get("metadata") or {}
+        self._agent_type = data.get("agent_type")
+
+    def get_agent_type(self) -> Optional[str]:
+        return self._agent_type or self.metadata.get("agent_type")
 
 
 async def _get_session(session_id: str) -> Optional[Any]:
-    """Fetch a session from the database. Returns None on any failure."""
+    """Fetch a session via the Parachute server API. Returns None on any failure."""
     try:
-        db = await _get_db()
-        try:
-            return await db.get_session(session_id)
-        finally:
-            await db.close()
+        import httpx
+
+        url = f"{_get_server_url()}/api/sessions/{session_id}"
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(url, timeout=5.0)
+        if resp.status_code == 200:
+            return _SessionStub(resp.json())
     except Exception as e:
         logger.debug(f"Failed to fetch session {session_id[:8]}: {e}")
-        return None
+    return None
 
 
 async def call_summarizer(
@@ -428,41 +443,32 @@ async def append_activity_log(
         f.write(json.dumps(entry) + "\n")
 
 
-async def update_session_title(
-    session_id: str, new_title: str, title_source: str = "ai"
+async def update_session_metadata(
+    session_id: str,
+    *,
+    title: Optional[str] = None,
+    summary: Optional[str] = None,
 ) -> None:
-    """Update session title and title_source in the database."""
-    try:
-        from parachute.models.session import SessionUpdate
+    """Update session title and/or summary via the Parachute server API.
 
-        session = await _get_session(session_id)
-        metadata = dict(session.metadata or {}) if session and session.metadata else {}
-        metadata["title_source"] = title_source
-        db = await _get_db()
-        try:
-            await db.update_session(
-                session_id, SessionUpdate(title=new_title, metadata=metadata)
-            )
-        finally:
-            await db.close()
-    except Exception as e:
-        logger.warning(f"Failed to update session title: {e}")
-
-
-async def update_session_summary(session_id: str, summary: str) -> None:
-    """Persist AI-generated summary to the session record."""
-    if not summary:
+    The server handles the title_source guard (won't overwrite user-set titles).
+    Fire-and-forget: failures are logged but never raised.
+    """
+    payload = {}
+    if title is not None:
+        payload["title"] = title
+    if summary is not None:
+        payload["summary"] = summary
+    if not payload:
         return
     try:
-        from parachute.models.session import SessionUpdate
+        import httpx
 
-        db = await _get_db()
-        try:
-            await db.update_session(session_id, SessionUpdate(summary=summary))
-        finally:
-            await db.close()
+        url = f"{_get_server_url()}/api/sessions/{session_id}/metadata"
+        async with httpx.AsyncClient() as client:
+            await client.patch(url, json=payload, timeout=5.0)
     except Exception as e:
-        logger.debug(f"Failed to update session summary: {e}")
+        logger.debug(f"Failed to update session metadata: {e}")
 
 
 if __name__ == "__main__":

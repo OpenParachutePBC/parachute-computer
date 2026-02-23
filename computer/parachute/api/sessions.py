@@ -12,6 +12,13 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
+class SessionMetadataUpdate(BaseModel):
+    """Request body for updating AI-generated session metadata (title and/or summary)."""
+
+    title: Optional[str] = Field(None, description="AI-generated session title")
+    summary: Optional[str] = Field(None, description="AI-generated session summary")
+
+
 class SessionConfigUpdate(BaseModel):
     """Request body for updating session configuration."""
 
@@ -237,6 +244,47 @@ async def activate_session(
         "success": True,
         "session": updated.model_dump(by_alias=True) if updated else None,
     }
+
+
+@router.patch("/chat/{session_id}/metadata")
+async def update_session_metadata(
+    request: Request,
+    session_id: str,
+    body: SessionMetadataUpdate,
+) -> dict[str, Any]:
+    """
+    Update AI-generated session metadata (title and/or summary).
+
+    Called by the activity hook after each exchange. Respects user-set titles:
+    if title_source == "user", the title field is silently ignored.
+    """
+    db = request.app.state.database
+    if not db:
+        raise HTTPException(status_code=503, detail="Database not ready")
+
+    session = await db.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    from parachute.models.session import SessionUpdate
+
+    update = SessionUpdate()
+
+    if body.title is not None:
+        title_source = (session.metadata or {}).get("title_source")
+        if title_source != "user":
+            metadata = dict(session.metadata or {})
+            metadata["title_source"] = "ai"
+            update.title = body.title
+            update.metadata = metadata
+
+    if body.summary is not None:
+        update.summary = body.summary
+
+    if update.title is not None or update.summary is not None:
+        await db.update_session(session_id, update)
+
+    return {"success": True}
 
 
 @router.patch("/chat/{session_id}/config")
