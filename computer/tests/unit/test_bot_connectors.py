@@ -2049,3 +2049,205 @@ class TestDiscordRingBuffer:
         assert "<group_context>" in prompt
         assert "Alice" in prompt
         assert "Hello world" in prompt
+
+
+# ---------------------------------------------------------------------------
+# Command registry tests
+# ---------------------------------------------------------------------------
+
+
+class TestCommandRegistry:
+    """Tests for BotConnector command registry (register_command, dispatch_command,
+    and shared handler implementations)."""
+
+    # -- Registry mechanics --------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_register_and_dispatch(self):
+        """A registered handler is called and returns its response string."""
+        connector = _make_test_connector()
+
+        async def _handler(chat_id, sender, args):
+            return f"hello from {chat_id}"
+
+        connector.register_command("ping", _handler, "Ping the bot")
+        result = await connector.dispatch_command("ping", "chat1", "user1", [])
+        assert result == "hello from chat1"
+
+    @pytest.mark.asyncio
+    async def test_unknown_command_returns_none(self):
+        """dispatch_command returns None for an unregistered command name."""
+        connector = _make_test_connector()
+        result = await connector.dispatch_command("xyz", "chat1", "user1", [])
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_display_only_command_returns_none(self):
+        """A command registered with handler=None is not dispatchable."""
+        connector = _make_test_connector()
+        connector.register_command("platform-cmd", None, "Platform specific")
+        result = await connector.dispatch_command("platform-cmd", "chat1", "user1", [])
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_aliases_dispatch_correctly(self):
+        """Aliased command names route to the same handler."""
+        connector = _make_test_connector()
+
+        async def _handler(chat_id, sender, args):
+            return "journal result"
+
+        connector.register_command("journal", _handler, "Journal", aliases=["j"])
+        result = await connector.dispatch_command("j", "chat1", "user1", ["entry"])
+        assert result == "journal result"
+
+    def test_shared_commands_registered_on_init(self):
+        """new, journal (and alias j), help are registered on BotConnector init."""
+        connector = _make_test_connector()
+        assert "new" in connector._commands
+        assert "journal" in connector._commands
+        assert "j" in connector._commands
+        assert "help" in connector._commands
+
+    def test_display_only_appears_in_commands(self):
+        """A display-only command is present in _commands but has no handler."""
+        connector = _make_test_connector()
+        connector.register_command("status", None, "Show status")
+        assert "status" in connector._commands
+        assert connector._commands["status"].handler is None
+
+    # -- _shared_cmd_new -----------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_shared_cmd_new_archives_existing_session(self):
+        """_shared_cmd_new archives the existing session when one is found."""
+        mock_session = MagicMock()
+        mock_session.id = "session-abc-123"
+        mock_db = MagicMock()
+        mock_db.get_session_by_bot_link = AsyncMock(return_value=mock_session)
+        mock_db.archive_session = AsyncMock()
+
+        connector = _make_test_connector(server=SimpleNamespace(database=mock_db))
+        response = await connector.dispatch_command("new", "chat1", "user1", [])
+
+        mock_db.archive_session.assert_called_once_with("session-abc-123")
+        assert "Starting fresh" in response
+
+    @pytest.mark.asyncio
+    async def test_shared_cmd_new_no_existing_session(self):
+        """_shared_cmd_new succeeds silently when no session exists."""
+        mock_db = MagicMock()
+        mock_db.get_session_by_bot_link = AsyncMock(return_value=None)
+        mock_db.archive_session = AsyncMock()
+
+        connector = _make_test_connector(server=SimpleNamespace(database=mock_db))
+        response = await connector.dispatch_command("new", "chat1", "user1", [])
+
+        mock_db.archive_session.assert_not_called()
+        assert "Starting fresh" in response
+
+    @pytest.mark.asyncio
+    async def test_shared_cmd_new_no_database(self):
+        """_shared_cmd_new returns a message even when db is unavailable."""
+        connector = _make_test_connector(server=SimpleNamespace())
+        response = await connector.dispatch_command("new", "chat1", "user1", [])
+        assert "Starting fresh" in response
+
+    # -- _shared_cmd_journal -------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_shared_cmd_journal_empty_args(self):
+        """_shared_cmd_journal returns a usage hint when no content given."""
+        connector = _make_test_connector()
+        response = await connector.dispatch_command("journal", "chat1", "user1", [])
+        assert "Please provide" in response
+
+    @pytest.mark.asyncio
+    async def test_shared_cmd_journal_no_daily_module(self):
+        """_shared_cmd_journal returns informative message when Daily is unavailable."""
+        connector = _make_test_connector(server=SimpleNamespace())
+        response = await connector.dispatch_command(
+            "journal", "chat1", "user1", ["my", "entry"]
+        )
+        assert "Daily module not available" in response
+
+    @pytest.mark.asyncio
+    async def test_shared_cmd_journal_creates_entry(self):
+        """_shared_cmd_journal calls create_journal_entry with correct args."""
+        mock_result = MagicMock()
+        mock_result.title = "My Entry"
+        mock_create = AsyncMock(return_value=mock_result)
+
+        connector = _make_test_connector(
+            server=SimpleNamespace(create_journal_entry=mock_create)
+        )
+        response = await connector.dispatch_command(
+            "journal", "chat1", "user1", ["my", "entry", "text"]
+        )
+
+        mock_create.assert_called_once()
+        call_kwargs = mock_create.call_args.kwargs
+        assert call_kwargs["content"] == "my entry text"
+        assert call_kwargs["source"] == "test"  # connector.platform
+        assert "Journal entry saved: My Entry" in response
+
+    @pytest.mark.asyncio
+    async def test_shared_cmd_journal_handles_exception(self):
+        """_shared_cmd_journal returns an error string on exception."""
+        mock_create = AsyncMock(side_effect=RuntimeError("oops"))
+
+        connector = _make_test_connector(
+            server=SimpleNamespace(create_journal_entry=mock_create)
+        )
+        response = await connector.dispatch_command(
+            "journal", "chat1", "user1", ["entry"]
+        )
+        assert "Failed to save" in response
+
+    # -- _shared_cmd_help ----------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_shared_cmd_help_lists_all_commands(self):
+        """_shared_cmd_help output includes all registered command names."""
+        connector = _make_test_connector()
+        connector.register_command("ping", None, "Ping the bot")
+        response = await connector.dispatch_command("help", "chat1", "user1", [])
+
+        assert "new" in response
+        assert "journal" in response
+        assert "help" in response
+        assert "ping" in response
+
+    @pytest.mark.asyncio
+    async def test_shared_cmd_help_shows_alias(self):
+        """_shared_cmd_help includes alias information for journal command."""
+        connector = _make_test_connector()
+        response = await connector.dispatch_command("help", "chat1", "user1", [])
+        # journal alias 'j' should appear in the help output
+        assert "j" in response
+
+    # -- Matrix _handle_command via registry ---------------------------------
+
+    @pytest.mark.asyncio
+    async def test_matrix_dispatch_strips_bang_prefix(self):
+        """MatrixConnector._handle_command strips ! prefix and routes via registry."""
+        connector = _make_matrix_connector()
+        mock_db = MagicMock()
+        mock_db.get_session_by_bot_link = AsyncMock(return_value=None)
+        connector.server = SimpleNamespace(database=mock_db)
+
+        # Patch _send_room_message to capture output
+        connector._send_room_message = AsyncMock()
+
+        await connector._handle_command("room1", "user1", "!new", "dm")
+
+        connector._send_room_message.assert_called_once()
+        args = connector._send_room_message.call_args[0]
+        assert "Starting fresh" in args[1]  # plain text body
+
+    @pytest.mark.asyncio
+    async def test_matrix_unknown_command_returns_false(self):
+        """MatrixConnector._handle_command returns False for unknown commands."""
+        connector = _make_matrix_connector()
+        result = await connector._handle_command("room1", "user1", "!unknown", "dm")
+        assert result is False
