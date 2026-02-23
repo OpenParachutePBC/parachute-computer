@@ -173,6 +173,26 @@ async def run():
     # Token: prefer stdin payload (persistent mode), fall back to env var (ephemeral mode)
     oauth_token = request.get("claude_token") or os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
 
+    # Apply injected credentials to environment before SDK initialisation.
+    # Values come from vault/.parachute/credentials.yaml (server-side) and are
+    # forwarded via the stdin JSON payload — never via --env-file or -e flags.
+    # Defense-in-depth: maintain a local denylist here even though the server
+    # already filters via _BLOCKED_ENV_VARS — a compromised server plugin should
+    # not be able to smuggle interpreter-control variables into the container.
+    _ENTRYPOINT_BLOCKED = frozenset({
+        "CLAUDE_CODE_OAUTH_TOKEN", "PATH", "LD_PRELOAD", "LD_LIBRARY_PATH",
+        "HOME", "USER", "SHELL", "PYTHONPATH", "PYTHONSTARTUP", "PYTHONINSPECT",
+        "PYTHONASYNCIODEBUG", "PYTHONMALLOC", "PYTHONFAULTHANDLER", "NODE_OPTIONS",
+    })
+    for key, value in request.get("credentials", {}).items():
+        if (
+            key
+            and isinstance(value, str)
+            and key not in _ENTRYPOINT_BLOCKED
+            and re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', key)  # valid env var name
+        ):
+            os.environ[key] = value
+
     # Set working directory: prefer explicit PARACHUTE_CWD, else session scratch dir
     cwd = os.environ.get("PARACHUTE_CWD")
     if cwd:

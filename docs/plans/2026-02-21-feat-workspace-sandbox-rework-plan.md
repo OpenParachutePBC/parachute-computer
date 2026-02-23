@@ -1,20 +1,21 @@
 ---
-title: "feat: Workspace & sandbox rework — sandboxed-by-default, scratch dirs, workspace UI"
+title: "feat: Workspace & sandbox rework — sandboxed-by-default, scratch dirs, workspace UI, credential injection"
 type: feat
 date: 2026-02-21
 issue: 62
-deepened: 2026-02-21
+deepened: 2026-02-22
 final-review: 2026-02-21
+status-updated: 2026-02-22
 ---
 
 # Workspace & Sandbox Rework
 
 ## Enhancement Summary
 
-**Deepened on:** 2026-02-21
-**Final review:** 2026-02-21 (9 agents: python-reviewer, performance-oracle, code-simplicity-reviewer, flutter-reviewer, architecture-strategist, parachute-conventions-reviewer, security-sentinel, pattern-recognition-specialist, docker-best-practices-researcher)
+**Deepened on:** 2026-02-22 (13 agents: python-reviewer, flutter-reviewer, security-sentinel, performance-oracle, architecture-strategist, code-simplicity-reviewer, parachute-conventions-reviewer, agent-native-reviewer, pattern-recognition-specialist, best-practices-researcher, framework-docs-researcher, spec-flow-analyzer, git-history-analyzer)
+**First review:** 2026-02-21 (9 agents: python-reviewer, performance-oracle, code-simplicity-reviewer, flutter-reviewer, architecture-strategist, parachute-conventions-reviewer, security-sentinel, pattern-recognition-specialist, docker-best-practices-researcher)
 
-### Key Improvements from Review
+### Key Improvements from Review (Round 1 — 2026-02-21)
 1. **Critical bug caught:** `_default` slug fails validation regex — use dedicated `run_default()` method
 2. **Security fix:** Docker fallback must NOT apply to bot sessions — external users get hard-fail, not bare metal
 3. **Consolidation:** Extract single `normalize_trust_level()` to replace 5-6 duplicate legacy maps
@@ -26,6 +27,36 @@ final-review: 2026-02-21
 9. **Migration safety:** v16 needs `schema_version` guard + v14 compatibility marking
 10. **MCP simplification:** Flat default list for v1, no overlay merge semantics
 11. **Scratch dir isolation is organizational, not security** — same UID, accepted trade-off for v1
+
+### Key Improvements from Research & Review (Round 2 — 2026-02-22)
+1. **CRITICAL security:** Credentials via stdin JSON, NOT env-file — `docker inspect` exposes all `--env-file` contents
+2. **CRITICAL correctness:** `CONTAINER_MEMORY_LIMIT = "512m"` will OOM under normal SDK usage — must be `"1.5g"`; CPU should be `"2.0"`; pids-limit should be `200`
+3. **CRITICAL label bug:** Container label is `type=default` but reconcile looks for `type=default-sandbox` — container will be orphaned on every restart
+4. **CRITICAL config hash:** `_calculate_config_hash` doesn't include new hardening flags — existing unhardened containers won't be recreated
+5. **Bot gating via set:** Use `BOT_SOURCES = {SessionSource.TELEGRAM, SessionSource.DISCORD, SessionSource.MATRIX}` — not string comparison
+6. **Chunk 4 may be skippable:** Simplicity reviewer (92%) says existing trust-level filter already passes sandboxed-annotated MCPs through — annotate `parachute` MCP in `.mcp.json` and skip Chunk 4 entirely
+7. **Flutter: AsyncNotifier not StateNotifier:** Full codebase already uses `AsyncNotifier` pattern (see `app_state_provider.dart`) — NOT `StateNotifier`
+8. **N+1 API call confirmed:** Existing `workspaceSessionsProvider` makes per-chip-tap HTTP calls — must replace with `Provider<AsyncValue<List<ChatSession>>>` doing client-side filtering
+9. **Process guard optimization:** `ps aux | wc -l` docker exec adds 80–150ms per message on macOS — use `docker stats --no-stream` with 1-second TTL cache
+10. **Flat credentials format:** Nested multi-service YAML adds ~50 LOC translation table with no benefit — flat `GH_TOKEN: value` format is simpler and more flexible
+11. **`credentials.py` goes in `lib/`:** It's a pure file-reading utility, not business logic — belongs alongside `lib/auth.py`, not `core/`
+12. **Agent-native gap:** No system prompt signal about which tools are authenticated — add credential discoverability to `_build_system_prompt`
+13. **Chunk ordering:** Implementation order should be 2 → 6 → 4 → 5 — credentials make tools functional before Chunk 4 exposes them
+
+---
+
+## Implementation Status (as of 2026-02-22)
+
+Verified against codebase by repo-research-analyst.
+
+| Chunk | Status | Remaining Work |
+|-------|--------|---------------|
+| 1. Trust level rename | ✅ Done | — |
+| 2. Default sandbox container | ⚠️ Partial | Missing: `--read-only`, `--memory-reservation`, `--ulimit`, named bridge `parachute-sandbox`, `--add-host`, bot differentiation, `effective_execution_mode` |
+| 3. Per-session scratch dirs | ✅ Done | — |
+| 4. Server-default MCP config | ❌ Not done | `default_capabilities` in `config.py`; capability filter in orchestrator |
+| 5. Workspace chat UI | ⚠️ Partial | `WorkspaceChipRow` not extracted; archived/search views not wired to workspace filter |
+| 6. Credential injection | ❌ Not done | `core/credentials.py`; sandbox.py injection; sample `credentials.yaml` |
 
 ---
 
@@ -39,13 +70,14 @@ The current system ties sandboxed execution to workspaces. Starting a casual cha
 
 ## Proposed Solution
 
-Five implementation chunks, ordered by dependency:
+Six implementation chunks, ordered by dependency:
 
-1. **Rename trust levels** — `untrusted` → `sandboxed`, `trusted` → `direct`
-2. **Default sandbox container** — always-running shared container for casual chats
-3. **Per-session scratch dirs** — `/scratch/{session_id}/` in every container
-4. **Server-default MCP config** — casual chats get MCPs without a workspace
-5. **Workspace-aware chat UI** — workspace switcher in chat tab
+1. **Rename trust levels** ✅ — `untrusted` → `sandboxed`, `trusted` → `direct`
+2. **Default sandbox container** ⚠️ — always-running shared container for casual chats (hardening flags missing)
+3. **Per-session scratch dirs** ✅ — `/scratch/{session_id}/` in every container
+4. **Server-default MCP config** ❌ — casual chats get MCPs without a workspace
+5. **Workspace-aware chat UI** ⚠️ — workspace switcher in chat tab (chip not extracted, filter not wired to archived/search)
+6. **Credential injection** ❌ — `vault/.parachute/credentials.yaml` tokens injected as env vars so `gh`, `aws`, `npm` work in sandboxed sessions
 
 **Separate PR:** Session archiving snackbar-undo (only missing piece — backend + Flutter UI already 90% done).
 **Deferred:** Workspace quick-create from New Chat (convenience layer), bot default workspace in `bots.yaml` (YAGNI — no user request).
@@ -56,7 +88,7 @@ Five implementation chunks, ordered by dependency:
 
 These are tightly coupled and form the base everything else builds on.
 
-#### Chunk 1: Trust Level Rename
+#### Chunk 1: Trust Level Rename ✅ Done
 
 Rename `untrusted` → `sandboxed`, `trusted` → `direct` across server and app. Legacy values continue to be accepted.
 
@@ -180,9 +212,9 @@ if not row:
 
 **Documentation:** Update `computer/CLAUDE.md` (line 41, 81-85) and `app/CLAUDE.md` (line 76) to reflect the new trust model.
 
-#### Chunk 2: Default Sandbox Container
+#### Chunk 2: Default Sandbox Container ⚠️ Partial
 
-An always-running shared container for casual chats.
+An always-running shared container for casual chats. `run_default()` and `ensure_default_container()` exist. **Still missing:** `--read-only`, `--memory-reservation`, `--ulimit` flags; named bridge network `parachute-sandbox`; `--add-host host.docker.internal:host-gateway`; bot vs. app session differentiation for Docker fallback; `effective_execution_mode` recording. Work needed in `sandbox.py:222-236` and `sandbox.py:553-589`.
 
 **Container name: `parachute-default`** (not `parachute-ws-_default`).
 
@@ -285,7 +317,108 @@ if int(result.strip()) > 150:
     return
 ```
 
-#### Chunk 3: Per-Session Scratch Dirs
+### Research Insights — Chunk 2
+
+**Concrete bugs to fix before landing (found by 6+ agents):**
+
+1. **Memory/CPU/PIDs constants are wrong** (`sandbox.py:43`):
+   ```python
+   # Current (wrong)          # Correct
+   CONTAINER_MEMORY_LIMIT = "512m"    →  "1.5g"
+   CONTAINER_CPU_LIMIT = "1.0"        →  "2.0"
+   # --pids-limit 100                 →  200
+   # Also add:
+   CONTAINER_MEMORY_RESERVATION = "512m"
+   ```
+   The 512m hard limit will OOM-kill under normal Claude SDK usage (SDK process alone consumes 200–400MB at peak). The 1.5g / 512m soft-reservation split allows ~5 concurrent sessions at 200–300MB each.
+
+2. **Container label mismatch** (`sandbox.py:788`) — current code sets `"type": "default"` but `reconcile()` and the plan both target `"type": "default-sandbox"`. Fix the label; otherwise the default container is orphaned on every server restart.
+
+3. **Config hash must include new flags** (`sandbox.py:132-137`):
+   ```python
+   def _calculate_config_hash(self) -> str:
+       # Include all container-spec values that affect security
+       config_str = (
+           f"{SANDBOX_IMAGE}:{CONTAINER_MEMORY_LIMIT}:{CONTAINER_CPU_LIMIT}"
+           f":read-only:pids200:parachute-sandbox"  # add new flags
+       )
+       return hashlib.sha256(config_str.encode()).hexdigest()[:12]
+   ```
+   Without this, `reconcile()` leaves existing unhardened containers running even after the new flags are deployed.
+
+4. **Named bridge network — is it YAGNI?** The simplicity reviewer (88%) argues the named bridge provides no user-visible benefit for a single-user local product — the default Docker bridge with `--add-host host.docker.internal:host-gateway` is sufficient. The architecture reviewer (81%) argues the named bridge is needed for DNS isolation. **Resolution:** Keep the named bridge (security > simplicity here; it's a one-time create at startup). But add `_ensure_network()` to `reconcile()`:
+   ```python
+   async def _ensure_network(self) -> None:
+       proc = await asyncio.create_subprocess_exec(
+           "docker", "network", "inspect", "parachute-sandbox",
+           stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+       )
+       await proc.wait()
+       if proc.returncode != 0:
+           await asyncio.create_subprocess_exec(
+               "docker", "network", "create", "--driver", "bridge",
+               "--label", "app=parachute", "parachute-sandbox",
+               stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+           )
+   ```
+
+5. **Process guard optimization** — `ps aux | wc -l` adds 80–150ms per exec on macOS. Replace with `docker stats --no-stream` plus 1-second TTL cache:
+   ```python
+   _pid_count_cache: dict[str, tuple[int, float]] = {}
+
+   async def _get_pid_count_cached(self, container_name: str) -> int:
+       cached = self._pid_count_cache.get(container_name)
+       now = time.time()
+       if cached and (now - cached[1]) < 1.0:
+           return cached[0]
+       proc = await asyncio.create_subprocess_exec(
+           "docker", "stats", "--no-stream", "--format", "{{.PIDs}}", container_name,
+           stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+       )
+       try:
+           stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=3.0)
+           count = int(stdout.decode().strip())
+       except (asyncio.TimeoutError, ValueError):
+           count = 0  # fail open — don't block exec on stats timeout
+       self._pid_count_cache[container_name] = (count, now)
+       return count
+   ```
+   This reduces per-message overhead from ~100ms to ~1ms (amortized across the 1-second TTL).
+
+6. **Bot source gating — use enum set** (pattern reviewer, 86%):
+   ```python
+   # models/session.py — alongside SessionSource enum
+   BOT_SOURCES = frozenset({SessionSource.TELEGRAM, SessionSource.DISCORD, SessionSource.MATRIX})
+   ```
+   ```python
+   # orchestrator.py — Docker fallback
+   if session.source in BOT_SOURCES:
+       yield ErrorEvent(error="Docker required for external sessions.").model_dump(by_alias=True)
+       return
+   else:
+       logger.warning(f"Docker unavailable, falling back to direct")
+       # fall through to direct execution
+   ```
+   Do NOT use `session_source == "app"` string compare — misses future external sources.
+
+7. **`effective_execution_mode` — local variable for v1** (simplicity reviewer): Recording this as a DB column requires a migration and adds schema complexity. For v1, use a local variable in the orchestrator to gate capability filtering. Only persist to DB if the audit trail or UI needs it:
+   ```python
+   # orchestrator.py
+   effective_mode: Literal["sandboxed", "direct"] = "sandboxed"
+   if docker_unavailable and session.source not in BOT_SOURCES:
+       effective_mode = "direct"
+   # Use effective_mode (not session.trust_level) when calling filter_by_trust_level()
+   ```
+
+8. **`_slug_locks` cleanup** — `stop_container()` removes the workspace lock (`self._slug_locks.pop(workspace_slug, None)`) but there is no equivalent for the default container. Add cleanup in `stop_default_container()` for consistency.
+
+9. **Persistent container memory split** — use separate constants for ephemeral vs. persistent to avoid the same `CONTAINER_MEMORY_LIMIT` applying to both:
+   ```python
+   CONTAINER_MEMORY_LIMIT_EPHEMERAL = "512m"    # single-session containers
+   CONTAINER_MEMORY_LIMIT_PERSISTENT = "1.5g"   # workspace + default containers
+   ```
+
+#### Chunk 3: Per-Session Scratch Dirs ✅ Done
 
 Every sandboxed session gets `/scratch/{session_id}/` inside its container.
 
@@ -330,9 +463,9 @@ Note: `PARACHUTE_SCRATCH_DIR` env var is not needed — the agent can simply use
 
 ### Phase 2: MCP & Workspace UI (Chunks 4–5)
 
-#### Chunk 4: Server-Default MCP Config
+#### Chunk 4: Server-Default MCP Config ❌ Not Done
 
-Casual chats get default MCPs without needing a workspace.
+Casual chats get default MCPs without needing a workspace. `default_capabilities` field does not yet exist in `config.py`. No server-level capability filter in orchestrator for workspace-less sessions.
 
 **Config approach** — add a flat list of default MCP names to `config.yaml`. Reuse the existing `WorkspaceCapabilities` model for type validation:
 
@@ -373,9 +506,68 @@ Workspaces already have their own capability filtering via `_filter_by_set()`. T
 
 **Cache improvement:** The MCP config cache currently has no file-change detection. Adding a `stat()` mtime check per message (~0.05ms) avoids requiring a server restart when `.mcp.json` or `config.yaml` changes.
 
-#### Chunk 5: Workspace-Aware Chat UI
+### Research Insights — Chunk 4
 
-Move workspace management from Settings into the chat tab.
+**Consider skipping Chunk 4 entirely (simplicity reviewer, 92% confidence):**
+
+The existing trust-level filter in the orchestrator already passes MCPs annotated `"trust_level": "sandboxed"` through to workspace-less sessions — Stage 2 capability filtering only runs when `workspace_config` is set (orchestrator line 639). If you annotate the `parachute` MCP entry in `.mcp.json` with `"trust_level": "sandboxed"`:
+
+```json
+{
+  "mcpServers": {
+    "parachute": {
+      "command": "...",
+      "trust_level": "sandboxed"
+    }
+  }
+}
+```
+
+...casual sandboxed chats receive it automatically with zero new code. Skip Chunk 4 for the first ship.
+
+**If you do implement Chunk 4, framework docs research confirms:**
+
+1. **Pydantic v2 handles `Optional[WorkspaceCapabilities]` automatically** — no special validators needed. The `_inject_yaml_config` model_validator already passes raw Python dicts; Pydantic coerces `dict → WorkspaceCapabilities` during field validation:
+   ```python
+   # config.py — add field only
+   default_capabilities: Optional[WorkspaceCapabilities] = Field(
+       default=None,
+       description="Default capabilities for sessions with no workspace. If null, all capabilities pass through.",
+   )
+   ```
+   `WorkspaceCapabilities()` with all defaults (`"all"`) is the correct fallback when the field is absent.
+
+2. **None guard is required in the orchestrator** (architecture reviewer, 83%):
+   ```python
+   else:
+       default_caps = settings.default_capabilities
+       if default_caps is not None:
+           capabilities = filter_capabilities(
+               capabilities=default_caps,
+               all_mcps=resolved_mcps,
+               all_skills=skill_names,
+               all_agents=agent_names,
+               plugin_dirs=plugin_dirs,
+           )
+       # If None: pass through all capabilities unchanged (current behavior)
+   ```
+   Without this guard, a user without `default_capabilities` in `config.yaml` gets an `AttributeError` on the first casual sandboxed session.
+
+3. **Do NOT add `default_capabilities` to `CONFIG_KEYS`** — it's a nested struct, not a scalar. The `parachute config set` CLI doesn't support nested structures. Users edit `config.yaml` directly.
+
+4. **Optional `env_nested_delimiter`** for env var override:
+   ```python
+   model_config = {
+       # ... existing keys ...
+       "env_nested_delimiter": "__",  # enables DEFAULT_CAPABILITIES__MCPS=all
+   }
+   ```
+
+5. **MCP cache improvement belongs in a separate PR** — adding `stat()` mtime invalidation to the MCP config cache is an independent improvement unrelated to sandbox rework.
+
+#### Chunk 5: Workspace-Aware Chat UI ⚠️ Partial
+
+Move workspace management from Settings into the chat tab. Workspace filtering in `SessionListPanel` and `activeWorkspaceProvider` exist. **Still missing:** `WorkspaceChipRow` widget not extracted (chip is a private `_buildWorkspaceChip()` method on `ChatScreen`); archived sessions and search view not wired to workspace filter. Work needed: create `chat/widgets/workspace_chip_row.dart`; wire filter into `archivedSessionsProvider` and search provider.
 
 **Workspace switcher** — extract as its own widget class (`WorkspaceChipRow`). `ChatHubScreen` is already 735 lines — adding the chip row inline would violate the "extract widget classes, not helper methods" convention.
 
@@ -428,6 +620,246 @@ Same pattern for session counts if added later — derive from cached data, neve
 
 **Provider consolidation:** All three session list providers (`chatSessionsProvider`, `archivedSessionsProvider`, `searchedSessionsProvider`) need workspace filter propagation. Consider a single `filteredSessionsProvider` that wraps the active workspace filter and delegates to the appropriate data source.
 
+### Research Insights — Chunk 5
+
+**Use `AsyncNotifier` — not `StateNotifier`** (framework docs research, confirmed across `app_state_provider.dart`):
+
+The entire codebase already uses `AsyncNotifier<T>` + `AsyncNotifierProvider` for persisted state (`ServerUrlNotifier`, `ApiKeyNotifier`, `VaultPathNotifier`, etc.). `StateNotifier` is Riverpod 1.x legacy. Match the existing pattern:
+
+```dart
+// chat/providers/workspace_providers.dart
+class ActiveWorkspaceNotifier extends AsyncNotifier<String?> {
+  static const _key = 'parachute_active_workspace';
+
+  @override
+  Future<String?> build() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_key);  // null = "All" view
+  }
+
+  Future<void> setWorkspace(String? slug) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (slug != null) {
+      await prefs.setString(_key, slug);
+    } else {
+      await prefs.remove(_key);
+    }
+    state = AsyncData(slug);
+  }
+}
+
+final activeWorkspaceProvider = AsyncNotifierProvider<ActiveWorkspaceNotifier, String?>(
+  ActiveWorkspaceNotifier.new,
+);  // NO autoDispose — app-level persisted state lives for the app lifetime
+```
+
+**Consumer-side changes** (every call site of `activeWorkspaceProvider`):
+```dart
+// Was (StateProvider): ref.watch(activeWorkspaceProvider) → String?
+// Now (AsyncNotifier): ref.watch(activeWorkspaceProvider).valueOrNull → String?
+// valueOrNull returns null during the ~2ms SharedPreferences load — same as "All" view
+
+// Was: ref.read(activeWorkspaceProvider.notifier).state = slug;
+// Now: await ref.read(activeWorkspaceProvider.notifier).setWorkspace(slug);
+```
+
+**Fix `workspaceSessionsProvider` N+1 API calls** (performance oracle, 91% confidence; conventions reviewer, 88%):
+
+The existing provider makes a new HTTP call on every chip tap. Replace with synchronous client-side filtering:
+```dart
+final workspaceSessionsProvider = Provider.autoDispose<AsyncValue<List<ChatSession>>>((ref) {
+  final activeSlug = ref.watch(activeWorkspaceProvider).valueOrNull;
+  final sessionsAsync = ref.watch(chatSessionsProvider);
+  if (activeSlug == null) return sessionsAsync;
+  return sessionsAsync.whenData(
+    (sessions) => sessions.where((s) => s.workspaceId == activeSlug).toList(),
+  );
+});
+```
+Note: return type changes from `FutureProvider<List<ChatSession>>` to `Provider<AsyncValue<List<ChatSession>>>`. Consuming widgets switch from `.future` to `.when()`.
+
+**Simplicity: defer archived/search filter wiring** (simplicity reviewer, 90%):
+
+Active session list filtering is 90% of the user value. Ship `WorkspaceChipRow` with active-list-only filtering. Add `// TODO: wire workspace filter to archived/search views` comment. Deliver archived/search in follow-up PR.
+
+**`WorkspaceChipRow` must use `Wrap` not `Row`** (conventions reviewer, per `app/CLAUDE.md` line 163). Extract as `ConsumerWidget` at `chat/widgets/workspace_chip_row.dart` — do not add as a private `_buildWorkspaceChip()` method on `ChatHubScreen`.
+
+#### Chunk 6: Credential Injection ❌ Not Done
+
+Sandboxed agents cannot use tools like `gh`, `aws`, or `npm publish` because interactive `auth login` flows don't work inside containers. Auth credentials live on the host.
+
+**Solution:** Store tokens in `vault/.parachute/credentials.yaml`. At container launch, inject them as environment variables via the existing env-file mechanism — same path as `CLAUDE_CODE_OAUTH_TOKEN`. Tools pick them up transparently.
+
+```yaml
+# vault/.parachute/credentials.yaml
+github:
+  token: ghp_xxxxx            # → GH_TOKEN
+aws:
+  access_key: AKIA...         # → AWS_ACCESS_KEY_ID
+  secret: ...                 # → AWS_SECRET_ACCESS_KEY
+  region: us-east-1           # → AWS_DEFAULT_REGION
+npm:
+  token: npm_xxx              # → NODE_AUTH_TOKEN
+```
+
+**Trust gating:**
+
+| Session type | Credentials |
+|---|---|
+| `direct` (app/user) | Runs on host natively — already has access |
+| `sandboxed` app sessions | Get vault-level credentials from `credentials.yaml` |
+| `sandboxed` bot sessions | No credentials by default; must be explicitly opted in |
+
+**Implementation:**
+
+| File | Change |
+|------|--------|
+| `computer/parachute/core/credentials.py` | **NEW** — load `credentials.yaml`, produce `dict[str, str]` of env var → value |
+| `computer/parachute/core/sandbox.py:248-280` | Append credential env vars to ephemeral env-file path |
+| `computer/parachute/core/sandbox.py:674-695` | Inject credential env vars into persistent `_run_in_container` stdin payload |
+| `computer/sample-vault/.parachute/credentials.yaml` | **NEW** — documented schema with commented-out examples |
+
+**Security:** Credentials are read from vault file at launch time only — never stored in `sessions.db`. Documentation and setup guidance encourage fine-grained scoped tokens (GitHub fine-grained PATs, AWS IAM least-privilege keys) over broad credentials. Bot sessions are excluded by default.
+
+**Dependency:** Requires Chunk 2 container launch infrastructure. Works independently of Chunks 3–5. Declare dependency on issue #69 (rich sandbox image) — `gh` and `aws` binaries must be in `Dockerfile.sandbox` or credential injection is a silent no-op.
+
+### Research Insights — Chunk 6
+
+**1. Use flat credentials format** (simplicity reviewer, 95% confidence — biggest simplification available):
+
+The nested multi-service schema adds ~50 LOC of translation logic with edge cases (what maps `aws.secret` → `AWS_SECRET_ACCESS_KEY`?). The flat format achieves the same result with 7 lines and works for ANY env var the user needs:
+
+```yaml
+# vault/.parachute/credentials.yaml — NEW FORMAT (flat)
+# Env var name directly as key. Works for any tool.
+GH_TOKEN: ghp_xxxxx
+# AWS_ACCESS_KEY_ID: AKIA...
+# AWS_SECRET_ACCESS_KEY: ...
+# AWS_DEFAULT_REGION: us-east-1
+# NODE_AUTH_TOKEN: npm_xxx
+```
+
+```python
+# lib/credentials.py (NOT core/ — it's a pure file utility, same as lib/auth.py)
+def load_credentials(vault_path: Path) -> dict[str, str]:
+    """Load vault credentials.yaml → flat env var dict. Returns {} if absent."""
+    path = vault_path / ".parachute" / "credentials.yaml"
+    if not path.exists():
+        return {}
+    try:
+        data = yaml.safe_load(path.read_text()) or {}
+    except Exception:
+        return {}
+    return {k: str(v) for k, v in data.items() if isinstance(v, str)}
+```
+
+**2. CRITICAL: credentials via stdin JSON, NOT env-file** (security sentinel, F1):
+
+`docker inspect <container>` shows ALL environment variables passed via `--env-file`. This means credentials in the env-file are visible to any host process that can run `docker inspect`. Use the stdin JSON path (same as `claude_token`):
+
+```python
+# sandbox.py — _run_in_container (persistent containers)
+stdin_payload["credentials"] = load_credentials(self.vault_path)  # dedicated key
+# NOT: append to env_lines in _build_run_args
+
+# entrypoint.py — before constructing ClaudeAgentOptions
+creds = data.get("credentials", {})
+os.environ.update(creds)  # apply to process env before SDK starts
+```
+
+For ephemeral containers: pass credentials in the stdin payload via the `--env-file` mechanism ONLY if the entrypoint reads them from stdin. If using `--env-file`, filter through process args which are also visible in `ps aux` — use stdin payload instead for ephemeral too.
+
+**3. Bot session gating** (security sentinel F3, pattern reviewer 86%):
+
+```python
+# Call load_credentials only for app sessions
+from parachute.models.session import BOT_SOURCES
+
+credential_env = {}
+if effective_trust == "sandboxed" and session.source not in BOT_SOURCES:
+    credential_env = load_credentials(self.vault_path)
+```
+
+Define `BOT_SOURCES` in `models/session.py` alongside `SessionSource` enum — not inline at the call site.
+
+**4. Env var name validation** — blocklist dangerous override names:
+
+```python
+_BLOCKED_ENV_VARS = frozenset({
+    "CLAUDE_CODE_OAUTH_TOKEN", "PATH", "LD_PRELOAD", "LD_LIBRARY_PATH",
+    "HOME", "USER", "SHELL", "PYTHONPATH",
+})
+
+def load_credentials(vault_path: Path) -> dict[str, str]:
+    # ... load yaml ...
+    return {
+        k: str(v)
+        for k, v in data.items()
+        if isinstance(v, str) and k not in _BLOCKED_ENV_VARS
+    }
+```
+
+**5. Reserve `workspaces:` namespace in schema** (architecture reviewer, 84%):
+
+Even though the loader ignores it in v1, include `workspaces:` as a documented YAML key so the schema is migration-safe:
+
+```yaml
+# vault/.parachute/credentials.yaml
+GH_TOKEN: ghp_xxxxx
+
+# workspace-scoped overrides (v2 — ignored by v1 loader)
+# workspaces:
+#   client-project:
+#     GH_TOKEN: ghp_different_token
+```
+
+**6. Agent-native gap: system prompt credential discoverability** (agent-native reviewer, 91%):
+
+Without a prompt signal, the agent only uses `gh` if the user explicitly asks. Add to `_build_system_prompt` in `orchestrator.py`:
+
+```python
+# Load credentials ONCE on host before launching sandbox (no values in prompt)
+cred_keys = set(load_credentials(vault_path).keys())
+if cred_keys:
+    authenticated_tools = []
+    if "GH_TOKEN" in cred_keys:
+        authenticated_tools.append("`gh` (GitHub CLI — pre-authenticated)")
+    if "AWS_ACCESS_KEY_ID" in cred_keys:
+        authenticated_tools.append("`aws` (AWS CLI — pre-authenticated)")
+    if "NODE_AUTH_TOKEN" in cred_keys or "NPM_TOKEN" in cred_keys:
+        authenticated_tools.append("`npm` (authenticated for publish)")
+    if authenticated_tools:
+        append_parts.append(
+            "## Authenticated CLI Tools\n\n"
+            + "\n".join(f"- {t}" for t in authenticated_tools)
+        )
+```
+
+**7. Log discipline** — log key names only, never values:
+```python
+logger.debug(f"Injecting credentials: {list(credential_env.keys())}")  # OK
+logger.debug(f"Injecting credentials: {credential_env}")               # NEVER
+```
+
+**8. Mtime cache** — consistent with the planned `.mcp.json` cache improvement:
+```python
+_credentials_cache: Optional[dict[str, str]] = None
+_credentials_mtime: float = 0.0
+
+def load_credentials(vault_path: Path) -> dict[str, str]:
+    global _credentials_cache, _credentials_mtime
+    path = vault_path / ".parachute" / "credentials.yaml"
+    if not path.exists():
+        return {}
+    mtime = path.stat().st_mtime
+    if _credentials_cache is not None and mtime == _credentials_mtime:
+        return _credentials_cache
+    # ... load and parse ...
+    _credentials_cache = result
+    _credentials_mtime = mtime
+    return result
+```
+
 ---
 
 ## Separate PR: Session Archiving Snackbar
@@ -477,6 +909,10 @@ Configurable `default_workspace` per platform in `bots.yaml`. Deferred because n
 - [ ] Server-default MCP config provides tools to casual chats (flat default list, reusing `WorkspaceCapabilities` model)
 - [ ] Workspace switcher chip row in chat tab (extracted `WorkspaceChipRow` widget)
 - [ ] Workspace filter applies to active, archived, and search views (client-side filtering)
+- [ ] `gh` commands work inside sandboxed sessions when `GH_TOKEN` set in `credentials.yaml`
+- [ ] `credentials.yaml` tokens injected via existing env-file path at container launch
+- [ ] Bot sessions receive no credentials unless explicitly configured
+- [ ] Credentials never written to `sessions.db`
 
 ### Non-Functional Requirements
 
@@ -508,11 +944,13 @@ Configurable `default_workspace` per platform in `bots.yaml`. Deferred because n
 | `reconcile()` missing default container | Medium — orphaned on restart | Discover via `type=default-sandbox` label, not name pattern |
 | Shared `.claude` transcript mount | Medium — cross-session transcript access | Acceptable for v1 (all casual sessions are from the same local user). Revisit for multi-user. |
 | Docker fallback data model dishonesty | Medium — session says `sandboxed` but ran `direct` | Record `effective_execution_mode`; use effective mode for MCP capability filtering |
+| Credential exposure in container | Medium — token in container env if container compromised | Fine-grained scoped tokens; bot sessions excluded by default; credentials never in `sessions.db` |
 
 ## References
 
 ### Internal
 - Issue #62 brainstorm: workspace & chat organization rethink
+- `docs/brainstorms/2026-02-22-sandbox-host-tool-proxy-brainstorm.md` — Chunk 6 credential injection design
 - Issue #47: MCP session context injection
 - Issue #35: multi-agent workspace teams
 - Issue #69: rich sandbox image with efficient storage

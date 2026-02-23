@@ -20,7 +20,8 @@ import '../widgets/user_question_card.dart';
 import '../../settings/models/trust_level.dart';
 import '../../settings/screens/settings_screen.dart';
 import '../models/workspace.dart';
-import '../providers/workspace_providers.dart' show activeWorkspaceProvider, workspacesProvider;
+import '../providers/workspace_providers.dart' show activeWorkspaceProvider;
+import '../widgets/workspace_chip_row.dart';
 
 /// Main chat screen for AI conversations
 ///
@@ -1031,7 +1032,23 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             ),
             const SizedBox(height: Spacing.xl),
             // Workspace selector for new chats
-            _buildWorkspaceSelector(isDark),
+            WorkspaceChipRow(
+              onSelected: (workspace) {
+                if (workspace != null) {
+                  // Set default trust from workspace (user can still change freely)
+                  if (_pendingTrustLevel == null) {
+                    final wsTrust = TrustLevel.fromString(workspace.defaultTrustLevel);
+                    setState(() {
+                      _pendingTrustLevel = wsTrust == TrustLevel.direct ? null : wsTrust.name;
+                    });
+                  }
+                  // Auto-fill working directory
+                  if (workspace.workingDirectory != null) {
+                    ref.read(chatMessagesProvider.notifier).setWorkingDirectory(workspace.workingDirectory);
+                  }
+                }
+              },
+            ),
             const SizedBox(height: Spacing.md),
             // Trust level selector for new chats
             _buildTrustLevelSelector(isDark),
@@ -1044,102 +1061,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     ),
   );
 }
-
-  Widget _buildWorkspaceSelector(bool isDark) {
-    final workspacesAsync = ref.watch(workspacesProvider);
-    final activeSlug = ref.watch(activeWorkspaceProvider);
-
-    return workspacesAsync.when(
-      data: (workspaces) {
-        if (workspaces.isEmpty) return const SizedBox.shrink();
-        return Column(
-          children: [
-            Text(
-              'Workspace',
-              style: TextStyle(
-                fontSize: TypographyTokens.labelSmall,
-                fontWeight: FontWeight.w500,
-                color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
-              ),
-            ),
-            const SizedBox(height: Spacing.xs),
-            Wrap(
-              spacing: 0,
-              runSpacing: Spacing.xs,
-              alignment: WrapAlignment.center,
-              children: [
-                _buildWorkspaceChip(null, 'None', activeSlug == null, isDark),
-                ...workspaces.map((w) =>
-                  _buildWorkspaceChip(w, w.name, activeSlug == w.slug, isDark),
-                ),
-              ],
-            ),
-          ],
-        );
-      },
-      loading: () => const SizedBox.shrink(),
-      error: (_, __) => const SizedBox.shrink(),
-    );
-  }
-
-  Widget _buildWorkspaceChip(Workspace? workspace, String label, bool isSelected, bool isDark) {
-    final color = isDark ? BrandColors.nightForest : BrandColors.forest;
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 3),
-      child: GestureDetector(
-        onTap: () {
-          ref.read(activeWorkspaceProvider.notifier).state = workspace?.slug;
-          if (workspace != null) {
-            // Set default trust from workspace (user can still change freely)
-            if (_pendingTrustLevel == null) {
-              final wsTrust = TrustLevel.fromString(workspace.defaultTrustLevel);
-              setState(() {
-                _pendingTrustLevel = wsTrust == TrustLevel.direct ? null : wsTrust.name;
-              });
-            }
-            // Auto-fill working directory
-            if (workspace.workingDirectory != null) {
-              ref.read(chatMessagesProvider.notifier).setWorkingDirectory(workspace.workingDirectory);
-            }
-          }
-        },
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-          decoration: BoxDecoration(
-            color: isSelected
-                ? color.withValues(alpha: 0.15)
-                : (isDark
-                    ? BrandColors.nightSurfaceElevated
-                    : BrandColors.stone.withValues(alpha: 0.2)),
-            borderRadius: BorderRadius.circular(Radii.sm),
-            border: Border.all(
-              color: isSelected ? color : Colors.transparent,
-              width: 1.5,
-            ),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                workspace == null ? Icons.do_not_disturb_alt : Icons.workspaces_outlined,
-                size: 13,
-                color: isSelected ? color : (isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood),
-              ),
-              const SizedBox(width: 4),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w500,
-                  color: isSelected ? color : (isDark ? BrandColors.nightText : BrandColors.charcoal),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
 
   Widget _buildTrustLevelSelector(bool isDark) {
     final currentLevel = _pendingTrustLevel != null

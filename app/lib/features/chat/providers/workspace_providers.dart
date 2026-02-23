@@ -1,10 +1,7 @@
-import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/providers/app_state_provider.dart';
-import 'package:parachute/core/providers/feature_flags_provider.dart';
 import '../models/workspace.dart';
 import '../models/chat_session.dart';
-import '../services/chat_service.dart';
 import '../services/workspace_service.dart';
 import 'chat_session_providers.dart';
 
@@ -31,27 +28,15 @@ final activeWorkspaceProvider = StateProvider<String?>((ref) => null);
 
 /// Sessions filtered by the active workspace.
 ///
-/// When a workspace is selected, fetches sessions with workspaceId filter.
-/// When null, returns all sessions.
-final workspaceSessionsProvider = FutureProvider.autoDispose<List<ChatSession>>((ref) async {
+/// Derives from the already-fetched [chatSessionsProvider] via client-side
+/// filtering, eliminating a separate network request per workspace chip tap.
+final workspaceSessionsProvider = Provider.autoDispose<AsyncValue<List<ChatSession>>>((ref) {
   final activeSlug = ref.watch(activeWorkspaceProvider);
+  final sessionsAsync = ref.watch(chatSessionsProvider);
 
-  if (activeSlug == null) {
-    try {
-      return await ref.watch(chatSessionsProvider.future);
-    } catch (_) {
-      // chatSessionsProvider can throw when both server and local fail;
-      // workspace filter view degrades gracefully to empty list
-      return [];
-    }
-  }
+  if (activeSlug == null) return sessionsAsync;
 
-  // Filter by workspace — use the chat service with workspace filter
-  final service = ref.watch(chatServiceProvider);
-  try {
-    return await service.getSessions(workspaceId: activeSlug);
-  } catch (e) {
-    debugPrint('[WorkspaceProviders] Error loading workspace sessions: $e');
-    return [];
-  }
+  return sessionsAsync.whenData(
+    (sessions) => sessions.where((s) => s.workspaceId == activeSlug).toList(),
+  );
 });

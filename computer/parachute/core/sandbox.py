@@ -24,11 +24,14 @@ import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import AsyncGenerator, Optional
+from typing import Any, AsyncGenerator
 
 from parachute.core.validation import validate_workspace_slug
+from parachute.lib.credentials import load_credentials
+from parachute.models.session import BOT_SOURCES, SessionSource
 
 SANDBOX_DATA_DIR = ".parachute/sandbox"
+SANDBOX_NETWORK_NAME = "parachute-sandbox"
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +42,10 @@ SANDBOX_IMAGE = "parachute-sandbox:latest"
 DEFAULT_CONTAINER_NAME = "parachute-default"
 
 # Container resource limits
-CONTAINER_MEMORY_LIMIT = "512m"
+# Ephemeral containers (--rm, short-lived) can run with less memory.
+# Persistent containers need more — the Claude SDK process alone uses 300–500 MB.
+CONTAINER_MEMORY_LIMIT_EPHEMERAL = "512m"
+CONTAINER_MEMORY_LIMIT_PERSISTENT = "1.5g"
 CONTAINER_CPU_LIMIT = "1.0"
 
 
@@ -53,11 +59,12 @@ class AgentSandboxConfig:
     network_enabled: bool = False
     timeout_seconds: int = 300  # 5 minute default
     plugin_dirs: list[Path] = field(default_factory=list)
-    mcp_servers: Optional[dict] = None  # Filtered MCP configs to pass to container
-    agents: Optional[dict] = None
-    working_directory: Optional[str] = None  # /vault/... absolute path for container CWD
-    model: Optional[str] = None  # Model to use (e.g., "claude-opus-4-6")
-    system_prompt: Optional[str] = None  # System prompt to pass to SDK inside container
+    mcp_servers: dict[str, Any] | None = None  # Filtered MCP configs to pass to container
+    agents: dict[str, Any] | None = None
+    working_directory: str | None = None  # /vault/... absolute path for container CWD
+    model: str | None = None  # Model to use (e.g., "claude-opus-4-6")
+    system_prompt: str | None = None  # System prompt to pass to SDK inside container
+    session_source: SessionSource | None = None  # Used to gate credential injection
 
 
 class DockerSandbox:
@@ -66,10 +73,10 @@ class DockerSandbox:
     # Re-check Docker availability every 60 seconds
     _CACHE_TTL = 60
 
-    def __init__(self, vault_path: Path, claude_token: Optional[str] = None):
+    def __init__(self, vault_path: Path, claude_token: str | None = None):
         self.vault_path = vault_path
         self.claude_token = claude_token
-        self._docker_available: Optional[bool] = None
+        self._docker_available: bool | None = None
         self._checked_at: float = 0
         # Per-workspace locks to prevent race conditions in ensure_container
         self._slug_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
@@ -129,8 +136,10 @@ class DockerSandbox:
         Returns:
             12-character hex hash (48 bits entropy, collision-resistant for ~16M configs)
         """
-        # Combine image tag and resource limits into deterministic string
-        config_str = f"{SANDBOX_IMAGE}:{CONTAINER_MEMORY_LIMIT}:{CONTAINER_CPU_LIMIT}"
+        # Combine image tag and resource limits into deterministic string.
+        # Bump the trailing version string whenever hardening flags change to
+        # force reconcile() to rebuild containers on the next server restart.
+        config_str = f"{SANDBOX_IMAGE}:{CONTAINER_MEMORY_LIMIT_PERSISTENT}:{CONTAINER_CPU_LIMIT}:v3"
 
         # SHA-256 hash, truncate to 12 chars (48 bits)
         hash_digest = hashlib.sha256(config_str.encode()).hexdigest()
@@ -225,19 +234,29 @@ class DockerSandbox:
             "-i",  # Interactive mode: accept stdin for message passing
             "--init",  # tini as PID 1 — reaps zombies, forwards signals
             "--name", f"parachute-sandbox-{config.session_id[:8]}",
-            "--memory", CONTAINER_MEMORY_LIMIT,
+            "--memory", CONTAINER_MEMORY_LIMIT_EPHEMERAL,
+            "--memory-swap", CONTAINER_MEMORY_LIMIT_EPHEMERAL,  # no swap
             "--cpus", CONTAINER_CPU_LIMIT,
             # Security hardening (match persistent container flags)
             "--cap-drop", "ALL",
             "--security-opt", "no-new-privileges",
             "--pids-limit", "100",
+            "--ulimit", "nproc=64:64",
+            "--ulimit", "nofile=4096:8192",
             # Per-session scratch space (tmpfs — no disk persistence)
             "--tmpfs", "/scratch:size=512m,uid=1000,gid=1000",
+            "--tmpfs", "/tmp:size=128m,uid=1000,gid=1000",
+            "--tmpfs", "/run:size=32m,uid=1000,gid=1000",
         ]
 
         # Network isolation
         if not config.network_enabled:
             args.extend(["--network", "none"])
+        else:
+            args.extend([
+                "--network", SANDBOX_NETWORK_NAME,
+                "--add-host", "host.docker.internal:host-gateway",
+            ])
 
         # Volume mounts
         args.extend(self._build_mounts(config))
@@ -512,13 +531,17 @@ class DockerSandbox:
                 # Bad state (dead, removing, etc.) — force remove and recreate
                 await self._remove_container(container_name)
 
+            # Ensure network exists before container creation
+            if config.network_enabled:
+                await self._ensure_sandbox_network()
+
             # Create new container
             await self._create_persistent_container(
                 container_name, workspace_slug, config
             )
             return container_name
 
-    async def _inspect_status(self, container_name: str) -> Optional[str]:
+    async def _inspect_status(self, container_name: str) -> str | None:
         """Get container status via docker inspect. Returns None if not found."""
         proc = await asyncio.create_subprocess_exec(
             "docker", "inspect", "-f", "{{.State.Status}}", container_name,
@@ -554,14 +577,19 @@ class DockerSandbox:
             "docker", "run", "-d",
             "--init",  # tini as PID 1 — reaps zombies, forwards signals
             "--name", container_name,
-            "--memory", CONTAINER_MEMORY_LIMIT,
+            "--memory", CONTAINER_MEMORY_LIMIT_PERSISTENT,
+            "--memory-swap", CONTAINER_MEMORY_LIMIT_PERSISTENT,  # no swap
             "--cpus", CONTAINER_CPU_LIMIT,
             # Security hardening
             "--cap-drop", "ALL",
             "--security-opt", "no-new-privileges",
             "--pids-limit", "100",
+            "--ulimit", "nproc=64:64",
+            "--ulimit", "nofile=4096:8192",
             # Per-session scratch space (tmpfs — no disk persistence)
             "--tmpfs", "/scratch:size=512m,uid=1000,gid=1000",
+            "--tmpfs", "/tmp:size=128m,uid=1000,gid=1000",
+            "--tmpfs", "/run:size=32m,uid=1000,gid=1000",
         ]
 
         # Add labels
@@ -571,6 +599,11 @@ class DockerSandbox:
         # Network isolation
         if not config.network_enabled:
             args.extend(["--network", "none"])
+        else:
+            args.extend([
+                "--network", SANDBOX_NETWORK_NAME,
+                "--add-host", "host.docker.internal:host-gateway",
+            ])
 
         # Vault mounts
         args.extend(vault_mounts)
@@ -694,6 +727,20 @@ class DockerSandbox:
             if capabilities:
                 stdin_payload["capabilities"] = capabilities
 
+            # Inject credentials for known non-bot sources only.
+            # Require explicit non-bot confirmation: None (unknown caller) gets no credentials.
+            # Bot sessions (Telegram/Discord/Matrix) and unknown sources never receive host credentials.
+            if config.session_source is not None and config.session_source not in BOT_SOURCES:
+                creds = load_credentials(self.vault_path)
+                if creds:
+                    logger.debug(
+                        f"Injecting credentials into container: "
+                        f"keys={list(creds.keys())} (values redacted)"
+                    )
+                stdin_payload["credentials"] = creds
+            else:
+                stdin_payload["credentials"] = {}
+
             async for event in self._stream_process(
                 proc, stdin_payload, config, label=label
             ):
@@ -776,6 +823,10 @@ class DockerSandbox:
                 # Bad state — force remove and recreate
                 await self._remove_container(container_name)
 
+            # Ensure network exists before container creation
+            if config.network_enabled:
+                await self._ensure_sandbox_network()
+
             # Create the default container
             default_claude_dir = self.vault_path / SANDBOX_DATA_DIR / "_default" / ".claude"
 
@@ -785,7 +836,7 @@ class DockerSandbox:
 
             labels = {
                 "app": "parachute",
-                "type": "default",
+                "type": "default-sandbox",
                 "config_hash": self._calculate_config_hash(),
             }
 
@@ -827,6 +878,29 @@ class DockerSandbox:
             container_name, config, message, resume_session_id, "default sandbox"
         ):
             yield event
+
+    async def _ensure_sandbox_network(self) -> None:
+        """Create the parachute-sandbox bridge network if it doesn't exist.
+
+        Idempotent — safe to call before every container creation.
+        The named user-defined bridge provides network-level isolation:
+        sandbox containers cannot reach containers on other networks.
+        """
+        proc = await asyncio.create_subprocess_exec(
+            "docker", "network", "create",
+            "--driver", "bridge",
+            SANDBOX_NETWORK_NAME,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        await proc.wait()
+        # returncode 0 = created, 1 = already exists — both are fine
+
+    async def stop_default_container(self) -> None:
+        """Stop and remove the default sandbox container."""
+        await self._stop_container(DEFAULT_CONTAINER_NAME)
+        await self._remove_container(DEFAULT_CONTAINER_NAME)
+        self._slug_locks.pop(DEFAULT_CONTAINER_NAME, None)
 
     async def stop_container(self, workspace_slug: str) -> None:
         """Stop and remove a workspace's persistent container."""

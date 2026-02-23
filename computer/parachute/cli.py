@@ -1006,11 +1006,17 @@ def cmd_sandbox(args: argparse.Namespace) -> None:
 
         elif action == "inspect":
             # Show sandbox configuration and container status
-            from parachute.core.sandbox import SANDBOX_IMAGE, CONTAINER_MEMORY_LIMIT, CONTAINER_CPU_LIMIT
+            from parachute.core.sandbox import (
+                SANDBOX_IMAGE,
+                CONTAINER_MEMORY_LIMIT_EPHEMERAL,
+                CONTAINER_MEMORY_LIMIT_PERSISTENT,
+                CONTAINER_CPU_LIMIT,
+            )
 
             print("Sandbox Configuration:")
             print(f"  Image: {SANDBOX_IMAGE}")
-            print(f"  Memory limit: {CONTAINER_MEMORY_LIMIT}")
+            print(f"  Memory limit (ephemeral): {CONTAINER_MEMORY_LIMIT_EPHEMERAL}")
+            print(f"  Memory limit (persistent): {CONTAINER_MEMORY_LIMIT_PERSISTENT}")
             print(f"  CPU limit: {CONTAINER_CPU_LIMIT}")
 
             # Check if image exists
