@@ -1,5 +1,5 @@
 ---
-status: ready
+status: complete
 priority: p1
 issue_id: 109
 tags: [code-review, agent-native, api, server, chat, ask-user-question]
