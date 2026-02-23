@@ -32,9 +32,11 @@ permalink: /roadmap/
 
     <section class="section">
         <h2>Vision</h2>
-        <p>Parachute Computer is an open-source personal AI platform. It's the best of Claude Code, Claude.ai, and a personal knowledge system&mdash;combined into one integrated experience that runs on your machine, with your data, under your control.</p>
-        <p>Where existing tools give you chat in one place, coding in another, and notes somewhere else, Parachute connects them. Your journal entries inform your AI conversations. Your conversations build your knowledge graph. Your knowledge graph makes everything smarter over time.</p>
-        <p>The Parachute App puts this all in one interface: <strong>Chat</strong> for AI conversations with deep context, <strong>Daily</strong> for voice journaling wherever you think, and <strong>Brain</strong> for your personal knowledge graph. It runs on macOS, Android, and web.</p>
+        <p>Parachute is an open-source personal AI platform built around a simple premise: <strong>instead of you learning the system, the system learns you.</strong></p>
+        <p>We're building two products that serve different users and connect into one coherent extended mind.</p>
+        <p><strong>Parachute Daily</strong> is a journaling app with gentle AI integration&mdash;daily reflections, weekly synthesis, pattern detection. Hosted service, accessible price point, designed for the 90% of people who want to think better without running a server. <a href="/vision/">Read the full vision &rarr;</a></p>
+        <p><strong>Parachute Computer</strong> is the full agentic platform&mdash;Claude Code for your entire life, not just your codebase. It combines Chat with deep context, Daily journaling, and Brain (your personal knowledge graph) into one integrated system that runs on your machine, with your data, under your control.</p>
+        <p>The two products connect through a seamless upgrade path: months of Daily journals flow into Parachute Brain, which bootstraps a system that already knows you the moment you switch.</p>
     </section>
 
     <section class="section">
@@ -74,7 +76,9 @@ permalink: /roadmap/
             <li>Three trust tiers&mdash;full access, vault-restricted, or sandboxed in Docker containers&mdash;so you control what AI can touch</li>
             <li>Modular architecture: brain, chat, and daily ship as independent modules with hash verification</li>
             <li>Workspaces that scope what tools, MCPs, and capabilities are available per session</li>
-            <li>Telegram and Discord bot connectors with per-user trust and a pairing approval flow</li>
+            <li>Telegram, Discord, and Matrix bot connectors with per-user trust and a pairing approval flow</li>
+            <li>Multi-agent workspace teams&mdash;agents that spawn and coordinate sub-agents inside your vault</li>
+            <li>MCP server for session and journal search, workspace operations, inter-agent messaging</li>
             <li>A real CLI (<code>parachute</code>) for install, daemon management, config, diagnostics, module management, and updates</li>
             <li>Event-driven hooks for extending behavior at every lifecycle point</li>
         </ul>
@@ -84,6 +88,8 @@ permalink: /roadmap/
             <li>Unified Flutter app with Chat, Daily, and Brain tabs</li>
             <li>Adaptive layout: single-panel on mobile, dual-panel on tablet, three-panel on desktop</li>
             <li>Voice journaling with local Sherpa-ONNX transcription (works fully offline)</li>
+            <li>Brain v2&mdash;TerminusDB knowledge graph with Tana-inspired dynamic schema UI, entity browser, and query bar</li>
+            <li>Chat redesign with two-phase streaming and polished session management</li>
             <li>Workspace picker, model selection, trust level controls, bot session management</li>
             <li>CI/CD pipeline with macOS code signing and notarized DMG builds</li>
         </ul>
@@ -92,11 +98,12 @@ permalink: /roadmap/
     <section class="section">
         <h2>Project Objectives</h2>
         <ul>
-            <li><strong>Ship Parachute Computer to real users</strong>&mdash;starting with <a href="https://regenhub.xyz" target="_blank">Regen Hub</a>, then <a href="https://learnvibe.build" target="_blank">Learn Vibe Build</a> graduates, then the broader open-source community</li>
-            <li><strong>Build the Brain</strong>&mdash;the knowledge layer that connects journal entries, conversations, and vault content into a personal knowledge graph</li>
+            <li><strong>Launch Parachute Daily</strong>&mdash;a standalone hosted journaling app with AI reflections, bringing the core Parachute experience to a much wider audience</li>
+            <li><strong>Ship Parachute Computer to real users</strong>&mdash;open-source launch to the Claude Code community, <a href="https://learnvibe.build" target="_blank">Learn Vibe Build</a> graduates, and beyond, building on the <a href="https://regenhub.xyz" target="_blank">Regen Hub</a> foundation</li>
+            <li><strong>Complete the Daily &rarr; Brain &rarr; Chat loop</strong>&mdash;journals feeding the knowledge graph, which enriches every conversation over time</li>
             <li><strong>Design and build a hardware pendant</strong>&mdash;collaborating with Marvin Melzer to create a wearable device for always-on voice capture</li>
             <li><strong>Grow an open-source community</strong>&mdash;launch publicly, get to 100+ active users</li>
-            <li><strong>Find a revenue path</strong>&mdash;explore hosted options and identify a model that reaches $1,000 MRR by April 22</li>
+            <li><strong>Find a revenue path</strong>&mdash;Parachute Daily subscriptions and hosted Computer options; identify a model that reaches $1,000 MRR by April 22</li>
             <li><strong>Maintain modular foundations</strong>&mdash;ship fast while keeping architecture decisions that support long-term extensibility</li>
         </ul>
     </section>
@@ -178,13 +185,15 @@ permalink: /roadmap/
             </div>
             <div class="timeline-item">
                 <h3>Weeks of Feb 17 &ndash; 24 <span class="status-badge status-active">Now</span></h3>
-                <span class="week-label">Brain Module &amp; Open-Source Prep</span>
+                <span class="week-label">Brain Module &amp; Platform Polish</span>
                 <ul>
-                    <li>Brain module: entity store, knowledge graph search, cross-session linking</li>
-                    <li>Daily &rarr; Brain &rarr; Chat flow: journals feed the knowledge graph, which enriches conversations</li>
-                    <li>Incorporate Regen Hub feedback into polish</li>
+                    <li>Brain v2 shipped&mdash;TerminusDB knowledge graph backend + Tana-inspired Flutter UI &#10003;</li>
+                    <li>Chat UI redesign&mdash;two-phase streaming, visual polish &#10003;</li>
+                    <li>Multi-agent workspace teams &#10003;</li>
+                    <li>Matrix bot connector with bridge-aware room detection &#10003;</li>
+                    <li>Sandbox hardening and credential injection &#10003;</li>
+                    <li>Daily &rarr; Brain &rarr; Chat integration loop&mdash;in progress</li>
                     <li>Open-source launch prep: README, install guides, contributing guide</li>
-                    <li>Begin hardware pendant design with Marvin Melzer</li>
                 </ul>
             </div>
             <div class="timeline-item">
@@ -224,12 +233,14 @@ permalink: /roadmap/
 
     <section class="section">
         <h2>Revenue Path</h2>
-        <p>Parachute Computer is free and open source&mdash;that's the growth engine. Revenue comes from making it easier for people who don't want to self-host:</p>
+        <p>Open source is the growth engine, not a constraint. Parachute Computer is free for self-hosters. Revenue comes from making the experience easier for people who don't want to run infrastructure&mdash;and from a simpler product built for a wider audience.</p>
         <ul>
-            <li><strong>Hosted Parachute Computer</strong>&mdash;a managed service where you get your own Parachute Computer without running a server.</li>
-            <li><strong>Standalone Daily app</strong>&mdash;a simpler journal-focused entry point for people who aren't ready for the full platform.</li>
+            <li><strong>Parachute Daily subscriptions</strong>&mdash;the entry point for most users. Hosted journaling with AI reflections at an accessible price. Simple tiers: sync, daily AI reflections, richer weekly synthesis. This is where the majority of revenue comes from at scale.</li>
+            <li><strong>Hosted Parachute Computer</strong>&mdash;a managed service for power users who want everything without running a server. Higher-margin, lower-volume.</li>
+            <li><strong>Hardware pendant</strong>&mdash;wearable voice capture device, in development with Marvin Melzer. Future revenue stream once prototyping is complete.</li>
         </ul>
-        <p>February focuses on users. Revenue experimentation starts March once real usage patterns show which path has the most pull.</p>
+        <p>The upgrade path is the flywheel: Daily users build months of journal context, then upgrade to Computer where Brain ingests their history and immediately knows them. Retention compounds on both sides.</p>
+        <p>February focuses on users. Revenue experimentation starts March once real usage patterns show which path has the most pull. Target: a path to $1,000 MRR identified by April 22.</p>
     </section>
 
     <section class="section">

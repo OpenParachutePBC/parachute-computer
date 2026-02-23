@@ -1,0 +1,130 @@
+---
+layout: base.njk
+title: "Vision"
+description: "Two products, one extended mind. Parachute Daily for the way you already think. Parachute Computer for the power users ready to go deeper."
+permalink: /vision/
+---
+<main>
+    <div class="roadmap-header fade-up fade-up-1">
+        <h1>Vision</h1>
+        <p class="dates">Open Parachute, PBC &mdash; Spring 2026</p>
+    </div>
+
+    <section class="section">
+        <h2>The Problem</h2>
+        <p>Most people have thoughts scattered across a dozen places. Voice memos here, typed notes there, AI conversations that start fresh every time. The tools that could help you think better don't actually know you&mdash;and the ones that could know you don't feel safe to trust with your real thinking.</p>
+        <p>The result: your best thinking disappears. Your AI can't build on what you've already worked through. And every morning, you start from scratch.</p>
+        <p>Parachute is built around a different premise: <strong>instead of you learning the system, the system learns you.</strong></p>
+    </section>
+
+    <section class="section">
+        <h2>Two Products</h2>
+        <p>We're building two distinct products that serve different users&mdash;and connect into one coherent system.</p>
+
+        <div class="products" style="margin-top: 2rem;">
+            <div class="product">
+                <div style="display: flex; align-items: baseline; gap: 1rem; margin-bottom: 0.5rem;">
+                    <h3 style="margin-top: 0; margin-bottom: 0;">Parachute Daily</h3>
+                    <span class="status">Hosted &middot; Subscription</span>
+                </div>
+                <p>A journaling app with gentle AI integration. Designed for the 90% of people who want to think more clearly and stay connected to their own ideas&mdash;without self-hosting a server or diving into agentic AI.</p>
+                <p>You journal however you naturally think: voice, typing, wherever you are. Each day, an AI reflects your writing back to you&mdash;surfacing what mattered, asking questions to deepen the thinking, noticing patterns over time. It builds a simple profile of you from your own words: the projects you're working on, the people in your life, the things you keep returning to.</p>
+                <ul>
+                    <li><strong>Daily reflections</strong> &mdash; AI reads your entries and reflects back what's most salient</li>
+                    <li><strong>Weekly synthesis</strong> &mdash; a digest of themes, progress, and patterns from the week</li>
+                    <li><strong>Gentle profile building</strong> &mdash; simple markdown files that capture what the app has learned about you</li>
+                    <li><strong>Voice-first capture</strong> &mdash; local on-device transcription, works offline</li>
+                    <li><strong>Your data</strong> &mdash; plain markdown files you own and can export at any time</li>
+                </ul>
+                <p style="margin-top: 1.25rem; margin-bottom: 0;"><em>For anyone who wants to think better. No setup required.</em></p>
+            </div>
+
+            <div class="product">
+                <div style="display: flex; align-items: baseline; gap: 1rem; margin-bottom: 0.5rem;">
+                    <h3 style="margin-top: 0; margin-bottom: 0;">Parachute Computer</h3>
+                    <span class="status">Open Source &middot; Self-Hosted</span>
+                </div>
+                <p>A full personal AI platform. If Parachute Daily is a journaling companion, Parachute Computer is the whole extended mind&mdash;Claude Code for your entire life, not just your codebase.</p>
+                <p>It runs on your machine, connects to your existing tools, and orchestrates AI agents with real capabilities: searching your vault, running code, managing files, operating across Telegram, Discord, and Matrix. Three trust tiers keep you in control of what AI can touch.</p>
+                <ul>
+                    <li><strong>Brain</strong> &mdash; a personal knowledge graph that connects journals, conversations, and vault content</li>
+                    <li><strong>Chat</strong> &mdash; AI conversations with full context and deep tool access</li>
+                    <li><strong>Workspaces</strong> &mdash; named capability scopes for different kinds of sessions</li>
+                    <li><strong>Bot connectors</strong> &mdash; Telegram, Discord, Matrix with per-platform trust levels</li>
+                    <li><strong>Multi-agent teams</strong> &mdash; agents that spawn and coordinate sub-agents inside your vault</li>
+                    <li><strong>Three trust tiers</strong> &mdash; full access, vault-restricted, or sandboxed in Docker</li>
+                </ul>
+                <p style="margin-top: 1.25rem; margin-bottom: 0;"><em>For developers, researchers, and power users. Open source, free to self-host.</em></p>
+            </div>
+        </div>
+    </section>
+
+    <section class="section">
+        <h2>The Connection</h2>
+        <p>Daily and Computer aren't parallel tracks&mdash;they're the same path at different stages.</p>
+        <p>When you're ready to go deeper, everything you've built in Daily comes with you. Your journal entries flow into Parachute Brain, which extracts entities, builds your knowledge graph, and immediately bootstraps a system that already knows you. The first conversation you have with Parachute Computer will reference projects you've been working on, people in your life, questions you've been exploring&mdash;because they're already in your vault.</p>
+        <div style="background: var(--accent-soft); border: 1px solid rgba(74,124,89,0.12); border-radius: 10px; padding: 2rem; margin: 2rem 0; max-width: var(--content-width);">
+            <p style="margin-bottom: 0.5rem; font-family: var(--serif); font-size: 1.1rem; color: var(--fg);">The upgrade path</p>
+            <p style="margin-bottom: 0; font-size: 0.9rem; color: var(--fg-muted); line-height: 1.8;">
+                Start journaling in Daily &rarr;
+                Build months of context &rarr;
+                Switch to Computer &rarr;
+                Brain ingests your history &rarr;
+                System already knows you
+            </p>
+        </div>
+        <p>The data format makes this seamless. Daily stores journal entries as plain markdown, organized by date. Parachute Computer uses the same vault format. There's no migration wizard&mdash;your data just works.</p>
+    </section>
+
+    <section class="section">
+        <h2>Business Model</h2>
+        <p>Open source is our growth engine, not a constraint. Parachute Computer is free and always will be for people who self-host. Revenue comes from making it easier for people who don't want to run infrastructure.</p>
+        <ul>
+            <li><strong>Parachute Daily</strong> &mdash; hosted subscription. Simple tiers: sync across devices, AI daily reflections, richer weekly synthesis. Accessible price point. This is where most users start.</li>
+            <li><strong>Hosted Parachute Computer</strong> &mdash; managed service for power users who want all the capability without running a server. Higher-margin, lower-volume.</li>
+            <li><strong>Hardware pendant</strong> &mdash; wearable device for always-on voice capture, feeding directly into Daily or Computer. In active development with Marvin Melzer.</li>
+        </ul>
+        <p>February is about users. Revenue experimentation starts March once real usage patterns show which path has the most pull. Target: a path to $1,000 MRR identified by April 22.</p>
+    </section>
+
+    <section class="section">
+        <h2>Traction</h2>
+        <ul>
+            <li><strong>111+ pull requests</strong> merged since January &mdash; averaging 3+ per day at peak</li>
+            <li><strong>~180 commits</strong> across both repositories since mid-January</li>
+            <li><strong>Regen Hub</strong> &mdash; first community of real users running Parachute Computer</li>
+            <li><strong>Brain v2</strong> shipped this week &mdash; TerminusDB knowledge graph with Tana-inspired schema UI</li>
+            <li><strong>ATLAS CU Boulder</strong> &mdash; Scope of Work project with final presentation April 22</li>
+            <li><strong>Investor conversations</strong> active &mdash; approaching initial funding round</li>
+        </ul>
+    </section>
+
+    <section class="section">
+        <h2>Team</h2>
+        <ul>
+            <li><strong>Aaron Gabriel Neyer</strong> &mdash; founder, product vision, architecture. ATLAS CU Boulder.</li>
+            <li><strong>Jon Bo</strong> &mdash; co-founder, Parachute Daily lead. Shapes simplicity when things get too complicated.</li>
+            <li><strong>Lucian Hymer</strong> &mdash; Parachute Computer lead. Architecture and deep systems work.</li>
+            <li><strong>Marvin Melzer</strong> &mdash; hardware pendant. ATLAS grad student, developing wearable voice capture device as independent study.</li>
+            <li><strong>Neil Yarnal</strong> &mdash; brand and design. Gives Parachute its visual identity.</li>
+        </ul>
+    </section>
+
+    <section class="section">
+        <h2>What We Believe</h2>
+        <ul>
+            <li><strong>Local-first.</strong> Your data lives on your devices in plain files. If we disappeared tomorrow, your notes would still be there, readable in any text editor.</li>
+            <li><strong>Voice-first.</strong> Talking is often more natural than typing. We meet people where their thinking actually happens&mdash;on walks, in the car, away from the desk.</li>
+            <li><strong>Open source as trust.</strong> The only way to deserve trust with personal thinking is transparency. You can see exactly what the software does.</li>
+            <li><strong>AI as partner.</strong> The goal isn't to automate your thinking. It's to help you think more clearly, remember more completely, make connections you might have missed.</li>
+            <li><strong>Start simple, grow deep.</strong> Parachute Daily works for anyone. Parachute Computer grows with you. The path from one to the other should feel like a natural next step, not a migration.</li>
+        </ul>
+    </section>
+
+    <section class="cta">
+        <h2>Open source and launching now</h2>
+        <p>Install Parachute Computer, follow the roadmap, or get in touch.</p>
+        <a href="https://github.com/OpenParachutePBC/parachute-computer" class="button" target="_blank">GitHub</a>
+        <p class="cta-secondary"><a href="/roadmap/">Read the roadmap &rarr;</a></p>
+    </section>
+</main>
