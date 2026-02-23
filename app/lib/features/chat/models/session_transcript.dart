@@ -76,6 +76,54 @@ class SessionTranscript {
   List<ChatMessage> toMessages() {
     final messages = <ChatMessage>[];
 
+    // Pre-build tool_result index for O(1) lookups during the main pass.
+    // Without this, _findToolResult would scan all N events for each of K
+    // AskUserQuestion tool calls: O(N*K). With the index it's O(N+K).
+    final toolResultIndex = <String, Map<String, dynamic>?>{};
+    for (final event in events) {
+      if (event.type != 'user') continue;
+      final content = event.message?['content'];
+      if (content is! List) continue;
+      for (final block in content) {
+        if (block is! Map) continue;
+        if (block['type'] != 'tool_result') continue;
+        final toolUseId = block['tool_use_id'] as String?;
+        if (toolUseId == null || toolUseId.isEmpty) continue;
+        final rawContent = block['content'];
+        String? resultContent;
+        if (rawContent is String) {
+          resultContent = rawContent;
+        } else if (rawContent is List) {
+          for (final item in rawContent) {
+            if (item is Map && item['type'] == 'text') {
+              resultContent = item['text'] as String?;
+              break;
+            }
+          }
+        }
+        if (resultContent == null || resultContent.isEmpty) {
+          toolResultIndex[toolUseId] = {};
+          continue;
+        }
+        try {
+          final parsed = jsonDecode(resultContent);
+          if (parsed is Map<String, dynamic>) {
+            if (parsed.containsKey('answers')) {
+              final nested = parsed['answers'];
+              toolResultIndex[toolUseId] =
+                  nested is Map<String, dynamic> ? nested : {};
+            } else {
+              toolResultIndex[toolUseId] = parsed;
+            }
+          } else {
+            toolResultIndex[toolUseId] = {};
+          }
+        } catch (_) {
+          toolResultIndex[toolUseId] = {};
+        }
+      }
+    }
+
     // Track accumulated assistant content between human messages
     List<MessageContent> pendingAssistantContent = [];
     DateTime? assistantTimestamp;
@@ -201,7 +249,7 @@ class SessionTranscript {
                     ?.map((q) => q as Map<String, dynamic>)
                     .toList() ?? [];
 
-                final answers = _findToolResult(toolId);
+                final answers = toolResultIndex[toolId];
                 final status = _determineQuestionStatus(answers);
 
                 pendingAssistantContent.add(MessageContent.userQuestion(
@@ -243,54 +291,6 @@ class SessionTranscript {
     }
 
     return messages;
-  }
-
-  /// Find tool_result matching a tool_use ID in the transcript events.
-  /// Returns the parsed answers map, or null if no result found (still pending).
-  Map<String, dynamic>? _findToolResult(String toolUseId) {
-    if (toolUseId.isEmpty) return null;
-    for (final event in events) {
-      if (event.type != 'user') continue;
-      final content = event.message?['content'];
-      if (content is! List) continue;
-      for (final block in content) {
-        if (block is! Map) continue;
-        if (block['type'] == 'tool_result' && block['tool_use_id'] == toolUseId) {
-          // Content can be a String or a List of content blocks (SDK wraps it)
-          final rawContent = block['content'];
-          String? resultContent;
-          if (rawContent is String) {
-            resultContent = rawContent;
-          } else if (rawContent is List) {
-            for (final item in rawContent) {
-              if (item is Map && item['type'] == 'text') {
-                resultContent = item['text'] as String?;
-                break;
-              }
-            }
-          }
-          if (resultContent == null || resultContent.isEmpty) {
-            return {}; // Empty result = timeout/dismissed
-          }
-          try {
-            final parsed = jsonDecode(resultContent);
-            if (parsed is Map<String, dynamic>) {
-              // Server wraps result as {"questions": [...], "answers": {...}}
-              // Extract the nested answers map when present
-              if (parsed.containsKey('answers')) {
-                final nested = parsed['answers'];
-                return nested is Map<String, dynamic> ? nested : {};
-              }
-              return parsed;
-            }
-          } catch (_) {
-            // Not valid JSON
-          }
-          return {}; // Fallback: treat as answered with empty
-        }
-      }
-    }
-    return null; // No result found = still pending
   }
 
   /// Determine question status from answers
