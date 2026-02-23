@@ -149,6 +149,12 @@ class BotConnector(ABC):
         self._init_nudge_sent: dict[str, int] = {}
         self.group_history = GroupHistoryBuffer(max_messages=50)
 
+        # Rate limiting: token bucket, 10 messages per 60-second window per chat_id
+        self._rate_buckets: dict[str, tuple[float, int]] = {}  # chat_id -> (last_refill_time, tokens)
+        self._rate_limit: int = 10
+        self._rate_window: float = 60.0
+        self._rate_limit_message: str = "You're sending messages too quickly. Please wait a moment and try again."
+
         # Security: Warn about risky trust level configurations
         if default_trust_level == "direct":
             logger.warning(
@@ -204,11 +210,57 @@ class BotConnector(ABC):
         """Transition to a new state with validation."""
         old = self._status
         if new not in self._VALID_TRANSITIONS.get(old, set()):
-            logger.warning(f"Invalid connector state transition: {old} -> {new}")
-            return
+            raise RuntimeError(f"Invalid connector state transition: {old} → {new}")
+        logger.debug(f"{self.platform} connector state: {old} → {new}")
         self._status = new
         # Keep _running in sync for backwards compatibility
         self._running = new == ConnectorState.RUNNING
+
+    def _check_rate_limit(self, chat_id: str) -> bool:
+        """Token bucket rate limiter.
+
+        Returns True if the message is within the allowed rate, False if
+        the bucket is empty. A full bucket of _rate_limit tokens refills
+        once per _rate_window seconds.
+        """
+        now = time.time()
+        last_refill, tokens = self._rate_buckets.get(chat_id, (now, self._rate_limit))
+
+        if now - last_refill >= self._rate_window:
+            # Window elapsed — refill the bucket
+            tokens = self._rate_limit
+            last_refill = now
+
+        if tokens <= 0:
+            logger.info(f"{self.platform} rate limit exceeded for chat {chat_id}")
+            return False
+
+        self._rate_buckets[chat_id] = (last_refill, tokens - 1)
+        return True
+
+    async def _send_with_retry(self, coro_factory, chat_id: str) -> None:
+        """Send a message with up to 3 attempts using 1s/2s/4s exponential backoff.
+
+        Args:
+            coro_factory: Zero-argument callable returning a coroutine to execute.
+                          Must be a factory (not a pre-created coroutine) so it
+                          can be called again on retry.
+            chat_id: Chat ID for log messages (never logged is message content).
+        """
+        delays = [1.0, 2.0, 4.0]
+        for attempt in range(1, len(delays) + 1):
+            try:
+                await coro_factory()
+                return
+            except Exception as exc:
+                logger.warning(
+                    f"{self.platform}: send attempt {attempt}/{len(delays)} failed for chat {chat_id}: {exc}"
+                )
+                if attempt < len(delays):
+                    await asyncio.sleep(delays[attempt - 1])
+        logger.error(
+            f"{self.platform}: send failed after {len(delays)} attempts for chat {chat_id}"
+        )
 
     def _sanitize_error(self, exc: Exception) -> str:
         """Sanitize exception message for safe API exposure."""
@@ -439,6 +491,15 @@ class BotConnector(ABC):
         # Look up existing session
         session = await db.get_session_by_bot_link(platform, chat_id)
         if session:
+            if session.archived:
+                logger.info(
+                    f"{platform} session {session.id[:8]} for chat {chat_id} is archived — skipping dispatch"
+                )
+                await self.send_message(
+                    chat_id,
+                    "Your session has ended. Start a new one with /new",
+                )
+                return None
             return session
 
         # Create new session
@@ -487,6 +548,26 @@ class BotConnector(ABC):
     def clear_init_nudge(self, chat_id: str) -> None:
         """Clear initialization nudge counter for a chat."""
         self._init_nudge_sent.pop(chat_id, None)
+
+    async def expire_stale_pairing_requests(self, ttl_days: int = 7) -> int:
+        """Mark pending pairing requests older than ttl_days as expired.
+
+        Also resets the nudge counter for affected chat IDs so users can
+        re-pair without hitting silence. Returns the number of requests expired.
+        """
+        db = getattr(self.server, "database", None)
+        if not db:
+            return 0
+
+        expired = await db.get_expired_pairing_requests(ttl_days=ttl_days)
+        for req in expired:
+            await db.expire_pairing_request(req.id)
+            # Reset nudge counter so the user can retry
+            self._init_nudge_sent.pop(req.platform_chat_id, None)
+            logger.info(
+                f"Expired stale pairing request {req.id[:8]} for {req.platform} user {req.platform_user_id}"
+            )
+        return len(expired)
 
     @staticmethod
     def split_response(text: str, max_len: int) -> list[str]:

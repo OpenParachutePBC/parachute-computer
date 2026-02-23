@@ -558,6 +558,44 @@ async def deny_pairing(request_id: str):
     return {"success": True}
 
 
+@router.delete("/pairing/{platform}/{user_id}")
+async def revoke_user(platform: str, user_id: str):
+    """Revoke a previously approved user, removing them from the platform allowlist."""
+    if platform not in ("telegram", "discord", "matrix"):
+        raise HTTPException(status_code=400, detail=f"Unknown platform: {platform}")
+    if not _vault_path:
+        raise HTTPException(status_code=400, detail="Server not configured")
+
+    async with _config_lock:
+        config = load_bots_config(_vault_path)
+        platform_config = getattr(config, platform, None)
+        if not platform_config:
+            raise HTTPException(status_code=400, detail=f"Platform {platform} not configured")
+
+        # Remove from YAML allowlist
+        if hasattr(platform_config, "allowed_users"):
+            before = len(platform_config.allowed_users)
+            platform_config.allowed_users = [
+                u for u in platform_config.allowed_users if str(u) != str(user_id)
+            ]
+            if len(platform_config.allowed_users) == before:
+                raise HTTPException(status_code=404, detail=f"User {user_id} not in {platform} allowlist")
+            _write_bots_config(config)
+            logger.info(f"Revoked user {user_id} from {platform} allowlist")
+
+        # Clear in-memory connector state under the same lock
+        connector = _connectors.get(platform)
+        if connector:
+            if hasattr(connector, "allowed_users"):
+                connector.allowed_users = [
+                    u for u in connector.allowed_users if str(u) != str(user_id)
+                ]
+            if hasattr(connector, "_trust_overrides"):
+                connector._trust_overrides.pop(str(user_id), None)
+
+    return {"success": True, "platform": platform, "user_id": user_id}
+
+
 async def _add_to_allowlist(
     platform: str,
     identifier: str,

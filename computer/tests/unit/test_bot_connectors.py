@@ -5,6 +5,7 @@ Tests for bot connectors: base class, message formatter, config loading, resilie
 import asyncio
 import tempfile
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -504,10 +505,12 @@ class TestConnectorResilience:
 
     @pytest.mark.asyncio
     async def test_state_transition_validation(self):
-        """Invalid transitions should be rejected."""
+        """Invalid transitions raise RuntimeError; valid transitions succeed."""
         c = _make_test_connector()
-        # stopped -> reconnecting is invalid
-        c._set_status(ConnectorState.RECONNECTING)
+
+        # stopped -> reconnecting is invalid — must raise
+        with pytest.raises(RuntimeError, match="Invalid connector state transition"):
+            c._set_status(ConnectorState.RECONNECTING)
         assert c._status == ConnectorState.STOPPED  # Unchanged
 
         # stopped -> running is valid
@@ -1150,3 +1153,393 @@ class TestAllowlistRoomApproval:
             assert "user2" in updated_config.discord.allowed_users
         finally:
             bots_module._vault_path = old_vault
+
+
+# ---------------------------------------------------------------------------
+# Fix 1 — Token bucket rate limiter
+# ---------------------------------------------------------------------------
+
+
+class TestRateLimiter:
+    def test_allows_messages_within_limit(self):
+        c = _make_test_connector()
+        # All 10 messages in the window should be allowed
+        for _ in range(10):
+            assert c._check_rate_limit("chat1") is True
+
+    def test_rejects_11th_message(self):
+        c = _make_test_connector()
+        for _ in range(10):
+            c._check_rate_limit("chat1")
+        # 11th should be rejected
+        assert c._check_rate_limit("chat1") is False
+
+    def test_per_chat_isolation(self):
+        c = _make_test_connector()
+        # Exhaust chat1's bucket
+        for _ in range(10):
+            c._check_rate_limit("chat1")
+        assert c._check_rate_limit("chat1") is False
+        # chat2 is unaffected
+        assert c._check_rate_limit("chat2") is True
+
+    def test_bucket_refills_after_window(self):
+        c = _make_test_connector()
+        c._rate_window = 0.05  # 50ms window for fast tests
+        for _ in range(10):
+            c._check_rate_limit("chat1")
+        assert c._check_rate_limit("chat1") is False
+
+        # Wait for the window to expire
+        time.sleep(0.1)
+        assert c._check_rate_limit("chat1") is True
+
+    def test_first_message_always_allowed(self):
+        c = _make_test_connector()
+        assert c._check_rate_limit("new_chat") is True
+
+
+# ---------------------------------------------------------------------------
+# Fix 2 — Message send retry
+# ---------------------------------------------------------------------------
+
+
+class TestSendWithRetry:
+    @pytest.mark.asyncio
+    async def test_succeeds_on_first_attempt(self):
+        c = _make_test_connector()
+        calls = []
+
+        async def factory():
+            calls.append(1)
+
+        await c._send_with_retry(factory, "chat1")
+        assert len(calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_retries_on_failure_then_succeeds(self):
+        c = _make_test_connector()
+        attempts = []
+
+        async def factory():
+            attempts.append(1)
+            if len(attempts) < 2:
+                raise OSError("network blip")
+
+        with patch("asyncio.sleep", return_value=None):
+            await c._send_with_retry(factory, "chat1")
+
+        assert len(attempts) == 2
+
+    @pytest.mark.asyncio
+    async def test_gives_up_after_three_attempts(self):
+        c = _make_test_connector()
+        attempts = []
+
+        async def factory():
+            attempts.append(1)
+            raise OSError("always fails")
+
+        with patch("asyncio.sleep", return_value=None):
+            await c._send_with_retry(factory, "chat1")  # Should not raise
+
+        assert len(attempts) == 3
+
+    @pytest.mark.asyncio
+    async def test_backoff_delays_are_1_2_4(self):
+        c = _make_test_connector()
+        slept = []
+
+        async def fake_sleep(delay):
+            slept.append(delay)
+
+        async def factory():
+            raise OSError("fail")
+
+        with patch("asyncio.sleep", side_effect=fake_sleep):
+            await c._send_with_retry(factory, "chat1")
+
+        # 3 failures → 2 sleeps (1s and 2s; no sleep after the last attempt)
+        assert slept == [1.0, 2.0]
+
+
+# ---------------------------------------------------------------------------
+# Fix 3 — State machine raises on invalid transitions
+# ---------------------------------------------------------------------------
+
+
+class TestStateMachineStrictness:
+    def test_invalid_transition_raises(self):
+        c = _make_test_connector()
+        with pytest.raises(RuntimeError, match="Invalid connector state transition"):
+            c._set_status(ConnectorState.RECONNECTING)  # stopped -> reconnecting is invalid
+
+    def test_valid_transitions_do_not_raise(self):
+        c = _make_test_connector()
+        c._set_status(ConnectorState.RUNNING)          # stopped -> running: valid
+        c._set_status(ConnectorState.RECONNECTING)     # running -> reconnecting: valid
+        c._set_status(ConnectorState.RUNNING)          # reconnecting -> running: valid
+        c._set_status(ConnectorState.STOPPED)          # running -> stopped: valid
+
+    def test_all_valid_transitions(self):
+        """Every valid transition in _VALID_TRANSITIONS should not raise."""
+        from parachute.connectors.base import BotConnector
+        for from_state, to_states in BotConnector._VALID_TRANSITIONS.items():
+            for to_state in to_states:
+                c = _make_test_connector()
+                c._status = from_state
+                c._set_status(to_state)  # Should not raise
+
+
+# ---------------------------------------------------------------------------
+# Fix 4a + 4b — TTL expiry + nudge counter reset
+# ---------------------------------------------------------------------------
+
+
+class TestPairingTTL:
+    @pytest.mark.asyncio
+    async def test_expire_stale_requests_marks_expired(self):
+        """expire_stale_pairing_requests expires old pending requests."""
+        from datetime import timedelta
+
+        c = _make_test_connector()
+        mock_db = AsyncMock()
+
+        stale_req = SimpleNamespace(
+            id="req-old",
+            platform="telegram",
+            platform_user_id="111",
+            platform_chat_id="chat_111",
+        )
+        mock_db.get_expired_pairing_requests = AsyncMock(return_value=[stale_req])
+        mock_db.expire_pairing_request = AsyncMock()
+        c.server = SimpleNamespace(database=mock_db)
+
+        count = await c.expire_stale_pairing_requests(ttl_days=7)
+
+        assert count == 1
+        mock_db.expire_pairing_request.assert_called_once_with("req-old")
+
+    @pytest.mark.asyncio
+    async def test_expire_stale_resets_nudge_counter(self):
+        """Nudge counter is cleared for chats whose pairing request expires."""
+        c = _make_test_connector()
+        c._init_nudge_sent["chat_111"] = 3  # Pre-populate counter
+
+        mock_db = AsyncMock()
+        stale_req = SimpleNamespace(
+            id="req-old",
+            platform="telegram",
+            platform_user_id="111",
+            platform_chat_id="chat_111",
+        )
+        mock_db.get_expired_pairing_requests = AsyncMock(return_value=[stale_req])
+        mock_db.expire_pairing_request = AsyncMock()
+        c.server = SimpleNamespace(database=mock_db)
+
+        await c.expire_stale_pairing_requests()
+        assert "chat_111" not in c._init_nudge_sent
+
+    @pytest.mark.asyncio
+    async def test_expire_stale_no_db(self):
+        """Returns 0 gracefully when no database is configured."""
+        c = _make_test_connector()
+        c.server = SimpleNamespace()  # No .database attribute
+        count = await c.expire_stale_pairing_requests()
+        assert count == 0
+
+    @pytest.mark.asyncio
+    async def test_get_expired_pairing_requests(self, test_database):
+        """get_expired_pairing_requests returns only old pending rows."""
+        import uuid
+        from datetime import timedelta
+
+        # Insert a fresh pending request
+        fresh_id = str(uuid.uuid4())
+        await test_database.create_pairing_request(
+            id=fresh_id,
+            platform="telegram",
+            platform_user_id="111",
+            platform_chat_id="chat1",
+        )
+
+        # Insert a stale pending request (simulate 8 days old)
+        stale_id = str(uuid.uuid4())
+        stale_time = (datetime.now(timezone.utc) - timedelta(days=8)).isoformat()
+        await test_database.connection.execute(
+            """
+            INSERT INTO pairing_requests
+            (id, platform, platform_user_id, platform_chat_id, status, created_at)
+            VALUES (?, 'telegram', '222', 'chat2', 'pending', ?)
+            """,
+            (stale_id, stale_time),
+        )
+        await test_database.connection.commit()
+
+        expired = await test_database.get_expired_pairing_requests(ttl_days=7)
+        expired_ids = [r.id for r in expired]
+        assert stale_id in expired_ids
+        assert fresh_id not in expired_ids
+
+    @pytest.mark.asyncio
+    async def test_expire_pairing_request(self, test_database):
+        """expire_pairing_request marks a pending request as expired."""
+        import uuid
+        req_id = str(uuid.uuid4())
+        await test_database.create_pairing_request(
+            id=req_id,
+            platform="telegram",
+            platform_user_id="333",
+            platform_chat_id="chat3",
+        )
+
+        await test_database.expire_pairing_request(req_id)
+
+        updated = await test_database.get_pairing_request(req_id)
+        assert updated.status == "expired"
+
+    @pytest.mark.asyncio
+    async def test_expire_does_not_affect_non_pending(self, test_database):
+        """expire_pairing_request is a no-op on already-resolved requests."""
+        import uuid
+        req_id = str(uuid.uuid4())
+        await test_database.create_pairing_request(
+            id=req_id,
+            platform="telegram",
+            platform_user_id="444",
+            platform_chat_id="chat4",
+        )
+        await test_database.resolve_pairing_request(req_id, approved=True, trust_level="sandboxed")
+
+        # Trying to expire an already-approved request should be a no-op
+        await test_database.expire_pairing_request(req_id)
+        updated = await test_database.get_pairing_request(req_id)
+        assert updated.status == "approved"  # Unchanged
+
+
+# ---------------------------------------------------------------------------
+# Fix 4c — Revocation endpoint
+# ---------------------------------------------------------------------------
+
+
+class TestRevokeUser:
+    @pytest.mark.asyncio
+    async def test_revoke_removes_from_yaml_and_memory(self, tmp_path):
+        """DELETE /pairing/{platform}/{user_id} removes from YAML and connector."""
+        from parachute.api.bots import revoke_user, _write_bots_config, init_bots_api
+        from parachute.connectors.config import BotsConfig, DiscordConfig
+
+        parachute_dir = tmp_path / ".parachute"
+        parachute_dir.mkdir()
+
+        initial_config = BotsConfig(
+            discord=DiscordConfig(
+                enabled=True,
+                bot_token="test-token",
+                allowed_users=["user1", "user2"],
+            )
+        )
+        import parachute.api.bots as bots_module
+        old_vault = bots_module._vault_path
+        old_connectors = bots_module._connectors
+        bots_module._vault_path = tmp_path
+        _write_bots_config(initial_config)
+
+        # Set up mock connector with in-memory state
+        mock_connector = MagicMock()
+        mock_connector.allowed_users = ["user1", "user2"]
+        mock_connector._trust_overrides = {"user1": "sandboxed"}
+        bots_module._connectors = {"discord": mock_connector}
+
+        try:
+            result = await revoke_user("discord", "user1")
+            assert result["success"] is True
+
+            # YAML updated
+            updated_config = load_bots_config(tmp_path)
+            assert "user1" not in [str(u) for u in updated_config.discord.allowed_users]
+            assert "user2" in [str(u) for u in updated_config.discord.allowed_users]
+
+            # In-memory connector updated
+            assert "user1" not in [str(u) for u in mock_connector.allowed_users]
+            assert "user1" not in mock_connector._trust_overrides
+        finally:
+            bots_module._vault_path = old_vault
+            bots_module._connectors = old_connectors
+
+    @pytest.mark.asyncio
+    async def test_revoke_unknown_user_returns_404(self, tmp_path):
+        from parachute.api.bots import revoke_user, _write_bots_config
+        from parachute.connectors.config import BotsConfig, DiscordConfig
+        from fastapi import HTTPException
+
+        parachute_dir = tmp_path / ".parachute"
+        parachute_dir.mkdir()
+
+        initial_config = BotsConfig(
+            discord=DiscordConfig(enabled=True, bot_token="test-token", allowed_users=["user1"])
+        )
+        import parachute.api.bots as bots_module
+        old_vault = bots_module._vault_path
+        bots_module._vault_path = tmp_path
+        _write_bots_config(initial_config)
+
+        try:
+            with pytest.raises(HTTPException) as exc_info:
+                await revoke_user("discord", "nonexistent")
+            assert exc_info.value.status_code == 404
+        finally:
+            bots_module._vault_path = old_vault
+
+
+# ---------------------------------------------------------------------------
+# Fix 5 — Session archived state guard
+# ---------------------------------------------------------------------------
+
+
+class TestSessionArchivedGuard:
+    @pytest.mark.asyncio
+    async def test_archived_session_sends_notice_and_returns_none(self):
+        """get_or_create_session returns None for archived sessions."""
+        c = _make_test_connector()
+        c.send_message = AsyncMock()
+
+        archived_session = SimpleNamespace(id="sess-abc", archived=True)
+        mock_db = AsyncMock()
+        mock_db.get_session_by_bot_link = AsyncMock(return_value=archived_session)
+        c.server = SimpleNamespace(database=mock_db)
+
+        result = await c.get_or_create_session("telegram", "chat1", "dm", "Alice")
+
+        assert result is None
+        c.send_message.assert_called_once()
+        msg = c.send_message.call_args[0][1]
+        assert "session" in msg.lower() or "ended" in msg.lower()
+
+    @pytest.mark.asyncio
+    async def test_active_session_returned_normally(self):
+        """get_or_create_session returns an active (non-archived) session."""
+        c = _make_test_connector()
+
+        active_session = SimpleNamespace(id="sess-xyz", archived=False)
+        mock_db = AsyncMock()
+        mock_db.get_session_by_bot_link = AsyncMock(return_value=active_session)
+        c.server = SimpleNamespace(database=mock_db)
+
+        result = await c.get_or_create_session("telegram", "chat2", "dm", "Bob")
+        assert result is active_session
+
+    @pytest.mark.asyncio
+    async def test_no_existing_session_creates_new(self):
+        """get_or_create_session creates a new session when none exists."""
+        c = _make_test_connector()
+
+        new_session = SimpleNamespace(id="sess-new", archived=False)
+        mock_db = AsyncMock()
+        mock_db.get_session_by_bot_link = AsyncMock(return_value=None)
+        mock_db.create_session = AsyncMock(return_value=new_session)
+        c.server = SimpleNamespace(database=mock_db)
+
+        result = await c.get_or_create_session("telegram", "chat3", "dm", "Charlie")
+        assert result is new_session
+        mock_db.create_session.assert_called_once()

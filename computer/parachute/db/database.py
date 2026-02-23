@@ -942,6 +942,30 @@ class Database:
         await self.connection.commit()
         return await self.get_pairing_request(request_id)
 
+    async def get_expired_pairing_requests(self, ttl_days: int = 7) -> list[PairingRequest]:
+        """Return pending requests older than ttl_days that should be marked expired."""
+        from datetime import timedelta
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=ttl_days)).isoformat()
+        async with self.connection.execute(
+            """
+            SELECT * FROM pairing_requests
+            WHERE status = 'pending' AND created_at < ?
+            ORDER BY created_at ASC
+            """,
+            (cutoff,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [self._row_to_pairing_request(row) for row in rows]
+
+    async def expire_pairing_request(self, request_id: str) -> None:
+        """Mark a pending pairing request as expired."""
+        now = datetime.now(timezone.utc).isoformat()
+        await self.connection.execute(
+            "UPDATE pairing_requests SET status = 'expired', resolved_at = ? WHERE id = ? AND status = 'pending'",
+            (now, request_id),
+        )
+        await self.connection.commit()
+
     def _row_to_pairing_request(self, row: aiosqlite.Row) -> PairingRequest:
         """Convert a database row to a PairingRequest model."""
         return PairingRequest(
