@@ -305,6 +305,38 @@ extension ChatSessionService on ChatService {
     return false;
   }
 
+  /// Get pending AskUserQuestion requests for a session.
+  ///
+  /// Returns a list of pending questions that have not been answered yet.
+  /// Used by [loadSession] to restore [ChatMessagesState.pendingUserQuestion]
+  /// after a session reload.
+  Future<PendingUserQuestion?> getPendingQuestion(String sessionId) async {
+    try {
+      final url = '$baseUrl/api/chat/${Uri.encodeComponent(sessionId)}/pending-questions';
+      final response = await client
+          .get(Uri.parse(url), headers: defaultHeaders)
+          .timeout(ChatService.requestTimeout);
+      if (response.statusCode != 200) return null;
+      final body = jsonDecode(response.body) as Map<String, dynamic>;
+      final pending = body['pending'] as List<dynamic>?;
+      if (pending == null || pending.isEmpty) return null;
+      final first = pending.first as Map<String, dynamic>;
+      final requestId = first['request_id'] as String?;
+      final questions = (first['questions'] as List<dynamic>?)
+          ?.map((q) => q as Map<String, dynamic>)
+          .toList();
+      if (requestId == null || questions == null) return null;
+      return PendingUserQuestion(
+        requestId: requestId,
+        sessionId: sessionId,
+        questions: questions,
+      );
+    } catch (e) {
+      debugPrint('[ChatService] Error getting pending question for $sessionId: $e');
+      return null;
+    }
+  }
+
   /// Abort an active streaming session
   /// Returns true if abort was successful, false if no active stream found
   Future<bool> abortStream(String sessionId) async {

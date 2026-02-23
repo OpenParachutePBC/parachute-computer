@@ -74,6 +74,15 @@ class _MessageBubbleState extends State<MessageBubble>
                 : (isDark
                     ? BrandColors.nightSurfaceElevated
                     : BrandColors.stone),
+            boxShadow: isUser
+                ? [
+                    BoxShadow(
+                      blurRadius: 4,
+                      offset: const Offset(0, 2),
+                      color: Colors.black.withValues(alpha: 0.12),
+                    ),
+                  ]
+                : null,
             borderRadius: BorderRadius.only(
               topLeft: const Radius.circular(Radii.lg),
               topRight: const Radius.circular(Radii.lg),
@@ -123,8 +132,8 @@ class _MessageBubbleState extends State<MessageBubble>
         widgets.add(CollapsibleThinkingSection(
           items: List.from(pendingThinkingItems),
           isDark: isDark,
-          // Expand during streaming so user can see work in progress
-          initiallyExpanded: widget.message.isStreaming,
+          isStreaming: widget.message.isStreaming,
+          initiallyExpanded: false,
         ));
         pendingThinkingItems = [];
       }
@@ -170,7 +179,9 @@ class _MessageBubbleState extends State<MessageBubble>
     // Note: selectable: false because we use SelectionArea wrapper for proper
     // multi-line selection across the entire message bubble
     return Padding(
-      padding: Spacing.cardPadding,
+      padding: isUser
+          ? const EdgeInsets.symmetric(horizontal: 14, vertical: 10)
+          : const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       child: _SafeMarkdownBody(
         text: text,
         textColor: textColor,
@@ -562,16 +573,20 @@ class _MessageBubbleState extends State<MessageBubble>
 
   /// Cache for resolved image file paths to avoid repeated filesystem checks
   static final Map<String, File?> _imageFileCache = {};
+  static const int _maxImageCacheSize = 200;
 
   /// Find an image file, trying alternate extensions if needed
   Future<File?> _findImageFile(String path) async {
-    // Return cached result if available
+    // Return cached result if available (only successful lookups are cached)
     if (_imageFileCache.containsKey(path)) {
       return _imageFileCache[path];
     }
 
     final file = File(path);
     if (await file.exists()) {
+      if (_imageFileCache.length >= _maxImageCacheSize) {
+        _imageFileCache.clear();
+      }
       _imageFileCache[path] = file;
       return file;
     }
@@ -583,12 +598,15 @@ class _MessageBubbleState extends State<MessageBubble>
     for (final ext in alternateExtensions) {
       final altFile = File('$basePath$ext');
       if (await altFile.exists()) {
+        if (_imageFileCache.length >= _maxImageCacheSize) {
+          _imageFileCache.clear();
+        }
         _imageFileCache[path] = altFile;
         return altFile;
       }
     }
 
-    _imageFileCache[path] = null;
+    // File not found — return null without caching so it can be retried later
     return null;
   }
 
@@ -736,23 +754,13 @@ class _MessageBubbleState extends State<MessageBubble>
 
 
   Widget _buildStreamingIndicator(BuildContext context, bool isDark) {
-    // Use a simple, efficient streaming indicator instead of multiple animated dots
-    // This reduces animation overhead from 3 controllers to 1 built-in widget
+    final accentColor = isDark ? BrandColors.nightTurquoise : BrandColors.turquoise;
     return Padding(
-      padding: Spacing.cardPadding,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          SizedBox(
-            width: 14,
-            height: 14,
-            child: CircularProgressIndicator(
-              strokeWidth: 2,
-              valueColor: AlwaysStoppedAnimation<Color>(
-                isDark ? BrandColors.nightTurquoise : BrandColors.turquoise,
-              ),
-            ),
-          ),
+          PulsingDot(color: accentColor),
           const SizedBox(width: 8),
           Text(
             'Thinking...',

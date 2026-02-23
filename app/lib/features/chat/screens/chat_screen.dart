@@ -16,7 +16,6 @@ import '../widgets/resume_marker.dart';
 import '../widgets/session_resume_banner.dart';
 import '../widgets/directory_picker.dart';
 import '../widgets/unified_session_settings.dart';
-import '../widgets/user_question_card.dart';
 import '../../settings/models/trust_level.dart';
 import '../../settings/screens/settings_screen.dart';
 import '../models/workspace.dart';
@@ -695,41 +694,44 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                 ? _buildLoadingState(isDark)
                 : chatState.messages.isEmpty
                     ? _buildEmptyStateOrContinuation(context, isDark, chatState)
-                    : ListView.builder(
-                        controller: _scrollController,
-                        padding: const EdgeInsets.all(Spacing.md),
-                        cacheExtent: 500,
-                        addRepaintBoundaries: true,
-                        // Keep items alive when scrolled off-screen (works with AutomaticKeepAliveClientMixin)
-                        addAutomaticKeepAlives: true,
-                        itemCount: chatState.messages.length +
-                            (chatState.isContinuation ? 1 : 0) +
-                            (chatState.hasEarlierSegments ? 1 : 0),
-                        itemBuilder: (context, index) {
-                          // Show "load earlier" at the very top if there are earlier segments
-                          if (chatState.hasEarlierSegments && index == 0) {
-                            return _buildLoadEarlierSegmentsButton(isDark, chatState);
-                          }
-
-                          // Adjust index for the load-earlier button
-                          final adjustedIndex = chatState.hasEarlierSegments ? index - 1 : index;
-
-                          // Show resume marker at the top if this is a continuation
-                          if (chatState.isContinuation && adjustedIndex == 0) {
-                            return ResumeMarker(
-                              key: const ValueKey('resume_marker'),
-                              originalSession: chatState.continuedFromSession!,
-                              priorMessages: chatState.priorMessages,
+                    : Builder(builder: (context) {
+                        // Filter out compact summaries before building the list.
+                        // They are SDK-generated compaction artifacts that add visual
+                        // noise when shown as regular message bubbles. Filtering here
+                        // (not with SizedBox.shrink) avoids gaps in scroll position.
+                        final displayMessages = chatState.messages
+                            .where((m) => !m.isCompactSummary)
+                            .toList();
+                        return ListView.builder(
+                          controller: _scrollController,
+                          padding: const EdgeInsets.all(Spacing.md),
+                          cacheExtent: 500,
+                          addRepaintBoundaries: true,
+                          addAutomaticKeepAlives: true,
+                          itemCount: displayMessages.length +
+                              (chatState.isContinuation ? 1 : 0) +
+                              (chatState.hasEarlierSegments ? 1 : 0),
+                          itemBuilder: (context, index) {
+                            if (chatState.hasEarlierSegments && index == 0) {
+                              return _buildLoadEarlierSegmentsButton(isDark, chatState);
+                            }
+                            final adjustedIndex = chatState.hasEarlierSegments ? index - 1 : index;
+                            if (chatState.isContinuation && adjustedIndex == 0) {
+                              return ResumeMarker(
+                                key: const ValueKey('resume_marker'),
+                                originalSession: chatState.continuedFromSession!,
+                                priorMessages: chatState.priorMessages,
+                              );
+                            }
+                            final msgIndex = chatState.isContinuation ? adjustedIndex - 1 : adjustedIndex;
+                            final message = displayMessages[msgIndex];
+                            return MessageBubble(
+                              key: ValueKey(message.id),
+                              message: message,
                             );
-                          }
-                          final msgIndex = chatState.isContinuation ? adjustedIndex - 1 : adjustedIndex;
-                          final message = chatState.messages[msgIndex];
-                          return MessageBubble(
-                            key: ValueKey(message.id),
-                            message: message,
-                          );
-                        },
-                      ),
+                          },
+                        );
+                      }),
           ),
 
           // Error banner
@@ -739,10 +741,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           // Resume button for archived sessions
           if (chatState.isViewingArchived)
             _buildContinueButton(context, isDark, chatState),
-
-          // User question card (when Claude is asking via AskUserQuestion)
-          if (chatState.pendingUserQuestion != null)
-            _buildUserQuestionCard(chatState.pendingUserQuestion!),
 
           // Input field - disabled when viewing archived sessions
           ChatInput(
@@ -1569,37 +1567,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     return result ?? false;
   }
 
-  /// Build the user question card when Claude asks a question
-  Widget _buildUserQuestionCard(Map<String, dynamic> questionData) {
-    final requestId = questionData['requestId'] as String? ?? '';
-    final sessionId = questionData['sessionId'] as String? ?? '';
-    final questionsJson = questionData['questions'] as List<dynamic>? ?? [];
-
-    // Parse the questions
-    final questions = questionsJson
-        .map((q) => UserQuestion.fromJson(q as Map<String, dynamic>))
-        .toList();
-
-    if (questions.isEmpty) {
-      return const SizedBox.shrink();
-    }
-
-    return UserQuestionCard(
-      requestId: requestId,
-      sessionId: sessionId,
-      questions: questions,
-      onAnswer: (answers) async {
-        return await ref.read(chatMessagesProvider.notifier).answerQuestion(answers);
-      },
-      onDismiss: () {
-        // Send empty answers to unblock the server-side Future, then clear UI
-        ref.read(chatMessagesProvider.notifier).answerQuestion({});
-        ref.read(chatMessagesProvider.notifier).dismissPendingQuestion();
-      },
-    );
-  }
-
-  /// Resume an archived session - unarchive and enable input
+/// Resume an archived session - unarchive and enable input
   Future<void> _resumeSession(ChatSession session) async {
     try {
       await ref.read(unarchiveSessionProvider)(session.id);

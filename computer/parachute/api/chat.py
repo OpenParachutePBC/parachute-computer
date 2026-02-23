@@ -266,6 +266,83 @@ async def answer_questions(
     )
 
 
+@router.get("/chat/{session_id}/pending-questions")
+async def get_pending_questions(
+    request: Request,
+    session_id: str,
+) -> dict[str, Any]:
+    """
+    Get pending AskUserQuestion requests for a session.
+
+    Returns the list of questions currently awaiting an answer.
+    Use the returned request_id with POST /chat/{session_id}/answer
+    to submit answers programmatically.
+
+    Returns an empty list if no questions are pending or session not found.
+    """
+    orchestrator = get_orchestrator(request)
+    handler = orchestrator.pending_permissions.get(session_id)
+    if not handler:
+        return {"pending": [], "session_id": session_id}
+
+    pending = handler.get_pending_questions()
+    return {
+        "session_id": session_id,
+        "pending": [
+            {
+                "request_id": q.id,
+                "questions": q.questions,
+                "status": q.status,
+            }
+            for q in pending
+        ],
+    }
+
+
+@router.get("/chat/{session_id}/streaming-status")
+async def get_streaming_status(
+    request: Request,
+    session_id: str,
+) -> dict[str, Any]:
+    """
+    Get the current streaming status for a session.
+
+    Returns whether a stream is active and the most recent tool call
+    being executed, allowing bot connectors to surface progress to users.
+
+    Returns is_streaming: false if no active stream found.
+    """
+    orchestrator = get_orchestrator(request)
+    is_streaming = session_id in orchestrator.active_streams
+
+    if not is_streaming:
+        return {
+            "session_id": session_id,
+            "is_streaming": False,
+            "current_tool": None,
+            "current_tool_summary": None,
+        }
+
+    # active_streams stores QueryInterrupt objects which have no tool tracking.
+    # Return is_streaming: True with null tool info — the boolean is the key feature.
+    stream_ctx = orchestrator.active_streams.get(session_id)
+    current_tool = None
+    current_tool_summary = None
+
+    if stream_ctx is not None:
+        if hasattr(stream_ctx, "current_tool_name"):
+            current_tool = stream_ctx.current_tool_name
+        if hasattr(stream_ctx, "current_tool_summary"):
+            current_tool_summary = stream_ctx.current_tool_summary
+
+    return {
+        "session_id": session_id,
+        "is_streaming": True,
+        "current_tool": current_tool,
+        "current_tool_summary": current_tool_summary,
+    }
+
+
 class InjectMessageRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=32000)
 

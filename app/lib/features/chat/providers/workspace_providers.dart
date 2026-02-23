@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/providers/app_state_provider.dart';
+import 'package:parachute/core/providers/feature_flags_provider.dart';
 import '../models/workspace.dart';
 import '../models/chat_session.dart';
 import '../services/workspace_service.dart';

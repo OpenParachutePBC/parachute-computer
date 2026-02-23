@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'chat_message.dart';
+import '../formatters/chat_display_formatter.dart';
 
 /// Represents the full SDK transcript for a session
 ///
@@ -112,6 +113,14 @@ class SessionTranscript {
               // tool_result blocks are NOT human messages
             }
           }
+        }
+
+        // Strip skill/command injection: when a slash command injects the full
+        // SKILL.md content into the user message, extract just the user's input.
+        // Only match when the message starts with the tag (the CLI's actual pattern),
+        // not when the tag appears mid-text in a legitimate user message.
+        if (humanText.trimLeft().startsWith('<command-name>')) {
+          humanText = ChatDisplayFormatter.extractCommandDisplay(humanText);
         }
 
         if (isHumanMessage && humanText.isNotEmpty) {
@@ -247,17 +256,35 @@ class SessionTranscript {
       for (final block in content) {
         if (block is! Map) continue;
         if (block['type'] == 'tool_result' && block['tool_use_id'] == toolUseId) {
-          // The tool_result content is typically a string with the JSON answers
-          final resultContent = block['content'] as String?;
+          // Content can be a String or a List of content blocks (SDK wraps it)
+          final rawContent = block['content'];
+          String? resultContent;
+          if (rawContent is String) {
+            resultContent = rawContent;
+          } else if (rawContent is List) {
+            for (final item in rawContent) {
+              if (item is Map && item['type'] == 'text') {
+                resultContent = item['text'] as String?;
+                break;
+              }
+            }
+          }
           if (resultContent == null || resultContent.isEmpty) {
             return {}; // Empty result = timeout/dismissed
           }
-          // The answers are passed as a JSON string in the tool_result content
           try {
             final parsed = jsonDecode(resultContent);
-            if (parsed is Map<String, dynamic>) return parsed;
+            if (parsed is Map<String, dynamic>) {
+              // Server wraps result as {"questions": [...], "answers": {...}}
+              // Extract the nested answers map when present
+              if (parsed.containsKey('answers')) {
+                final nested = parsed['answers'];
+                return nested is Map<String, dynamic> ? nested : {};
+              }
+              return parsed;
+            }
           } catch (_) {
-            // Not valid JSON, treat as answered
+            // Not valid JSON
           }
           return {}; // Fallback: treat as answered with empty
         }
