@@ -8,6 +8,7 @@ import '../models/session_resume_info.dart';
 import '../models/prompt_metadata.dart';
 import '../models/session_transcript.dart';
 import '../models/attachment.dart';
+import '../models/pending_user_question.dart';
 import '../services/chat_service.dart';
 import '../services/background_stream_manager.dart';
 import 'package:parachute/core/services/logging_service.dart';
@@ -16,28 +17,6 @@ import 'package:parachute/core/providers/app_state_provider.dart' show modelPref
 import 'chat_session_actions.dart' show newChatModeProvider;
 import 'chat_session_providers.dart';
 import 'workspace_providers.dart' show activeWorkspaceProvider;
-
-// ============================================================
-// Performance Tracing (inline stub)
-// ============================================================
-
-/// Simple performance trace for measuring operation duration
-class _PerformanceTrace {
-  final Stopwatch _stopwatch = Stopwatch()..start();
-
-  void end({Map<String, dynamic>? additionalData}) {
-    _stopwatch.stop();
-    // Stub: just stops the timer, no logging
-  }
-}
-
-class _PerfStub {
-  _PerformanceTrace trace(String name, {Map<String, dynamic>? metadata}) {
-    return _PerformanceTrace();
-  }
-}
-
-final _perf = _PerfStub();
 
 // ============================================================
 // Chat State Management
@@ -106,8 +85,7 @@ class ChatMessagesState {
 
   /// Pending user question from AskUserQuestion tool
   /// When set, UI should display a question card for user to answer
-  /// Map contains: requestId, sessionId, questions
-  final Map<String, dynamic>? pendingUserQuestion;
+  final PendingUserQuestion? pendingUserQuestion;
 
   /// Trust level for this session (direct, sandboxed)
   /// Set from SSE session event so config sheet can display it immediately
@@ -169,7 +147,7 @@ class ChatMessagesState {
     List<String>? selectedContexts,
     bool? contextsExplicitlySet,
     bool? reloadClaudeMd,
-    Map<String, dynamic>? pendingUserQuestion,
+    PendingUserQuestion? pendingUserQuestion,
     String? trustLevel,
     bool clearSessionUnavailable = false,
     bool clearWorkingDirectory = false,
@@ -358,12 +336,11 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
   /// If the session was continued from another session, loads prior messages too.
   /// If there's an active background stream for this session, reattaches to it.
   Future<void> loadSession(String sessionId) async {
-    final trace = _perf.trace('LoadSession', metadata: {'sessionId': sessionId});
-
     // Cancel subscription to current stream (but let it continue in background)
     _currentStreamSubscription?.cancel();
     _currentStreamSubscription = null;
     _activeStreamSessionId = null;
+    _queuedMessages.clear();
 
     // Check if there's an active background stream for this session (in-memory)
     bool hasActiveStream = _streamManager.hasActiveStream(sessionId);
@@ -512,9 +489,7 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
         _startPollingForStreamCompletion(sessionId);
       }
 
-      trace.end(additionalData: {'messageCount': loadedMessages.length, 'usedTranscript': usedTranscript, 'hasActiveStream': hasActiveStream});
     } catch (e) {
-      trace.end(additionalData: {'error': e.toString()});
       _log.error('Error loading session', error: e);
       state = state.copyWith(error: e.toString(), isLoading: false);
     }
@@ -715,18 +690,7 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
 
       case StreamEventType.promptMetadata:
         // Prompt composition metadata for transparency
-        final metadata = PromptMetadata(
-          promptSource: event.promptSource ?? 'default',
-          promptSourcePath: event.promptSourcePath,
-          contextFiles: event.contextFiles,
-          contextTokens: event.contextTokens,
-          contextTruncated: event.contextTruncated,
-          agentName: event.agentName,
-          availableAgents: event.availableAgents,
-          basePromptTokens: event.basePromptTokens,
-          totalPromptTokens: event.totalPromptTokens,
-          trustMode: event.trustMode,
-        );
+        final metadata = _buildPromptMetadata(event);
         debugPrint('[ChatMessagesNotifier] Reattach stream prompt metadata: ${metadata.promptSource}');
         state = state.copyWith(promptMetadata: metadata);
         break;
@@ -874,11 +838,11 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
         // Restore pendingUserQuestion when reattaching to background stream
         debugPrint('[ChatMessagesNotifier] Restoring user question from reattach: ${event.questionRequestId}');
         state = state.copyWith(
-          pendingUserQuestion: {
-            'requestId': event.questionRequestId,
-            'sessionId': event.sessionId,
-            'questions': event.questions,
-          },
+          pendingUserQuestion: PendingUserQuestion(
+            requestId: event.questionRequestId ?? '',
+            sessionId: event.sessionId ?? '',
+            questions: List<Map<String, dynamic>>.from(event.questions ?? []),
+          ),
         );
         break;
 
@@ -1427,18 +1391,7 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
 
       case StreamEventType.promptMetadata:
         // Prompt composition metadata for transparency
-        final metadata = PromptMetadata(
-          promptSource: event.promptSource ?? 'default',
-          promptSourcePath: event.promptSourcePath,
-          contextFiles: event.contextFiles,
-          contextTokens: event.contextTokens,
-          contextTruncated: event.contextTruncated,
-          agentName: event.agentName,
-          availableAgents: event.availableAgents,
-          basePromptTokens: event.basePromptTokens,
-          totalPromptTokens: event.totalPromptTokens,
-          trustMode: event.trustMode,
-        );
+        final metadata = _buildPromptMetadata(event);
         debugPrint('[ChatMessagesNotifier] Prompt metadata: ${metadata.promptSource} '
             '(${metadata.totalPromptTokens} tokens, ${metadata.contextFiles.length} context files)');
         state = state.copyWith(promptMetadata: metadata);
@@ -1663,6 +1616,7 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
       case StreamEventType.userQuestion:
         // User question event - Claude is asking the user something
         // Convert the AskUserQuestion ToolCall in streaming content to an inline userQuestion item
+        _flushPendingUpdates();
         debugPrint('[ChatMessagesNotifier] Received user_question event: ${event.questionRequestId}');
         {
           final questions = event.questions;
@@ -1688,11 +1642,11 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
           }
         }
         state = state.copyWith(
-          pendingUserQuestion: {
-            'requestId': event.questionRequestId,
-            'sessionId': event.sessionId,
-            'questions': event.questions,
-          },
+          pendingUserQuestion: PendingUserQuestion(
+            requestId: event.questionRequestId ?? '',
+            sessionId: event.sessionId ?? '',
+            questions: List<Map<String, dynamic>>.from(event.questions ?? []),
+          ),
         );
         break;
 
@@ -1763,16 +1717,8 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
 
   /// Actually perform the message update (called from throttled path)
   void _performMessageUpdate(List<MessageContent> content, {required bool isStreaming}) {
-    final trace = _perf.trace('MessageUpdate', metadata: {
-      'messageCount': state.messages.length,
-      'contentBlocks': content.length,
-    });
-
     final messages = List<ChatMessage>.from(state.messages);
-    if (messages.isEmpty) {
-      trace.end();
-      return;
-    }
+    if (messages.isEmpty) return;
 
     // Find the last streaming assistant message first, then fall back to
     // the last assistant message by role. This prevents overwriting a
@@ -1785,10 +1731,7 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
         (m) => m.role == MessageRole.assistant,
       );
     }
-    if (targetIndex == -1) {
-      trace.end();
-      return;
-    }
+    if (targetIndex == -1) return;
 
     messages[targetIndex] = messages[targetIndex].copyWith(
       content: List.from(content),
@@ -1796,7 +1739,6 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
     );
 
     state = state.copyWith(messages: messages);
-    trace.end();
   }
 
   /// Flush any pending content updates (call when important events happen).
@@ -1858,9 +1800,9 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
       return false;
     }
 
-    final sessionId = pending['sessionId'] as String?;
-    final requestId = pending['requestId'] as String?;
-    if (sessionId == null || requestId == null) {
+    final sessionId = pending.sessionId;
+    final requestId = pending.requestId;
+    if (sessionId.isEmpty || requestId.isEmpty) {
       debugPrint('[ChatMessagesNotifier] Missing sessionId or requestId in pending question');
       return false;
     }
@@ -1896,6 +1838,25 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
   /// Dismiss the pending user question without answering
   void dismissPendingQuestion() {
     state = state.copyWith(clearPendingUserQuestion: true);
+  }
+
+  /// Build a [PromptMetadata] from a [StreamEvent].
+  ///
+  /// Centralises the mapping so both the reattach and send-stream
+  /// [StreamEventType.promptMetadata] handlers share a single code path.
+  PromptMetadata _buildPromptMetadata(StreamEvent event) {
+    return PromptMetadata(
+      promptSource: event.promptSource ?? 'default',
+      promptSourcePath: event.promptSourcePath,
+      contextFiles: event.contextFiles,
+      contextTokens: event.contextTokens,
+      contextTruncated: event.contextTruncated,
+      agentName: event.agentName,
+      availableAgents: event.availableAgents,
+      basePromptTokens: event.basePromptTokens,
+      totalPromptTokens: event.totalPromptTokens,
+      trustMode: event.trustMode,
+    );
   }
 }
 
