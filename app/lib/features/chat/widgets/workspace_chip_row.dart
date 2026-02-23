@@ -19,7 +19,7 @@ class WorkspaceChipRow extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final workspacesAsync = ref.watch(workspacesProvider);
-    final activeSlug = ref.watch(activeWorkspaceProvider);
+    final activeSlug = ref.watch(activeWorkspaceProvider).valueOrNull;
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return workspacesAsync.when(
@@ -47,7 +47,7 @@ class WorkspaceChipRow extends ConsumerWidget {
                   isSelected: activeSlug == null,
                   isDark: isDark,
                   onTap: () {
-                    ref.read(activeWorkspaceProvider.notifier).state = null;
+                    ref.read(activeWorkspaceProvider.notifier).setWorkspace(null);
                     onSelected?.call(null);
                   },
                 ),
@@ -57,7 +57,7 @@ class WorkspaceChipRow extends ConsumerWidget {
                   isSelected: activeSlug == w.slug,
                   isDark: isDark,
                   onTap: () {
-                    ref.read(activeWorkspaceProvider.notifier).state = w.slug;
+                    ref.read(activeWorkspaceProvider.notifier).setWorkspace(w.slug);
                     onSelected?.call(w);
                   },
                 )),

@@ -1273,7 +1273,7 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
       final modelApiValue = modelPref?.apiValue;
 
       // Read active workspace - prefer explicit param, fall back to sidebar filter
-      final activeWorkspace = workspaceId ?? _ref.read(activeWorkspaceProvider);
+      final activeWorkspace = workspaceId ?? _ref.read(activeWorkspaceProvider).valueOrNull;
 
       // Create stream context to hold mutable state across callbacks
       final ctx = _SendStreamContext(

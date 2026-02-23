@@ -689,7 +689,7 @@ class _AgentHubScreenState extends ConsumerState<AgentHubScreen> {
 
     // Set workspace if selected
     if (config.workspaceId != null) {
-      ref.read(activeWorkspaceProvider.notifier).state = config.workspaceId;
+      ref.read(activeWorkspaceProvider.notifier).setWorkspace(config.workspaceId);
     }
 
     if (mounted) {
@@ -730,7 +730,7 @@ class _AgentHubScreenState extends ConsumerState<AgentHubScreen> {
 
     // Set workspace if selected
     if (config.workspaceId != null) {
-      ref.read(activeWorkspaceProvider.notifier).state = config.workspaceId;
+      ref.read(activeWorkspaceProvider.notifier).setWorkspace(config.workspaceId);
     }
 
     if (mounted) {

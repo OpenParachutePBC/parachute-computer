@@ -144,7 +144,7 @@ class _WorkspaceSidebar extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final workspacesAsync = ref.watch(workspacesProvider);
-    final activeSlug = ref.watch(activeWorkspaceProvider);
+    final activeSlug = ref.watch(activeWorkspaceProvider).valueOrNull;
 
     return Container(
       color: isDark ? BrandColors.nightSurfaceElevated : BrandColors.softWhite,
@@ -202,7 +202,7 @@ class _WorkspaceSidebar extends ConsumerWidget {
             icon: Icons.chat_bubble_outline,
             isActive: activeSlug == null,
             isDark: isDark,
-            onTap: () => ref.read(activeWorkspaceProvider.notifier).state = null,
+            onTap: () => ref.read(activeWorkspaceProvider.notifier).setWorkspace(null),
           ),
 
           // Workspace list
@@ -234,7 +234,7 @@ class _WorkspaceSidebar extends ConsumerWidget {
                       isActive: activeSlug == ws.slug,
                       isDark: isDark,
                       subtitle: ws.model ?? ws.defaultTrustLevel,
-                      onTap: () => ref.read(activeWorkspaceProvider.notifier).state = ws.slug,
+                      onTap: () => ref.read(activeWorkspaceProvider.notifier).setWorkspace(ws.slug),
                       onEdit: () async {
                         final saved = await EditWorkspaceDialog.show(context, ws);
                         if (saved == true) ref.invalidate(workspacesProvider);
@@ -246,7 +246,7 @@ class _WorkspaceSidebar extends ConsumerWidget {
                         await service.deleteWorkspace(ws.slug);
                         ref.invalidate(workspacesProvider);
                         if (activeSlug == ws.slug) {
-                          ref.read(activeWorkspaceProvider.notifier).state = null;
+                          ref.read(activeWorkspaceProvider.notifier).setWorkspace(null);
                         }
                       },
                     );
@@ -325,7 +325,7 @@ class _WorkspaceSidebar extends ConsumerWidget {
       context,
       onCreated: (ws) {
         ref.invalidate(workspacesProvider);
-        ref.read(activeWorkspaceProvider.notifier).state = ws.slug;
+        ref.read(activeWorkspaceProvider.notifier).setWorkspace(ws.slug);
       },
     );
   }

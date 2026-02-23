@@ -45,7 +45,7 @@ class _SessionListPanelState extends ConsumerState<SessionListPanel> {
 
   Widget _buildHeader(BuildContext context, bool isDark) {
     final layoutMode = ref.watch(chatLayoutModeProvider);
-    final activeSlug = ref.watch(activeWorkspaceProvider);
+    final activeSlug = ref.watch(activeWorkspaceProvider).valueOrNull;
     final workspacesAsync = ref.watch(workspacesProvider);
 
     return Container(
@@ -118,7 +118,7 @@ class _SessionListPanelState extends ConsumerState<SessionListPanel> {
   ) {
     final searchQuery = ref.watch(sessionSearchQueryProvider);
 
-    final activeWorkspace = ref.watch(activeWorkspaceProvider);
+    final activeWorkspace = ref.watch(activeWorkspaceProvider).valueOrNull;
 
     final AsyncValue<List<ChatSession>> sessionsAsync;
     if (_showArchived) {
@@ -251,7 +251,7 @@ class _SessionListPanelState extends ConsumerState<SessionListPanel> {
 
   void _showWorkspacePicker(bool isDark) {
     final workspacesAsync = ref.read(workspacesProvider);
-    final activeSlug = ref.read(activeWorkspaceProvider);
+    final activeSlug = ref.read(activeWorkspaceProvider).valueOrNull;
 
     showModalBottomSheet(
       context: context,
@@ -310,7 +310,7 @@ class _SessionListPanelState extends ConsumerState<SessionListPanel> {
                       ? Icon(Icons.check, color: isDark ? BrandColors.nightForest : BrandColors.forest)
                       : null,
                   onTap: () {
-                    ref.read(activeWorkspaceProvider.notifier).state = null;
+                    ref.read(activeWorkspaceProvider.notifier).setWorkspace(null);
                     Navigator.pop(sheetContext);
                   },
                 ),
@@ -363,7 +363,7 @@ class _SessionListPanelState extends ConsumerState<SessionListPanel> {
                                   ? Icon(Icons.check, color: isDark ? BrandColors.nightForest : BrandColors.forest)
                                   : null,
                               onTap: () {
-                                ref.read(activeWorkspaceProvider.notifier).state = ws.slug;
+                                ref.read(activeWorkspaceProvider.notifier).setWorkspace(ws.slug);
                                 Navigator.pop(sheetContext);
                               },
                             );
