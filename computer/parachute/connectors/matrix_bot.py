@@ -38,6 +38,9 @@ except ImportError:
 # Matrix event limit is 65KB; 25K text leaves room for HTML + metadata
 MATRIX_MAX_MESSAGE_LENGTH = 25000
 
+# Maximum audio download size — prevents memory exhaustion from large uploads
+MAX_AUDIO_BYTES = 10 * 1024 * 1024  # 10 MB
+
 # Ghost user prefixes for bridge detection (mautrix bridges)
 BRIDGE_GHOST_PREFIXES = ["meta", "telegram", "discord", "signal", "whatsapp"]
 
@@ -442,10 +445,10 @@ class MatrixConnector(BotConnector):
         self._last_message_time = time.time()
 
         # Ack reaction
-        ack_sent = False
+        ack_event_id = None
         if self.ack_emoji and self._client:
             try:
-                await self._client.room_send(
+                resp = await self._client.room_send(
                     room_id,
                     message_type="m.reaction",
                     content={
@@ -456,7 +459,7 @@ class MatrixConnector(BotConnector):
                         }
                     },
                 )
-                ack_sent = True
+                ack_event_id = getattr(resp, "event_id", None)
             except Exception as e:
                 logger.debug(f"Ack reaction failed (non-critical): {e}")
 
@@ -490,19 +493,17 @@ class MatrixConnector(BotConnector):
                 except Exception:
                     pass
 
-        if not response_text:
-            response_text = "No response from agent."
-
         # Format and send (handle 25K char limit)
         plain, html = claude_to_matrix(response_text)
         for chunk_plain, chunk_html in self._split_matrix_response(plain, html):
             await self._send_room_message(room_id, chunk_plain, chunk_html)
 
         # Remove ack reaction after response (Matrix requires redaction)
-        if ack_sent and self._client:
-            # Matrix doesn't have a simple "remove reaction" — would need to
-            # redact the reaction event. Skip for simplicity in v1.
-            pass
+        if ack_event_id and self._client:
+            try:
+                await self._client.room_redact(room_id, ack_event_id)
+            except Exception:
+                pass
 
     async def on_voice_message(self, update: Any, context: Any) -> None:
         """Handle incoming voice/audio message from Matrix."""
@@ -514,6 +515,21 @@ class MatrixConnector(BotConnector):
         # Bridge-aware auth check (shared with text handler)
         _chat_type, is_authorized, _session = await self._resolve_bridge_auth(room_id, sender, room)
         if not is_authorized:
+            return
+
+        # Check audio size before downloading (uses Matrix event info field)
+        event_content = getattr(event, "source", {})
+        if isinstance(event_content, dict):
+            event_content = event_content.get("content", {}) or {}
+        audio_info = event_content.get("info", {}) if isinstance(event_content, dict) else {}
+        audio_size = audio_info.get("size", 0) if isinstance(audio_info, dict) else 0
+        if audio_size and audio_size > MAX_AUDIO_BYTES:
+            limit_mb = MAX_AUDIO_BYTES // (1024 * 1024)
+            size_mb = audio_size // (1024 * 1024)
+            await self._send_room_message(
+                room_id,
+                f"Audio file too large ({size_mb} MB). Maximum is {limit_mb} MB.",
+            )
             return
 
         # Download audio from homeserver
@@ -792,6 +808,7 @@ class MatrixConnector(BotConnector):
     async def _route_to_chat(self, session_id: str, message: str) -> str:
         """Route a message through the Chat orchestrator and collect response."""
         response_text = ""
+        error_occurred = False
         orchestrate = getattr(self.server, "orchestrate", None)
         if not orchestrate:
             logger.error("Server has no orchestrate method")
@@ -813,18 +830,20 @@ class MatrixConnector(BotConnector):
                 elif event_type == "error":
                     error_msg = event.get("error", "") if isinstance(event, dict) else getattr(event, "error", "")
                     logger.error(f"Orchestrator error event: {error_msg}")
+                    error_occurred = True
 
                 elif event_type == "typed_error":
                     title = event.get("title", "Error") if isinstance(event, dict) else getattr(event, "title", "Error")
-                    msg = event.get("message", "") if isinstance(event, dict) else getattr(event, "message", "")
-                    error_text = f"{title}: {msg}" if msg else title
+                    event_msg = event.get("message", "") if isinstance(event, dict) else getattr(event, "message", "")
+                    error_text = f"{title}: {event_msg}" if event_msg else title
                     logger.error(f"Orchestrator typed error: {error_text}")
                     response_text += f"\n\n⚠️ {error_text}"
+                    error_occurred = True
 
                 elif event_type == "warning":
                     title = event.get("title", "Warning") if isinstance(event, dict) else getattr(event, "title", "Warning")
-                    msg = event.get("message", "") if isinstance(event, dict) else getattr(event, "message", "")
-                    warning_text = f"{title}: {msg}" if msg else title
+                    event_msg = event.get("message", "") if isinstance(event, dict) else getattr(event, "message", "")
+                    warning_text = f"{title}: {event_msg}" if event_msg else title
                     logger.warning(f"Orchestrator warning: {warning_text}")
                     response_text += f"\n\n⚠️ {warning_text}"
             logger.info(f"Matrix orchestration: {event_count} events, {len(response_text)} chars response")
@@ -832,6 +851,8 @@ class MatrixConnector(BotConnector):
             logger.error(f"Chat orchestration failed: {e}", exc_info=True)
             return "Something went wrong. Please try again later."
 
+        if not response_text and not error_occurred:
+            response_text = "No response from agent."
         return response_text
 
     async def send_message(self, chat_id: str, text: str) -> None:
