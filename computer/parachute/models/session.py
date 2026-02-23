@@ -122,6 +122,19 @@ class SessionSource(str, Enum):
     MATRIX = "matrix"  # From Matrix bot connector
 
 
+BOT_SOURCES: frozenset[SessionSource] = frozenset({
+    SessionSource.TELEGRAM,
+    SessionSource.DISCORD,
+    SessionSource.MATRIX,
+})
+"""Session sources that originate from bot connectors.
+
+Used to differentiate bot-initiated sessions from app-initiated ones,
+e.g. for Docker unavailability fallback: bot sessions fall back to direct
+execution while app sessions surface the error to the user.
+"""
+
+
 class Session(BaseModel):
     """A chat session."""
 

@@ -173,6 +173,13 @@ async def run():
     # Token: prefer stdin payload (persistent mode), fall back to env var (ephemeral mode)
     oauth_token = request.get("claude_token") or os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
 
+    # Apply injected credentials to environment before SDK initialisation.
+    # Values come from vault/.parachute/credentials.yaml (server-side) and are
+    # forwarded via the stdin JSON payload — never via --env-file or -e flags.
+    for key, value in request.get("credentials", {}).items():
+        if key and isinstance(value, str):
+            os.environ[key] = value
+
     # Set working directory: prefer explicit PARACHUTE_CWD, else session scratch dir
     cwd = os.environ.get("PARACHUTE_CWD")
     if cwd:

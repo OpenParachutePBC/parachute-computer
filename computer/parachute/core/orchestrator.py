@@ -26,6 +26,7 @@ from parachute.core.skills import generate_runtime_plugin, cleanup_runtime_plugi
 from parachute.core.session_manager import SessionManager
 from parachute.db.database import Database
 from parachute.lib.context_loader import format_context_for_prompt, load_agent_context
+from parachute.lib.credentials import load_credentials
 from parachute.core.context_folders import ContextFolderService
 from parachute.core.capability_filter import filter_by_trust_level, filter_capabilities
 from parachute.lib.mcp_loader import load_mcp_servers, resolve_mcp_servers, validate_and_filter_servers
@@ -51,7 +52,7 @@ from parachute.models.events import (
     UserQuestionEvent,
     WarningEvent,
 )
-from parachute.models.session import ResumeInfo, Session, SessionSource, TrustLevel
+from parachute.models.session import BOT_SOURCES, ResumeInfo, Session, SessionSource, TrustLevel
 
 logger = logging.getLogger(__name__)
 
@@ -224,6 +225,10 @@ class Orchestrator:
     async def stop_workspace_container(self, workspace_slug: str) -> None:
         """Stop and remove a workspace's persistent container."""
         await self._sandbox.stop_container(workspace_slug)
+
+    async def stop_default_container(self) -> None:
+        """Stop and remove the default sandbox container."""
+        await self._sandbox.stop_default_container()
 
     async def reconcile_containers(self) -> None:
         """Discover existing workspace containers on startup."""
@@ -819,6 +824,7 @@ class Orchestrator:
                         working_directory=sandbox_wd,
                         model=sandbox_model,
                         system_prompt=sandbox_system_prompt,
+                        session_source=session.source,  # For credential injection gating
                     )
                     # For continuing sandbox sessions, try SDK resume first
                     # (full-fidelity), fall back to history injection (text-only).
@@ -1009,13 +1015,33 @@ class Orchestrator:
                             logger.warning(f"Failed to increment message count for {sandbox_sid[:8]}: {e}")
                     return
                 else:
-                    # No fallback — Docker is required for sandboxed sessions
-                    logger.error("Docker not available for sandboxed session")
-                    yield ErrorEvent(
-                        error="Docker is required for sandboxed sessions but is not available. "
-                              "Either install Docker (brew install orbstack) or change trust level to 'direct'.",
-                    ).model_dump(by_alias=True)
-                    return
+                    # Docker unavailable — behavior differs by session source:
+                    # - External bot sessions (Telegram/Discord/Matrix): hard fail.
+                    #   We must not grant bare-metal access to untrusted external users.
+                    # - Local app sessions: fall through to direct execution with a warning.
+                    #   The sandbox is a protection layer; local users own the machine.
+                    if session.source in BOT_SOURCES:
+                        logger.error(
+                            f"Docker unavailable for bot session {session.id[:8]} "
+                            f"(source={session.source.value}) — hard failing"
+                        )
+                        yield ErrorEvent(
+                            error="Docker is required for external sessions but is not available. "
+                                  "Contact the server administrator.",
+                        ).model_dump(by_alias=True)
+                        return
+                    else:
+                        logger.warning(
+                            f"Docker unavailable for session {session.id[:8]} — "
+                            f"falling back to direct execution"
+                        )
+                        yield WarningEvent(
+                            code=ErrorCode.SERVICE_UNAVAILABLE,
+                            title="Running Without Sandbox",
+                            message="Docker is not available. Running in direct mode — no sandboxing active.",
+                            session_id=session.id if session.id != "pending" else None,
+                        ).model_dump(by_alias=True)
+                        # Fall through to direct execution below
 
             logger.info(
                 f"SDK launch: cwd={effective_cwd}, resume={resume_id}, "
@@ -1568,6 +1594,23 @@ The messages below are from that earlier session. Treat them as if they happened
 The user is now continuing this conversation with you. Respond naturally as if you remember the above exchange.
 """
             append_parts.append(prior_section)
+
+        # Credential discoverability — tell the agent which CLI tools are pre-authenticated
+        # so it can use them proactively without being explicitly asked.
+        cred_keys = set(load_credentials(self.vault_path).keys())
+        if cred_keys:
+            tools: list[str] = []
+            if "GH_TOKEN" in cred_keys:
+                tools.append("`gh` (GitHub CLI — pre-authenticated)")
+            if "AWS_ACCESS_KEY_ID" in cred_keys:
+                tools.append("`aws` (AWS CLI — pre-authenticated)")
+            if "NODE_AUTH_TOKEN" in cred_keys:
+                tools.append("`npm` (npm registry — pre-authenticated)")
+            if tools:
+                append_parts.append(
+                    "## Authenticated CLI Tools\n\n"
+                    + "\n".join(f"- {t}" for t in tools)
+                )
 
         # Combine all append parts
         append_content = "\n\n".join(append_parts) if append_parts else ""
