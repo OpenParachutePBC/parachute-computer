@@ -52,7 +52,7 @@ enum MessageRole { user, assistant }
 enum ContentType { text, toolUse, thinking, warning, userQuestion }
 
 /// Status of a user question (from AskUserQuestion tool)
-enum UserQuestionStatus { pending, answered, dismissed, timeout }
+enum UserQuestionStatus { pending, answered, timeout }
 
 /// Data for an AskUserQuestion tool call persisted in message content
 class UserQuestionData {
@@ -68,17 +68,6 @@ class UserQuestionData {
     this.status = UserQuestionStatus.pending,
   });
 
-  UserQuestionData copyWith({
-    Map<String, dynamic>? answers,
-    UserQuestionStatus? status,
-  }) {
-    return UserQuestionData(
-      toolUseId: toolUseId,
-      questions: questions,
-      answers: answers ?? this.answers,
-      status: status ?? this.status,
-    );
-  }
 }
 
 /// A tool call made by the assistant

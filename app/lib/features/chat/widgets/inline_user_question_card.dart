@@ -254,7 +254,6 @@ class _InlineUserQuestionCardState
       case UserQuestionStatus.pending:
         return isDark ? BrandColors.nightTurquoise : BrandColors.turquoise;
       case UserQuestionStatus.timeout:
-      case UserQuestionStatus.dismissed:
         return isDark ? Colors.orange.shade700 : Colors.orange.shade300;
     }
   }
@@ -281,10 +280,6 @@ class _InlineUserQuestionCardState
         case UserQuestionStatus.timeout:
           icon = Icons.timer_off_outlined;
           label = 'Expired';
-          color = isDark ? Colors.orange.shade300 : Colors.orange.shade700;
-        case UserQuestionStatus.dismissed:
-          icon = Icons.close;
-          label = 'Dismissed';
           color = isDark ? Colors.orange.shade300 : Colors.orange.shade700;
       }
     }

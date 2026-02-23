@@ -1823,17 +1823,12 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
         answers: answers,
       );
 
-      if (success) {
-        // Clear the pending question
-        state = state.copyWith(clearPendingUserQuestion: true);
-        debugPrint('[ChatMessagesNotifier] Question answered successfully');
-      } else {
-        // Backend likely timed out — clear the stale floating card.
-        // The inline card in the transcript will show the correct status
-        // when the session is reloaded.
-        debugPrint('[ChatMessagesNotifier] Answer rejected (question likely expired), clearing');
-        state = state.copyWith(clearPendingUserQuestion: true);
-      }
+      // Clear the pending question regardless of outcome. If rejected, the
+      // inline card in the transcript will show the correct status on reload.
+      state = state.copyWith(clearPendingUserQuestion: true);
+      debugPrint(success
+          ? '[ChatMessagesNotifier] Question answered successfully'
+          : '[ChatMessagesNotifier] Answer rejected (question likely expired), clearing');
 
       return success;
     } catch (e) {
