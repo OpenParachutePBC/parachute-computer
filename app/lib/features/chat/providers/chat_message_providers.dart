@@ -478,6 +478,13 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
         trustLevel: loadedSession.trustLevel, // Preserve trust level from server
       );
 
+      // Restore pendingUserQuestion if server has an active pending question
+      // (survives session reload; required for answerQuestion() to work after reload)
+      final pendingQuestion = await _service.getPendingQuestion(sessionId);
+      if (pendingQuestion != null && state.sessionId == sessionId) {
+        state = state.copyWith(pendingUserQuestion: pendingQuestion);
+      }
+
       // If there's an active background stream, reattach to receive updates
       if (_streamManager.hasActiveStream(sessionId)) {
         debugPrint('[ChatMessagesNotifier] Session has active background stream - reattaching');
