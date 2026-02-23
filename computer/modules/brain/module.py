@@ -33,9 +33,6 @@ from .models import (
     SavedQueryListResponse,
 )
 
-# Module-level lock for queries.json file access
-_queries_lock = asyncio.Lock()
-
 logger = logging.getLogger(__name__)
 
 
@@ -58,6 +55,7 @@ class BrainModule:
         self.kg_service: Optional[KnowledgeGraphService] = None
         self.schemas: list[dict[str, Any]] = []
         self._init_lock = asyncio.Lock()  # CRITICAL: Race condition protection
+        self._queries_lock = asyncio.Lock()
 
     async def _ensure_kg_service(self) -> KnowledgeGraphService:
         """Lazy-load KnowledgeGraphService with race condition protection"""
@@ -258,11 +256,11 @@ class BrainModule:
             if not re.match(r'^[A-Za-z][A-Za-z0-9_]*$', type_name):
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid type name")
             kg = await self._ensure_kg_service()
-            count = await kg.count_entities(type_name)
-            if count > 0:
+            has_data = await kg.has_entities(type_name)
+            if has_data:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Type has {count} entities. Delete all entities first.",
+                    detail="Delete all entities of this type first.",
                 )
             try:
                 await kg.delete_schema_type(type_name)
@@ -271,14 +269,15 @@ class BrainModule:
                 raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to delete schema type")
             # Purge orphaned saved queries for this type
             queries_path = self.vault_path / ".brain" / "queries.json"
-            async with _queries_lock:
+            async with self._queries_lock:
                 if queries_path.exists():
-                    data = json.loads(queries_path.read_text())
+                    text = await asyncio.to_thread(queries_path.read_text)
+                    data = json.loads(text)
                     data["queries"] = [
                         q for q in data.get("queries", [])
                         if q.get("entity_type") != type_name
                     ]
-                    queries_path.write_text(json.dumps(data, indent=2))
+                    await asyncio.to_thread(queries_path.write_text, json.dumps(data, indent=2))
             await self._reload_schemas()
             return {"success": True}
 
@@ -288,9 +287,10 @@ class BrainModule:
         async def list_saved_queries():
             """List all saved queries."""
             queries_path = self.vault_path / ".brain" / "queries.json"
-            async with _queries_lock:
+            async with self._queries_lock:
                 if queries_path.exists():
-                    data = json.loads(queries_path.read_text())
+                    text = await asyncio.to_thread(queries_path.read_text)
+                    data = json.loads(text)
                     return SavedQueryListResponse(queries=data.get("queries", []))
             return SavedQueryListResponse(queries=[])
 
@@ -299,30 +299,32 @@ class BrainModule:
             """Save a named filter query."""
             queries_path = self.vault_path / ".brain" / "queries.json"
             queries_path.parent.mkdir(parents=True, exist_ok=True)
-            async with _queries_lock:
+            async with self._queries_lock:
                 if queries_path.exists():
-                    data = json.loads(queries_path.read_text())
+                    text = await asyncio.to_thread(queries_path.read_text)
+                    data = json.loads(text)
                 else:
                     data = {"queries": []}
                 request_dict = request.model_dump()
                 request_dict["id"] = request_dict.get("id") or str(uuid.uuid4())
                 data["queries"].append(request_dict)
-                queries_path.write_text(json.dumps(data, indent=2))
+                await asyncio.to_thread(queries_path.write_text, json.dumps(data, indent=2))
             return {"success": True, "id": request_dict["id"]}
 
         @router.delete("/queries/{query_id}", response_model=dict)
         async def delete_saved_query(query_id: str):
             """Delete a saved query by ID."""
             queries_path = self.vault_path / ".brain" / "queries.json"
-            async with _queries_lock:
+            async with self._queries_lock:
                 if not queries_path.exists():
                     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Query not found")
-                data = json.loads(queries_path.read_text())
+                text = await asyncio.to_thread(queries_path.read_text)
+                data = json.loads(text)
                 original_count = len(data.get("queries", []))
                 data["queries"] = [q for q in data.get("queries", []) if q.get("id") != query_id]
                 if len(data["queries"]) == original_count:
                     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Query not found")
-                queries_path.write_text(json.dumps(data, indent=2))
+                await asyncio.to_thread(queries_path.write_text, json.dumps(data, indent=2))
             return {"success": True}
 
         return router

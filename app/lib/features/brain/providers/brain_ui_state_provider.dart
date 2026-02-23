@@ -15,26 +15,18 @@ final brainSearchQueryProvider = StateProvider<String>((ref) => '');
 /// Null = detail pane closed.
 final brainSelectedEntityProvider = StateProvider<String?>((ref) => null);
 
-/// Current layout mode — updated by BrainHomeScreen's LayoutBuilder.
-/// Using an internal StateProvider + a public derived provider separates
-/// the write side (LayoutBuilder) from the read side (child widgets).
-final _brainLayoutModeStateProvider =
+/// Current layout mode — written by BrainHomeScreen's LayoutBuilder, read by child widgets.
+/// Only BrainHomeScreen should write to this provider.
+final brainLayoutModeProvider =
     StateProvider<BrainLayoutMode>((ref) => BrainLayoutMode.mobile);
-
-final brainLayoutModeProvider = Provider<BrainLayoutMode>(
-  (ref) => ref.watch(_brainLayoutModeStateProvider),
-);
 
 /// Layout mode for the Brain screen.
 enum BrainLayoutMode { mobile, wide }
 
-/// Expose the internal state provider notifier for LayoutBuilder to update.
-final brainLayoutModeStateProvider = _brainLayoutModeStateProvider;
-
 /// Schema types from /api/brain/types — includes entity counts per type.
 /// Use this for the sidebar (needs counts). brainSchemaListProvider is legacy.
 final brainSchemaDetailProvider =
-    FutureProvider.autoDispose<List<BrainSchemaDetail>>((ref) async {
+    FutureProvider<List<BrainSchemaDetail>>((ref) async {
   final service = ref.watch(brainServiceProvider);
   return service.listSchemaTypes();
 });
@@ -48,7 +40,10 @@ final brainActiveFiltersProvider =
 
 class BrainFilterNotifier extends Notifier<List<BrainFilterCondition>> {
   @override
-  List<BrainFilterCondition> build() => [];
+  List<BrainFilterCondition> build() {
+    ref.watch(brainSelectedTypeProvider); // auto-clear filters on type switch
+    return [];
+  }
 
   void add(BrainFilterCondition condition) =>
       state = [...state, condition];
@@ -64,5 +59,5 @@ class BrainFilterNotifier extends Notifier<List<BrainFilterCondition>> {
 
 /// Saved filter queries loaded from backend.
 final brainSavedQueriesProvider = FutureProvider.autoDispose<List<SavedQuery>>(
-  (ref) => ref.read(brainQueryServiceProvider).loadQueries(),
+  (ref) => ref.watch(brainQueryServiceProvider).loadQueries(),
 );

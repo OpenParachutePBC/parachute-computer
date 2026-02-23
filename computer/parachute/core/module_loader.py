@@ -87,6 +87,12 @@ class ModuleLoader:
         modules: dict[str, Any] = {}
 
         # Step 1: Load built-in modules from source (always trusted, no hash)
+        if not self.builtin_dir.exists():
+            logger.warning(
+                f"Built-in module directory not found: {self.builtin_dir}. "
+                f"No built-in modules will be loaded. "
+                f"Check that the server is running from the correct directory."
+            )
         if self.builtin_dir.exists():
             for module_dir in sorted(self.builtin_dir.iterdir()):
                 if not module_dir.is_dir():

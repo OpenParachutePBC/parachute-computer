@@ -50,7 +50,7 @@ class SchemaCompiler:
         json_schema = {
             "@type": "Class",
             "@id": schema_def["name"],
-            "@key": self._build_key_strategy(schema_def),
+            "@key": self.build_key_strategy(schema_def),
         }
 
         if schema_def.get("description"):
@@ -60,7 +60,7 @@ class SchemaCompiler:
 
         # Compile fields (enum_docs populated as side effect)
         for field_name, field_spec in schema_def.get("fields", {}).items():
-            json_schema[field_name] = self._compile_field(
+            json_schema[field_name] = self.compile_field(
                 field_spec, schema_def["name"], field_name, enum_docs
             )
 
@@ -91,7 +91,7 @@ class SchemaCompiler:
                     f"Must be one of: {valid_strategies}"
                 )
 
-    def _build_key_strategy(self, schema_def: dict[str, Any]) -> dict[str, Any]:
+    def build_key_strategy(self, schema_def: dict[str, Any]) -> dict[str, Any]:
         """Generate @key based on key_strategy."""
         strategy = schema_def.get("key_strategy", "Random")
 
@@ -112,7 +112,7 @@ class SchemaCompiler:
         else:
             raise ValueError(f"Unknown key strategy: {strategy}")
 
-    def _compile_field(
+    def compile_field(
         self,
         field_spec: dict[str, Any],
         class_name: str,

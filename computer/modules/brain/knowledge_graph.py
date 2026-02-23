@@ -80,6 +80,9 @@ _ALLOWED_FIELD_TYPES = frozenset({
     "string", "integer", "boolean", "datetime", "enum", "link",
 })
 
+# Field names must be snake_case starting with a lowercase letter
+_FIELD_NAME_RE = re.compile(r'^[a-z][a-z0-9_]*$')
+
 
 class KnowledgeGraphService:
     """Async wrapper around TerminusDB client"""
@@ -188,13 +191,14 @@ class KnowledgeGraphService:
         logger.info(f"Creating {entity_type} entity", extra={"entity_type": entity_type})
 
         def _create_sync():
-            doc = {"@type": entity_type, **data}
-            result = self.client.insert_document(
-                doc,
-                commit_msg=commit_msg or f"Create {entity_type}",
-            )
-            # TerminusDB returns list of IRIs — extract first one
-            entity_id = result[0] if isinstance(result, list) else result
+            with self._client_lock:
+                doc = {"@type": entity_type, **data}
+                result = self.client.insert_document(
+                    doc,
+                    commit_msg=commit_msg or f"Create {entity_type}",
+                )
+                # TerminusDB returns list of IRIs — extract first one
+                entity_id = result[0] if isinstance(result, list) else result
             logger.debug(f"Created entity: {entity_id}")
             return entity_id
 
@@ -230,12 +234,13 @@ class KnowledgeGraphService:
             if filters:
                 template.update(filters)
 
-            # CRITICAL: Use limit for memory safety (cap at 1000)
-            results = list(self.client.query_document(
-                template,
-                skip=offset,
-                count=min(limit, 1000),
-            ))
+            with self._client_lock:
+                # CRITICAL: Use limit for memory safety (cap at 1000)
+                results = list(self.client.query_document(
+                    template,
+                    skip=offset,
+                    count=min(limit, 1000),
+                ))
 
             logger.debug(f"Query returned {len(results)} results")
 
@@ -258,7 +263,8 @@ class KnowledgeGraphService:
 
         def _get_sync():
             try:
-                return self.client.get_document(entity_id)
+                with self._client_lock:
+                    return self.client.get_document(entity_id)
             except (DatabaseError, APIError) as e:
                 logger.warning(f"Entity not found: {entity_id}", exc_info=True)
                 return None
@@ -279,17 +285,18 @@ class KnowledgeGraphService:
         logger.info(f"Updating entity: {entity_id}")
 
         def _update_sync():
-            # Get current document
-            doc = self.client.get_document(entity_id)
+            with self._client_lock:
+                # Get current document
+                doc = self.client.get_document(entity_id)
 
-            # Apply updates
-            doc.update(data)
+                # Apply updates
+                doc.update(data)
 
-            # Save
-            self.client.update_document(
-                doc,
-                commit_msg=commit_msg or f"Update {entity_id}",
-            )
+                # Save
+                self.client.update_document(
+                    doc,
+                    commit_msg=commit_msg or f"Update {entity_id}",
+                )
 
         try:
             await asyncio.to_thread(_update_sync)
@@ -308,7 +315,8 @@ class KnowledgeGraphService:
         logger.info(f"Deleting entity: {entity_id}")
 
         def _delete_sync():
-            self.client.delete_document({"@id": entity_id})
+            with self._client_lock:
+                self.client.delete_document({"@id": entity_id})
 
         try:
             await asyncio.to_thread(_delete_sync)
@@ -321,11 +329,11 @@ class KnowledgeGraphService:
         self._ensure_connected()
 
         def _list_sync():
-            # Query TerminusDB schema graph
-            schema_docs = self.client.query_document(
-                {"@type": "Class"},
-                graph_type="schema"
-            )
+            with self._client_lock:
+                schema_docs = list(self.client.query_document(
+                    {"@type": "Class"},
+                    graph_type="schema"
+                ))
             return schema_docs
 
         try:
@@ -334,25 +342,25 @@ class KnowledgeGraphService:
             logger.error("Failed to list schemas", exc_info=True)
             raise
 
-    async def count_entities(self, entity_type: str) -> int:
-        """Count entities of a given type."""
+    async def has_entities(self, entity_type: str) -> bool:
+        """Return True if any entities of the given type exist."""
         self._ensure_connected()
 
-        def _count_sync():
+        def _has_sync():
             with self._client_lock:
-                results = self.client.query_document({"@type": entity_type}, count=100)
-                return len(list(results))
+                results = self.client.query_document({"@type": entity_type}, count=1)
+                return len(list(results)) > 0
 
         try:
-            return await asyncio.to_thread(_count_sync)
+            return await asyncio.to_thread(_has_sync)
         except Exception:
-            return 0
+            return False
 
     async def list_schema_types_with_counts(self) -> list[dict[str, Any]]:
         """List all schema types with entity counts.
 
-        Uses asyncio.gather() for concurrent count queries (O(1) parallel latency).
-        If > 20 types, skips counts (returns -1) to avoid too many connections.
+        Fetches counts sequentially in a single thread to avoid lock contention.
+        If > 20 types, skips counts (returns -1) to prevent excessive latency.
         """
         self._ensure_connected()
 
@@ -391,21 +399,19 @@ class KnowledgeGraphService:
                 "entity_count": -1,  # filled below
             })
 
-        # Fetch entity counts concurrently (skip if > 20 types)
+        # Fetch entity counts sequentially in a single thread (avoids lock contention)
         if len(types) <= 20:
-            async def get_count(type_name: str) -> int:
-                def _count():
-                    with self._client_lock:
-                        results = self.client.query_document({"@type": type_name}, count=100)
-                        return len(list(results))
-                return await asyncio.to_thread(_count)
-
-            counts = await asyncio.gather(
-                *[get_count(t["name"]) for t in types],
-                return_exceptions=True,
-            )
-            for t, count in zip(types, counts):
-                t["entity_count"] = count if isinstance(count, int) else -1
+            def _fetch_all_counts():
+                with self._client_lock:
+                    for t in types:
+                        try:
+                            results = list(self.client.query_document(
+                                {"@type": t["name"]}, count=1000
+                            ))
+                            t["entity_count"] = len(results)
+                        except Exception:
+                            t["entity_count"] = -1
+            await asyncio.to_thread(_fetch_all_counts)
 
         return types
 
@@ -430,6 +436,18 @@ class KnowledgeGraphService:
             raise ValueError(
                 f"Type name '{name}' is reserved by TerminusDB and cannot be used."
             )
+        if name.startswith("Sys"):
+            raise ValueError(
+                f"Type names starting with 'Sys' are reserved by TerminusDB"
+            )
+
+    def _validate_field_names(self, fields: dict) -> None:
+        """Raise ValueError if any field name is not snake_case."""
+        for name in fields:
+            if not _FIELD_NAME_RE.match(name):
+                raise ValueError(
+                    f"Field name must be snake_case (^[a-z][a-z0-9_]*$), got '{name}'"
+                )
 
     def _compile_field_from_spec(
         self,
@@ -463,7 +481,26 @@ class KnowledgeGraphService:
 
         from .schema_compiler import SchemaCompiler
         compiler = SchemaCompiler()
-        return compiler._compile_field(spec_dict, class_name, field_name, enum_docs)
+        return compiler.compile_field(spec_dict, class_name, field_name, enum_docs)
+
+    def _compile_fields(
+        self,
+        name: str,
+        fields: dict[str, Any],
+    ) -> "tuple[dict[str, Any], list[dict[str, Any]]]":
+        """Compile fields dict to (compiled_fields, enum_docs)."""
+        from .models import FieldSpec
+        enum_docs: list[dict[str, Any]] = []
+        compiled_fields: dict[str, Any] = {}
+        for field_name, field_data in fields.items():
+            if isinstance(field_data, dict):
+                field_spec = FieldSpec.model_validate(field_data)
+            else:
+                field_spec = field_data
+            compiled_fields[field_name] = self._compile_field_from_spec(
+                field_spec, name, field_name, enum_docs
+            )
+        return compiled_fields, enum_docs
 
     async def create_schema_type(
         self,
@@ -477,23 +514,13 @@ class KnowledgeGraphService:
         Enum documents MUST be inserted before the Class document (TerminusDB v12).
         """
         self._validate_type_name(name)
+        self._validate_field_names(fields)
 
-        from .models import FieldSpec
-        enum_docs: list[dict[str, Any]] = []
-        compiled_fields: dict[str, Any] = {}
-
-        for field_name, field_data in fields.items():
-            if isinstance(field_data, dict):
-                field_spec = FieldSpec.model_validate(field_data)
-            else:
-                field_spec = field_data
-            compiled_fields[field_name] = self._compile_field_from_spec(
-                field_spec, name, field_name, enum_docs
-            )
+        compiled_fields, enum_docs = self._compile_fields(name, fields)
 
         from .schema_compiler import SchemaCompiler
         compiler = SchemaCompiler()
-        key_doc = compiler._build_key_strategy({"key_strategy": key_strategy})
+        key_doc = compiler.build_key_strategy({"key_strategy": key_strategy})
 
         class_doc: dict[str, Any] = {
             "@type": "Class",
@@ -529,28 +556,28 @@ class KnowledgeGraphService:
         DatabaseError (strengthening constraint) — caught and re-raised as ValueError.
         """
         self._ensure_connected()
+        self._validate_type_name(name)
+        self._validate_field_names(fields)
 
-        from .models import FieldSpec
-        enum_docs: list[dict[str, Any]] = []
-        compiled_fields: dict[str, Any] = {}
-
-        for field_name, field_data in fields.items():
-            if isinstance(field_data, dict):
-                field_spec = FieldSpec.model_validate(field_data)
-            else:
-                field_spec = field_data
-            compiled_fields[field_name] = self._compile_field_from_spec(
-                field_spec, name, field_name, enum_docs
-            )
-
-        class_doc: dict[str, Any] = {
-            "@type": "Class",
-            "@id": name,
-            **compiled_fields,
-        }
+        compiled_fields, enum_docs = self._compile_fields(name, fields)
 
         def _replace_sync():
             with self._client_lock:
+                # Fetch existing doc to preserve @key and @documentation
+                try:
+                    existing = self.client.get_document(name, graph_type="schema")
+                except Exception:
+                    existing = {}
+
+                class_doc: dict[str, Any] = {
+                    "@type": "Class",
+                    "@id": name,
+                    **compiled_fields,
+                }
+                for preserve_key in ("@key", "@documentation"):
+                    if preserve_key in existing:
+                        class_doc.setdefault(preserve_key, existing[preserve_key])
+
                 if enum_docs:
                     self.client.replace_document(
                         enum_docs, graph_type="schema",
@@ -562,7 +589,8 @@ class KnowledgeGraphService:
                         commit_msg=f"Update type {name}",
                     )
                 except Exception as e:
-                    raise ValueError(f"Schema update rejected by TerminusDB: {e}") from e
+                    logger.error(f"Schema replace rejected for '{name}': {e}", exc_info=True)
+                    raise ValueError("Schema update failed: type constraint violation") from e
 
         await asyncio.to_thread(_replace_sync)
 
@@ -615,20 +643,21 @@ class KnowledgeGraphService:
         logger.info(f"Creating relationship: {from_id} --[{relationship}]--> {to_id}")
 
         def _create_rel_sync():
-            # Get source entity
-            from_doc = self.client.get_document(from_id)
+            with self._client_lock:
+                # Get source entity
+                from_doc = self.client.get_document(from_id)
 
-            # Add relationship
-            if relationship not in from_doc:
-                from_doc[relationship] = []
-            if to_id not in from_doc[relationship]:
-                from_doc[relationship].append(to_id)
+                # Add relationship
+                if relationship not in from_doc:
+                    from_doc[relationship] = []
+                if to_id not in from_doc[relationship]:
+                    from_doc[relationship].append(to_id)
 
-            # Update
-            self.client.update_document(
-                from_doc,
-                commit_msg=commit_msg or f"Link {from_id} -> {to_id} via {relationship}",
-            )
+                # Update
+                self.client.update_document(
+                    from_doc,
+                    commit_msg=commit_msg or f"Link {from_id} -> {to_id} via {relationship}",
+                )
 
         try:
             await asyncio.to_thread(_create_rel_sync)
@@ -663,7 +692,6 @@ class KnowledgeGraphService:
             from terminusdb_client.woqlquery import WOQLQuery as Q
 
             try:
-                # Single WOQL query replaces N individual gets
                 query = Q().path(
                     start_id,
                     f"({relationship})*",  # Kleene star for recursive traversal
@@ -671,7 +699,8 @@ class KnowledgeGraphService:
                     path="v:Path",
                 ).limit(1000)  # Safety limit
 
-                results = self.client.query(query)
+                with self._client_lock:
+                    results = list(self.client.query(query))
 
                 # Filter by max_depth in Python (WOQL doesn't have depth limit)
                 filtered = [r for r in results if len(r.get("Path", [])) <= max_depth]
@@ -724,7 +753,8 @@ class KnowledgeGraphService:
 
             # Get entity
             try:
-                entity = self.client.get_document(entity_id)
+                with self._client_lock:
+                    entity = self.client.get_document(entity_id)
             except Exception as e:
                 logger.warning(f"Failed to fetch entity {entity_id}: {e}")
                 continue
@@ -746,7 +776,3 @@ class KnowledgeGraphService:
 
         return results
 
-    async def export_to_rdf(self, output_path: Path) -> None:
-        """Export current graph state to RDF/Turtle format"""
-        # TODO: Phase 2 - implement RDF export
-        pass

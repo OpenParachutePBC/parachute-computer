@@ -156,6 +156,16 @@ class CreateSchemaTypeRequest(BaseModel):
             raise ValueError(f"Type name must match ^[A-Za-z][A-Za-z0-9_]*$, got '{v}'")
         if v in _RESERVED:
             raise ValueError(f"'{v}' is a reserved TerminusDB name")
+        if v.startswith("Sys"):
+            raise ValueError(f"Type names starting with 'Sys' are reserved by TerminusDB")
+        return v
+
+    @field_validator("key_strategy")
+    @classmethod
+    def validate_key_strategy(cls, v: str) -> str:
+        allowed = {"Random", "Lexical", "Hash", "ValueHash"}
+        if v not in allowed:
+            raise ValueError(f"key_strategy must be one of {allowed}, got '{v}'")
         return v
 
     @field_validator("fields")

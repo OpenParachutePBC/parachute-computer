@@ -24,11 +24,15 @@ class _BrainTypeManagerSheetState extends ConsumerState<BrainTypeManagerSheet> {
   late TextEditingController _typeNameController;
   late TextEditingController _descriptionController;
 
-  // Each field: {name, type, required, values (for enum), link_type (for link)}
+  // Each field: {_id, type, required, values (for enum), link_type (for link)}
+  // _id is a stable int assigned at field creation to give ValueKey stability.
   final List<Map<String, dynamic>> _fields = [];
   final List<TextEditingController> _fieldNameControllers = [];
+  int _nextFieldId = 0;
 
   bool _isSubmitting = false;
+  // In edit mode, true once _loadExistingType has populated the form.
+  bool _isEditReady = true;
   String? _errorMessage;
 
   static final _typeNamePattern = RegExp(r'^[A-Za-z][A-Za-z0-9_]*$');
@@ -43,31 +47,54 @@ class _BrainTypeManagerSheetState extends ConsumerState<BrainTypeManagerSheet> {
     super.initState();
     _typeNameController = TextEditingController(text: widget.typeName ?? '');
     _descriptionController = TextEditingController();
-    // In edit mode, populate fields from provider after first frame
+    // In edit mode, disable Save until fields are populated from provider.
     if (widget.typeName != null) {
+      _isEditReady = false;
       WidgetsBinding.instance.addPostFrameCallback((_) => _loadExistingType());
     }
   }
 
   void _loadExistingType() {
     final typesAsync = ref.read(brainSchemaDetailProvider);
-    typesAsync.whenData((types) {
-      final type = types.where((t) => t.name == widget.typeName).firstOrNull;
-      if (type == null) return;
-      setState(() {
-        _descriptionController.text = type.description ?? '';
-        for (final field in type.fields) {
-          final ctrl = TextEditingController(text: field.name);
-          _fieldNameControllers.add(ctrl);
-          _fields.add({
-            'type': field.isEntity ? 'link' : field.type,
-            'required': field.required,
-            'values': List<String>.from(field.enumValues ?? []),
-            'link_type': field.isEntity ? field.type : null,
+    typesAsync.when(
+      data: (types) {
+        final type = types.where((t) => t.name == widget.typeName).firstOrNull;
+        if (type == null) {
+          setState(() {
+            _isEditReady = true;
+            _errorMessage = 'Type "${widget.typeName}" not found';
           });
+          return;
         }
-      });
-    });
+        setState(() {
+          _descriptionController.text = type.description ?? '';
+          for (final field in type.fields) {
+            final ctrl = TextEditingController(text: field.name);
+            _fieldNameControllers.add(ctrl);
+            _fields.add({
+              '_id': _nextFieldId++,
+              'type': field.isEntity ? 'link' : field.type,
+              'required': field.required,
+              'values': List<String>.from(field.enumValues ?? []),
+              'link_type': field.isEntity ? field.type : null,
+            });
+          }
+          _isEditReady = true;
+        });
+      },
+      loading: () {
+        // Provider still loading; retry after next frame when it may have resolved
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _loadExistingType();
+        });
+      },
+      error: (e, _) {
+        setState(() {
+          _isEditReady = true;
+          _errorMessage = 'Failed to load type data';
+        });
+      },
+    );
   }
 
   @override
@@ -82,6 +109,7 @@ class _BrainTypeManagerSheetState extends ConsumerState<BrainTypeManagerSheet> {
     setState(() {
       _fieldNameControllers.add(TextEditingController());
       _fields.add({
+        '_id': _nextFieldId++,
         'type': 'string',
         'required': false,
         'values': <String>[],
@@ -349,10 +377,16 @@ class _BrainTypeManagerSheetState extends ConsumerState<BrainTypeManagerSheet> {
                       ),
                       const SizedBox(height: 12),
 
+                      // Show loading spinner in edit mode while data is fetching
+                      if (!_isEditReady) ...[
+                        const Center(child: CircularProgressIndicator()),
+                        const SizedBox(height: 12),
+                      ],
+
                       // Field editor rows
                       for (var i = 0; i < _fields.length; i++)
                         _FieldEditorRow(
-                          key: ValueKey(i),
+                          key: ValueKey(_fields[i]['_id'] as int),
                           nameController: _fieldNameControllers[i],
                           field: _fields[i],
                           existingTypeNames: existingTypeNames.toList(),
@@ -433,7 +467,7 @@ class _BrainTypeManagerSheetState extends ConsumerState<BrainTypeManagerSheet> {
                     const SizedBox(width: 12),
                     Expanded(
                       child: FilledButton(
-                        onPressed: _isSubmitting ? null : _handleSave,
+                        onPressed: (_isSubmitting || !_isEditReady) ? null : _handleSave,
                         style: FilledButton.styleFrom(
                           backgroundColor: isDark ? BrandColors.nightForest : BrandColors.forest,
                         ),

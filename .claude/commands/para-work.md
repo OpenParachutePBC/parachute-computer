@@ -26,7 +26,11 @@ This command takes a work document (plan, specification, or todo file) and execu
    1. Fetch the issue: `gh issue view NN --json title,body,labels`
    2. Search for a local plan file:
       - Scan `docs/plans/*.md` YAML frontmatter for `issue: NN`
-      - If found, use that as the work document
+      - If found, use that as the work document. Sync the local plan to GitHub to ensure the
+        issue body reflects the latest state (e.g., after `/deepen-plan`):
+        ```bash
+        gh issue edit NN --body-file <plan-path>
+        ```
       - If not found, check the issue comments for a plan (the most recent long comment)
         and tell the user: "No local plan file found for #NN. The plan was posted as a
         comment on the issue. Would you like me to save it locally first?"

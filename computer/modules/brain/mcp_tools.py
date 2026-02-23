@@ -5,7 +5,10 @@ Provides agent-native access to the knowledge graph via MCP tools.
 All 7 CRUD operations exposed for full agent autonomy.
 """
 
+import asyncio
+import json
 import logging
+import uuid
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -165,14 +168,6 @@ BRAIN_TOOLS = [
         },
     },
     {
-        "name": "brain_list_schemas",
-        "description": "List all available entity schemas. Returns normalized schema definitions with field types and descriptions.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {},
-        },
-    },
-    {
         "name": "brain_list_types",
         "description": "List all schema types with field definitions and entity counts. Preferred over brain_list_schemas for newer workflows.",
         "inputSchema": {
@@ -251,6 +246,7 @@ BRAIN_TOOLS = [
                             "required": {"type": "boolean"},
                             "values": {"type": "array", "items": {"type": "string"}},
                             "link_type": {"type": "string"},
+                            "description": {"type": "string"},
                         },
                         "required": ["type"],
                     },
@@ -595,19 +591,29 @@ async def handle_update_type(module, arguments: dict[str, Any]) -> dict[str, Any
 
 async def handle_delete_type(module, arguments: dict[str, Any]) -> dict[str, Any]:
     """Handle brain_delete_type tool call."""
-    import json
     kg = await module._ensure_kg_service()
 
     name = arguments["name"]
 
     try:
-        count = await kg.count_entities(name)
-        if count > 0:
+        has_data = await kg.has_entities(name)
+        if has_data:
             return {
                 "success": False,
-                "error": f"Type '{name}' has {count} entities. Delete all entities first.",
+                "error": f"Type '{name}' has entities. Delete all entities first.",
             }
         await kg.delete_schema_type(name)
+        # Purge orphaned saved queries for this type
+        queries_path = module.vault_path / ".brain" / "queries.json"
+        async with module._queries_lock:
+            if queries_path.exists():
+                text = await asyncio.to_thread(queries_path.read_text)
+                data = json.loads(text)
+                data["queries"] = [
+                    q for q in data.get("queries", [])
+                    if q.get("entity_type") != name
+                ]
+                await asyncio.to_thread(queries_path.write_text, json.dumps(data, indent=2))
         await module._reload_schemas()
         return {"success": True, "message": f"Deleted type '{name}'"}
     except Exception as e:
@@ -617,15 +623,16 @@ async def handle_delete_type(module, arguments: dict[str, Any]) -> dict[str, Any
 
 async def handle_list_saved_queries(module, arguments: dict[str, Any]) -> dict[str, Any]:
     """Handle brain_list_saved_queries tool call."""
-    import json
     queries_path = module.vault_path / ".brain" / "queries.json"
 
     try:
-        if queries_path.exists():
-            data = json.loads(queries_path.read_text())
-            queries = data.get("queries", [])
-        else:
-            queries = []
+        async with module._queries_lock:
+            if queries_path.exists():
+                text = await asyncio.to_thread(queries_path.read_text)
+                data = json.loads(text)
+                queries = data.get("queries", [])
+            else:
+                queries = []
         return {"success": True, "queries": queries, "count": len(queries)}
     except Exception as e:
         logger.error(f"Failed to list saved queries: {e}", exc_info=True)
@@ -634,20 +641,24 @@ async def handle_list_saved_queries(module, arguments: dict[str, Any]) -> dict[s
 
 async def handle_save_query(module, arguments: dict[str, Any]) -> dict[str, Any]:
     """Handle brain_save_query tool call."""
-    import json, uuid as uuid_mod
     queries_path = module.vault_path / ".brain" / "queries.json"
     queries_path.parent.mkdir(parents=True, exist_ok=True)
 
     try:
-        data = json.loads(queries_path.read_text()) if queries_path.exists() else {"queries": []}
-        query_id = str(uuid_mod.uuid4())
-        data["queries"].append({
-            "id": query_id,
-            "name": arguments["name"],
-            "entity_type": arguments["entity_type"],
-            "filters": arguments["filters"],
-        })
-        queries_path.write_text(json.dumps(data, indent=2))
+        async with module._queries_lock:
+            if queries_path.exists():
+                text = await asyncio.to_thread(queries_path.read_text)
+                data = json.loads(text)
+            else:
+                data = {"queries": []}
+            query_id = str(uuid.uuid4())
+            data["queries"].append({
+                "id": query_id,
+                "name": arguments["name"],
+                "entity_type": arguments["entity_type"],
+                "filters": arguments["filters"],
+            })
+            await asyncio.to_thread(queries_path.write_text, json.dumps(data, indent=2))
         return {"success": True, "id": query_id, "message": f"Saved query '{arguments['name']}'"}
     except Exception as e:
         logger.error(f"Failed to save query: {e}", exc_info=True)
@@ -656,19 +667,20 @@ async def handle_save_query(module, arguments: dict[str, Any]) -> dict[str, Any]
 
 async def handle_delete_saved_query(module, arguments: dict[str, Any]) -> dict[str, Any]:
     """Handle brain_delete_saved_query tool call."""
-    import json
     query_id = arguments["query_id"]
     queries_path = module.vault_path / ".brain" / "queries.json"
 
     try:
-        if not queries_path.exists():
-            return {"success": False, "error": "No saved queries found"}
-        data = json.loads(queries_path.read_text())
-        original_count = len(data.get("queries", []))
-        data["queries"] = [q for q in data.get("queries", []) if q.get("id") != query_id]
-        if len(data["queries"]) == original_count:
-            return {"success": False, "error": f"Query '{query_id}' not found"}
-        queries_path.write_text(json.dumps(data, indent=2))
+        async with module._queries_lock:
+            if not queries_path.exists():
+                return {"success": False, "error": "No saved queries found"}
+            text = await asyncio.to_thread(queries_path.read_text)
+            data = json.loads(text)
+            original_count = len(data.get("queries", []))
+            data["queries"] = [q for q in data.get("queries", []) if q.get("id") != query_id]
+            if len(data["queries"]) == original_count:
+                return {"success": False, "error": f"Query '{query_id}' not found"}
+            await asyncio.to_thread(queries_path.write_text, json.dumps(data, indent=2))
         return {"success": True, "message": f"Deleted query '{query_id}'"}
     except Exception as e:
         logger.error(f"Failed to delete saved query: {e}", exc_info=True)
@@ -684,7 +696,6 @@ TOOL_HANDLERS = {
     "brain_delete_entity": handle_delete_entity,
     "brain_create_relationship": handle_create_relationship,
     "brain_traverse_graph": handle_traverse_graph,
-    "brain_list_schemas": handle_list_schemas,
     "brain_list_types": handle_list_types,
     "brain_create_type": handle_create_type,
     "brain_update_type": handle_update_type,

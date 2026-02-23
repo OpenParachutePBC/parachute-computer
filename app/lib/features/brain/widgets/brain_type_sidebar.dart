@@ -149,9 +149,8 @@ class _TypeRow extends ConsumerWidget {
     return InkWell(
       onTap: () {
         ref.read(brainSelectedTypeProvider.notifier).state = schema.name;
-        // Clear entity selection and filters when switching types
+        // Clear entity selection and search when switching types (filters auto-clear via BrainFilterNotifier)
         ref.read(brainSelectedEntityProvider.notifier).state = null;
-        ref.read(brainActiveFiltersProvider.notifier).clear();
         ref.read(brainSearchQueryProvider.notifier).state = '';
         onTap?.call();
       },

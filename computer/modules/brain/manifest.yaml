@@ -1,7 +1,7 @@
 name: brain
 version: "1.0.0"
 description: "TerminusDB knowledge graph"
-trust_level: trusted
+trust_level: vault
 provides:
   - BrainInterface
 dependencies:

@@ -30,8 +30,8 @@ class BrainHomeScreen extends ConsumerWidget {
 
         // Update layout mode after frame (avoid setState during build)
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (ref.read(brainLayoutModeStateProvider) != mode) {
-            ref.read(brainLayoutModeStateProvider.notifier).state = mode;
+          if (ref.read(brainLayoutModeProvider) != mode) {
+            ref.read(brainLayoutModeProvider.notifier).state = mode;
           }
         });
 

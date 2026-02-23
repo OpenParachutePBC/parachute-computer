@@ -708,25 +708,33 @@ class _SavedQueriesSheetState extends ConsumerState<_SavedQueriesSheet> {
               ),
             )
           else
-            ...widget.savedQueries.map(
-              (q) => ListTile(
-                dense: true,
-                title: Text(q.name,
-                    style: const TextStyle(fontSize: 14)),
-                subtitle: Text(
-                  '${q.filters.length} filter${q.filters.length == 1 ? '' : 's'}',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: isDark
-                        ? BrandColors.nightTextSecondary
-                        : BrandColors.driftwood,
-                  ),
+            Flexible(
+              child: SingleChildScrollView(
+                child: Column(
+                  children: widget.savedQueries
+                      .map(
+                        (q) => ListTile(
+                          dense: true,
+                          title: Text(q.name,
+                              style: const TextStyle(fontSize: 14)),
+                          subtitle: Text(
+                            '${q.filters.length} filter${q.filters.length == 1 ? '' : 's'}',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: isDark
+                                  ? BrandColors.nightTextSecondary
+                                  : BrandColors.driftwood,
+                            ),
+                          ),
+                          trailing: IconButton(
+                            icon: const Icon(Icons.delete_outline, size: 18),
+                            onPressed: () => _deleteQuery(context, q),
+                          ),
+                          onTap: () => _loadQuery(context, q),
+                        ),
+                      )
+                      .toList(),
                 ),
-                trailing: IconButton(
-                  icon: const Icon(Icons.delete_outline, size: 18),
-                  onPressed: () => _deleteQuery(context, q),
-                ),
-                onTap: () => _loadQuery(context, q),
               ),
             ),
         ],
