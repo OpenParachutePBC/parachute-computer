@@ -131,9 +131,13 @@ async def handle_stop_hook(hook_input: dict) -> None:
             summary=summary,
         )
 
-        # Note: title and summary DB writes are handled by the MCP tools
-        # (update_session_title / update_session_summary), which work from
-        # sandboxed sessions. The hook only writes the daily activity log.
+        # 6. Persist summary to session record
+        if summary:
+            await update_session_summary(session_id, summary)
+
+        # 7. Update session title if changed (and user hasn't renamed it)
+        if not user_renamed and new_title and new_title != "NO_CHANGE" and new_title != session_title:
+            await update_session_title(session_id, new_title, title_source="ai")
 
     except Exception as e:
         # Fire-and-forget - log but don't fail
@@ -243,12 +247,31 @@ def read_last_exchange(transcript_path: Path) -> Optional[dict]:
     }
 
 
+async def _get_db():
+    """Open a direct database connection for hook subprocess use.
+
+    The server process's get_database() singleton is not available in hook
+    subprocesses. We open our own connection directly to the DB file,
+    mirroring what mcp_server.py does.
+    """
+    from parachute.config import get_settings
+    from parachute.db.database import Database
+
+    settings = get_settings()
+    db_path = settings.vault_path / "Chat" / "sessions.db"
+    db = Database(db_path)
+    await db.connect()
+    return db
+
+
 async def _get_session(session_id: str) -> Optional[Any]:
     """Fetch a session from the database. Returns None on any failure."""
     try:
-        from parachute.db.database import get_database
-        db = await get_database()
-        return await db.get_session(session_id)
+        db = await _get_db()
+        try:
+            return await db.get_session(session_id)
+        finally:
+            await db.close()
     except Exception as e:
         logger.debug(f"Failed to fetch session {session_id[:8]}: {e}")
         return None
@@ -403,6 +426,43 @@ async def append_activity_log(
 
     with open(log_file, "a") as f:
         f.write(json.dumps(entry) + "\n")
+
+
+async def update_session_title(
+    session_id: str, new_title: str, title_source: str = "ai"
+) -> None:
+    """Update session title and title_source in the database."""
+    try:
+        from parachute.models.session import SessionUpdate
+
+        session = await _get_session(session_id)
+        metadata = dict(session.metadata or {}) if session and session.metadata else {}
+        metadata["title_source"] = title_source
+        db = await _get_db()
+        try:
+            await db.update_session(
+                session_id, SessionUpdate(title=new_title, metadata=metadata)
+            )
+        finally:
+            await db.close()
+    except Exception as e:
+        logger.warning(f"Failed to update session title: {e}")
+
+
+async def update_session_summary(session_id: str, summary: str) -> None:
+    """Persist AI-generated summary to the session record."""
+    if not summary:
+        return
+    try:
+        from parachute.models.session import SessionUpdate
+
+        db = await _get_db()
+        try:
+            await db.update_session(session_id, SessionUpdate(summary=summary))
+        finally:
+            await db.close()
+    except Exception as e:
+        logger.debug(f"Failed to update session summary: {e}")
 
 
 if __name__ == "__main__":
