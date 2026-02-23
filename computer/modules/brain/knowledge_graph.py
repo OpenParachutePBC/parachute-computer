@@ -6,15 +6,79 @@ All blocking operations use asyncio.to_thread() to prevent event loop blocking.
 """
 
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
 import asyncio
 import os
 import logging
+import re
+import threading
 from collections import deque
 from terminusdb_client import WOQLClient
 from terminusdb_client.errors import DatabaseError, APIError, InterfaceError
 
+if TYPE_CHECKING:
+    from .models import FieldSpec
+
 logger = logging.getLogger(__name__)
+
+
+def _format_field_for_api(
+    field_def: Any,
+    enum_values: dict[str, list[str]],
+) -> dict[str, Any]:
+    """Convert a TerminusDB field definition to Flutter-friendly format."""
+    _reverse_type_map = {
+        "xsd:string": "string",
+        "xsd:integer": "integer",
+        "xsd:boolean": "boolean",
+        "xsd:dateTime": "datetime",
+    }
+
+    if isinstance(field_def, str):
+        type_name = _reverse_type_map.get(field_def, field_def)
+        if field_def in enum_values:
+            return {"type": "enum", "required": True, "values": enum_values[field_def]}
+        return {"type": type_name, "required": True}
+
+    if not isinstance(field_def, dict):
+        return {"type": "string", "required": False}
+
+    field_type = field_def.get("@type", "")
+    field_class = field_def.get("@class", "")
+
+    if field_type == "Optional":
+        type_name = _reverse_type_map.get(field_class, field_class)
+        if field_class in enum_values:
+            return {"type": "enum", "required": False, "values": enum_values[field_class]}
+        # Link field: class is a TerminusDB type name (PascalCase)
+        if field_class and field_class[0].isupper() and field_class not in _reverse_type_map:
+            return {"type": "link", "required": False, "link_type": field_class}
+        return {"type": type_name, "required": False}
+
+    if field_type == "Set":
+        if isinstance(field_class, str):
+            item_type = _reverse_type_map.get(field_class, field_class)
+        else:
+            item_type = "string"
+        return {"type": "array", "required": False, "items": item_type}
+
+    # Required link field
+    if field_type and field_type[0].isupper() and field_type not in _reverse_type_map:
+        return {"type": "link", "required": True, "link_type": field_type}
+
+    return {"type": "string", "required": False}
+
+
+# Reserved TerminusDB names that cannot be used as type names
+_RESERVED_TERMINUS_NAMES = frozenset({
+    "Class", "Enum", "Set", "Optional", "TaggedUnion", "Array",
+    "Sys", "xsd", "rdf", "owl", "rdfs",
+})
+
+# Allowed field types for schema creation
+_ALLOWED_FIELD_TYPES = frozenset({
+    "string", "integer", "boolean", "datetime", "enum", "link",
+})
 
 
 class KnowledgeGraphService:
@@ -37,6 +101,9 @@ class KnowledgeGraphService:
         self.db_name = db_name
         self.client: WOQLClient | None = None
         self._connected = False
+        # WOQLClient uses requests.Session which is not thread-safe.
+        # All client calls from asyncio.to_thread() must acquire this lock.
+        self._client_lock = threading.Lock()
 
     def _ensure_connected(self) -> None:
         """Raise RuntimeError if not connected to TerminusDB."""
@@ -81,16 +148,23 @@ class KnowledgeGraphService:
                 client.connect(db=self.db_name, team="admin", user="admin", key=password)
                 logger.info(f"Created new database: {self.db_name}")
 
-            # Upsert all schemas (create if new, replace if existing)
-            schema_copies = [s.copy() for s in schemas]
-            client.replace_document(
-                schema_copies,
-                graph_type="schema",
-                commit_msg="Load schemas from YAML definitions",
-                create=True,
-            )
-
-            logger.info(f"Loaded {len(schemas)} schemas into TerminusDB")
+            # Additive-only: only insert seed types that don't already exist.
+            # User-created types (via API) must survive server restarts.
+            existing_docs = list(client.query_document({"@type": "Class"}, graph_type="schema"))
+            existing_ids = {d.get("@id") for d in existing_docs}
+            new_schemas = [
+                s for s in schemas
+                if s.get("@id") not in existing_ids
+            ]
+            if new_schemas:
+                client.insert_document(
+                    new_schemas,
+                    graph_type="schema",
+                    commit_msg="Bootstrap seed schemas",
+                )
+                logger.info(f"Inserted {len(new_schemas)} new seed schemas into TerminusDB")
+            else:
+                logger.info("All seed schemas already present — no changes needed")
 
             return client
 
@@ -259,6 +333,264 @@ class KnowledgeGraphService:
         except (DatabaseError, APIError) as e:
             logger.error("Failed to list schemas", exc_info=True)
             raise
+
+    async def count_entities(self, entity_type: str) -> int:
+        """Count entities of a given type."""
+        self._ensure_connected()
+
+        def _count_sync():
+            with self._client_lock:
+                results = self.client.query_document({"@type": entity_type}, count=100)
+                return len(list(results))
+
+        try:
+            return await asyncio.to_thread(_count_sync)
+        except Exception:
+            return 0
+
+    async def list_schema_types_with_counts(self) -> list[dict[str, Any]]:
+        """List all schema types with entity counts.
+
+        Uses asyncio.gather() for concurrent count queries (O(1) parallel latency).
+        If > 20 types, skips counts (returns -1) to avoid too many connections.
+        """
+        from .module import BrainModule  # avoid circular — used only for _format_field
+        self._ensure_connected()
+
+        def _list_class_docs_sync() -> list[dict[str, Any]]:
+            with self._client_lock:
+                docs = list(self.client.query_document({"@type": "Class"}, graph_type="schema"))
+            return docs
+
+        class_docs = await asyncio.to_thread(_list_class_docs_sync)
+
+        # Build enum lookup from schema graph
+        def _list_enum_docs_sync() -> dict[str, list[str]]:
+            with self._client_lock:
+                enum_docs = list(self.client.query_document(
+                    {"@type": "Enum"}, graph_type="schema"
+                ))
+            return {d["@id"]: d.get("@value", []) for d in enum_docs}
+
+        enum_values = await asyncio.to_thread(_list_enum_docs_sync)
+
+        # Format class docs to Flutter-friendly field list
+        types: list[dict[str, Any]] = []
+        for doc in class_docs:
+            type_id = doc.get("@id", "")
+            if not type_id:
+                continue
+            key_config = doc.get("@key", {})
+            documentation = doc.get("@documentation", {})
+            fields = []
+            for key, value in doc.items():
+                if key.startswith("@"):
+                    continue
+                field_info = _format_field_for_api(value, enum_values)
+                field_info["name"] = key
+                fields.append(field_info)
+            types.append({
+                "name": type_id,
+                "description": documentation.get("@comment") if isinstance(documentation, dict) else None,
+                "key_strategy": key_config.get("@type") if isinstance(key_config, dict) else None,
+                "fields": fields,
+                "entity_count": -1,  # filled below
+            })
+
+        # Fetch entity counts concurrently (skip if > 20 types)
+        if len(types) <= 20:
+            async def get_count(type_name: str) -> int:
+                def _count():
+                    with self._client_lock:
+                        results = self.client.query_document({"@type": type_name}, count=100)
+                        return len(list(results))
+                return await asyncio.to_thread(_count)
+
+            counts = await asyncio.gather(
+                *[get_count(t["name"]) for t in types],
+                return_exceptions=True,
+            )
+            for t, count in zip(types, counts):
+                t["entity_count"] = count if isinstance(count, int) else -1
+
+        return types
+
+    def _validate_type_name(self, name: str) -> None:
+        """Raise ValueError if name is reserved or malformed."""
+        if not re.match(r'^[A-Za-z][A-Za-z0-9_]*$', name):
+            raise ValueError(
+                f"Type name must match ^[A-Za-z][A-Za-z0-9_]*$, got '{name}'"
+            )
+        if name in _RESERVED_TERMINUS_NAMES:
+            raise ValueError(
+                f"Type name '{name}' is reserved by TerminusDB and cannot be used."
+            )
+
+    def _compile_field_from_spec(
+        self,
+        field_spec: "FieldSpec",
+        class_name: str,
+        field_name: str,
+        enum_docs: list[dict[str, Any]],
+    ) -> "str | dict[str, Any]":
+        """Convert FieldSpec Pydantic model to TerminusDB field definition.
+
+        Bridge to SchemaCompiler._compile_field() which expects a dict.
+        """
+        if field_spec.type not in _ALLOWED_FIELD_TYPES:
+            raise ValueError(f"Unknown field type '{field_spec.type}'")
+
+        if field_spec.type == "link":
+            if not field_spec.link_type:
+                raise ValueError("link field requires link_type")
+            if not re.match(r'^[A-Za-z][A-Za-z0-9_]*$', field_spec.link_type):
+                raise ValueError(f"Invalid link_type '{field_spec.link_type}'")
+            spec_dict: dict[str, Any] = {
+                "type": field_spec.link_type,
+                "required": field_spec.required,
+            }
+        else:
+            spec_dict = {
+                "type": field_spec.type,
+                "required": field_spec.required,
+                "values": field_spec.values or [],
+            }
+
+        from .schema_compiler import SchemaCompiler
+        compiler = SchemaCompiler()
+        return compiler._compile_field(spec_dict, class_name, field_name, enum_docs)
+
+    async def create_schema_type(
+        self,
+        name: str,
+        fields: dict[str, Any],
+        key_strategy: str = "Random",
+        description: str | None = None,
+    ) -> None:
+        """Insert a new Class document into the TerminusDB schema graph.
+
+        Enum documents MUST be inserted before the Class document (TerminusDB v12).
+        """
+        self._validate_type_name(name)
+
+        from .models import FieldSpec
+        enum_docs: list[dict[str, Any]] = []
+        compiled_fields: dict[str, Any] = {}
+
+        for field_name, field_data in fields.items():
+            if isinstance(field_data, dict):
+                field_spec = FieldSpec.model_validate(field_data)
+            else:
+                field_spec = field_data
+            compiled_fields[field_name] = self._compile_field_from_spec(
+                field_spec, name, field_name, enum_docs
+            )
+
+        from .schema_compiler import SchemaCompiler
+        compiler = SchemaCompiler()
+        key_doc = compiler._build_key_strategy({"key_strategy": key_strategy})
+
+        class_doc: dict[str, Any] = {
+            "@type": "Class",
+            "@id": name,
+            "@key": key_doc,
+            **compiled_fields,
+        }
+        if description:
+            class_doc["@documentation"] = {"@comment": description}
+
+        def _insert_sync():
+            with self._client_lock:
+                if enum_docs:
+                    self.client.insert_document(
+                        enum_docs, graph_type="schema",
+                        commit_msg=f"Add enums for {name}",
+                    )
+                self.client.insert_document(
+                    class_doc, graph_type="schema",
+                    commit_msg=f"Create type {name}",
+                )
+
+        await asyncio.to_thread(_insert_sync)
+
+    async def update_schema_type(
+        self,
+        name: str,
+        fields: dict[str, Any],
+    ) -> None:
+        """Replace a Class document in the TerminusDB schema graph.
+
+        Field additions are safe. Field type changes with existing data may raise
+        DatabaseError (strengthening constraint) — caught and re-raised as ValueError.
+        """
+        self._ensure_connected()
+
+        from .models import FieldSpec
+        enum_docs: list[dict[str, Any]] = []
+        compiled_fields: dict[str, Any] = {}
+
+        for field_name, field_data in fields.items():
+            if isinstance(field_data, dict):
+                field_spec = FieldSpec.model_validate(field_data)
+            else:
+                field_spec = field_data
+            compiled_fields[field_name] = self._compile_field_from_spec(
+                field_spec, name, field_name, enum_docs
+            )
+
+        class_doc: dict[str, Any] = {
+            "@type": "Class",
+            "@id": name,
+            **compiled_fields,
+        }
+
+        def _replace_sync():
+            with self._client_lock:
+                if enum_docs:
+                    self.client.replace_document(
+                        enum_docs, graph_type="schema",
+                        create=True, commit_msg=f"Update enums for {name}",
+                    )
+                try:
+                    self.client.replace_document(
+                        class_doc, graph_type="schema",
+                        commit_msg=f"Update type {name}",
+                    )
+                except Exception as e:
+                    raise ValueError(f"Schema update rejected by TerminusDB: {e}") from e
+
+        await asyncio.to_thread(_replace_sync)
+
+    async def delete_schema_type(self, name: str) -> None:
+        """Delete a Class and its Enum documents from the schema graph.
+
+        Uses batch delete_document call for efficiency.
+        Caller must verify entity count = 0 before calling this.
+        """
+        self._ensure_connected()
+
+        def _delete_sync():
+            with self._client_lock:
+                # Fetch class doc to find associated enum IDs
+                try:
+                    class_doc = self.client.get_document(name, graph_type="schema")
+                    # Enum IDs follow the pattern {TypeName}_{fieldName}
+                    enum_ids = [
+                        v for v in class_doc.values()
+                        if isinstance(v, str) and v.startswith(f"{name}_")
+                    ]
+                except Exception:
+                    enum_ids = []
+
+                # Batch delete: class + all its enums in one call
+                ids_to_delete: list[str] = [name] + enum_ids
+                self.client.delete_document(
+                    ids_to_delete,
+                    graph_type="schema",
+                    commit_msg=f"Delete type {name}",
+                )
+
+        await asyncio.to_thread(_delete_sync)
 
     async def create_relationship(
         self,

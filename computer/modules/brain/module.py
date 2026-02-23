@@ -5,7 +5,10 @@ Provides strongly-typed, version-controlled knowledge graph with agent-native MC
 """
 
 import asyncio
+import json
 import logging
+import re
+import uuid
 from pathlib import Path
 from typing import Optional, Any
 
@@ -23,7 +26,15 @@ from .models import (
     DeleteEntityRequest,
     CreateRelationshipRequest,
     TraverseGraphRequest,
+    CreateSchemaTypeRequest,
+    UpdateSchemaTypeRequest,
+    SchemaTypeResponse,
+    SavedQueryModel,
+    SavedQueryListResponse,
 )
+
+# Module-level lock for queries.json file access
+_queries_lock = asyncio.Lock()
 
 logger = logging.getLogger(__name__)
 
@@ -191,7 +202,145 @@ class BrainModule:
             schemas = self._format_schemas_for_api()
             return {"success": True, "schemas": schemas}
 
+        # --- Schema type CRUD routes ---
+
+        @router.get("/types", response_model=list[SchemaTypeResponse])
+        async def list_schema_types():
+            """List all schema types with fields and entity counts."""
+            kg = await self._ensure_kg_service()
+            try:
+                return await kg.list_schema_types_with_counts()
+            except Exception as e:
+                logger.error(f"Error listing schema types: {e}", exc_info=True)
+                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to list schema types")
+
+        @router.post("/types", response_model=dict)
+        async def create_schema_type(request: CreateSchemaTypeRequest):
+            """Create a new schema type (TerminusDB Class)."""
+            kg = await self._ensure_kg_service()
+            try:
+                await kg.create_schema_type(
+                    name=request.name,
+                    fields={k: v for k, v in request.fields.items()},
+                    key_strategy=request.key_strategy,
+                    description=request.description,
+                )
+            except ValueError as e:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+            except Exception as e:
+                logger.error(f"Error creating schema type: {e}", exc_info=True)
+                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to create schema type")
+            await self._reload_schemas()
+            return {"success": True, "name": request.name}
+
+        @router.put("/types/{type_name}", response_model=dict)
+        async def update_schema_type(type_name: str, request: UpdateSchemaTypeRequest):
+            """Update a schema type's fields (full replacement)."""
+            if not re.match(r'^[A-Za-z][A-Za-z0-9_]*$', type_name):
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid type name")
+            kg = await self._ensure_kg_service()
+            try:
+                await kg.update_schema_type(
+                    name=type_name,
+                    fields={k: v for k, v in request.fields.items()},
+                )
+            except ValueError as e:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+            except Exception as e:
+                logger.error(f"Error updating schema type: {e}", exc_info=True)
+                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update schema type")
+            await self._reload_schemas()
+            return {"success": True, "name": type_name}
+
+        @router.delete("/types/{type_name}", response_model=dict)
+        async def delete_schema_type(type_name: str):
+            """Delete a schema type. Blocked if entities of this type exist."""
+            if not re.match(r'^[A-Za-z][A-Za-z0-9_]*$', type_name):
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid type name")
+            kg = await self._ensure_kg_service()
+            count = await kg.count_entities(type_name)
+            if count > 0:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Type has {count} entities. Delete all entities first.",
+                )
+            try:
+                await kg.delete_schema_type(type_name)
+            except Exception as e:
+                logger.error(f"Error deleting schema type: {e}", exc_info=True)
+                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to delete schema type")
+            # Purge orphaned saved queries for this type
+            queries_path = self.vault_path / ".brain" / "queries.json"
+            async with _queries_lock:
+                if queries_path.exists():
+                    data = json.loads(queries_path.read_text())
+                    data["queries"] = [
+                        q for q in data.get("queries", [])
+                        if q.get("entity_type") != type_name
+                    ]
+                    queries_path.write_text(json.dumps(data, indent=2))
+            await self._reload_schemas()
+            return {"success": True}
+
+        # --- Saved query routes ---
+
+        @router.get("/queries", response_model=SavedQueryListResponse)
+        async def list_saved_queries():
+            """List all saved queries."""
+            queries_path = self.vault_path / ".brain" / "queries.json"
+            async with _queries_lock:
+                if queries_path.exists():
+                    data = json.loads(queries_path.read_text())
+                    return SavedQueryListResponse(queries=data.get("queries", []))
+            return SavedQueryListResponse(queries=[])
+
+        @router.post("/queries", response_model=dict)
+        async def save_query(request: SavedQueryModel):
+            """Save a named filter query."""
+            queries_path = self.vault_path / ".brain" / "queries.json"
+            queries_path.parent.mkdir(parents=True, exist_ok=True)
+            async with _queries_lock:
+                if queries_path.exists():
+                    data = json.loads(queries_path.read_text())
+                else:
+                    data = {"queries": []}
+                request_dict = request.model_dump()
+                request_dict["id"] = request_dict.get("id") or str(uuid.uuid4())
+                data["queries"].append(request_dict)
+                queries_path.write_text(json.dumps(data, indent=2))
+            return {"success": True, "id": request_dict["id"]}
+
+        @router.delete("/queries/{query_id}", response_model=dict)
+        async def delete_saved_query(query_id: str):
+            """Delete a saved query by ID."""
+            queries_path = self.vault_path / ".brain" / "queries.json"
+            async with _queries_lock:
+                if not queries_path.exists():
+                    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Query not found")
+                data = json.loads(queries_path.read_text())
+                original_count = len(data.get("queries", []))
+                data["queries"] = [q for q in data.get("queries", []) if q.get("id") != query_id]
+                if len(data["queries"]) == original_count:
+                    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Query not found")
+                queries_path.write_text(json.dumps(data, indent=2))
+            return {"success": True}
+
         return router
+
+    async def _reload_schemas(self) -> None:
+        """Reload in-memory schema cache from TerminusDB after mutations.
+
+        Called after create/update/delete type operations to keep self.schemas
+        in sync with the live TerminusDB schema graph.
+        """
+        if self.kg_service is None:
+            return
+        try:
+            raw_schemas = await self.kg_service.list_schemas()
+            self.schemas = raw_schemas
+            logger.debug(f"Schema cache reloaded: {len(self.schemas)} documents")
+        except Exception as e:
+            logger.warning(f"Failed to reload schema cache: {e}")
 
     def get_status(self) -> dict:
         """Get module status for /api/modules listing"""
