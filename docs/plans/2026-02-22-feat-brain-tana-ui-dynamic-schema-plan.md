@@ -581,15 +581,15 @@ Add 7 new tools so agents have full parity with the UI:
 **`brain_list_schemas` normalization (existing tool):** Update `brain_list_schemas` to return normalized `{name, fields, entity_count}` format — currently returns raw TerminusDB format which breaks agent workflows.
 
 **Acceptance criteria — Phase 1:**
-- [ ] `GET /api/brain/types` returns all types with field shapes and entity counts
-- [ ] `POST /api/brain/types` creates a new TerminusDB class; new type appears in schema list
-- [ ] `PUT /api/brain/types/Project` replaces field definitions; existing entities unaffected for additive changes
-- [ ] `DELETE /api/brain/types/Project` returns 400 if entities exist; succeeds when none
-- [ ] User-created types survive server restart (connect() is additive-only)
-- [ ] Reserved names (`Class`, `Enum`, etc.) return 400, not 500
-- [ ] All 7 MCP tools work (3 schema + 4 query management)
-- [ ] `GET /api/brain/queries`, `POST /api/brain/queries`, `DELETE /api/brain/queries/{id}` functional
-- [ ] `brain_list_schemas` returns normalized format
+- [x] `GET /api/brain/types` returns all types with field shapes and entity counts
+- [x] `POST /api/brain/types` creates a new TerminusDB class; new type appears in schema list
+- [x] `PUT /api/brain/types/Project` replaces field definitions; existing entities unaffected for additive changes
+- [x] `DELETE /api/brain/types/Project` returns 400 if entities exist; succeeds when none
+- [x] User-created types survive server restart (connect() is additive-only)
+- [x] Reserved names (`Class`, `Enum`, etc.) return 400, not 500
+- [x] All 7 MCP tools work (3 schema + 4 query management)
+- [x] `GET /api/brain/queries`, `POST /api/brain/queries`, `DELETE /api/brain/queries/{id}` functional
+- [x] `brain_list_schemas` returns normalized format
 
 ---
 
@@ -781,13 +781,13 @@ class BrainFilterNotifier extends Notifier<List<BrainFilterCondition>> {
 - Accept that sidebar counts are "last-fetched" between entity CRUD operations
 
 **Acceptance criteria — Phase 2:**
-- [ ] Wide (≥800px): sidebar visible with all types + counts; selecting a type updates card list
-- [ ] Wide: tapping a card opens the inline detail pane (AnimatedSize) without nav push; `×` closes it
-- [ ] Narrow (<800px): sidebar accessible via Drawer; tapping card pushes detail screen
-- [ ] `LayoutBuilder` callback only evaluates width breakpoint — no entity/schema state reads
-- [ ] `+ New Type` button in sidebar opens `BrainTypeManagerSheet` in new-type mode
-- [ ] `+ New` button in list header opens `BrainEntityFormScreen` for selected type
-- [ ] Filters clear when switching types (filter state scoped to type)
+- [x] Wide (≥800px): sidebar visible with all types + counts; selecting a type updates card list
+- [x] Wide: tapping a card opens the inline detail pane (AnimatedSize) without nav push; `×` closes it
+- [x] Narrow (<800px): sidebar accessible via Drawer; tapping card pushes detail screen
+- [x] `LayoutBuilder` callback only evaluates width breakpoint — no entity/schema state reads
+- [x] `+ New Type` button in sidebar opens `BrainTypeManagerSheet` in new-type mode
+- [x] `+ New` button in list header opens `BrainEntityFormScreen` for selected type
+- [x] Filters clear when switching types (filter state scoped to type)
 
 ---
 
@@ -862,16 +862,16 @@ On **Save**:
 - If entity count = 0: "Delete type Project? This cannot be undone." → confirm → `DELETE /api/brain/types/{name}` → invalidate providers → close sheet
 
 **Acceptance criteria — Phase 3:**
-- [ ] Tapping `+ New Type` opens sheet with blank name field and no fields
-- [ ] Can add fields of each supported type: `string`, `integer`, `boolean`, `datetime`, `enum`, `link`
-- [ ] `enum` fields show chip input for values (add/remove individual values)
-- [ ] `link` fields show dropdown populated with existing type names
-- [ ] Saving a new type calls `POST /api/brain/types` and new type appears in sidebar
-- [ ] Editing an existing type calls `PUT /api/brain/types/{name}`; existing entities unaffected for additive changes
-- [ ] Delete blocked with clear message if entities exist; succeeds when none
-- [ ] Schema strengthening errors shown inline (not dismissed)
-- [ ] Validation: field names must be `^[a-z][a-z0-9_]*$`, type name `^[A-Za-z][A-Za-z0-9_]*$`
-- [ ] Reserved names (`Class`, `Enum`, etc.) rejected with user-friendly message before API call
+- [x] Tapping `+ New Type` opens sheet with blank name field and no fields
+- [x] Can add fields of each supported type: `string`, `integer`, `boolean`, `datetime`, `enum`, `link`
+- [x] `enum` fields show chip input for values (add/remove individual values)
+- [x] `link` fields show dropdown populated with existing type names
+- [x] Saving a new type calls `POST /api/brain/types` and new type appears in sidebar
+- [x] Editing an existing type calls `PUT /api/brain/types/{name}`; existing entities unaffected for additive changes
+- [x] Delete blocked with clear message if entities exist; succeeds when none
+- [x] Schema strengthening errors shown inline (not dismissed)
+- [x] Validation: field names must be `^[a-z][a-z0-9_]*$`, type name `^[A-Za-z][A-Za-z0-9_]*$`
+- [x] Reserved names (`Class`, `Enum`, etc.) rejected with user-friendly message before API call
 
 ---
 
@@ -979,14 +979,14 @@ class BrainQueryService {
 **Filter format normalization:** When loading saved queries, parse filter JSON back to typed `BrainFilterCondition` list (not raw `dynamic`).
 
 **Acceptance criteria — Phase 4:**
-- [ ] Filter bar visible above card list (hidden when no filters; `[+ Add filter]` always visible)
-- [ ] Adding a filter via bottom sheet creates a chip in the bar; card list immediately filters
-- [ ] Multiple filters combine with AND logic
-- [ ] `×` on a filter chip removes it (correct `ValueKey` reconciliation)
-- [ ] Filters clear when switching types
-- [ ] Saved queries load from `GET /api/brain/queries`; save via `POST /api/brain/queries`
-- [ ] `BrainQueryService` uses HTTP, not direct vault file I/O
-- [ ] MCP tools `brain_list_saved_queries`, `brain_save_query`, `brain_delete_saved_query` work
+- [x] Filter bar visible above card list (hidden when no filters; `[+ Add filter]` always visible)
+- [x] Adding a filter via bottom sheet creates a chip in the bar; card list immediately filters
+- [x] Multiple filters combine with AND logic
+- [x] `×` on a filter chip removes it (correct `ValueKey` reconciliation)
+- [x] Filters clear when switching types
+- [x] Saved queries load from `GET /api/brain/queries`; save via `POST /api/brain/queries`
+- [x] `BrainQueryService` uses HTTP, not direct vault file I/O
+- [x] MCP tools `brain_list_saved_queries`, `brain_save_query`, `brain_delete_saved_query` work
 
 ---
 
@@ -1022,35 +1022,35 @@ class BrainQueryService {
 
 ### Functional
 
-- [ ] Sidebar lists all types with live entity counts
-- [ ] Selecting a type in sidebar updates the card list (no page push)
-- [ ] On wide screens: tapping a card opens inline detail pane (AnimatedSize); `×` closes it
-- [ ] On mobile: sidebar in Drawer; card tap pushes full detail screen
-- [ ] `+ New Type` in sidebar opens type manager sheet; created type appears immediately
-- [ ] Long-pressing a type opens type manager in edit mode
-- [ ] Can add `string`, `integer`, `boolean`, `datetime`, `enum`, `link` fields to a type
-- [ ] Enum fields require at least 1 value before saving
-- [ ] Link fields pick from existing type names
-- [ ] Type deletion blocked with count message if entities exist
-- [ ] Filter bar: add/remove filter conditions (`eq`, `neq`, `contains`); list filters in real time
-- [ ] Saved queries: save + reload named queries via HTTP endpoints
-- [ ] Existing entity CRUD (create, edit, delete) still works unchanged
-- [ ] User-created types survive server restart
+- [x] Sidebar lists all types with live entity counts
+- [x] Selecting a type in sidebar updates the card list (no page push)
+- [x] On wide screens: tapping a card opens inline detail pane (AnimatedSize); `×` closes it
+- [x] On mobile: sidebar in Drawer; card tap pushes full detail screen
+- [x] `+ New Type` in sidebar opens type manager sheet; created type appears immediately
+- [x] Long-pressing a type opens type manager in edit mode
+- [x] Can add `string`, `integer`, `boolean`, `datetime`, `enum`, `link` fields to a type
+- [x] Enum fields require at least 1 value before saving
+- [x] Link fields pick from existing type names
+- [x] Type deletion blocked with count message if entities exist
+- [x] Filter bar: add/remove filter conditions (`eq`, `neq`, `contains`); list filters in real time
+- [x] Saved queries: save + reload named queries via HTTP endpoints
+- [x] Existing entity CRUD (create, edit, delete) still works unchanged
+- [x] User-created types survive server restart
 
 ### Non-Functional
 
-- [ ] Sidebar type switch < 100ms (existing cached data)
-- [ ] Type manager sheet opens < 200ms
-- [ ] `GET /api/brain/types` < 200ms for ≤ 20 types (concurrent gather)
-- [ ] No hardcoded colors — use `BrandColors` tokens only
-- [ ] `LayoutBuilder` callback only evaluates width (no entity/schema state reads)
-- [ ] `_BrainWideLayout` is a `const ConsumerWidget` — sidebar/list do not rebuild on entity tap
-- [ ] All `TextEditingController` instances disposed in `dispose()`
-- [ ] `ref.listen` only inside `build()` — never in `initState`
-- [ ] `BrainQueryService` uses HTTP endpoints, not direct vault file I/O
-- [ ] Reserved TerminusDB names blocked at API and UI validation layers
-- [ ] `WOQLClient` access serialized via `threading.Lock`
-- [ ] Follows `app/CLAUDE.md` and `computer/CLAUDE.md` conventions throughout
+- [x] Sidebar type switch < 100ms (existing cached data)
+- [x] Type manager sheet opens < 200ms
+- [x] `GET /api/brain/types` < 200ms for ≤ 20 types (concurrent gather)
+- [x] No hardcoded colors — use `BrandColors` tokens only
+- [x] `LayoutBuilder` callback only evaluates width (no entity/schema state reads)
+- [x] `_BrainWideLayout` is a `const ConsumerWidget` — sidebar/list do not rebuild on entity tap
+- [x] All `TextEditingController` instances disposed in `dispose()`
+- [x] `ref.listen` only inside `build()` — never in `initState`
+- [x] `BrainQueryService` uses HTTP endpoints, not direct vault file I/O
+- [x] Reserved TerminusDB names blocked at API and UI validation layers
+- [x] `WOQLClient` access serialized via `threading.Lock`
+- [x] Follows `app/CLAUDE.md` and `computer/CLAUDE.md` conventions throughout
 
 ---
 
