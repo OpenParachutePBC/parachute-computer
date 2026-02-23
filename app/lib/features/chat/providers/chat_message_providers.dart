@@ -1662,8 +1662,31 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
 
       case StreamEventType.userQuestion:
         // User question event - Claude is asking the user something
-        // Update state so UI can display the question card
+        // Convert the AskUserQuestion ToolCall in streaming content to an inline userQuestion item
         debugPrint('[ChatMessagesNotifier] Received user_question event: ${event.questionRequestId}');
+        {
+          final questions = event.questions;
+          final contentList = ctx.accumulatedContent;
+          int askIndex = -1;
+          String? toolUseId;
+          for (int i = contentList.length - 1; i >= 0; i--) {
+            final item = contentList[i];
+            if (item.type == ContentType.toolUse &&
+                item.toolCall?.name == 'AskUserQuestion') {
+              askIndex = i;
+              toolUseId = item.toolCall!.id;
+              break;
+            }
+          }
+          if (askIndex >= 0 && toolUseId != null) {
+            contentList[askIndex] = MessageContent.userQuestion(UserQuestionData(
+              toolUseId: toolUseId,
+              questions: questions,
+              status: UserQuestionStatus.pending,
+            ));
+            _performMessageUpdate(contentList, isStreaming: true);
+          }
+        }
         state = state.copyWith(
           pendingUserQuestion: {
             'requestId': event.questionRequestId,

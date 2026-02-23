@@ -37,6 +37,7 @@ class CollapsibleThinkingSection extends StatefulWidget {
 class _CollapsibleThinkingSectionState extends State<CollapsibleThinkingSection> {
   final Set<int> _expandedTools = {};
   late bool _sectionExpanded;
+  bool _streamingExpanded = false;
 
   @override
   void initState() {
@@ -45,13 +46,25 @@ class _CollapsibleThinkingSectionState extends State<CollapsibleThinkingSection>
   }
 
   @override
+  void didUpdateWidget(CollapsibleThinkingSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // When streaming ends, collapse back so the completed summary shows
+    if (oldWidget.isStreaming && !widget.isStreaming) {
+      _streamingExpanded = false;
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     if (widget.items.isEmpty) {
       return const SizedBox.shrink();
     }
 
-    // During streaming: show only the current (last) step with a pulsing dot
+    // During streaming: compact pulsing row (tap to expand in-place)
     if (widget.isStreaming) {
+      if (_streamingExpanded) {
+        return _buildStreamingExpandedView(context);
+      }
       return _buildStreamingView(context);
     }
 
@@ -135,7 +148,7 @@ class _CollapsibleThinkingSectionState extends State<CollapsibleThinkingSection>
     );
   }
 
-  /// Streaming view: shows only the current (last) step with a pulsing dot.
+  /// Streaming view: compact row — pulsing dot + current step. Tappable to expand.
   Widget _buildStreamingView(BuildContext context) {
     final lastItem = widget.items.last;
     final label = _streamingLabel(lastItem);
@@ -147,40 +160,120 @@ class _CollapsibleThinkingSectionState extends State<CollapsibleThinkingSection>
         right: Spacing.md,
         bottom: Spacing.sm,
       ),
-      child: Container(
-        padding: const EdgeInsets.symmetric(
-          horizontal: Spacing.sm,
-          vertical: Spacing.xs,
-        ),
-        decoration: BoxDecoration(
-          border: Border(
-            left: BorderSide(
-              color: accentColor.withValues(alpha: 0.5),
-              width: 2,
-            ),
+      child: GestureDetector(
+        onTap: () => setState(() => _streamingExpanded = true),
+        child: Container(
+          padding: const EdgeInsets.symmetric(
+            horizontal: Spacing.sm,
+            vertical: Spacing.xs,
           ),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            PulsingDot(color: accentColor),
-            const SizedBox(width: Spacing.sm),
-            Flexible(
-              child: Text(
-                label,
-                style: TextStyle(
-                  color: widget.isDark
-                      ? BrandColors.nightTextSecondary
-                      : BrandColors.driftwood,
-                  fontSize: TypographyTokens.labelSmall,
-                  fontStyle: FontStyle.italic,
-                ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+          decoration: BoxDecoration(
+            border: Border(
+              left: BorderSide(
+                color: accentColor.withValues(alpha: 0.5),
+                width: 2,
               ),
             ),
-          ],
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              PulsingDot(color: accentColor),
+              const SizedBox(width: Spacing.sm),
+              Flexible(
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    color: widget.isDark
+                        ? BrandColors.nightTextSecondary
+                        : BrandColors.driftwood,
+                    fontSize: TypographyTokens.labelSmall,
+                    fontStyle: FontStyle.italic,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const SizedBox(width: Spacing.xs),
+              Icon(
+                Icons.expand_more,
+                size: 14,
+                color: accentColor.withValues(alpha: 0.6),
+              ),
+            ],
+          ),
         ),
+      ),
+    );
+  }
+
+  /// Expanded streaming view: shows all steps so far with a collapse button.
+  Widget _buildStreamingExpandedView(BuildContext context) {
+    final accentColor = widget.isDark ? BrandColors.nightTurquoise : BrandColors.turquoise;
+
+    return Padding(
+      padding: const EdgeInsets.only(
+        left: Spacing.md,
+        right: Spacing.md,
+        bottom: Spacing.sm,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header row: pulsing dot + collapse button
+          GestureDetector(
+            onTap: () => setState(() => _streamingExpanded = false),
+            child: Container(
+              padding: const EdgeInsets.symmetric(
+                horizontal: Spacing.sm,
+                vertical: Spacing.xs,
+              ),
+              decoration: BoxDecoration(
+                border: Border(
+                  left: BorderSide(
+                    color: accentColor.withValues(alpha: 0.5),
+                    width: 2,
+                  ),
+                ),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  PulsingDot(color: accentColor),
+                  const SizedBox(width: Spacing.sm),
+                  Text(
+                    'Working...',
+                    style: TextStyle(
+                      color: widget.isDark
+                          ? BrandColors.nightTextSecondary
+                          : BrandColors.driftwood,
+                      fontSize: TypographyTokens.labelSmall,
+                      fontStyle: FontStyle.italic,
+                    ),
+                  ),
+                  const SizedBox(width: Spacing.xs),
+                  Icon(
+                    Icons.expand_less,
+                    size: 14,
+                    color: accentColor.withValues(alpha: 0.6),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: Spacing.xs),
+          // All items so far
+          ...widget.items.asMap().entries.map((entry) {
+            final index = entry.key;
+            final item = entry.value;
+            if (item.type == ContentType.thinking) {
+              return _buildThinkingBlock(item.text ?? '');
+            } else if (item.type == ContentType.toolUse && item.toolCall != null) {
+              return _buildToolCall(index, item.toolCall!);
+            }
+            return const SizedBox.shrink();
+          }),
+        ],
       ),
     );
   }
