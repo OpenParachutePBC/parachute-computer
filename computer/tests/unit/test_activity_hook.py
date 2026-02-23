@@ -2,78 +2,21 @@
 Tests for activity_hook.py — SDK Stop hook handler.
 
 Covers:
-- update_session_summary() helper
-- update_session_title() integration with summary flow
+- Session summary field in the DB layer
 - context_hook.py context re-injection
+
+Note: title/summary DB writes are now handled by the MCP tools
+(update_session_title / update_session_summary in mcp_server.py).
+See test_mcp_session_metadata.py for those tests.
 """
 
-import asyncio
 import json
-import sys
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from parachute.models.session import SessionCreate, SessionUpdate
-
-
-# ---------------------------------------------------------------------------
-# update_session_summary tests
-# ---------------------------------------------------------------------------
-
-
-class TestUpdateSessionSummary:
-    @pytest.mark.asyncio
-    async def test_persists_summary_to_db(self, test_database):
-        """update_session_summary writes summary to session record."""
-        from parachute.hooks.activity_hook import update_session_summary
-
-        session_data = SessionCreate(id="hook-sum-001", title="Test", module="chat")
-        await test_database.create_session(session_data)
-
-        with patch(
-            "parachute.db.database.get_database",
-            new=AsyncMock(return_value=test_database),
-        ):
-            await update_session_summary("hook-sum-001", "Discussed Python patterns.")
-
-        session = await test_database.get_session("hook-sum-001")
-        assert session is not None
-        assert session.summary == "Discussed Python patterns."
-
-    @pytest.mark.asyncio
-    async def test_skips_empty_summary(self, test_database):
-        """update_session_summary does nothing for empty string."""
-        from parachute.hooks.activity_hook import update_session_summary
-
-        session_data = SessionCreate(id="hook-sum-002", title="Test", module="chat")
-        await test_database.create_session(session_data)
-
-        with patch(
-            "parachute.db.database.get_database",
-            new=AsyncMock(return_value=test_database),
-        ):
-            await update_session_summary("hook-sum-002", "")
-
-        session = await test_database.get_session("hook-sum-002")
-        assert session is not None
-        assert session.summary is None  # unchanged
-
-    @pytest.mark.asyncio
-    async def test_handles_db_error_gracefully(self):
-        """update_session_summary does not raise on DB failure."""
-        from parachute.hooks.activity_hook import update_session_summary
-
-        failing_db = AsyncMock()
-        failing_db.update_session.side_effect = RuntimeError("DB unavailable")
-
-        with patch(
-            "parachute.db.database.get_database",
-            new=AsyncMock(return_value=failing_db),
-        ):
-            # Should not raise — errors are logged at DEBUG level
-            await update_session_summary("nonexistent-id", "Some summary.")
 
 
 # ---------------------------------------------------------------------------

@@ -131,13 +131,9 @@ async def handle_stop_hook(hook_input: dict) -> None:
             summary=summary,
         )
 
-        # 6. Persist summary to session record
-        if summary:
-            await update_session_summary(session_id, summary)
-
-        # 7. Update session title if changed (and user hasn't renamed it)
-        if not user_renamed and new_title and new_title != "NO_CHANGE" and new_title != session_title:
-            await update_session_title(session_id, new_title, title_source="ai")
+        # Note: title and summary DB writes are handled by the MCP tools
+        # (update_session_title / update_session_summary), which work from
+        # sandboxed sessions. The hook only writes the daily activity log.
 
     except Exception as e:
         # Fire-and-forget - log but don't fail
@@ -407,39 +403,6 @@ async def append_activity_log(
 
     with open(log_file, "a") as f:
         f.write(json.dumps(entry) + "\n")
-
-
-async def update_session_title(
-    session_id: str, new_title: str, title_source: str = "ai"
-) -> None:
-    """Update session title and title_source in the database."""
-    try:
-        from parachute.db.database import get_database
-        from parachute.models.session import SessionUpdate
-
-        session = await _get_session(session_id)
-        metadata = dict(session.metadata or {}) if session and session.metadata else {}
-        metadata["title_source"] = title_source
-        db = await get_database()
-        await db.update_session(
-            session_id, SessionUpdate(title=new_title, metadata=metadata)
-        )
-    except Exception as e:
-        logger.warning(f"Failed to update session title: {e}")
-
-
-async def update_session_summary(session_id: str, summary: str) -> None:
-    """Persist AI-generated summary to the session record."""
-    if not summary:
-        return
-    try:
-        from parachute.db.database import get_database
-        from parachute.models.session import SessionUpdate
-
-        db = await get_database()
-        await db.update_session(session_id, SessionUpdate(summary=summary))
-    except Exception as e:
-        logger.debug(f"Failed to update session summary: {e}")
 
 
 if __name__ == "__main__":
