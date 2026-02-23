@@ -114,6 +114,12 @@ class SessionTranscript {
           }
         }
 
+        // Strip skill/command injection: when a slash command injects the full
+        // SKILL.md content into the user message, extract just the user's input.
+        if (humanText.contains('<command-name>')) {
+          humanText = _extractCommandDisplay(humanText);
+        }
+
         if (isHumanMessage && humanText.isNotEmpty) {
           // First, flush any pending assistant content
           if (pendingAssistantContent.isNotEmpty) {
@@ -234,6 +240,37 @@ class SessionTranscript {
     }
 
     return messages;
+  }
+
+  /// Strip skill/command injection from user messages, returning only the
+  /// user's actual input.
+  ///
+  /// When a slash command (e.g. `/para-brainstorm`) is invoked, Claude Code
+  /// injects the full skill SKILL.md content into the user message alongside
+  /// the original user input. On reload, this surfaces as a giant text bubble.
+  ///
+  /// We extract just the user's input from `<command-args>` (or fall back to
+  /// the command name from `<command-name>`). Everything else is dropped.
+  static String _extractCommandDisplay(String text) {
+    // Extract user's actual args (their typed input)
+    final argsMatch = RegExp(
+      r'<command-args>([\s\S]*?)</command-args>',
+      multiLine: true,
+    ).firstMatch(text);
+    if (argsMatch != null) {
+      final args = argsMatch.group(1)?.trim() ?? '';
+      // Strip leading '#' that the skill command wrapper sometimes adds
+      final cleaned = args.startsWith('#') ? args.substring(1).trim() : args;
+      if (cleaned.isNotEmpty) return cleaned;
+    }
+
+    // Fall back to command name
+    final cmdMatch = RegExp(r'<command-name>([^<]+)</command-name>').firstMatch(text);
+    if (cmdMatch != null) {
+      return cmdMatch.group(1)?.trim() ?? text;
+    }
+
+    return text;
   }
 
   /// Find tool_result matching a tool_use ID in the transcript events.

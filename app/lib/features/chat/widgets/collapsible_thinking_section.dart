@@ -2,22 +2,31 @@ import 'package:flutter/material.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
 import '../models/chat_message.dart';
 
-/// Inline section showing the agent's thinking process and tool calls
+/// Inline section showing the agent's thinking process and tool calls.
 ///
-/// Thinking text is shown expanded by default.
-/// Tool calls are shown as compact chips, expandable for full input details.
+/// **Two-phase display:**
+/// - During streaming (`isStreaming=true`): Shows only the *current* (last) step
+///   with a pulsing dot animation. This avoids an ever-growing list that
+///   distracts from the response being built below.
+/// - After streaming (`isStreaming=false`): Collapses to a single summary row
+///   ("N tools · N thoughts") that can be expanded to see all steps.
 class CollapsibleThinkingSection extends StatefulWidget {
   /// Content items in order (thinking text and tool calls interleaved)
   final List<MessageContent> items;
   final bool isDark;
 
-  /// Whether the section should start expanded (true during streaming)
+  /// Whether the assistant is currently streaming this message.
+  /// When true, only the last (current) step is shown with a pulsing indicator.
+  final bool isStreaming;
+
+  /// Whether to start expanded (only applies when isStreaming=false)
   final bool initiallyExpanded;
 
   const CollapsibleThinkingSection({
     super.key,
     required this.items,
     required this.isDark,
+    this.isStreaming = false,
     this.initiallyExpanded = false,
   });
 
@@ -41,7 +50,12 @@ class _CollapsibleThinkingSectionState extends State<CollapsibleThinkingSection>
       return const SizedBox.shrink();
     }
 
-    // Count tools and thinking blocks for summary
+    // During streaming: show only the current (last) step with a pulsing dot
+    if (widget.isStreaming) {
+      return _buildStreamingView(context);
+    }
+
+    // After streaming: collapsed summary row or expanded full list
     final toolCount = widget.items.where((i) => i.type == ContentType.toolUse).length;
     final thinkingCount = widget.items.where((i) => i.type == ContentType.thinking).length;
 
@@ -54,7 +68,7 @@ class _CollapsibleThinkingSectionState extends State<CollapsibleThinkingSection>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Collapsible header for the whole section
+          // Collapsed/expanded summary header
           GestureDetector(
             onTap: () => setState(() => _sectionExpanded = !_sectionExpanded),
             child: Container(
@@ -72,19 +86,11 @@ class _CollapsibleThinkingSectionState extends State<CollapsibleThinkingSection>
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Icon(
-                    _sectionExpanded ? Icons.expand_less : Icons.expand_more,
-                    size: 16,
+                    Icons.auto_awesome,
+                    size: 13,
                     color: widget.isDark
-                        ? BrandColors.nightTextSecondary
-                        : BrandColors.driftwood,
-                  ),
-                  const SizedBox(width: Spacing.xs),
-                  Icon(
-                    Icons.psychology_outlined,
-                    size: 14,
-                    color: widget.isDark
-                        ? BrandColors.nightTextSecondary
-                        : BrandColors.driftwood,
+                        ? BrandColors.nightTextSecondary.withValues(alpha: 0.7)
+                        : BrandColors.driftwood.withValues(alpha: 0.7),
                   ),
                   const SizedBox(width: Spacing.xs),
                   Text(
@@ -94,7 +100,16 @@ class _CollapsibleThinkingSectionState extends State<CollapsibleThinkingSection>
                           ? BrandColors.nightTextSecondary
                           : BrandColors.driftwood,
                       fontSize: TypographyTokens.labelSmall,
+                      fontWeight: FontWeight.w500,
                     ),
+                  ),
+                  const SizedBox(width: Spacing.xs),
+                  Icon(
+                    _sectionExpanded ? Icons.expand_less : Icons.expand_more,
+                    size: 14,
+                    color: widget.isDark
+                        ? BrandColors.nightTextSecondary.withValues(alpha: 0.6)
+                        : BrandColors.driftwood.withValues(alpha: 0.6),
                   ),
                 ],
               ),
@@ -118,6 +133,92 @@ class _CollapsibleThinkingSectionState extends State<CollapsibleThinkingSection>
         ],
       ),
     );
+  }
+
+  /// Streaming view: shows only the current (last) step with a pulsing dot.
+  Widget _buildStreamingView(BuildContext context) {
+    final lastItem = widget.items.last;
+    final label = _streamingLabel(lastItem);
+    final accentColor = widget.isDark ? BrandColors.nightTurquoise : BrandColors.turquoise;
+
+    return Padding(
+      padding: const EdgeInsets.only(
+        left: Spacing.md,
+        right: Spacing.md,
+        bottom: Spacing.sm,
+      ),
+      child: Container(
+        padding: const EdgeInsets.symmetric(
+          horizontal: Spacing.sm,
+          vertical: Spacing.xs,
+        ),
+        decoration: BoxDecoration(
+          border: Border(
+            left: BorderSide(
+              color: accentColor.withValues(alpha: 0.5),
+              width: 2,
+            ),
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            PulsingDot(color: accentColor),
+            const SizedBox(width: Spacing.sm),
+            Flexible(
+              child: Text(
+                label,
+                style: TextStyle(
+                  color: widget.isDark
+                      ? BrandColors.nightTextSecondary
+                      : BrandColors.driftwood,
+                  fontSize: TypographyTokens.labelSmall,
+                  fontStyle: FontStyle.italic,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Human-readable label for the current streaming step.
+  String _streamingLabel(MessageContent item) {
+    if (item.type == ContentType.thinking) {
+      return 'Thinking...';
+    }
+    if (item.type == ContentType.toolUse && item.toolCall != null) {
+      final name = item.toolCall!.name.toLowerCase();
+      final summary = item.toolCall!.summary;
+      if (name == 'skill') return 'Running skill...';
+      if (name == 'task') return 'Spawning agent...';
+      if (name == 'todowrite') return 'Updating tasks...';
+      if (name.contains('bash') || name.contains('shell') || name.contains('terminal')) {
+        return summary.isNotEmpty ? 'Running: $summary' : 'Running command...';
+      }
+      if (name.contains('glob') || name.contains('grep') || name.contains('search')) {
+        return summary.isNotEmpty ? 'Searching: $summary' : 'Searching...';
+      }
+      if (name.contains('read')) {
+        return summary.isNotEmpty ? 'Reading: $summary' : 'Reading file...';
+      }
+      if (name.contains('write') || name.contains('edit') || name.contains('multiedit')) {
+        return summary.isNotEmpty ? 'Editing: $summary' : 'Editing file...';
+      }
+      if (name.contains('web') || name.contains('browser') || name.contains('navigate')) {
+        return 'Browsing web...';
+      }
+      if (name.startsWith('mcp__')) {
+        final parts = name.split('__');
+        final toolName = parts.length >= 3 ? parts[2] : name;
+        return 'Using $toolName...';
+      }
+      return summary.isNotEmpty ? summary : 'Using tool...';
+    }
+    return 'Working...';
   }
 
   String _buildSummaryText(int toolCount, int thinkingCount) {
@@ -755,6 +856,7 @@ class _CollapsibleThinkingSectionState extends State<CollapsibleThinkingSection>
   }
 
   IconData _getToolIcon(String toolName) {
+
     final name = toolName.toLowerCase();
     if (name == 'skill') return Icons.auto_awesome;
     if (name == 'todowrite') return Icons.checklist;
@@ -770,5 +872,57 @@ class _CollapsibleThinkingSectionState extends State<CollapsibleThinkingSection>
     if (name.contains('snapshot')) return Icons.camera_alt_outlined;
     if (name.contains('glif')) return Icons.brush;
     return Icons.build_outlined;
+  }
+}
+
+/// A small dot that breathes in and out to indicate active streaming.
+///
+/// Uses a single AnimationController with reverse-repeat so the opacity
+/// oscillates smoothly between 0.25 and 1.0. Disposes cleanly to avoid leaks.
+class PulsingDot extends StatefulWidget {
+  final Color color;
+
+  const PulsingDot({super.key, required this.color});
+
+  @override
+  State<PulsingDot> createState() => _PulsingDotState();
+}
+
+class _PulsingDotState extends State<PulsingDot>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  late final Animation<double> _opacity;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1100),
+    )..repeat(reverse: true);
+    _opacity = Tween<double>(begin: 0.25, end: 1.0).animate(
+      CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: _opacity,
+      child: Container(
+        width: 7,
+        height: 7,
+        decoration: BoxDecoration(
+          color: widget.color,
+          shape: BoxShape.circle,
+        ),
+      ),
+    );
   }
 }

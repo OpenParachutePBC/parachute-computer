@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:uuid/uuid.dart';
 import '../models/chat_session.dart';
 import '../models/chat_message.dart';
 import '../models/stream_event.dart';
@@ -244,7 +243,6 @@ class _SendStreamContext {
 class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
   final ChatService _service;
   final Ref _ref;
-  static const _uuid = Uuid();
   final _log = logger.createLogger('ChatMessagesNotifier');
 
   /// Track the session ID of the currently active stream
@@ -269,6 +267,14 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
 
   /// Message that failed mid-stream inject and needs to be re-sent as a new turn
   String? _pendingResendMessage;
+
+  /// Messages queued while streaming is active.
+  ///
+  /// When the user sends a message mid-stream, we defer showing it in the UI
+  /// until the current stream completes. This prevents the jarring visual
+  /// where the new user message appears above a still-streaming assistant
+  /// response. Messages are flushed (via sendMessage) on the done event.
+  final List<String> _queuedMessages = [];
 
   /// Prevents overlapping async poll callbacks when HTTP takes >2s
   bool _isPolling = false;
@@ -308,6 +314,7 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
     _pendingContent = null;
     _pendingSessionId = null;
     _pendingResendMessage = null;
+    _queuedMessages.clear();
   }
 
   /// Enable input for an archived session so the user can resume it
@@ -1143,39 +1150,6 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
 
   /// Inject a message into an active streaming session.
   ///
-  /// Adds the user message optimistically to the UI, then POSTs to the inject
-  /// endpoint. On failure (stream ended), queues the message for re-send as
-  /// a new turn when the done event arrives.
-  Future<void> _injectMessage(String message) async {
-    final sessionId = state.sessionId;
-    if (sessionId == null) return;
-
-    // Optimistic UI: add user message to list
-    final userMessage = ChatMessage(
-      id: _uuid.v4(),
-      sessionId: sessionId,
-      role: MessageRole.user,
-      content: [MessageContent.text(message)],
-      timestamp: DateTime.now(),
-    );
-    state = state.copyWith(
-      messages: [...state.messages, userMessage],
-    );
-
-    // POST to inject endpoint
-    final success = await _service.injectMessage(sessionId, message);
-
-    if (!success) {
-      // Stream likely ended between isStreaming check and inject call.
-      // Queue the message for re-send when the done event fires.
-      // Remove the optimistic message — it will be re-added by sendMessage.
-      final msgs = List<ChatMessage>.from(state.messages);
-      msgs.removeWhere((m) => m.id == userMessage.id);
-      state = state.copyWith(messages: msgs);
-      _pendingResendMessage = message;
-    }
-  }
-
   /// Send a message and handle streaming response
   ///
   /// [systemPrompt] - Custom system prompt for this session
@@ -1199,7 +1173,12 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
     String? workspaceId,
   }) async {
     if (state.isStreaming) {
-      await _injectMessage(message);
+      // Defer: don't show the user message until the current stream finishes.
+      // Showing it immediately creates a jarring visual where the new user
+      // message floats above a still-streaming assistant response.
+      // The message will be flushed from _queuedMessages on the done event.
+      debugPrint('[ChatMessagesNotifier] sendMessage deferred (streaming active): "$message"');
+      _queuedMessages.add(message);
       return;
     }
 
@@ -1579,11 +1558,20 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
         // Always refresh sessions list to get updated title
         _ref.invalidate(chatSessionsProvider);
 
-        // Re-send any message that failed mid-stream inject
+        // Flush any queued messages (submitted while streaming was active).
+        // Also handle the legacy single-message resend path.
+        final pending = List<String>.from(_queuedMessages);
+        _queuedMessages.clear();
         if (_pendingResendMessage != null) {
-          final resendMsg = _pendingResendMessage!;
+          pending.insert(0, _pendingResendMessage!);
           _pendingResendMessage = null;
-          Future.microtask(() => sendMessage(message: resendMsg));
+        }
+        if (pending.isNotEmpty) {
+          Future.microtask(() async {
+            for (final msg in pending) {
+              await sendMessage(message: msg);
+            }
+          });
         }
         _sendStreamCtx = null;
         break;

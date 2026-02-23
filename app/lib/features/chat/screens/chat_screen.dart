@@ -695,41 +695,44 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                 ? _buildLoadingState(isDark)
                 : chatState.messages.isEmpty
                     ? _buildEmptyStateOrContinuation(context, isDark, chatState)
-                    : ListView.builder(
-                        controller: _scrollController,
-                        padding: const EdgeInsets.all(Spacing.md),
-                        cacheExtent: 500,
-                        addRepaintBoundaries: true,
-                        // Keep items alive when scrolled off-screen (works with AutomaticKeepAliveClientMixin)
-                        addAutomaticKeepAlives: true,
-                        itemCount: chatState.messages.length +
-                            (chatState.isContinuation ? 1 : 0) +
-                            (chatState.hasEarlierSegments ? 1 : 0),
-                        itemBuilder: (context, index) {
-                          // Show "load earlier" at the very top if there are earlier segments
-                          if (chatState.hasEarlierSegments && index == 0) {
-                            return _buildLoadEarlierSegmentsButton(isDark, chatState);
-                          }
-
-                          // Adjust index for the load-earlier button
-                          final adjustedIndex = chatState.hasEarlierSegments ? index - 1 : index;
-
-                          // Show resume marker at the top if this is a continuation
-                          if (chatState.isContinuation && adjustedIndex == 0) {
-                            return ResumeMarker(
-                              key: const ValueKey('resume_marker'),
-                              originalSession: chatState.continuedFromSession!,
-                              priorMessages: chatState.priorMessages,
+                    : Builder(builder: (context) {
+                        // Filter out compact summaries before building the list.
+                        // They are SDK-generated compaction artifacts that add visual
+                        // noise when shown as regular message bubbles. Filtering here
+                        // (not with SizedBox.shrink) avoids gaps in scroll position.
+                        final displayMessages = chatState.messages
+                            .where((m) => !m.isCompactSummary)
+                            .toList();
+                        return ListView.builder(
+                          controller: _scrollController,
+                          padding: const EdgeInsets.all(Spacing.md),
+                          cacheExtent: 500,
+                          addRepaintBoundaries: true,
+                          addAutomaticKeepAlives: true,
+                          itemCount: displayMessages.length +
+                              (chatState.isContinuation ? 1 : 0) +
+                              (chatState.hasEarlierSegments ? 1 : 0),
+                          itemBuilder: (context, index) {
+                            if (chatState.hasEarlierSegments && index == 0) {
+                              return _buildLoadEarlierSegmentsButton(isDark, chatState);
+                            }
+                            final adjustedIndex = chatState.hasEarlierSegments ? index - 1 : index;
+                            if (chatState.isContinuation && adjustedIndex == 0) {
+                              return ResumeMarker(
+                                key: const ValueKey('resume_marker'),
+                                originalSession: chatState.continuedFromSession!,
+                                priorMessages: chatState.priorMessages,
+                              );
+                            }
+                            final msgIndex = chatState.isContinuation ? adjustedIndex - 1 : adjustedIndex;
+                            final message = displayMessages[msgIndex];
+                            return MessageBubble(
+                              key: ValueKey(message.id),
+                              message: message,
                             );
-                          }
-                          final msgIndex = chatState.isContinuation ? adjustedIndex - 1 : adjustedIndex;
-                          final message = chatState.messages[msgIndex];
-                          return MessageBubble(
-                            key: ValueKey(message.id),
-                            message: message,
-                          );
-                        },
-                      ),
+                          },
+                        );
+                      }),
           ),
 
           // Error banner
