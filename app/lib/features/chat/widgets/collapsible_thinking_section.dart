@@ -131,17 +131,7 @@ class _CollapsibleThinkingSectionState extends State<CollapsibleThinkingSection>
           // Expanded content
           if (_sectionExpanded) ...[
             const SizedBox(height: Spacing.sm),
-            ...widget.items.asMap().entries.map((entry) {
-              final index = entry.key;
-              final item = entry.value;
-
-              if (item.type == ContentType.thinking) {
-                return _buildThinkingBlock(item.text ?? '');
-              } else if (item.type == ContentType.toolUse && item.toolCall != null) {
-                return _buildToolCall(index, item.toolCall!);
-              }
-              return const SizedBox.shrink();
-            }),
+            ..._buildItemList(),
           ],
         ],
       ),
@@ -263,16 +253,7 @@ class _CollapsibleThinkingSectionState extends State<CollapsibleThinkingSection>
           ),
           const SizedBox(height: Spacing.xs),
           // All items so far
-          ...widget.items.asMap().entries.map((entry) {
-            final index = entry.key;
-            final item = entry.value;
-            if (item.type == ContentType.thinking) {
-              return _buildThinkingBlock(item.text ?? '');
-            } else if (item.type == ContentType.toolUse && item.toolCall != null) {
-              return _buildToolCall(index, item.toolCall!);
-            }
-            return const SizedBox.shrink();
-          }),
+          ..._buildItemList(),
         ],
       ),
     );
@@ -385,7 +366,7 @@ class _CollapsibleThinkingSectionState extends State<CollapsibleThinkingSection>
 
     // Chip color - error results get error styling
     final chipColor = toolCall.isError
-        ? (widget.isDark ? BrandColors.error : BrandColors.error)
+        ? BrandColors.error
         : (widget.isDark ? BrandColors.nightTurquoise : BrandColors.turquoise);
 
     // Special rendering for specific tools
@@ -793,7 +774,7 @@ class _CollapsibleThinkingSectionState extends State<CollapsibleThinkingSection>
                   ),
                   const SizedBox(width: Spacing.xs),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                    padding: const EdgeInsets.symmetric(horizontal: Spacing.xs, vertical: Spacing.xxs),
                     decoration: BoxDecoration(
                       color: widget.isDark
                           ? BrandColors.nightSurface
@@ -871,6 +852,19 @@ class _CollapsibleThinkingSectionState extends State<CollapsibleThinkingSection>
         ],
       ),
     );
+  }
+
+  List<Widget> _buildItemList() {
+    return widget.items.asMap().entries.map((entry) {
+      final index = entry.key;
+      final item = entry.value;
+      if (item.type == ContentType.thinking) {
+        return _buildThinkingBlock(item.text ?? '');
+      } else if (item.type == ContentType.toolUse && item.toolCall != null) {
+        return _buildToolCall(index, item.toolCall!);
+      }
+      return const SizedBox.shrink();
+    }).toList();
   }
 
   void _toggleTool(int index) {
