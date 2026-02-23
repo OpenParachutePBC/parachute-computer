@@ -573,16 +573,20 @@ class _MessageBubbleState extends State<MessageBubble>
 
   /// Cache for resolved image file paths to avoid repeated filesystem checks
   static final Map<String, File?> _imageFileCache = {};
+  static const int _maxImageCacheSize = 200;
 
   /// Find an image file, trying alternate extensions if needed
   Future<File?> _findImageFile(String path) async {
-    // Return cached result if available
+    // Return cached result if available (only successful lookups are cached)
     if (_imageFileCache.containsKey(path)) {
       return _imageFileCache[path];
     }
 
     final file = File(path);
     if (await file.exists()) {
+      if (_imageFileCache.length >= _maxImageCacheSize) {
+        _imageFileCache.clear();
+      }
       _imageFileCache[path] = file;
       return file;
     }
@@ -594,12 +598,15 @@ class _MessageBubbleState extends State<MessageBubble>
     for (final ext in alternateExtensions) {
       final altFile = File('$basePath$ext');
       if (await altFile.exists()) {
+        if (_imageFileCache.length >= _maxImageCacheSize) {
+          _imageFileCache.clear();
+        }
         _imageFileCache[path] = altFile;
         return altFile;
       }
     }
 
-    _imageFileCache[path] = null;
+    // File not found — return null without caching so it can be retried later
     return null;
   }
 
