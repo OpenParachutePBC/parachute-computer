@@ -4,7 +4,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
 import '../models/chat_message.dart';
 import '../providers/chat_message_providers.dart';
-import 'user_question_card.dart';
 
 /// Inline question card rendered within a message bubble.
 ///
