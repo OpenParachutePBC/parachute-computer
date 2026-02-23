@@ -226,7 +226,7 @@ class StreamEvent {
   List<Map<String, dynamic>> get questions {
     final qs = data['questions'] as List<dynamic>?;
     if (qs == null) return [];
-    return qs.cast<Map<String, dynamic>>();
+    return qs.whereType<Map<String, dynamic>>().toList();
   }
 
   // Typed error event accessors
