@@ -1295,14 +1295,14 @@ class Orchestrator:
 
             duration_ms = int((time.time() - start_time) * 1000)
 
-            # Kick off title/summary generation as a fire-and-forget background task.
+            # Kick off curator as a fire-and-forget background task.
             # Uses session.message_count (pre-increment) to compute exchange number.
             if final_session_id and final_session_id != "pending" and message and result_text:
-                from parachute.core.session_summarizer import summarize_session
+                from parachute.core.curator import observe as curator_observe
                 exchange_number = session.message_count // 2 + 1
                 session_metadata = session.metadata or {}
                 asyncio.create_task(
-                    summarize_session(
+                    curator_observe(
                         session_id=final_session_id,
                         message=message,
                         result_text=result_text,

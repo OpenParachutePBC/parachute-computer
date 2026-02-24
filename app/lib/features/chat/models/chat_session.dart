@@ -1,3 +1,5 @@
+import 'curator_run.dart';
+
 /// Source of a chat session
 enum ChatSource {
   /// Native Parachute chat session
@@ -142,6 +144,13 @@ class ChatSession {
 
   /// The first message sent by the unknown user
   String? get firstMessage => metadata?['first_message'] as String?;
+
+  /// The most recent curator run result, if curator has run for this session
+  CuratorRun? get curatorLastRun {
+    final raw = metadata?['curator_last_run'];
+    if (raw == null || raw is! Map<String, dynamic>) return null;
+    return CuratorRun.fromJson(raw);
+  }
 
   const ChatSession({
     required this.id,

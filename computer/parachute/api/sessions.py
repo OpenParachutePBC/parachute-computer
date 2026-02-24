@@ -508,6 +508,57 @@ async def deny_permission(
 
 
 # =========================================================================
+# Curator
+# =========================================================================
+
+
+@router.post("/chat/{session_id}/curator/trigger")
+async def trigger_curator(request: Request, session_id: str) -> dict[str, Any]:
+    """
+    Manually trigger a curator run for a session.
+
+    Returns immediately with {"status": "queued"} — the curator runs
+    fire-and-forget in the background. Useful for dev/testing and for
+    users who want to force a context update.
+    """
+    import asyncio
+
+    db = request.app.state.database
+    if not db:
+        raise HTTPException(status_code=503, detail="Database not ready")
+
+    session = await db.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    orchestrator = get_orchestrator(request)
+    settings = request.app.state.settings
+
+    from parachute.core.curator import observe as curator_observe
+
+    session_metadata = session.metadata or {}
+    # Use current message count to estimate exchange number
+    exchange_number = max(1, (session.message_count or 2) // 2)
+
+    asyncio.create_task(
+        curator_observe(
+            session_id=session_id,
+            message="(manual trigger — no specific exchange)",
+            result_text="",
+            tool_calls=[],
+            exchange_number=exchange_number,
+            session_title=session.title,
+            title_source=session_metadata.get("title_source"),
+            database=db,
+            vault_path=orchestrator.vault_path,
+            claude_token=settings.claude_code_oauth_token if settings else None,
+        )
+    )
+
+    return {"status": "queued", "sessionId": session_id}
+
+
+# =========================================================================
 # Vault Migration
 # =========================================================================
 

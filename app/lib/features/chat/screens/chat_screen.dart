@@ -21,6 +21,7 @@ import '../../settings/screens/settings_screen.dart';
 import '../models/workspace.dart';
 import '../providers/workspace_providers.dart' show activeWorkspaceProvider;
 import '../widgets/workspace_chip_row.dart';
+import '../widgets/curator_chip.dart';
 
 /// Main chat screen for AI conversations
 ///
@@ -596,6 +597,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                       ),
                     ),
                   ),
+
+                // Curator chip — shows what the background context agent did last
+                const ConstrainedBox(
+                  constraints: BoxConstraints(maxWidth: 160),
+                  child: CuratorChip(),
+                ),
               ],
             ),
           ),
