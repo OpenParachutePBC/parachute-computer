@@ -47,7 +47,7 @@ permalink: /pitch/
         .progress-fill {
             height: 100%; background: var(--accent);
             transition: width 0.45s ease;
-            width: calc(1 / 11 * 100%);
+            width: calc(1 / 12 * 100%);
         }
 
         /* ── Persistent chrome ── */
@@ -208,7 +208,19 @@ permalink: /pitch/
             font-size: 0.8rem; color: var(--fg-muted); max-width: 460px; line-height: 1.55;
         }
 
-        /* ── Slide 11 – Close ── */
+        /* ── Slide 9 – Business Model tiers ── */
+        .tier-table { display: flex; flex-direction: column; gap: 0; max-width: 560px; margin-top: 0.5rem; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: #fff; }
+        .tier-row { display: flex; align-items: baseline; gap: 1.25rem; padding: 0.75rem 1.25rem; border-bottom: 1px solid var(--border); }
+        .tier-row:last-child { border-bottom: none; }
+        .tier-price { font-family: var(--serif); font-size: 1.5rem; color: var(--accent); min-width: 4.5rem; line-height: 1; flex-shrink: 0; }
+        .tier-price span { font-family: var(--sans); font-size: 0.75rem; color: var(--fg-dim); letter-spacing: 0.02em; }
+        .tier-body { font-size: 0.9rem; color: var(--fg-muted); line-height: 1.5; }
+        .tier-body strong { color: var(--fg); font-weight: 500; }
+        .tier-row-highlight { background: var(--accent-soft); }
+        .tier-row-power { background: var(--bg-soft); }
+        .tier-row-power .tier-price { color: var(--fg); }
+
+        /* ── Slide 12 – Close ── */
         .close-links { margin-top: 2rem; display: flex; flex-direction: column; gap: 0.3rem; }
         .close-links a { color: var(--accent); text-decoration: none; font-size: 0.9rem; }
         .close-links a:hover { text-decoration: underline; }
@@ -227,7 +239,7 @@ permalink: /pitch/
 
 <div class="progress"><div class="progress-fill" id="progressFill"></div></div>
 <div class="logo-mark">Parachute</div>
-<div class="counter" id="counter">1 / 11</div>
+<div class="counter" id="counter">1 / 12</div>
 <div class="hint">Space or → to advance</div>
 
 <button class="nav-btn prev" id="prevBtn" onclick="navigate(-1)" disabled>‹</button>
@@ -364,16 +376,55 @@ permalink: /pitch/
         </ul>
     </div>
 
-    <!-- 08 ─ Business Model -->
+    <!-- 08 ─ Market -->
+    <div class="slide">
+        <div class="slide-label">Market</div>
+        <h2>$16B market.<br>$66/mo problem.</h2>
+        <div class="two-col" style="max-width:740px; margin-top:0.25rem;">
+            <div class="col-card">
+                <h3>Market size</h3>
+                <p>Personal AI platforms: $16B today → $268B by 2035 (41% CAGR).</p>
+                <ul>
+                    <li><strong>TwinMind</strong> — $5.7M at $60M valuation, 30K users. Most comparable.</li>
+                    <li><strong>Day One</strong> — journaling alone does ~$4.8M ARR at $2.92/mo.</li>
+                    <li><strong>Limitless</strong> — wearable AI, acquired by Meta. Validates hardware.</li>
+                </ul>
+            </div>
+            <div class="col-card">
+                <h3>The consolidation opportunity</h3>
+                <p>Knowledge workers pay ~$66/mo fragmented across 4 AI tools.</p>
+                <ul>
+                    <li><strong>67%</strong> rank AI as their most important subscription</li>
+                    <li>Subscription fatigue is real — one system that <em>knows you</em> wins</li>
+                    <li>Parachute replaces all of them at $5–$20/mo</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <!-- 09 ─ Business Model -->
     <div class="slide">
         <div class="slide-label">Business Model</div>
-        <h2>Open source grows.<br>Hosted services earn.</h2>
-        <ul style="margin-top:0.25rem;">
-            <li><strong>Parachute Daily — subscription</strong> — sync, AI reflections, weekly synthesis. The wide funnel.</li>
-            <li><strong>Hosted Parachute Computer</strong> — managed service for power users. Higher margin, lower volume.</li>
-            <li><strong>Hardware pendant</strong> — wearable voice capture device in development. Future hardware revenue.</li>
-        </ul>
-        <p style="margin-top:1.5rem;">Target: path to $1,000 MRR identified by April 22.</p>
+        <h2>Start at $1.<br>Grow with every user.</h2>
+        <div class="tier-table">
+            <div class="tier-row">
+                <div class="tier-price">$1<span>/mo</span></div>
+                <div class="tier-body"><strong>Sync</strong> — journal on any device, offline-first</div>
+            </div>
+            <div class="tier-row">
+                <div class="tier-price">$2<span>/mo</span></div>
+                <div class="tier-body"><strong>Daily AI</strong> — sync + daily reflections from your entries</div>
+            </div>
+            <div class="tier-row tier-row-highlight">
+                <div class="tier-price">$5<span>/mo</span></div>
+                <div class="tier-body"><strong>Advanced AI</strong> — multi-agent + web search + weekly synthesis</div>
+            </div>
+            <div class="tier-row tier-row-power">
+                <div class="tier-price">$20<span>/mo</span></div>
+                <div class="tier-body"><strong>Hosted Computer</strong> — full agentic platform, no self-hosting</div>
+            </div>
+        </div>
+        <p style="margin-top:1.25rem;">vs. $66/mo fragmented · Open source always free to self-host · Target: $1,000 MRR by April 22</p>
     </div>
 
     <!-- 09 ─ Team -->
