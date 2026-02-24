@@ -1,317 +1,290 @@
 ---
-layout: base.njk
-title: "Pitch"
-description: "Parachute — open source personal AI. Two products, one extended mind."
 permalink: /pitch/
 ---
-
-<style>
-    .deck {
-        max-width: none;
-        padding: 0;
-        margin: 0;
-    }
-
-    .slide {
-        min-height: 100vh;
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-        padding: 5rem 3rem;
-        position: relative;
-        border-bottom: 1px solid var(--border);
-        max-width: 900px;
-        margin: 0 auto;
-    }
-
-    .slide-num {
-        position: absolute;
-        top: 2rem;
-        right: 0;
-        font-size: 0.75rem;
-        color: var(--fg-dim);
-        letter-spacing: 0.08em;
-        font-family: var(--mono);
-    }
-
-    .slide-label {
-        font-size: 0.75rem;
-        letter-spacing: 0.1em;
-        text-transform: uppercase;
-        color: var(--accent);
-        margin-bottom: 1rem;
-        font-weight: 500;
-    }
-
-    .slide h1 {
-        font-family: var(--serif);
-        font-size: clamp(2.5rem, 5vw, 4rem);
-        font-weight: 400;
-        letter-spacing: -0.02em;
-        line-height: 1.1;
-        color: var(--fg);
-        margin-bottom: 2rem;
-        max-width: 720px;
-    }
-
-    .slide h2 {
-        font-family: var(--serif);
-        font-size: clamp(1.5rem, 3vw, 2.25rem);
-        font-weight: 400;
-        letter-spacing: -0.01em;
-        line-height: 1.2;
-        color: var(--fg);
-        margin-bottom: 1.75rem;
-        padding-bottom: 0;
-        border-bottom: none;
-    }
-
-    .slide p {
-        font-size: 1.05rem;
-        color: var(--fg-muted);
-        line-height: 1.75;
-        max-width: 620px;
-        margin-bottom: 1rem;
-    }
-
-    .slide ul {
-        list-style: none;
-        margin: 0;
-    }
-
-    .slide li {
-        color: var(--fg-muted);
-        padding: 0.6rem 0;
-        padding-left: 1.75rem;
-        position: relative;
-        line-height: 1.6;
-        font-size: 1rem;
-        max-width: 620px;
-    }
-
-    .slide li::before {
-        content: "\203A";
-        position: absolute;
-        left: 0.25rem;
-        color: var(--accent-light);
-        font-size: 1.1em;
-    }
-
-    .slide li strong {
-        color: var(--fg);
-        font-weight: 500;
-    }
-
-    /* Two-column layout for product slides */
-    .two-col {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 2rem;
-        margin-top: 1rem;
-    }
-
-    .col-card {
-        background: var(--card-bg);
-        border: 1px solid var(--border);
-        border-radius: 10px;
-        padding: 1.75rem;
-    }
-
-    .col-card h3 {
-        font-family: var(--serif);
-        font-size: 1.2rem;
-        font-weight: 400;
-        color: var(--fg);
-        margin-bottom: 0.75rem;
-    }
-
-    .col-card p {
-        font-size: 0.9rem;
-        margin-bottom: 0.75rem;
-    }
-
-    .col-card ul {
-        margin: 0;
-    }
-
-    .col-card li {
-        font-size: 0.9rem;
-        padding: 0.35rem 0;
-        padding-left: 1.5rem;
-        max-width: none;
-    }
-
-    /* Stat callouts */
-    .stats {
-        display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        gap: 1.5rem;
-        margin: 2rem 0;
-    }
-
-    .stat {
-        text-align: left;
-    }
-
-    .stat-num {
-        font-family: var(--serif);
-        font-size: 2.75rem;
-        font-weight: 400;
-        color: var(--accent);
-        line-height: 1;
-        margin-bottom: 0.35rem;
-        letter-spacing: -0.02em;
-    }
-
-    .stat-label {
-        font-size: 0.85rem;
-        color: var(--fg-muted);
-        line-height: 1.4;
-    }
-
-    /* Flywheel diagram */
-    .flywheel {
-        background: var(--accent-soft);
-        border: 1px solid rgba(74,124,89,0.15);
-        border-radius: 10px;
-        padding: 2rem 2.5rem;
-        margin: 1.5rem 0;
-        max-width: 560px;
-        font-family: var(--serif);
-        font-size: 1.1rem;
-        color: var(--fg);
-        line-height: 2;
-    }
-
-    .flywheel span {
-        color: var(--fg-dim);
-        font-family: var(--sans);
-        font-size: 0.8rem;
-        letter-spacing: 0.05em;
-    }
-
-    /* Team grid */
-    .team-grid {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 1rem;
-        margin-top: 1rem;
-    }
-
-    .team-member {
-        padding: 1rem 0;
-        border-top: 1px solid var(--border-light);
-    }
-
-    .team-member strong {
-        display: block;
-        color: var(--fg);
-        font-weight: 500;
-        margin-bottom: 0.2rem;
-    }
-
-    .team-member span {
-        font-size: 0.875rem;
-        color: var(--fg-muted);
-    }
-
-    /* Ask slide */
-    .ask-box {
-        background: var(--card-bg);
-        border: 1px solid var(--border);
-        border-radius: 10px;
-        padding: 2rem 2.5rem;
-        max-width: 540px;
-        margin: 1.5rem 0;
-    }
-
-    .ask-line {
-        display: flex;
-        justify-content: space-between;
-        align-items: baseline;
-        padding: 0.65rem 0;
-        border-bottom: 1px solid var(--border-light);
-        font-size: 0.95rem;
-    }
-
-    .ask-line:last-child {
-        border-bottom: none;
-    }
-
-    .ask-line .label {
-        color: var(--fg-muted);
-    }
-
-    .ask-line .value {
-        color: var(--fg);
-        font-weight: 500;
-        font-family: var(--serif);
-        font-size: 1.05rem;
-    }
-
-    .nvc-note {
-        font-size: 0.85rem;
-        color: var(--fg-muted);
-        margin-top: 1rem;
-        padding: 0.75rem 1rem;
-        background: var(--accent-soft);
-        border-radius: 6px;
-        max-width: 540px;
-    }
-
-    @media (max-width: 640px) {
-        .slide {
-            padding: 4rem 1.5rem;
-            min-height: auto;
-            padding-top: 5rem;
-            padding-bottom: 4rem;
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Parachute — Investor Deck</title>
+    <meta name="robots" content="noindex">
+    <meta name="description" content="Parachute — open source personal AI. Two products, one extended mind.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;1,9..40,400&family=JetBrains+Mono:wght@400&display=swap">
+    <style>
+        :root {
+            --bg:           #faf8f4;
+            --bg-soft:      #f3f0ea;
+            --fg:           #2c2a26;
+            --fg-muted:     #6b6860;
+            --fg-dim:       #9a9690;
+            --accent:       #4a7c59;
+            --accent-soft:  rgba(74, 124, 89, 0.08);
+            --accent-light: #6a9b77;
+            --border:       #e4e0d8;
+            --serif: 'Instrument Serif', Georgia, serif;
+            --sans:  'DM Sans', system-ui, sans-serif;
+            --mono:  'JetBrains Mono', monospace;
         }
-        .two-col { grid-template-columns: 1fr; }
-        .stats { grid-template-columns: 1fr 1fr; }
-        .team-grid { grid-template-columns: 1fr; }
-    }
-</style>
 
-<main class="deck">
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
 
-    <!-- 01 Hook -->
-    <div class="slide">
-        <span class="slide-num">01 / 11</span>
-        <div class="slide-label">Parachute &mdash; Open Parachute, PBC</div>
+        html, body {
+            width: 100%; height: 100%;
+            overflow: hidden;
+            background: var(--bg);
+            font-family: var(--sans);
+            color: var(--fg);
+            -webkit-font-smoothing: antialiased;
+        }
+
+        /* ── Progress bar ── */
+        .progress {
+            position: fixed; top: 0; left: 0; right: 0;
+            height: 2px; background: var(--border); z-index: 200;
+        }
+        .progress-fill {
+            height: 100%; background: var(--accent);
+            transition: width 0.45s ease;
+            width: calc(1 / 11 * 100%);
+        }
+
+        /* ── Persistent chrome ── */
+        .logo-mark {
+            position: fixed; bottom: 1.75rem; left: 2.5rem;
+            font-family: var(--serif); font-size: 0.875rem;
+            color: var(--fg-dim); z-index: 200; letter-spacing: 0.02em;
+            pointer-events: none;
+        }
+        .counter {
+            position: fixed; bottom: 1.75rem; right: 2.5rem;
+            font-family: var(--mono); font-size: 0.7rem;
+            color: var(--fg-dim); z-index: 200; letter-spacing: 0.08em;
+            pointer-events: none;
+        }
+
+        /* ── Nav arrows ── */
+        .nav-btn {
+            position: fixed; top: 50%; transform: translateY(-50%);
+            z-index: 200; background: none; border: none; cursor: pointer;
+            color: var(--fg-dim); font-size: 2rem; padding: 1rem 1.25rem;
+            opacity: 0; transition: opacity 0.2s, color 0.2s;
+            font-family: var(--serif);
+        }
+        .nav-btn.prev { left: 0; }
+        .nav-btn.next { right: 0; }
+        body:hover .nav-btn { opacity: 1; }
+        .nav-btn:hover { color: var(--accent); }
+        .nav-btn:disabled { opacity: 0 !important; cursor: default; }
+
+        /* ── Hint ── */
+        .hint {
+            position: fixed; bottom: 1.75rem; left: 50%; transform: translateX(-50%);
+            font-size: 0.65rem; color: var(--fg-dim); letter-spacing: 0.08em;
+            text-transform: uppercase; z-index: 200; pointer-events: none;
+            animation: hintFade 5s ease forwards;
+        }
+        @keyframes hintFade {
+            0%   { opacity: 0; }
+            15%  { opacity: 1; }
+            75%  { opacity: 1; }
+            100% { opacity: 0; }
+        }
+
+        /* ── Slides ── */
+        .slides { position: fixed; inset: 0; }
+
+        .slide {
+            position: absolute; inset: 0;
+            display: flex; flex-direction: column; justify-content: center;
+            padding: 4rem 8rem 4rem;
+            opacity: 0; pointer-events: none;
+            transition: opacity 0.45s ease;
+        }
+        .slide.active { opacity: 1; pointer-events: all; }
+
+        /* ── Slide typography ── */
+        .slide-label {
+            font-size: 0.65rem; letter-spacing: 0.14em; text-transform: uppercase;
+            color: var(--accent); font-weight: 500; margin-bottom: 1.25rem;
+        }
+
+        .slide h1 {
+            font-family: var(--serif);
+            font-size: clamp(2.75rem, 5.5vw, 5rem);
+            font-weight: 400; letter-spacing: -0.02em; line-height: 1.05;
+            color: var(--fg); margin-bottom: 1.5rem; max-width: 820px;
+        }
+        .slide h2 {
+            font-family: var(--serif);
+            font-size: clamp(1.75rem, 3.5vw, 3rem);
+            font-weight: 400; letter-spacing: -0.015em; line-height: 1.1;
+            color: var(--fg); margin-bottom: 1.5rem;
+        }
+        .slide p {
+            font-size: 1rem; color: var(--fg-muted);
+            line-height: 1.75; max-width: 620px; margin-bottom: 0.75rem;
+        }
+        .slide ul { list-style: none; }
+        .slide li {
+            color: var(--fg-muted); padding: 0.5rem 0; padding-left: 1.5rem;
+            position: relative; font-size: 0.95rem; line-height: 1.6;
+            max-width: 660px;
+        }
+        .slide li::before {
+            content: "›"; position: absolute; left: 0.2rem;
+            color: var(--accent-light); font-size: 1.05em;
+        }
+        .slide li strong { color: var(--fg); font-weight: 500; }
+
+        /* ── Slide 1 – Hook ── */
+        .hero-sub {
+            font-family: var(--serif); font-style: italic;
+            font-size: 1.35rem; color: var(--fg-muted); max-width: 500px;
+        }
+
+        /* ── Slide 3 – Numbered list ── */
+        .num-list { display: flex; flex-direction: column; gap: 1.1rem; max-width: 620px; }
+        .num-item { display: flex; gap: 1.25rem; align-items: flex-start; }
+        .num {
+            font-family: var(--serif); font-size: 2.25rem; color: var(--accent);
+            line-height: 1; flex-shrink: 0; width: 1.75rem; text-align: right;
+            padding-top: 0.1rem;
+        }
+        .num-body strong { display: block; color: var(--fg); font-weight: 500; font-size: 0.95rem; margin-bottom: 0.15rem; }
+        .num-body span { font-size: 0.875rem; color: var(--fg-muted); line-height: 1.5; }
+
+        /* ── Slide 4 – Two products ── */
+        .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; max-width: 820px; }
+        .col-card {
+            background: var(--bg-soft); border: 1px solid var(--border);
+            border-radius: 10px; padding: 1.5rem;
+        }
+        .col-card h3 {
+            font-family: var(--serif); font-size: 1.2rem; font-weight: 400;
+            color: var(--fg); margin-bottom: 0.4rem;
+        }
+        .col-card p { font-size: 0.85rem; color: var(--fg-muted); margin-bottom: 0.75rem; max-width: none; }
+        .col-card li { font-size: 0.85rem; padding: 0.3rem 0; padding-left: 1.25rem; max-width: none; }
+
+        /* ── Slide 5 – Flywheel ── */
+        .flywheel { display: flex; flex-direction: column; margin: 0.5rem 0 1.5rem; }
+        .fw-step { font-family: var(--serif); font-size: 1.4rem; color: var(--fg); padding: 0.3rem 0; }
+        .fw-step.final { color: var(--accent); }
+        .fw-arrow { font-size: 0.9rem; color: var(--accent-light); padding: 0.1rem 0 0.1rem 0.1rem; }
+
+        /* ── Slide 6 – Stats ── */
+        .stats { display: flex; gap: 4rem; margin: 0.5rem 0 1.5rem; }
+        .stat-num {
+            font-family: var(--serif);
+            font-size: clamp(3rem, 6.5vw, 5.5rem);
+            font-weight: 400; color: var(--accent);
+            line-height: 1; letter-spacing: -0.03em;
+        }
+        .stat-label { font-size: 0.825rem; color: var(--fg-muted); margin-top: 0.5rem; max-width: 150px; line-height: 1.4; }
+
+        /* ── Slide 9 – Team ── */
+        .team-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1.5rem 2.5rem; max-width: 700px; margin-top: 0.25rem; }
+        .member strong { display: block; color: var(--fg); font-weight: 500; font-size: 0.9rem; margin-bottom: 0.2rem; }
+        .member span { font-size: 0.8rem; color: var(--fg-muted); line-height: 1.45; }
+
+        /* ── Slide 10 – Ask ── */
+        .ask-box {
+            border: 1px solid var(--border); border-radius: 10px;
+            max-width: 460px; overflow: hidden; background: #fff;
+            margin: 1rem 0 0.75rem;
+        }
+        .ask-row {
+            display: flex; justify-content: space-between; align-items: baseline;
+            padding: 0.8rem 1.4rem; border-bottom: 1px solid var(--border);
+        }
+        .ask-row:last-child { border-bottom: none; }
+        .ask-row .lbl { font-size: 0.825rem; color: var(--fg-muted); }
+        .ask-row .val { font-family: var(--serif); font-size: 1.05rem; color: var(--fg); }
+        .nvc-note {
+            background: var(--accent-soft); border: 1px solid rgba(74,124,89,0.15);
+            border-radius: 7px; padding: 0.65rem 1rem;
+            font-size: 0.8rem; color: var(--fg-muted); max-width: 460px; line-height: 1.55;
+        }
+
+        /* ── Slide 11 – Close ── */
+        .close-links { margin-top: 2rem; display: flex; flex-direction: column; gap: 0.3rem; }
+        .close-links a { color: var(--accent); text-decoration: none; font-size: 0.9rem; }
+        .close-links a:hover { text-decoration: underline; }
+
+        /* ── Mobile ── */
+        @media (max-width: 700px) {
+            .slide { padding: 4.5rem 2rem 3.5rem; }
+            .two-col { grid-template-columns: 1fr; }
+            .stats { flex-direction: column; gap: 1.5rem; }
+            .team-grid { grid-template-columns: 1fr 1fr; }
+            .nav-btn { display: none; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="progress"><div class="progress-fill" id="progressFill"></div></div>
+<div class="logo-mark">Parachute</div>
+<div class="counter" id="counter">1 / 11</div>
+<div class="hint">Space or → to advance</div>
+
+<button class="nav-btn prev" id="prevBtn" onclick="navigate(-1)" disabled>‹</button>
+<button class="nav-btn next" id="nextBtn" onclick="navigate(1)">›</button>
+
+<div class="slides" id="deck" onclick="handleClick(event)">
+
+    <!-- 01 ─ Hook -->
+    <div class="slide active">
+        <div class="slide-label">Open Parachute, PBC</div>
         <h1>Your AI doesn't know you.</h1>
-        <p>Every conversation starts fresh. Your real thinking is scattered across a dozen apps. The tool that could actually help you think better has never heard of you.</p>
-        <p>We're building the extended mind that changes that.</p>
+        <p class="hero-sub">We're building the extended mind that changes that.</p>
     </div>
 
-    <!-- 02 Problem -->
+    <!-- 02 ─ Problem -->
     <div class="slide">
-        <span class="slide-num">02 / 11</span>
         <div class="slide-label">The Problem</div>
-        <h2>Powerful AI. No memory. No trust.</h2>
+        <h2>Powerful AI.<br>No memory. No trust.</h2>
         <ul>
-            <li><strong>Scattered thinking</strong> &mdash; voice memos here, typed notes there, AI conversations that vanish</li>
-            <li><strong>No continuity</strong> &mdash; every AI session starts cold; you re-explain your context every time</li>
-            <li><strong>No trust</strong> &mdash; the only way to get real help is to share your real thinking, but you wouldn't trust most tools with that</li>
-            <li><strong>Wrong layer</strong> &mdash; existing tools ask you to learn the system; the system should learn you</li>
+            <li><strong>Scattered thinking</strong> — voice memos here, typed notes there, AI conversations that vanish</li>
+            <li><strong>No continuity</strong> — every AI session starts cold; you re-explain your context every time</li>
+            <li><strong>No trust</strong> — real help requires real context, but you wouldn't share your actual thinking with most tools</li>
         </ul>
+        <p style="margin-top:1.5rem; font-family:var(--serif); font-style:italic; font-size:1.1rem;">Instead of you learning the system — the system should learn you.</p>
     </div>
 
-    <!-- 03 Why Now -->
+    <!-- 03 ─ Why Now -->
     <div class="slide">
-        <span class="slide-num">03 / 11</span>
         <div class="slide-label">Why Now</div>
         <h2>Three things converged.</h2>
-        <ul>
-            <li><strong>Models crossed a threshold</strong> &mdash; Claude and similar models are genuinely useful for personal thinking, not just coding tasks</li>
-            <li><strong>Local-first is viable</strong> &mdash; on-device voice transcription (Parakeet / Sherpa-ONNX) works offline, at quality</li>
-            <li><strong>Privacy is a real concern</strong> &mdash; people are increasingly aware of where their data goes; open source + local-first is the only honest answer</li>
-        </ul>
-        <p style="margin-top: 1.5rem;">The personal AI computer category is forming. The question is who builds it in a way people can actually trust.</p>
+        <div class="num-list">
+            <div class="num-item">
+                <span class="num">1</span>
+                <div class="num-body">
+                    <strong>Models crossed a threshold</strong>
+                    <span>Claude is genuinely useful for personal thinking — not just coding tasks</span>
+                </div>
+            </div>
+            <div class="num-item">
+                <span class="num">2</span>
+                <div class="num-body">
+                    <strong>Local-first is viable</strong>
+                    <span>On-device voice transcription works offline at quality — no server required</span>
+                </div>
+            </div>
+            <div class="num-item">
+                <span class="num">3</span>
+                <div class="num-body">
+                    <strong>Privacy is a real concern</strong>
+                    <span>Open source + local-first is the only honest answer to "who sees my thinking?"</span>
+                </div>
+            </div>
+        </div>
     </div>
 
-    <!-- 04 Solution -->
+    <!-- 04 ─ Solution -->
     <div class="slide">
-        <span class="slide-num">04 / 11</span>
         <div class="slide-label">The Solution</div>
         <h2>Two products. One extended mind.</h2>
         <div class="two-col">
@@ -319,17 +292,17 @@ permalink: /pitch/
                 <h3>Parachute Daily</h3>
                 <p>Journaling with gentle AI. For everyone.</p>
                 <ul>
-                    <li>Voice or text capture, wherever you think</li>
-                    <li>Daily AI reflections, weekly synthesis</li>
+                    <li>Voice or text, wherever you think</li>
+                    <li>Daily reflections, weekly synthesis</li>
                     <li>Pattern detection over time</li>
-                    <li>Hosted, subscription, no setup</li>
+                    <li>Hosted subscription — no setup</li>
                 </ul>
             </div>
             <div class="col-card">
                 <h3>Parachute Computer</h3>
                 <p>Full agentic platform. For power users.</p>
                 <ul>
-                    <li>Brain knowledge graph + Chat + Daily</li>
+                    <li>Brain knowledge graph + Chat</li>
                     <li>Three trust tiers, Docker sandbox</li>
                     <li>Telegram, Discord, Matrix bots</li>
                     <li>Open source, self-hosted or managed</li>
@@ -338,29 +311,26 @@ permalink: /pitch/
         </div>
     </div>
 
-    <!-- 05 Flywheel -->
+    <!-- 05 ─ Flywheel -->
     <div class="slide">
-        <span class="slide-num">05 / 11</span>
         <div class="slide-label">The Flywheel</div>
         <h2>Context compounds.</h2>
-        <p>Daily and Computer aren't parallel tracks &mdash; they're the same path at different stages.</p>
         <div class="flywheel">
-            Start journaling in Daily<br>
-            <span>&darr;</span><br>
-            Build months of personal context<br>
-            <span>&darr;</span><br>
-            Upgrade to Computer<br>
-            <span>&darr;</span><br>
-            Brain ingests your history instantly<br>
-            <span>&darr;</span><br>
-            System already knows you
+            <div class="fw-step">Start journaling in Daily</div>
+            <div class="fw-arrow">↓</div>
+            <div class="fw-step">Build months of personal context</div>
+            <div class="fw-arrow">↓</div>
+            <div class="fw-step">Upgrade to Computer</div>
+            <div class="fw-arrow">↓</div>
+            <div class="fw-step">Brain ingests your history instantly</div>
+            <div class="fw-arrow">↓</div>
+            <div class="fw-step final">System already knows you</div>
         </div>
-        <p>Plain markdown files mean the data just works &mdash; no migration wizard, no cold start.</p>
+        <p>Plain markdown files — the data just works. No migration wizard, no cold start.</p>
     </div>
 
-    <!-- 06 Demand -->
+    <!-- 06 ─ Demand -->
     <div class="slide">
-        <span class="slide-num">06 / 11</span>
         <div class="slide-label">Demand</div>
         <h2>People are waiting.</h2>
         <div class="stats">
@@ -370,112 +340,137 @@ permalink: /pitch/
             </div>
             <div class="stat">
                 <div class="stat-num">13</div>
-                <div class="stat-label">Learn Vibe Build cohort &mdash; all building with AI</div>
+                <div class="stat-label">Learn Vibe Build cohort — all building with AI</div>
             </div>
             <div class="stat">
                 <div class="stat-num">111+</div>
-                <div class="stat-label">PRs merged in 6 weeks &mdash; proof of velocity</div>
+                <div class="stat-label">PRs merged in 6 weeks of active development</div>
             </div>
         </div>
-        <p>We've been intentionally pre-launch &mdash; polishing before onboarding real users rather than churning an early cohort through an unstable system. The demand is built. The product is ready.</p>
+        <p>Intentionally pre-launch — polishing before onboarding real users rather than churning an early cohort through an unstable product.</p>
     </div>
 
-    <!-- 07 What's Built -->
+    <!-- 07 ─ What's Built -->
     <div class="slide">
-        <span class="slide-num">07 / 11</span>
         <div class="slide-label">What Exists Today</div>
         <h2>This is a working product.</h2>
         <ul>
-            <li><strong>Python/FastAPI server</strong> &mdash; full session management, streaming, module system, CLI</li>
-            <li><strong>Flutter app</strong> &mdash; macOS, Android, web; adaptive multi-panel layout</li>
-            <li><strong>Brain v2</strong> &mdash; TerminusDB knowledge graph with Tana-inspired schema UI</li>
-            <li><strong>Local voice transcription</strong> &mdash; Sherpa-ONNX + Parakeet, works fully offline</li>
-            <li><strong>Multi-agent teams</strong> &mdash; agents spawning and coordinating sub-agents in your vault</li>
-            <li><strong>Three bot connectors</strong> &mdash; Telegram, Discord, Matrix with per-platform trust levels</li>
-            <li><strong>Docker sandbox</strong> &mdash; untrusted sessions fully isolated, pre-warmed with shared caches</li>
+            <li><strong>Python/FastAPI server</strong> — full session management, streaming, module system, CLI</li>
+            <li><strong>Flutter app</strong> — macOS, Android, web; adaptive multi-panel layout</li>
+            <li><strong>Brain v2</strong> — TerminusDB knowledge graph with Tana-inspired schema UI</li>
+            <li><strong>Local voice transcription</strong> — Sherpa-ONNX + Parakeet, works fully offline</li>
+            <li><strong>Multi-agent teams</strong> — agents spawning and coordinating sub-agents in your vault</li>
+            <li><strong>Three bot connectors</strong> — Telegram, Discord, Matrix with per-platform trust levels</li>
         </ul>
     </div>
 
-    <!-- 08 Business Model -->
+    <!-- 08 ─ Business Model -->
     <div class="slide">
-        <span class="slide-num">08 / 11</span>
         <div class="slide-label">Business Model</div>
-        <h2>Open source as growth engine. Hosted services as revenue.</h2>
-        <ul>
-            <li><strong>Parachute Daily &mdash; subscription</strong> &mdash; accessible tiers: sync, AI daily reflections, weekly synthesis. The wide funnel.</li>
-            <li><strong>Hosted Parachute Computer</strong> &mdash; managed service for power users who don't want to run infrastructure. Higher margin, lower volume.</li>
-            <li><strong>Hardware pendant</strong> &mdash; wearable voice capture device in development; future hardware revenue.</li>
+        <h2>Open source grows.<br>Hosted services earn.</h2>
+        <ul style="margin-top:0.25rem;">
+            <li><strong>Parachute Daily — subscription</strong> — sync, AI reflections, weekly synthesis. The wide funnel.</li>
+            <li><strong>Hosted Parachute Computer</strong> — managed service for power users. Higher margin, lower volume.</li>
+            <li><strong>Hardware pendant</strong> — wearable voice capture device in development. Future hardware revenue.</li>
         </ul>
-        <p style="margin-top: 1.5rem;">Open source keeps acquisition cost near zero. The upgrade path keeps users in the ecosystem. Retention compounds on both sides.</p>
-        <p>Target: path to $1,000 MRR identified by April 22.</p>
+        <p style="margin-top:1.5rem;">Target: path to $1,000 MRR identified by April 22.</p>
     </div>
 
-    <!-- 09 Team -->
+    <!-- 09 ─ Team -->
     <div class="slide">
-        <span class="slide-num">09 / 11</span>
         <div class="slide-label">Team</div>
-        <h2>Small, capable, and committed.</h2>
+        <h2>Small, capable, committed.</h2>
         <div class="team-grid">
-            <div class="team-member">
+            <div class="member">
                 <strong>Aaron Gabriel Neyer</strong>
-                <span>Founder &mdash; product vision, architecture. ATLAS CU Boulder.</span>
+                <span>Founder — product vision, architecture. ATLAS CU Boulder.</span>
             </div>
-            <div class="team-member">
+            <div class="member">
                 <strong>Jon Bo</strong>
-                <span>Parachute Daily co-lead &mdash; the voice of simplicity in a complex system.</span>
+                <span>Parachute Daily co-lead — the voice of simplicity.</span>
             </div>
-            <div class="team-member">
+            <div class="member">
                 <strong>Lucian Hymer</strong>
-                <span>Parachute Computer co-lead &mdash; architecture and deep systems work.</span>
+                <span>Parachute Computer co-lead — architecture and deep systems.</span>
             </div>
-            <div class="team-member">
+            <div class="member">
                 <strong>Marvin Melzer</strong>
-                <span>Hardware pendant &mdash; ATLAS grad student, wearable voice capture as independent study.</span>
+                <span>Hardware pendant — ATLAS grad, wearable voice capture.</span>
             </div>
-            <div class="team-member">
+            <div class="member">
                 <strong>Neil Yarnal</strong>
-                <span>Brand &amp; design &mdash; gives Parachute its visual identity.</span>
+                <span>Brand & design — gives Parachute its identity.</span>
             </div>
         </div>
     </div>
 
-    <!-- 10 Ask -->
+    <!-- 10 ─ Ask -->
     <div class="slide">
-        <span class="slide-num">10 / 11</span>
         <div class="slide-label">The Ask</div>
         <h2>Seed round to accelerate to launch.</h2>
         <div class="ask-box">
-            <div class="ask-line">
-                <span class="label">Instrument</span>
-                <span class="value">SAFE (YC standard)</span>
-            </div>
-            <div class="ask-line">
-                <span class="label">Valuation cap</span>
-                <span class="value">$5,000,000</span>
-            </div>
-            <div class="ask-line">
-                <span class="label">Check size</span>
-                <span class="value">$5k &ndash; $50k</span>
-            </div>
-            <div class="ask-line">
-                <span class="label">Use of funds</span>
-                <span class="value">Pay team to ship faster</span>
-            </div>
+            <div class="ask-row"><span class="lbl">Instrument</span><span class="val">SAFE (YC standard)</span></div>
+            <div class="ask-row"><span class="lbl">Valuation cap</span><span class="val">$5,000,000</span></div>
+            <div class="ask-row"><span class="lbl">Check size</span><span class="val">$5k – $50k</span></div>
+            <div class="ask-row"><span class="lbl">Use of funds</span><span class="val">Pay team to ship faster</span></div>
         </div>
-        <p class="nvc-note">&#9432;&nbsp; Applying to CU New Venture Challenge &mdash; $144k investment at the same $5M cap for finalists. Early investors get in at NVC terms before the competition.</p>
+        <div class="nvc-note">ℹ Applying to CU New Venture Challenge — $144k at the same $5M cap for finalists. Early investors get in at NVC terms before the competition.</div>
     </div>
 
-    <!-- 11 Close -->
+    <!-- 11 ─ Close -->
     <div class="slide">
-        <span class="slide-num">11 / 11</span>
         <div class="slide-label">Open Parachute, PBC</div>
-        <h1>The extended mind, open source.</h1>
-        <p>A Colorado Public Benefit Corporation. Open source not as a distribution strategy but as a commitment &mdash; the only way to deserve trust with personal thinking is transparency.</p>
-        <p style="margin-top: 2rem;">
-            <a href="https://github.com/OpenParachutePBC/parachute-computer" target="_blank" style="color: var(--accent);">github.com/OpenParachutePBC</a><br>
-            <a href="/vision/" style="color: var(--accent);">parachute.computer/vision</a><br>
-            <a href="/roadmap/" style="color: var(--accent);">parachute.computer/roadmap</a>
-        </p>
+        <h1>The extended mind,<br>open source.</h1>
+        <p>A Colorado Public Benefit Corporation. Open source not as a distribution strategy — the only way to deserve trust with personal thinking is transparency.</p>
+        <div class="close-links">
+            <a href="https://github.com/OpenParachutePBC/parachute-computer" target="_blank">github.com/OpenParachutePBC</a>
+            <a href="/vision/">parachute.computer/vision</a>
+            <a href="/roadmap/">parachute.computer/roadmap</a>
+        </div>
     </div>
 
-</main>
+</div><!-- /slides -->
+
+<script>
+    const slides = Array.from(document.querySelectorAll('.slide'));
+    const total = slides.length;
+    let current = 0;
+
+    function goTo(n) {
+        if (n < 0 || n >= total) return;
+        slides[current].classList.remove('active');
+        current = n;
+        slides[current].classList.add('active');
+        document.getElementById('counter').textContent = `${current + 1} / ${total}`;
+        document.getElementById('progressFill').style.width = `${(current + 1) / total * 100}%`;
+        document.getElementById('prevBtn').disabled = current === 0;
+        document.getElementById('nextBtn').disabled = current === total - 1;
+        history.replaceState(null, '', `#${current + 1}`);
+    }
+
+    function navigate(dir) { goTo(current + dir); }
+
+    function handleClick(e) {
+        if (e.target.closest('a, button')) return;
+        navigate(1);
+    }
+
+    document.addEventListener('keydown', e => {
+        if (['ArrowRight', 'ArrowDown', ' '].includes(e.key)) { e.preventDefault(); navigate(1); }
+        if (['ArrowLeft', 'ArrowUp'].includes(e.key)) { e.preventDefault(); navigate(-1); }
+    });
+
+    // Swipe support
+    let tx = 0;
+    document.addEventListener('touchstart', e => { tx = e.touches[0].clientX; }, { passive: true });
+    document.addEventListener('touchend', e => {
+        const dx = tx - e.changedTouches[0].clientX;
+        if (Math.abs(dx) > 50) navigate(dx > 0 ? 1 : -1);
+    });
+
+    // Hash routing
+    const hash = parseInt(location.hash.slice(1));
+    goTo((hash >= 1 && hash <= total) ? hash - 1 : 0);
+</script>
+</body>
+</html>
