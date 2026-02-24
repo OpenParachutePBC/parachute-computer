@@ -1295,6 +1295,27 @@ class Orchestrator:
 
             duration_ms = int((time.time() - start_time) * 1000)
 
+            # Kick off title/summary generation as a fire-and-forget background task.
+            # Uses session.message_count (pre-increment) to compute exchange number.
+            if final_session_id and final_session_id != "pending" and message and result_text:
+                from parachute.core.session_summarizer import summarize_session
+                exchange_number = session.message_count // 2 + 1
+                session_metadata = session.metadata or {}
+                asyncio.create_task(
+                    summarize_session(
+                        session_id=final_session_id,
+                        message=message,
+                        result_text=result_text,
+                        tool_calls=[tc["name"] for tc in (tool_calls or []) if tc.get("name")],
+                        exchange_number=exchange_number,
+                        session_title=session.title,
+                        title_source=session_metadata.get("title_source"),
+                        database=self.database,
+                        vault_path=self.vault_path,
+                        claude_token=self.settings.claude_code_oauth_token,
+                    )
+                )
+
             # Yield done event
             yield DoneEvent(
                 response=result_text,
