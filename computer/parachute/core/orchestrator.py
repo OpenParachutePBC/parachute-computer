@@ -1306,7 +1306,7 @@ class Orchestrator:
                         session_id=final_session_id,
                         message=message,
                         result_text=result_text,
-                        tool_calls=[tc["name"] for tc in (tool_calls or []) if tc.get("name")],
+                        tool_calls=tool_calls or [],
                         exchange_number=exchange_number,
                         session_title=session.title,
                         title_source=session_metadata.get("title_source"),

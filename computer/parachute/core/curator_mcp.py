@@ -184,8 +184,10 @@ def build_server(session_id: str, vault_path: Path) -> Server:
             Tool(
                 name="log_activity",
                 description=(
-                    "Append an activity log entry for this specific exchange. "
-                    "Write 1-2 sentences describing what happened in this exchange."
+                    "Append a daily activity log entry for this exchange. "
+                    "Records what was worked on today within this session — "
+                    "sessions span multiple days, so each entry is timestamped. "
+                    "Write 1-2 sentences about what was accomplished in this exchange."
                 ),
                 inputSchema={
                     "type": "object",

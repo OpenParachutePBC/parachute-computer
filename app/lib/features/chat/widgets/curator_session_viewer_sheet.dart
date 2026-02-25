@@ -6,12 +6,7 @@ import '../models/curator_run.dart';
 import '../providers/curator_providers.dart';
 import '../providers/chat_session_providers.dart';
 
-/// Bottom sheet showing the curator's conversation and last run details.
-///
-/// Two tabs:
-/// - Conversation: the curator's actual SDK session messages, with verbose
-///   context messages collapsed by default and tool calls shown prominently.
-/// - Last Run: summary of what the most recent curator run did.
+/// Bottom sheet showing the curator's conversation with last run summary at the bottom.
 class CuratorSessionViewerSheet extends ConsumerStatefulWidget {
   final String chatSessionId;
 
@@ -36,29 +31,14 @@ class CuratorSessionViewerSheet extends ConsumerStatefulWidget {
 }
 
 class _CuratorSessionViewerSheetState
-    extends ConsumerState<CuratorSessionViewerSheet>
-    with SingleTickerProviderStateMixin {
-  late TabController _tabController;
+    extends ConsumerState<CuratorSessionViewerSheet> {
   bool _isTriggering = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _tabController = TabController(length: 2, vsync: this);
-  }
-
-  @override
-  void dispose() {
-    _tabController.dispose();
-    super.dispose();
-  }
 
   Future<void> _triggerCurator() async {
     setState(() => _isTriggering = true);
     try {
       final trigger = ref.read(triggerCuratorProvider);
       await trigger(widget.chatSessionId);
-      // Refresh the chat session (for curator_last_run) and the messages.
       ref.invalidate(sessionWithMessagesProvider(widget.chatSessionId));
       ref.invalidate(curatorMessagesProvider(widget.chatSessionId));
     } catch (e) {
@@ -75,6 +55,9 @@ class _CuratorSessionViewerSheetState
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final messagesAsync = ref.watch(curatorMessagesProvider(widget.chatSessionId));
+    final sessionAsync = ref.watch(sessionWithMessagesProvider(widget.chatSessionId));
+    final lastRun = sessionAsync.valueOrNull?.session.curatorLastRun;
 
     return Container(
       constraints: BoxConstraints(
@@ -94,20 +77,17 @@ class _CuratorSessionViewerSheetState
             width: 40,
             height: 4,
             decoration: BoxDecoration(
-              color:
-                  isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+              color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
               borderRadius: Radii.pill,
             ),
           ),
 
           // Header
           Padding(
-            padding: const EdgeInsets.fromLTRB(
-                Spacing.lg, Spacing.md, Spacing.md, 0),
+            padding: const EdgeInsets.fromLTRB(Spacing.lg, Spacing.md, Spacing.md, 0),
             child: Row(
               children: [
-                Icon(Icons.auto_fix_high,
-                    size: 24, color: BrandColors.turquoise),
+                Icon(Icons.auto_fix_high, size: 24, color: BrandColors.turquoise),
                 const SizedBox(width: Spacing.sm),
                 Text(
                   'Curator',
@@ -133,132 +113,66 @@ class _CuratorSessionViewerSheetState
                   onPressed: () => Navigator.pop(context),
                   icon: Icon(
                     Icons.close,
-                    color: isDark
-                        ? BrandColors.nightTextSecondary
-                        : BrandColors.driftwood,
+                    color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
                   ),
                 ),
               ],
             ),
           ),
 
-          // Tab bar
-          TabBar(
-            controller: _tabController,
-            labelColor: BrandColors.turquoise,
-            unselectedLabelColor:
-                isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
-            indicatorColor: BrandColors.turquoise,
-            tabs: const [
-              Tab(
-                  text: 'Conversation',
-                  icon: Icon(Icons.chat_bubble_outline, size: 16)),
-              Tab(text: 'Last Run', icon: Icon(Icons.history, size: 16)),
-            ],
-          ),
-
           const Divider(height: 1),
 
+          // Conversation list + last run at the bottom
           Expanded(
-            child: TabBarView(
-              controller: _tabController,
-              children: [
-                _ConversationTab(chatSessionId: widget.chatSessionId),
-                _LastRunTab(chatSessionId: widget.chatSessionId),
-              ],
+            child: messagesAsync.when(
+              data: (messages) {
+                if (messages.isEmpty && lastRun == null) {
+                  return _EmptyState(
+                    icon: Icons.chat_bubble_outline,
+                    message: 'No curator conversation yet',
+                    detail: 'The curator will start after\nyour first chat message.',
+                    isDark: isDark,
+                  );
+                }
+
+                final itemCount = messages.length + (lastRun != null ? 1 : 0);
+                return ListView.builder(
+                  padding: const EdgeInsets.all(Spacing.md),
+                  itemCount: itemCount,
+                  itemBuilder: (context, index) {
+                    // Last item is the run summary card (if present)
+                    if (lastRun != null && index == messages.length) {
+                      return _LastRunCard(run: lastRun, isDark: isDark);
+                    }
+                    return _MessageBubble(
+                      message: messages[index],
+                      isDark: isDark,
+                    );
+                  },
+                );
+              },
+              loading: () => const Center(
+                child: Padding(
+                  padding: EdgeInsets.all(Spacing.xl),
+                  child: CircularProgressIndicator(),
+                ),
+              ),
+              error: (e, _) => Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(Spacing.xl),
+                  child: Text(
+                    'Error loading conversation: $e',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+                    ),
+                  ),
+                ),
+              ),
             ),
           ),
         ],
       ),
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Conversation tab
-// ---------------------------------------------------------------------------
-
-class _ConversationTab extends ConsumerWidget {
-  final String chatSessionId;
-
-  const _ConversationTab({required this.chatSessionId});
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final messagesAsync = ref.watch(curatorMessagesProvider(chatSessionId));
-
-    return messagesAsync.when(
-      data: (messages) {
-        if (messages.isEmpty) {
-          return _EmptyState(
-            icon: Icons.chat_bubble_outline,
-            message: 'No curator conversation yet',
-            detail:
-                'The curator will start a conversation after\nyour first chat message.',
-            isDark: isDark,
-          );
-        }
-        return ListView.builder(
-          padding: const EdgeInsets.all(Spacing.md),
-          itemCount: messages.length,
-          itemBuilder: (context, index) => _MessageBubble(
-            message: messages[index],
-            isDark: isDark,
-          ),
-        );
-      },
-      loading: () => const Center(
-        child: Padding(
-          padding: EdgeInsets.all(Spacing.xl),
-          child: CircularProgressIndicator(),
-        ),
-      ),
-      error: (e, _) => Center(
-        child: Padding(
-          padding: const EdgeInsets.all(Spacing.xl),
-          child: Text(
-            'Error loading conversation: $e',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color:
-                  isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Last Run tab
-// ---------------------------------------------------------------------------
-
-class _LastRunTab extends ConsumerWidget {
-  final String chatSessionId;
-
-  const _LastRunTab({required this.chatSessionId});
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final sessionAsync =
-        ref.watch(sessionWithMessagesProvider(chatSessionId));
-    final lastRun = sessionAsync.valueOrNull?.session.curatorLastRun;
-
-    if (lastRun == null) {
-      return _EmptyState(
-        icon: Icons.history,
-        message: 'No runs yet',
-        detail: 'The curator runs automatically at key exchange points.',
-        isDark: isDark,
-      );
-    }
-
-    return ListView(
-      padding: const EdgeInsets.all(Spacing.md),
-      children: [_RunCard(run: lastRun, isDark: isDark)],
     );
   }
 }
@@ -308,9 +222,7 @@ class _MessageBubbleState extends State<_MessageBubble> {
         ? (widget.isDark
             ? BrandColors.nightTextSecondary.withValues(alpha: 0.15)
             : BrandColors.driftwood.withValues(alpha: 0.1))
-        : (widget.isDark
-            ? BrandColors.nightSurfaceElevated
-            : BrandColors.stone);
+        : (widget.isDark ? BrandColors.nightSurfaceElevated : BrandColors.stone);
 
     return Padding(
       padding: const EdgeInsets.only(bottom: Spacing.md),
@@ -322,8 +234,7 @@ class _MessageBubbleState extends State<_MessageBubble> {
           Padding(
             padding: const EdgeInsets.only(bottom: Spacing.xs),
             child: InkWell(
-              onTap:
-                  hasLong ? () => setState(() => _isExpanded = !_isExpanded) : null,
+              onTap: hasLong ? () => setState(() => _isExpanded = !_isExpanded) : null,
               borderRadius: BorderRadius.circular(Radii.sm),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
@@ -332,9 +243,7 @@ class _MessageBubbleState extends State<_MessageBubble> {
                     isUser ? Icons.description_outlined : Icons.auto_fix_high,
                     size: 14,
                     color: isUser
-                        ? (widget.isDark
-                            ? BrandColors.nightTextSecondary
-                            : BrandColors.driftwood)
+                        ? (widget.isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood)
                         : BrandColors.turquoise,
                   ),
                   const SizedBox(width: 4),
@@ -344,9 +253,7 @@ class _MessageBubbleState extends State<_MessageBubble> {
                       fontSize: TypographyTokens.labelSmall,
                       fontWeight: FontWeight.w500,
                       color: isUser
-                          ? (widget.isDark
-                              ? BrandColors.nightTextSecondary
-                              : BrandColors.driftwood)
+                          ? (widget.isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood)
                           : BrandColors.turquoise,
                     ),
                   ),
@@ -355,9 +262,7 @@ class _MessageBubbleState extends State<_MessageBubble> {
                     Icon(
                       _isExpanded ? Icons.expand_less : Icons.expand_more,
                       size: 14,
-                      color: widget.isDark
-                          ? BrandColors.nightTextSecondary
-                          : BrandColors.driftwood,
+                      color: widget.isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
                     ),
                   ],
                 ],
@@ -394,15 +299,12 @@ class _MessageBubbleState extends State<_MessageBubble> {
                           text,
                           style: TextStyle(
                             fontSize: TypographyTokens.bodyMedium,
-                            color: widget.isDark
-                                ? BrandColors.nightText
-                                : BrandColors.charcoal,
+                            color: widget.isDark ? BrandColors.nightText : BrandColors.charcoal,
                           ),
                         ),
                 if (widget.message.hasToolCalls) ...[
                   if (text.isNotEmpty) const SizedBox(height: Spacing.sm),
-                  ...toolCalls.map((tool) =>
-                      _ToolCallChip(tool: tool, isDark: widget.isDark)),
+                  ...toolCalls.map((tool) => _ToolCallChip(tool: tool, isDark: widget.isDark)),
                 ],
               ],
             ),
@@ -489,9 +391,7 @@ class _ToolCallChipState extends State<_ToolCallChip> {
               margin: const EdgeInsets.only(top: Spacing.xs),
               padding: const EdgeInsets.all(Spacing.sm),
               decoration: BoxDecoration(
-                color: widget.isDark
-                    ? BrandColors.nightSurface
-                    : BrandColors.softWhite,
+                color: widget.isDark ? BrandColors.nightSurface : BrandColors.softWhite,
                 borderRadius: BorderRadius.circular(Radii.sm),
                 border: Border.all(
                   color: widget.isDark
@@ -504,9 +404,7 @@ class _ToolCallChipState extends State<_ToolCallChip> {
                 style: TextStyle(
                   fontSize: TypographyTokens.bodySmall,
                   fontFamily: 'monospace',
-                  color: widget.isDark
-                      ? BrandColors.nightText
-                      : BrandColors.charcoal,
+                  color: widget.isDark ? BrandColors.nightText : BrandColors.charcoal,
                 ),
               ),
             ),
@@ -517,26 +415,25 @@ class _ToolCallChipState extends State<_ToolCallChip> {
 }
 
 // ---------------------------------------------------------------------------
-// Last Run card
+// Last run summary card (shown at the bottom of the conversation list)
 // ---------------------------------------------------------------------------
 
-class _RunCard extends StatelessWidget {
+class _LastRunCard extends StatelessWidget {
   final CuratorRun run;
   final bool isDark;
 
-  const _RunCard({required this.run, required this.isDark});
+  const _LastRunCard({required this.run, required this.isDark});
 
   @override
   Widget build(BuildContext context) {
     return Container(
+      margin: const EdgeInsets.only(top: Spacing.sm),
       padding: const EdgeInsets.all(Spacing.md),
       decoration: BoxDecoration(
         color: isDark ? BrandColors.nightSurfaceElevated : BrandColors.softWhite,
         borderRadius: BorderRadius.circular(Radii.md),
         border: Border.all(
-          color: isDark
-              ? BrandColors.nightTextSecondary.withValues(alpha: 0.2)
-              : BrandColors.driftwood.withValues(alpha: 0.2),
+          color: BrandColors.turquoise.withValues(alpha: 0.25),
         ),
       ),
       child: Column(
@@ -544,44 +441,81 @@ class _RunCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              Icon(Icons.swap_horiz, size: 16, color: BrandColors.turquoise),
+              Icon(Icons.history, size: 14, color: BrandColors.turquoise),
               const SizedBox(width: Spacing.xs),
               Text(
-                'Exchange #${run.exchangeNumber}',
+                'Last run — Exchange #${run.exchangeNumber}',
                 style: TextStyle(
+                  fontSize: TypographyTokens.labelSmall,
                   fontWeight: FontWeight.w600,
-                  color: isDark ? BrandColors.nightText : BrandColors.charcoal,
+                  color: BrandColors.turquoise,
                 ),
               ),
               const Spacer(),
               Text(
                 _formatTime(run.ts),
                 style: TextStyle(
-                  fontSize: TypographyTokens.bodySmall,
-                  color: isDark
-                      ? BrandColors.nightTextSecondary
-                      : BrandColors.driftwood,
+                  fontSize: TypographyTokens.labelSmall,
+                  color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
                 ),
               ),
             ],
           ),
-          const SizedBox(height: Spacing.md),
-          if (run.actions.isEmpty)
-            Text(
-              'No changes made',
-              style: TextStyle(
-                color: isDark
-                    ? BrandColors.nightTextSecondary
-                    : BrandColors.driftwood,
-              ),
-            )
-          else
+          if (run.actions.isNotEmpty) ...[
+            const SizedBox(height: Spacing.sm),
             Wrap(
-              spacing: Spacing.sm,
-              runSpacing: Spacing.sm,
-              children: run.actions
-                  .map((a) => _ActionBadge(action: a, run: run, isDark: isDark))
-                  .toList(),
+              spacing: Spacing.xs,
+              runSpacing: Spacing.xs,
+              children: run.actions.map((a) {
+                final (icon, label, color) = switch (a) {
+                  'update_title' => (
+                      Icons.title,
+                      run.newTitle != null ? 'Title → "${run.newTitle}"' : 'Title',
+                      BrandColors.turquoise,
+                    ),
+                  'update_summary' => (Icons.summarize, 'Summary', BrandColors.forest),
+                  'log_activity' => (Icons.note_add, 'Logged', BrandColors.warning),
+                  _ => (Icons.build, a, BrandColors.driftwood),
+                };
+                return Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: Spacing.sm, vertical: Spacing.xxs),
+                  decoration: BoxDecoration(
+                    color: color.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(Radii.sm),
+                    border: Border.all(color: color.withValues(alpha: 0.3)),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(icon, size: 12, color: color),
+                      const SizedBox(width: Spacing.xxs),
+                      Flexible(
+                        child: Text(
+                          label,
+                          style: TextStyle(
+                            fontSize: TypographyTokens.labelSmall,
+                            fontWeight: FontWeight.w500,
+                            color: color,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }).toList(),
+            ),
+          ] else
+            Padding(
+              padding: const EdgeInsets.only(top: Spacing.xs),
+              child: Text(
+                'No changes made',
+                style: TextStyle(
+                  fontSize: TypographyTokens.bodySmall,
+                  color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+                ),
+              ),
             ),
         ],
       ),
@@ -596,57 +530,6 @@ class _RunCard extends StatelessWidget {
     final amPm = local.hour >= 12 ? 'PM' : 'AM';
     final m = local.minute.toString().padLeft(2, '0');
     return '$h:$m $amPm';
-  }
-}
-
-class _ActionBadge extends StatelessWidget {
-  final String action;
-  final CuratorRun run;
-  final bool isDark;
-
-  const _ActionBadge(
-      {required this.action, required this.run, required this.isDark});
-
-  @override
-  Widget build(BuildContext context) {
-    final (icon, label, color) = switch (action) {
-      'update_title' => (
-          Icons.title,
-          run.newTitle != null ? 'Title → "${run.newTitle}"' : 'Title',
-          BrandColors.turquoise,
-        ),
-      'update_summary' => (Icons.summarize, 'Summary', BrandColors.forest),
-      'log_activity' => (Icons.note_add, 'Logged', BrandColors.warning),
-      _ => (Icons.build, action, BrandColors.driftwood),
-    };
-
-    return Container(
-      padding:
-          const EdgeInsets.symmetric(horizontal: Spacing.sm, vertical: Spacing.xs),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(Radii.sm),
-        border: Border.all(color: color.withValues(alpha: 0.3)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 14, color: color),
-          const SizedBox(width: Spacing.xs),
-          Flexible(
-            child: Text(
-              label,
-              style: TextStyle(
-                fontSize: TypographyTokens.bodySmall,
-                fontWeight: FontWeight.w500,
-                color: color,
-              ),
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-        ],
-      ),
-    );
   }
 }
 
@@ -678,18 +561,14 @@ class _EmptyState extends StatelessWidget {
             Icon(
               icon,
               size: 48,
-              color: isDark
-                  ? BrandColors.nightTextSecondary
-                  : BrandColors.driftwood,
+              color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
             ),
             const SizedBox(height: Spacing.md),
             Text(
               message,
               textAlign: TextAlign.center,
               style: TextStyle(
-                color: isDark
-                    ? BrandColors.nightTextSecondary
-                    : BrandColors.driftwood,
+                color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
               ),
             ),
             if (detail != null) ...[
@@ -699,9 +578,7 @@ class _EmptyState extends StatelessWidget {
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   fontSize: TypographyTokens.bodySmall,
-                  color: (isDark
-                          ? BrandColors.nightTextSecondary
-                          : BrandColors.driftwood)
+                  color: (isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood)
                       .withValues(alpha: 0.7),
                 ),
               ),

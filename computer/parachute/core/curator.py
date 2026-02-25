@@ -1,17 +1,18 @@
 """
 Curator — Background Context Agent
 
-Replaces session_summarizer.py. A persistent background agent (Claude Haiku)
-that observes each chat exchange and updates: session title, summary, and
-activity log via MCP tools.
+A persistent background agent (Claude Haiku) that observes each chat exchange
+and updates: session title, summary, and activity log via MCP tools.
 
 Key design:
-- Per-chat-session continuity: session.metadata["curator_session_id"] gives
-  the curator its own SDK session, 1:1 with the chat session. The curator
-  accumulates the full conversation context across all cadence exchanges.
+- Per-chat-session continuity: session.curator_session_id gives the curator its
+  own SDK session, 1:1 with the chat session. The curator accumulates the full
+  conversation context across all runs.
 - MCP writeback: the curator calls update_title / update_summary / log_activity
   as MCP tool calls — agent-native, transparent in the Flutter UI.
 - Fire-and-forget: observe() never raises; all exceptions are caught.
+- Runs after every exchange (no cadence gating — the curator decides internally
+  whether anything needs updating).
 """
 
 import logging
@@ -24,39 +25,103 @@ from parachute.core.claude_sdk import query_streaming
 
 logger = logging.getLogger(__name__)
 
-# Cadence: always run on {1, 3, 5}, then every 10th exchange
-_CURATOR_EXCHANGES = {1, 3, 5}
-_CURATOR_INTERVAL = 10
-
 CURATOR_SYSTEM_PROMPT = """You are a background context agent observing a conversation.
 
-After each exchange, use your tools to keep the session context current.
+After each exchange, honestly assess whether the session context needs updating, then call the appropriate tools.
 
 You have three tools:
-- update_title: Set a concise 3-8 word title capturing the main topic
-- update_summary: Write 1-3 sentences summarizing what has been discussed so far
-- log_activity: Append a brief note about what happened in this specific exchange
+
+- update_title: Set a concise 3-8 word title capturing the main topic.
+  Call this when: the title is not yet set, or you have a meaningfully more accurate title.
+  Do NOT call if the title was set by the user, or if the current AI-set title is already accurate.
+
+- update_summary: Write 1-3 sentences summarizing what has been discussed and accomplished so far.
+  Call this when: there is no summary yet, or the current summary no longer reflects the conversation.
+  Skip if the summary is already up to date.
+
+- log_activity: Append a brief note about what happened in this specific exchange.
+  Always call this — it records what was worked on today within this session.
+  Write 1-2 sentences about what was accomplished or discussed in this specific exchange.
 
 Guidelines:
-- If told the title was set by the user, do NOT call update_title
-- Always call update_summary and log_activity on every observation
 - Be concise and factual — focus on what matters for future context
-- Do not editorialize or speculate beyond what was discussed"""
+- Do not editorialize or speculate beyond what was discussed
+- If the exchange was trivial (e.g. "thanks", "ok"), a minimal log entry is fine; skip title/summary updates"""
 
 
-def _should_update(exchange_number: int) -> bool:
-    """Return True if this exchange warrants a curator run."""
-    return (
-        exchange_number in _CURATOR_EXCHANGES
-        or (exchange_number > 5 and exchange_number % _CURATOR_INTERVAL == 0)
-    )
+def _summarize_tool_calls(tool_calls: list[dict]) -> str:
+    """Build a readable summary of tool calls made during the exchange.
+
+    Formats each call as 'ToolName(key_arg_preview)' — enough context for the
+    curator to understand what happened without dumping full inputs.
+    """
+    if not tool_calls:
+        return "None"
+
+    parts = []
+    for tc in tool_calls:
+        name = tc.get("name", "unknown")
+        # Strip mcp__ prefix if present (e.g. mcp__server__tool -> tool)
+        if "__" in name:
+            name = name.rsplit("__", 1)[-1]
+
+        inp = tc.get("input") or {}
+        # Pick the most meaningful argument to show as a preview
+        preview = _pick_preview(name, inp)
+        if preview:
+            parts.append(f"{name}({preview})")
+        else:
+            parts.append(name)
+
+    return ", ".join(parts)
+
+
+def _pick_preview(tool_name: str, inp: dict) -> str:
+    """Return a short preview string for a tool call input."""
+    if not inp:
+        return ""
+
+    # Known patterns
+    if tool_name in ("Read", "read"):
+        path = inp.get("file_path", "")
+        return _short_path(path)
+    if tool_name in ("Write", "write"):
+        path = inp.get("file_path", "")
+        return _short_path(path)
+    if tool_name in ("Edit", "edit", "MultiEdit"):
+        path = inp.get("file_path", "")
+        return _short_path(path)
+    if tool_name in ("Bash", "bash"):
+        cmd = inp.get("command", "")
+        return cmd[:50] if cmd else ""
+    if tool_name in ("Glob", "glob"):
+        return inp.get("pattern", "")[:40]
+    if tool_name in ("Grep", "grep"):
+        return inp.get("pattern", "")[:40]
+    if tool_name in ("WebFetch", "web_fetch"):
+        url = inp.get("url", "")
+        return url[:50] if url else ""
+
+    # Generic fallback: first string value, truncated
+    for v in inp.values():
+        if isinstance(v, str) and v:
+            return v[:40]
+    return ""
+
+
+def _short_path(path: str) -> str:
+    """Return just the last two path components."""
+    if not path:
+        return ""
+    parts = path.replace("\\", "/").rstrip("/").split("/")
+    return "/".join(parts[-2:]) if len(parts) > 1 else parts[-1]
 
 
 async def observe(
     session_id: str,
     message: str,
     result_text: str,
-    tool_calls: list[str],
+    tool_calls: list[dict],
     exchange_number: int,
     session_title: Optional[str],
     title_source: Optional[str],
@@ -66,9 +131,6 @@ async def observe(
 ) -> None:
     """Fire-and-forget curator run. Never raises."""
     try:
-        if not _should_update(exchange_number):
-            return
-
         # Load curator session ID — 1:1 with the chat session
         session = await database.get_session(session_id)
         if session is None:
@@ -77,33 +139,44 @@ async def observe(
 
         curator_session_id: Optional[str] = session.curator_session_id
 
-        # Build the per-exchange prompt
-        tools_str = ", ".join(tool_calls) if tool_calls else "None"
-        truncated_user = message[:1000] + ("... [truncated]" if len(message) > 1000 else "")
-        truncated_response = result_text[:2000] + (
-            "... [truncated]" if len(result_text) > 2000 else ""
-        )
-
+        # Build title note
         if title_source == "user":
             title_note = (
                 f"Current title: {session_title!r} (user-set — do NOT call update_title)"
             )
         elif session_title:
             title_note = (
-                f"Current title: {session_title!r} (AI-set — update if more accurate)"
+                f"Current title: {session_title!r} (AI-set — update only if more accurate)"
             )
         else:
             title_note = "Current title: not yet set"
 
+        # Build current summary note
+        current_summary = session.summary
+        if current_summary:
+            summary_note = f"Current summary: {current_summary}"
+        else:
+            summary_note = "Current summary: not yet set"
+
+        # Build tool summary
+        tools_str = _summarize_tool_calls(tool_calls)
+
+        # Truncate user message and response for context
+        truncated_user = message[:1000] + ("... [truncated]" if len(message) > 1000 else "")
+        truncated_response = result_text[:2000] + (
+            "... [truncated]" if len(result_text) > 2000 else ""
+        )
+
         prompt = (
             f"Observe exchange #{exchange_number} and update session context.\n\n"
-            f"{title_note}\n\n"
+            f"{title_note}\n"
+            f"{summary_note}\n\n"
             f"---\n"
             f"User: {truncated_user}\n\n"
-            f"Tools used in this exchange: {tools_str}\n"
+            f"Tools used: {tools_str}\n"
             f"Assistant: {truncated_response}\n"
             f"---\n\n"
-            f"Call your tools to update the session context."
+            f"Assess whether title/summary need updating, then call log_activity for this exchange."
         )
 
         # Scoped MCP server for this curator run — bakes in the session ID
