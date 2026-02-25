@@ -9,7 +9,18 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python -m parachute.hooks.activity_hook"
+            "command": "/Volumes/ExternalSSD/Parachute/Projects/parachute-computer/computer/.venv/bin/python -m parachute.hooks.activity_hook"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Volumes/ExternalSSD/Parachute/Projects/parachute-computer/computer/.venv/bin/python -m parachute.hooks.context_hook"
           }
         ]
       }

@@ -133,6 +133,73 @@ extension ChatSessionService on ChatService {
     }
   }
 
+  /// Trigger a manual curator run for a session.
+  ///
+  /// Returns immediately — the curator runs fire-and-forget on the server.
+  Future<void> triggerCurator(String sessionId) async {
+    try {
+      final response = await client.post(
+        Uri.parse('$baseUrl/api/chat/${Uri.encodeComponent(sessionId)}/curator/trigger'),
+        headers: defaultHeaders,
+      ).timeout(ChatService.requestTimeout);
+
+      if (response.statusCode != 200) {
+        throw NetworkError(
+          'Failed to trigger curator',
+          statusCode: response.statusCode,
+        );
+      }
+    } on SocketException catch (e) {
+      debugPrint('[ChatService] Socket error triggering curator: $e');
+      throw ServerUnreachableError(cause: e);
+    } on http.ClientException catch (e) {
+      debugPrint('[ChatService] HTTP client error triggering curator: $e');
+      throw NetworkError('Network error triggering curator', cause: e);
+    } on TimeoutException catch (e) {
+      debugPrint('[ChatService] Timeout triggering curator: $e');
+      throw ServerUnreachableError(cause: e);
+    } catch (e) {
+      debugPrint('[ChatService] Error triggering curator: $e');
+      rethrow;
+    }
+  }
+
+  /// Fetch the curator's conversation messages for a session.
+  ///
+  /// The curator session is never stored in SQLite — messages are read
+  /// directly from the JSONL transcript on the server side.
+  /// Returns an empty list if no curator session exists yet.
+  Future<List<Map<String, dynamic>>> getCuratorMessages(
+      String sessionId) async {
+    try {
+      final response = await client.get(
+        Uri.parse(
+            '$baseUrl/api/chat/${Uri.encodeComponent(sessionId)}/curator/messages'),
+        headers: defaultHeaders,
+      ).timeout(ChatService.requestTimeout);
+
+      if (response.statusCode == 404) return [];
+      if (response.statusCode != 200) {
+        throw NetworkError(
+          'Failed to get curator messages',
+          statusCode: response.statusCode,
+        );
+      }
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      return (data['messages'] as List<dynamic>)
+          .cast<Map<String, dynamic>>();
+    } on SocketException catch (e) {
+      debugPrint('[ChatService] Socket error fetching curator messages: $e');
+      throw ServerUnreachableError(cause: e);
+    } on TimeoutException catch (e) {
+      debugPrint('[ChatService] Timeout fetching curator messages: $e');
+      throw ServerUnreachableError(cause: e);
+    } catch (e) {
+      debugPrint('[ChatService] Error fetching curator messages: $e');
+      rethrow;
+    }
+  }
+
   /// Archive a session
   Future<ChatSession> archiveSession(String sessionId) async {
     try {

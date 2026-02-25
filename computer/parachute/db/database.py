@@ -388,6 +388,59 @@ class Database:
             await self._connection.commit()
             logger.info("Added multi-agent session fields (v17)")
 
+        # Migration: Add summary column to sessions (v18)
+        async with self._connection.execute(
+            "SELECT version FROM schema_version WHERE version = 18"
+        ) as cursor:
+            row = await cursor.fetchone()
+        if not row:
+            try:
+                async with self._connection.execute(
+                    "SELECT summary FROM sessions LIMIT 1"
+                ):
+                    pass  # Column exists
+            except Exception:
+                await self._connection.execute(
+                    "ALTER TABLE sessions ADD COLUMN summary TEXT"
+                )
+                logger.info("Added summary column to sessions")
+            await self._connection.execute(
+                "INSERT OR IGNORE INTO schema_version (version, applied_at) VALUES (18, datetime('now'))"
+            )
+            await self._connection.commit()
+            logger.info("Added session summary column (v18)")
+
+        # v19: curator_session_id as a proper column
+        async with self._connection.execute(
+            "SELECT version FROM schema_version WHERE version = 19"
+        ) as cursor:
+            row = await cursor.fetchone()
+        if not row:
+            try:
+                async with self._connection.execute(
+                    "SELECT curator_session_id FROM sessions LIMIT 1"
+                ):
+                    pass  # Column exists
+            except Exception:
+                await self._connection.execute(
+                    "ALTER TABLE sessions ADD COLUMN curator_session_id TEXT"
+                )
+                logger.info("Added curator_session_id column to sessions")
+            # Backfill from metadata JSON for existing sessions
+            await self._connection.execute(
+                """
+                UPDATE sessions
+                SET curator_session_id = json_extract(metadata, '$.curator_session_id')
+                WHERE curator_session_id IS NULL
+                  AND json_extract(metadata, '$.curator_session_id') IS NOT NULL
+                """
+            )
+            await self._connection.execute(
+                "INSERT OR IGNORE INTO schema_version (version, applied_at) VALUES (19, datetime('now'))"
+            )
+            await self._connection.commit()
+            logger.info("Added curator_session_id column (v19)")
+
     async def close(self) -> None:
         """Close database connection."""
         if self._connection:
@@ -438,6 +491,8 @@ class Database:
         parent_session_id = getattr(session, 'parent_session_id', None)
         created_by = getattr(session, 'created_by', 'user')
 
+        curator_session_id = getattr(session, 'curator_session_id', None)
+
         await self.connection.execute(
             """
             INSERT INTO sessions (
@@ -445,8 +500,8 @@ class Database:
                 message_count, archived, created_at, last_accessed,
                 continued_from, agent_type, trust_level,
                 linked_bot_platform, linked_bot_chat_id, linked_bot_chat_type,
-                workspace_id, parent_session_id, created_by, metadata
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                workspace_id, parent_session_id, created_by, curator_session_id, metadata
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 session.id,
@@ -469,6 +524,7 @@ class Database:
                 workspace_id,
                 parent_session_id,
                 created_by,
+                curator_session_id,
                 metadata_json,
             ),
         )
@@ -496,6 +552,10 @@ class Database:
         if update.title is not None:
             updates.append("title = ?")
             params.append(update.title)
+
+        if update.summary is not None:
+            updates.append("summary = ?")
+            params.append(update.summary)
 
         if update.archived is not None:
             updates.append("archived = ?")
@@ -528,6 +588,10 @@ class Database:
         if update.workspace_id is not None:
             updates.append("workspace_id = ?")
             params.append(update.workspace_id)
+
+        if update.curator_session_id is not None:
+            updates.append("curator_session_id = ?")
+            params.append(update.curator_session_id)
 
         if not updates:
             return await self.get_session(session_id)
@@ -1229,6 +1293,8 @@ class Database:
             workspace_id=row["workspace_id"] if "workspace_id" in keys else None,
             parent_session_id=row["parent_session_id"] if "parent_session_id" in keys else None,
             created_by=row["created_by"] if "created_by" in keys else "user",
+            summary=row["summary"] if "summary" in keys else None,
+            curator_session_id=row["curator_session_id"] if "curator_session_id" in keys else None,
             metadata=metadata,
         )
 

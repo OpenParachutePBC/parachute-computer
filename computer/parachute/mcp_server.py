@@ -765,7 +765,7 @@ async def create_session(
     # Sanitize agent_type (alphanumeric, hyphens, underscores only)
     if not re.match(r'^[a-zA-Z0-9_-]+$', agent_type):
         return {
-            "error": f"Invalid agent_type: must contain only letters, numbers, hyphens, and underscores"
+            "error": "Invalid agent_type: must contain only letters, numbers, hyphens, and underscores"
         }
 
     # Content validation (max 50k chars, no control chars except newlines/tabs)
@@ -813,7 +813,7 @@ async def create_session(
     )
 
     # Create session in database
-    session = await db.create_session(session_create)
+    await db.create_session(session_create)
 
     # Initialize SDK session with initial message
     sm = SessionManager(Path(_vault_path), db)

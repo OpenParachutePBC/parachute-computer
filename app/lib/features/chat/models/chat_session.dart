@@ -1,3 +1,5 @@
+import 'curator_run.dart';
+
 /// Source of a chat session
 enum ChatSource {
   /// Native Parachute chat session
@@ -122,6 +124,9 @@ class ChatSession {
   /// Workspace slug this session belongs to
   final String? workspaceId;
 
+  /// SDK session ID of this session's curator background agent
+  final String? curatorSessionId;
+
   /// Additional metadata from the server (pending approval, pairing info, etc.)
   final Map<String, dynamic>? metadata;
 
@@ -143,6 +148,13 @@ class ChatSession {
   /// The first message sent by the unknown user
   String? get firstMessage => metadata?['first_message'] as String?;
 
+  /// The most recent curator run result, if curator has run for this session
+  CuratorRun? get curatorLastRun {
+    final raw = metadata?['curator_last_run'];
+    if (raw == null || raw is! Map<String, dynamic>) return null;
+    return CuratorRun.fromJson(raw);
+  }
+
   const ChatSession({
     required this.id,
     this.agentPath,
@@ -163,6 +175,7 @@ class ChatSession {
     this.linkedBotChatId,
     this.linkedBotChatType,
     this.workspaceId,
+    this.curatorSessionId,
     this.metadata,
   });
 
@@ -202,6 +215,7 @@ class ChatSession {
       linkedBotChatId: json['linkedBotChatId'] as String? ?? json['linked_bot_chat_id'] as String?,
       linkedBotChatType: json['linkedBotChatType'] as String? ?? json['linked_bot_chat_type'] as String?,
       workspaceId: json['workspaceId'] as String? ?? json['workspace_id'] as String?,
+      curatorSessionId: json['curatorSessionId'] as String?,
       metadata: json['metadata'] as Map<String, dynamic>?,
     );
   }
