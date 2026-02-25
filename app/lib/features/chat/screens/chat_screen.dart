@@ -473,10 +473,21 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   }
 
   /// Builds a compact toolbar for embedded (tablet/desktop) mode where there's no AppBar.
+  ///
+  /// Two-row layout:
+  /// - Row 1 (48px): session title + settings/more action buttons
+  /// - Row 2 (chip strip): agent, model, working-dir, and curator chips in a
+  ///   horizontally-scrollable row. Only visible when a session is active.
   Widget _buildEmbeddedToolbar(BuildContext context, bool isDark, ChatMessagesState chatState) {
     final currentSessionId = ref.watch(currentSessionIdProvider);
+
+    final hasAgent = chatState.promptMetadata?.agentName != null &&
+        chatState.promptMetadata!.agentName != 'Vault Agent';
+    final hasModel = chatState.model != null;
+    final hasDir = chatState.workingDirectory != null;
+    final showChipRow = currentSessionId != null && (hasAgent || hasModel || hasDir);
+
     return Container(
-      height: 48,
       padding: const EdgeInsets.symmetric(horizontal: Spacing.sm),
       decoration: BoxDecoration(
         color: isDark ? BrandColors.nightSurface : BrandColors.softWhite,
@@ -486,177 +497,145 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           ),
         ),
       ),
-      child: Row(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // Session title (tappable to switch sessions)
-          Expanded(
-            child: _buildTitle(context, isDark, currentSessionId, chatState),
-          ),
-
-          // Badges (constrained to avoid overflow)
-          Flexible(
-            flex: 0,
+          // Row 1: title + action buttons
+          SizedBox(
+            height: 48,
             child: Row(
-              mainAxisSize: MainAxisSize.min,
               children: [
-                // Agent badge
-                if (chatState.promptMetadata?.agentName != null &&
-                    chatState.promptMetadata!.agentName != 'Vault Agent')
-                  ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 120),
-                    child: Container(
-                      margin: const EdgeInsets.only(right: Spacing.xs),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: Spacing.sm,
-                        vertical: Spacing.xxs,
-                      ),
-                      decoration: BoxDecoration(
-                        color: BrandColors.turquoise.withValues(alpha: 0.15),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(Icons.smart_toy, size: 12, color: BrandColors.turquoise),
-                          const SizedBox(width: 4),
-                          Flexible(
-                            child: Text(
-                              _getAgentBadge(chatState.promptMetadata!.agentName!),
-                              style: TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.bold,
-                                color: BrandColors.turquoise,
-                              ),
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-
-                // Model badge
-                if (chatState.model != null)
-                  ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 120),
-                    child: Container(
-                      margin: const EdgeInsets.only(right: Spacing.xs),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: Spacing.sm,
-                        vertical: Spacing.xxs,
-                      ),
-                      decoration: BoxDecoration(
-                        color: _getModelColor(chatState.model!).withValues(alpha: 0.15),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Text(
-                        _getModelBadge(chatState.model!),
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.bold,
-                          color: _getModelColor(chatState.model!),
-                        ),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ),
-
-                // Working directory indicator
-                if (chatState.workingDirectory != null)
-                  ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 120),
-                    child: Tooltip(
-                      message: chatState.workingDirectory!,
-                      child: InkWell(
-                        onTap: chatState.messages.isEmpty ? _showDirectoryPicker : null,
-                        borderRadius: BorderRadius.circular(4),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                Icons.folder_outlined,
-                                size: 16,
-                                color: isDark ? BrandColors.nightForest : BrandColors.forest,
-                              ),
-                              const SizedBox(width: 2),
-                              Flexible(
-                                child: Text(
-                                  chatState.workingDirectory!.split('/').last,
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    color: isDark ? BrandColors.nightForest : BrandColors.forest,
-                                  ),
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-
-                // Curator chip — shows what the background context agent did last
-                const ConstrainedBox(
-                  constraints: BoxConstraints(maxWidth: 160),
-                  child: CuratorChip(),
+                Expanded(
+                  child: _buildTitle(context, isDark, currentSessionId, chatState),
                 ),
+                if (chatState.sessionId != null)
+                  IconButton(
+                    onPressed: () => _showUnifiedSettings(context),
+                    icon: Icon(Icons.settings_outlined, size: 18),
+                    tooltip: 'Session settings',
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                    color: isDark ? BrandColors.nightTextSecondary : BrandColors.charcoal,
+                  ),
+                if (chatState.sessionId != null)
+                  PopupMenuButton<String>(
+                    icon: Icon(
+                      Icons.more_vert,
+                      size: 18,
+                      color: isDark ? BrandColors.nightTextSecondary : BrandColors.charcoal,
+                    ),
+                    tooltip: 'More actions',
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                    onSelected: (value) => _handleMenuAction(value, chatState.sessionId!),
+                    itemBuilder: (context) => [
+                      PopupMenuItem(
+                        value: 'archive',
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.archive_outlined,
+                              size: 20,
+                              color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+                            ),
+                            const SizedBox(width: Spacing.sm),
+                            const Text('Archive'),
+                          ],
+                        ),
+                      ),
+                      PopupMenuItem(
+                        value: 'delete',
+                        child: Row(
+                          children: [
+                            Icon(Icons.delete_outline, size: 20, color: BrandColors.error),
+                            const SizedBox(width: Spacing.sm),
+                            Text('Delete', style: TextStyle(color: BrandColors.error)),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
               ],
             ),
           ),
 
-          // Unified session settings (trust, workspace, context, info)
-          if (chatState.sessionId != null)
-            IconButton(
-              onPressed: () => _showUnifiedSettings(context),
-              icon: Icon(Icons.settings_outlined, size: 18),
-              tooltip: 'Session settings',
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-              color: isDark ? BrandColors.nightTextSecondary : BrandColors.charcoal,
-            ),
-
-          // More actions menu (archive, delete)
-          if (chatState.sessionId != null)
-            PopupMenuButton<String>(
-              icon: Icon(
-                Icons.more_vert,
-                size: 18,
-                color: isDark ? BrandColors.nightTextSecondary : BrandColors.charcoal,
-              ),
-              tooltip: 'More actions',
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-              onSelected: (value) => _handleMenuAction(value, chatState.sessionId!),
-              itemBuilder: (context) => [
-                PopupMenuItem(
-                  value: 'archive',
-                  child: Row(
-                    children: [
-                      Icon(
-                        Icons.archive_outlined,
-                        size: 20,
-                        color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+          // Row 2: horizontally-scrollable chip strip
+          if (showChipRow)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    // Agent chip
+                    if (hasAgent)
+                      _buildInfoChip(
+                        icon: Icons.smart_toy,
+                        label: _getAgentBadge(chatState.promptMetadata!.agentName!),
+                        color: BrandColors.turquoise,
                       ),
-                      const SizedBox(width: Spacing.sm),
-                      const Text('Archive'),
-                    ],
-                  ),
+
+                    // Model chip
+                    if (hasModel)
+                      _buildInfoChip(
+                        icon: Icons.memory,
+                        label: _getModelBadge(chatState.model!),
+                        color: _getModelColor(chatState.model!),
+                      ),
+
+                    // Working directory chip
+                    if (hasDir)
+                      Tooltip(
+                        message: chatState.workingDirectory!,
+                        child: InkWell(
+                          onTap: chatState.messages.isEmpty ? _showDirectoryPicker : null,
+                          borderRadius: BorderRadius.circular(12),
+                          child: _buildInfoChip(
+                            icon: Icons.folder_outlined,
+                            label: chatState.workingDirectory!.split('/').last,
+                            color: isDark ? BrandColors.nightForest : BrandColors.forest,
+                          ),
+                        ),
+                      ),
+
+                    // Curator chip (manages its own visibility)
+                    CuratorChip(),
+                  ],
                 ),
-                PopupMenuItem(
-                  value: 'delete',
-                  child: Row(
-                    children: [
-                      Icon(Icons.delete_outline, size: 20, color: BrandColors.error),
-                      const SizedBox(width: Spacing.sm),
-                      Text('Delete', style: TextStyle(color: BrandColors.error)),
-                    ],
-                  ),
-                ),
-              ],
+              ),
             ),
+        ],
+      ),
+    );
+  }
+
+  /// Builds a small info chip used in the chip strip row.
+  Widget _buildInfoChip({
+    required IconData icon,
+    required String label,
+    required Color color,
+  }) {
+    return Container(
+      margin: const EdgeInsets.only(right: Spacing.xs),
+      padding: const EdgeInsets.symmetric(horizontal: Spacing.sm, vertical: Spacing.xxs),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 11, color: color),
+          const SizedBox(width: 3),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w500,
+              color: color,
+            ),
+          ),
         ],
       ),
     );

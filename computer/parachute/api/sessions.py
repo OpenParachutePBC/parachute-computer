@@ -558,6 +558,80 @@ async def trigger_curator(request: Request, session_id: str) -> dict[str, Any]:
     return {"status": "queued", "sessionId": session_id}
 
 
+@router.get("/chat/{session_id}/curator/messages")
+async def get_curator_messages(request: Request, session_id: str) -> dict[str, Any]:
+    """
+    Load the curator's conversation transcript for a chat session.
+
+    Reads the curator SDK session's JSONL directly — the curator session is
+    never stored in SQLite, so it won't appear in the chat list.
+    Returns 404 if no curator session exists yet.
+    """
+    db = request.app.state.database
+    if not db:
+        raise HTTPException(status_code=503, detail="Database not ready")
+
+    session = await db.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    curator_session_id = session.curator_session_id
+    if not curator_session_id:
+        raise HTTPException(status_code=404, detail="No curator session yet")
+
+    orchestrator = get_orchestrator(request)
+    session_manager = orchestrator.session_manager
+
+    transcript_path = session_manager._find_sdk_transcript(curator_session_id)
+    if not transcript_path or not transcript_path.exists():
+        raise HTTPException(status_code=404, detail="Curator transcript not found")
+
+    messages = []
+    try:
+        import json as _json
+
+        with open(transcript_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    event = _json.loads(line)
+                    msg_type = event.get("type")
+                    if msg_type in ("user", "assistant"):
+                        content = session_manager._extract_message_content(
+                            event.get("message", {})
+                        )
+                        # Extract tool_use blocks from assistant messages
+                        tool_calls = []
+                        if msg_type == "assistant":
+                            for block in event.get("message", {}).get("content", []):
+                                if isinstance(block, dict) and block.get("type") == "tool_use":
+                                    tool_calls.append({
+                                        "id": block.get("id"),
+                                        "name": block.get("name", ""),
+                                        "input": block.get("input", {}),
+                                    })
+                        if content or tool_calls:
+                            msg = {
+                                "role": msg_type,
+                                "content": content or "",
+                                "timestamp": event.get("timestamp"),
+                            }
+                            if tool_calls:
+                                msg["tool_calls"] = tool_calls
+                            messages.append(msg)
+                except _json.JSONDecodeError:
+                    continue
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error reading transcript: {e}") from e
+
+    return {
+        "curatorSessionId": curator_session_id,
+        "messages": messages,
+    }
+
+
 # =========================================================================
 # Vault Migration
 # =========================================================================

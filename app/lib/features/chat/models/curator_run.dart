@@ -1,3 +1,63 @@
+/// A tool call made by the curator.
+class CuratorToolCall {
+  final String? id;
+  final String name;
+  final Map<String, dynamic> input;
+
+  const CuratorToolCall({
+    this.id,
+    required this.name,
+    this.input = const {},
+  });
+
+  factory CuratorToolCall.fromJson(Map<String, dynamic> json) {
+    return CuratorToolCall(
+      id: json['id'] as String?,
+      name: json['name'] as String? ?? 'unknown',
+      input: (json['input'] as Map<String, dynamic>?) ?? {},
+    );
+  }
+
+  /// Display name with mcp__curator__ prefix stripped.
+  String get displayName {
+    if (name.startsWith('mcp__curator__')) {
+      return name.substring('mcp__curator__'.length);
+    }
+    return name;
+  }
+}
+
+/// A single message in the curator's conversation.
+class CuratorMessage {
+  final String role;
+  final String content;
+  final String? timestamp;
+  final List<CuratorToolCall> toolCalls;
+
+  const CuratorMessage({
+    required this.role,
+    required this.content,
+    this.timestamp,
+    this.toolCalls = const [],
+  });
+
+  factory CuratorMessage.fromJson(Map<String, dynamic> json) {
+    return CuratorMessage(
+      role: json['role'] as String,
+      content: json['content'] as String? ?? '',
+      timestamp: json['timestamp'] as String?,
+      toolCalls: (json['tool_calls'] as List<dynamic>?)
+              ?.map((e) => CuratorToolCall.fromJson(e as Map<String, dynamic>))
+              .toList() ??
+          [],
+    );
+  }
+
+  bool get isUser => role == 'user';
+  bool get isAssistant => role == 'assistant';
+  bool get hasToolCalls => toolCalls.isNotEmpty;
+}
+
 /// The result of a curator background run, stored in session metadata.
 ///
 /// The curator observes each chat exchange and decides what to update:

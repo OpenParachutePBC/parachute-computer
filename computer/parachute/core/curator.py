@@ -75,7 +75,7 @@ async def observe(
             logger.debug(f"Curator: session {session_id[:8]} not found, skipping")
             return
 
-        curator_session_id: Optional[str] = (session.metadata or {}).get("curator_session_id")
+        curator_session_id: Optional[str] = session.curator_session_id
 
         # Build the per-exchange prompt
         tools_str = ", ".join(tool_calls) if tool_calls else "None"
@@ -143,32 +143,36 @@ async def observe(
             ):
                 new_session_id = event["session_id"]
 
-            # Capture which MCP tools the curator called
+            # Capture which MCP tools the curator called.
+            # Claude Code emits tool names as mcp__<server>__<tool>, e.g.
+            # mcp__curator__update_title — strip the prefix for clean storage.
             if event.get("type") == "assistant" and event.get("message"):
                 for block in event["message"].get("content", []):
                     if isinstance(block, dict) and block.get("type") == "tool_use":
                         tool_name = block.get("name", "")
-                        if tool_name:
-                            tool_calls_made.append(tool_name)
-                            if tool_name == "update_title":
+                        short_name = tool_name.removeprefix("mcp__curator__") if tool_name else ""
+                        if short_name:
+                            tool_calls_made.append(short_name)
+                            if short_name == "update_title":
                                 new_title = (block.get("input") or {}).get("title")
 
-        # Write curator_session_id and curator_last_run to session metadata.
-        # Re-fetch to avoid clobbering concurrent writes.
+        # Write curator_session_id (proper column) and curator_last_run (metadata JSON).
+        # Re-fetch to avoid clobbering concurrent writes on metadata.
         refreshed = await database.get_session(session_id)
         if refreshed:
             from parachute.models.session import SessionUpdate
 
             fresh_meta = dict(refreshed.metadata or {})
-            if new_session_id:
-                fresh_meta["curator_session_id"] = new_session_id
             fresh_meta["curator_last_run"] = {
                 "ts": datetime.now(timezone.utc).isoformat(),
                 "exchange_number": exchange_number,
                 "actions": tool_calls_made,
                 "new_title": new_title,
             }
-            await database.update_session(session_id, SessionUpdate(metadata=fresh_meta))
+            update = SessionUpdate(metadata=fresh_meta)
+            if new_session_id:
+                update.curator_session_id = new_session_id
+            await database.update_session(session_id, update)
 
         logger.debug(
             f"Curator ran for {session_id[:8]}: "

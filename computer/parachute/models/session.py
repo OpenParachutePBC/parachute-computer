@@ -229,6 +229,12 @@ class Session(BaseModel):
     summary: Optional[str] = Field(
         default=None, description="AI-generated session summary"
     )
+    curator_session_id: Optional[str] = Field(
+        default=None,
+        alias="curatorSessionId",
+        serialization_alias="curatorSessionId",
+        description="SDK session ID of this session's curator background agent",
+    )
     metadata: Optional[dict[str, Any]] = Field(
         default=None, description="Additional metadata"
     )
@@ -304,6 +310,7 @@ class SessionUpdate(BaseModel):
     trust_level: Optional[str] = None
     working_directory: Optional[str] = None
     workspace_id: Optional[str] = None
+    curator_session_id: Optional[str] = None
 
 
 class PairingRequest(BaseModel):

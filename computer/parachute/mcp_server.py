@@ -273,43 +273,6 @@ TOOLS = [
             "required": ["session_id", "tag"],
         },
     ),
-    # Session Metadata Tools
-    Tool(
-        name="update_session_title",
-        description=(
-            "Update the title of the current session. "
-            "Call this after the first substantive exchange to give the session a descriptive name. "
-            "Will not overwrite a title the user has manually set."
-        ),
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "title": {
-                    "type": "string",
-                    "description": "Short, descriptive title (5-10 words) summarizing the session topic",
-                },
-            },
-            "required": ["title"],
-        },
-    ),
-    Tool(
-        name="update_session_summary",
-        description=(
-            "Update the summary of the current session. "
-            "Call this periodically to keep a current description of what has been discussed. "
-            "The summary is used as a preview in session lists and for future context."
-        ),
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "summary": {
-                    "type": "string",
-                    "description": "1-2 sentence summary of the session's key topics and outcomes so far",
-                },
-            },
-            "required": ["summary"],
-        },
-    ),
     # Multi-Agent Session Tools
     Tool(
         name="create_session",
@@ -767,44 +730,6 @@ async def remove_session_tag(session_id: str, tag: str) -> dict[str, Any]:
     return {"success": True, "session_id": session_id, "tag": tag, "removed": True}
 
 
-async def _handle_update_session_title(title: str) -> dict[str, Any]:
-    """Update the current session's title. Respects user-set title protection."""
-    if not _session_context or not _session_context.session_id:
-        return {"error": "No session context available"}
-
-    db = await get_db()
-    session = await db.get_session(_session_context.session_id)
-    if session is None:
-        return {"error": f"Session not found: {_session_context.session_id}"}
-
-    title_source = (session.metadata or {}).get("title_source")
-    if title_source == "user":
-        return {"status": "protected", "message": "Title set by user — not overwritten"}
-
-    from parachute.models.session import SessionUpdate
-
-    metadata = dict(session.metadata or {})
-    metadata["title_source"] = "ai"
-    await db.update_session(
-        _session_context.session_id, SessionUpdate(title=title, metadata=metadata)
-    )
-    return {"status": "ok", "title": title}
-
-
-async def _handle_update_session_summary(summary: str) -> dict[str, Any]:
-    """Update the current session's summary."""
-    if not _session_context or not _session_context.session_id:
-        return {"error": "No session context available"}
-
-    from parachute.models.session import SessionUpdate
-
-    db = await get_db()
-    await db.update_session(
-        _session_context.session_id, SessionUpdate(summary=summary)
-    )
-    return {"status": "ok"}
-
-
 # =============================================================================
 # Multi-Agent Session Functions
 # =============================================================================
@@ -840,7 +765,7 @@ async def create_session(
     # Sanitize agent_type (alphanumeric, hyphens, underscores only)
     if not re.match(r'^[a-zA-Z0-9_-]+$', agent_type):
         return {
-            "error": f"Invalid agent_type: must contain only letters, numbers, hyphens, and underscores"
+            "error": "Invalid agent_type: must contain only letters, numbers, hyphens, and underscores"
         }
 
     # Content validation (max 50k chars, no control chars except newlines/tabs)
@@ -888,7 +813,7 @@ async def create_session(
     )
 
     # Create session in database
-    session = await db.create_session(session_create)
+    await db.create_session(session_create)
 
     # Initialize SDK session with initial message
     sm = SessionManager(Path(_vault_path), db)
@@ -1272,11 +1197,6 @@ async def handle_tool_call(name: str, arguments: dict[str, Any]) -> str:
                 session_id=arguments["session_id"],
                 tag=arguments["tag"],
             )
-        # Session Metadata Tools
-        elif name == "update_session_title":
-            result = await _handle_update_session_title(title=arguments["title"])
-        elif name == "update_session_summary":
-            result = await _handle_update_session_summary(summary=arguments["summary"])
         # Multi-Agent Session Tools
         elif name == "create_session":
             result = await create_session(

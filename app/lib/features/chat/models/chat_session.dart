@@ -124,6 +124,9 @@ class ChatSession {
   /// Workspace slug this session belongs to
   final String? workspaceId;
 
+  /// SDK session ID of this session's curator background agent
+  final String? curatorSessionId;
+
   /// Additional metadata from the server (pending approval, pairing info, etc.)
   final Map<String, dynamic>? metadata;
 
@@ -172,6 +175,7 @@ class ChatSession {
     this.linkedBotChatId,
     this.linkedBotChatType,
     this.workspaceId,
+    this.curatorSessionId,
     this.metadata,
   });
 
@@ -211,6 +215,7 @@ class ChatSession {
       linkedBotChatId: json['linkedBotChatId'] as String? ?? json['linked_bot_chat_id'] as String?,
       linkedBotChatType: json['linkedBotChatType'] as String? ?? json['linked_bot_chat_type'] as String?,
       workspaceId: json['workspaceId'] as String? ?? json['workspace_id'] as String?,
+      curatorSessionId: json['curatorSessionId'] as String?,
       metadata: json['metadata'] as Map<String, dynamic>?,
     );
   }
