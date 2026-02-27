@@ -83,10 +83,14 @@ class _BrainEntityFormScreenState
           ),
         ),
         data: (schemas) {
-          final schema = schemas.firstWhere(
-            (s) => s.name == widget.entityType,
-            orElse: () => schemas.first,
-          );
+          // Find matching schema or use an empty one (un-crystallized type).
+          final schema = schemas.isEmpty
+              ? BrainSchema(id: widget.entityType, name: widget.entityType)
+              : schemas.firstWhere(
+                  (s) => s.name == widget.entityType,
+                  orElse: () =>
+                      BrainSchema(id: widget.entityType, name: widget.entityType),
+                );
 
           // For edit mode, wait for existing entity to load
           if (_isEditMode && existingEntityAsync != null) {

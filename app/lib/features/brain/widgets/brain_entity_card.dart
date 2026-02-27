@@ -51,22 +51,20 @@ class BrainEntityCard extends StatelessWidget {
                 ),
               ),
 
-              // Show primary fields (first 2-3 non-array fields)
-              ...schema.primaryFields.take(3).map((field) {
-                final value = entity[field.name];
-                if (value == null) return const SizedBox.shrink();
-
+              // Show up to 3 field values. Always prefer 'description', then
+              // schema-defined fields, then any remaining non-empty fields.
+              ..._displayFields(schema).map((entry) {
                 return Padding(
                   padding: const EdgeInsets.only(top: 4),
                   child: Text(
-                    '${field.name}: ${_formatValue(value)}',
+                    entry.value,
                     style: TextStyle(
                       fontSize: 14,
                       color: isDark
                           ? BrandColors.nightTextSecondary
                           : BrandColors.driftwood,
                     ),
-                    maxLines: 1,
+                    maxLines: entry.key == 'description' ? 2 : 1,
                     overflow: TextOverflow.ellipsis,
                   ),
                 );
@@ -110,10 +108,38 @@ class BrainEntityCard extends StatelessWidget {
     );
   }
 
-  String _formatValue(dynamic value) {
-    if (value is List) {
-      return value.take(3).join(', ') + (value.length > 3 ? '...' : '');
+  /// Returns up to 3 display fields: description first, then schema fields,
+  /// then any remaining non-empty entity fields.
+  List<MapEntry<String, String>> _displayFields(BrainSchema schema) {
+    final result = <MapEntry<String, String>>[];
+
+    // Always show description first if present
+    final desc = entity.fields['description']?.toString();
+    if (desc != null && desc.isNotEmpty) {
+      result.add(MapEntry('description', desc));
     }
-    return value.toString();
+
+    // Add schema-defined fields (excluding description, up to 3 total)
+    for (final field in schema.primaryFields) {
+      if (result.length >= 3) break;
+      if (field.name == 'description') continue;
+      final value = entity[field.name]?.toString();
+      if (value != null && value.isNotEmpty) {
+        result.add(MapEntry(field.name, '${field.name}: $value'));
+      }
+    }
+
+    // Fall back to any remaining entity fields
+    for (final entry in entity.fields.entries) {
+      if (result.length >= 3) break;
+      if (entry.key == 'description') continue;
+      if (result.any((e) => e.key == entry.key)) continue;
+      final value = entry.value?.toString();
+      if (value != null && value.isNotEmpty) {
+        result.add(MapEntry(entry.key, '${entry.key}: $value'));
+      }
+    }
+
+    return result;
   }
 }

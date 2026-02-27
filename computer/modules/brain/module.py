@@ -1,25 +1,26 @@
 """
-Brain Module - Graphiti + Kuzu Knowledge Graph
+Brain Module — LadybugDB + Agent-Driven Knowledge Graph (v3)
 
-Provides a personal knowledge graph with LLM entity extraction, deduplication,
-contradiction detection, and hybrid search. Agent-native via MCP tools.
+Local-first embedded graph with no LLM extraction pipeline.
+Agents write structured knowledge directly via MCP tools.
+Schema is defined in vault/.brain/entity_types.yaml and hot-reloadable.
 """
 
 import asyncio
 import json
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Optional, Any
 
 from fastapi import APIRouter, HTTPException, status
 
-from .graphiti_service import GraphitiService
+from .ladybug_service import LadybugService
+from .schema import load_entity_types, save_entity_types
 from .models import (
     CreateEntityRequest,
     CreateEntityResponse,
-    QueryEntitiesRequest,
     QueryEntitiesResponse,
     UpdateEntityRequest,
     DeleteEntityRequest,
@@ -33,97 +34,190 @@ logger = logging.getLogger(__name__)
 
 
 class BrainModule:
-    """Brain module with Graphiti + Kuzu knowledge graph"""
+    """Brain module with LadybugDB embedded knowledge graph"""
 
     name = "brain"
     provides = ["BrainInterface"]
 
     def __init__(self, vault_path: Path, **kwargs):
         self.vault_path = vault_path
-        self.kuzu_path = vault_path / ".brain" / "kuzu"
+        self.db_path = vault_path / ".brain" / "brain.lbug"
 
         # Ensure required directories exist
-        self.kuzu_path.mkdir(parents=True, exist_ok=True)
         (vault_path / ".brain").mkdir(parents=True, exist_ok=True)
 
         # Lazy-loaded service
-        self._service: Optional[GraphitiService] = None
+        self._service: Optional[LadybugService] = None
         self._init_lock = asyncio.Lock()
         self._queries_lock = asyncio.Lock()
 
-    def _load_brain_api_keys(self) -> tuple[Optional[str], Optional[str]]:
-        """Load Brain API keys from vault config.yaml under brain: namespace.
-
-        Keys are stored in vault/.parachute/config.yaml:
-            brain:
-              anthropic_api_key: sk-ant-api03-...
-              google_api_key: AIza...
-
-        Deliberately does NOT fall back to ANTHROPIC_API_KEY env var to prevent
-        the key from leaking into Claude CLI subprocesses (which inherit the full
-        process environment) and accidentally billing API instead of Max subscription.
-        """
-        import yaml
-        config_file = self.vault_path / ".parachute" / "config.yaml"
-        if not config_file.exists():
-            return None, None
-        try:
-            data = yaml.safe_load(config_file.read_text()) or {}
-            brain_cfg = data.get("brain", {}) if isinstance(data, dict) else {}
-            return brain_cfg.get("anthropic_api_key"), brain_cfg.get("google_api_key")
-        except Exception as e:
-            logger.warning(f"Brain: could not load config.yaml: {e}")
-            return None, None
-
-    async def _ensure_service(self) -> GraphitiService:
-        """Lazy-initialize GraphitiService with race condition protection."""
+    async def _ensure_service(self) -> LadybugService:
+        """Lazy-initialize LadybugService (idempotent, race-safe)."""
         if self._service is None:
             async with self._init_lock:
                 if self._service is None:
-                    anthropic_key, google_key = self._load_brain_api_keys()
-                    svc = GraphitiService(
-                        kuzu_path=self.kuzu_path,
-                        anthropic_api_key=anthropic_key,
-                        google_api_key=google_key,
+                    svc = LadybugService(
+                        db_path=self.db_path,
+                        vault_path=self.vault_path,
                     )
                     await svc.connect()
                     self._service = svc
-                    logger.info("Brain: GraphitiService initialized")
+                    logger.info("Brain: LadybugService initialized")
         return self._service
 
     def get_router(self) -> APIRouter:
         """Return FastAPI router for Brain REST API routes."""
         router = APIRouter(tags=["brain"])
 
-        # ── Episodes (new primary API) ────────────────────────────────────────
+        # ── Schema types ──────────────────────────────────────────────────────
+
+        @router.get("/types")
+        async def list_schema_types():
+            """List entity types with field definitions and entity counts."""
+            svc = await self._ensure_service()
+            return await svc.list_types_with_counts()
+
+        @router.get("/schemas")
+        async def list_schemas():
+            """List entity schemas (legacy alias for /types)."""
+            svc = await self._ensure_service()
+            types = await svc.list_types_with_counts()
+            return {"success": True, "schemas": types}
+
+        @router.post("/types", status_code=status.HTTP_201_CREATED)
+        async def create_schema_type(body: dict):
+            """Create a new entity type in entity_types.yaml."""
+            svc = await self._ensure_service()
+            type_name = body.get("name", "")
+            fields = body.get("fields", {})
+            if not type_name:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="name is required",
+                )
+            import re
+            if not re.match(r'^[A-Za-z][A-Za-z0-9_]*$', type_name):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Type name must match [A-Za-z][A-Za-z0-9_]*, got '{type_name}'",
+                )
+            entity_types = load_entity_types(self.vault_path)
+            if type_name in entity_types:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"Type '{type_name}' already exists. Use PUT /types/{type_name} to update.",
+                )
+            # Normalize fields: accept either {field: {type, description}} or {field: description}
+            normalized: dict[str, Any] = {}
+            for fname, fdef in fields.items():
+                if isinstance(fdef, dict):
+                    normalized[fname] = {
+                        "type": fdef.get("type", "text"),
+                        "description": fdef.get("description", ""),
+                    }
+                else:
+                    normalized[fname] = {"type": "text", "description": str(fdef)}
+            entity_types[type_name] = normalized
+            save_entity_types(self.vault_path, entity_types)
+            try:
+                added = await svc.sync_schema()
+            except Exception as e:
+                logger.warning(f"create_schema_type sync_schema failed: {e}")
+                added = {"added": []}
+            return {
+                "success": True,
+                "name": type_name,
+                "fields_count": len(normalized),
+                "columns_added": added.get("added", []),
+            }
+
+        @router.put("/types/{type_name}")
+        async def update_schema_type(type_name: str, body: dict):
+            """Update fields for an entity type in entity_types.yaml."""
+            svc = await self._ensure_service()
+            fields = body.get("fields", {})
+            entity_types = load_entity_types(self.vault_path)
+            if type_name not in entity_types:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Type '{type_name}' not found. Create it first with POST /types.",
+                )
+            existing = entity_types[type_name]
+            for fname, fdef in fields.items():
+                if isinstance(fdef, dict):
+                    existing[fname] = {
+                        "type": fdef.get("type", "text"),
+                        "description": fdef.get("description", ""),
+                    }
+                else:
+                    existing[fname] = {"type": "text", "description": str(fdef)}
+            entity_types[type_name] = existing
+            save_entity_types(self.vault_path, entity_types)
+            try:
+                added = await svc.sync_schema()
+            except Exception as e:
+                logger.warning(f"update_schema_type sync_schema failed: {e}")
+                added = {"added": []}
+            return {
+                "success": True,
+                "name": type_name,
+                "fields_count": len(existing),
+                "columns_added": added.get("added", []),
+            }
+
+        @router.delete("/types/{type_name}")
+        async def delete_schema_type(type_name: str):
+            """Remove entity type from entity_types.yaml (data columns preserved)."""
+            entity_types = load_entity_types(self.vault_path)
+            if type_name not in entity_types:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Type '{type_name}' not found.",
+                )
+            del entity_types[type_name]
+            save_entity_types(self.vault_path, entity_types)
+            return {
+                "success": True,
+                "name": type_name,
+                "note": "Type removed from schema. Existing entities and columns are preserved.",
+            }
+
+        # ── Episodes (compat) ─────────────────────────────────────────────────
 
         @router.post("/episodes")
         async def add_episode(body: dict):
-            """Ingest text as an episode. LLM extracts entities automatically."""
+            """Backward-compatible episode endpoint — maps to upsert_entity."""
             svc = await self._ensure_service()
             name = body.get("name", "")
             episode_body = body.get("episode_body", "")
             source_description = body.get("source_description", "")
-            if not name or not episode_body or not source_description:
+            if not name or not episode_body:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="name, episode_body, and source_description are required",
+                    detail="name and episode_body are required",
                 )
-            ref_time = None
-            if "reference_time" in body:
-                try:
-                    ref_time = datetime.fromisoformat(body["reference_time"])
-                except ValueError:
-                    pass
+            # Extract entity_type from name if in format "Type: name"
+            entity_type = "Note"
+            entity_name = name
+            if ": " in name:
+                parts = name.split(": ", 1)
+                entity_types_known = load_entity_types(self.vault_path)
+                if parts[0] in entity_types_known:
+                    entity_type = parts[0]
+                    entity_name = parts[1]
             try:
-                return await svc.add_episode(
-                    name=name,
-                    episode_body=episode_body,
-                    source_description=source_description,
-                    reference_time=ref_time,
+                result = await svc.upsert_entity(
+                    entity_type=entity_type,
+                    name=entity_name,
+                    attributes={"description": episode_body[:500]} if entity_type == "Note" else {},
                 )
-            except ValueError as e:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+                return {
+                    "success": True,
+                    "episode_uuid": None,
+                    "nodes_created": 1,
+                    "edges_created": 0,
+                    "entity": result,
+                }
             except Exception as e:
                 logger.error(f"add_episode error: {e}", exc_info=True)
                 raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
@@ -132,14 +226,15 @@ class BrainModule:
 
         @router.post("/search")
         async def search(body: dict):
-            """Hybrid search over the knowledge graph."""
+            """Text search over the knowledge graph."""
             svc = await self._ensure_service()
             query = body.get("query", "")
             if not query:
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="query is required")
-            num_results = min(int(body.get("num_results", 10)), 50)
+            num_results = min(int(body.get("num_results", 20)), 50)
+            entity_type = body.get("entity_type", "")
             try:
-                results = await svc.search(query=query, num_results=num_results)
+                results = await svc.search(query=query, entity_type=entity_type, num_results=num_results)
                 return {"success": True, "results": results, "count": len(results)}
             except Exception as e:
                 logger.error(f"search error: {e}", exc_info=True)
@@ -149,7 +244,7 @@ class BrainModule:
 
         @router.post("/cypher")
         async def cypher_query(body: dict):
-            """Execute raw Cypher query."""
+            """Execute raw Cypher query against LadybugDB."""
             svc = await self._ensure_service()
             query = body.get("query", "")
             if not query:
@@ -163,24 +258,22 @@ class BrainModule:
 
         # ── Entities ──────────────────────────────────────────────────────────
 
-        @router.post("/entities", response_model=CreateEntityResponse, status_code=status.HTTP_201_CREATED)
+        @router.post("/entities", status_code=status.HTTP_201_CREATED)
         async def create_entity(request: CreateEntityRequest):
-            """Create entity via synthetic episode."""
+            """Create entity directly in LadybugDB."""
             svc = await self._ensure_service()
             entity_type = request.entity_type
             data = request.data
-            name = data.get("name", "Unknown")
-            fields_text = ". ".join(f"{k}: {v}" for k, v in data.items() if k != "name" and v)
-            episode_body = f"New {entity_type}: {name}."
-            if fields_text:
-                episode_body += f" {fields_text}."
-            try:
-                await svc.add_episode(
-                    name=f"Create {entity_type}: {name}",
-                    episode_body=episode_body,
-                    source_description="Manual entity creation",
+            name = data.get("name", "")
+            if not name:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="data.name is required",
                 )
-                return CreateEntityResponse(success=True, entity_id=name)
+            attributes = {k: v for k, v in data.items() if k != "name"}
+            try:
+                entity = await svc.upsert_entity(entity_type=entity_type, name=name, attributes=attributes)
+                return {"success": True, "entity_id": name, "entity": entity}
             except Exception as e:
                 logger.error(f"create_entity error: {e}", exc_info=True)
                 raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
@@ -200,49 +293,53 @@ class BrainModule:
                 logger.error(f"get_entity error: {e}", exc_info=True)
                 raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
-        @router.get("/entities/{entity_type}", response_model=QueryEntitiesResponse)
-        async def query_entities(entity_type: str, limit: int = 100, offset: int = 0):
-            """Query entities by type with pagination."""
+        @router.get("/entities/{entity_type}")
+        async def query_entities(entity_type: str, limit: int = 100, offset: int = 0, search: str = ""):
+            """Query entities by type with pagination and optional text search."""
             svc = await self._ensure_service()
             try:
                 result = await svc.query_entities(
                     entity_type=entity_type,
                     limit=min(limit, 1000),
                     offset=offset,
+                    search=search,
                 )
-                return QueryEntitiesResponse(success=True, **result)
+                return {"success": True, **result}
             except Exception as e:
                 logger.error(f"query_entities error: {e}", exc_info=True)
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
-        @router.put("/entities/{entity_id}", response_model=CreateEntityResponse)
+        @router.put("/entities/{entity_id}")
         async def update_entity(entity_id: str, request: UpdateEntityRequest):
-            """Update entity via episode."""
+            """Update entity fields directly."""
             svc = await self._ensure_service()
-            fields_text = ". ".join(f"{k} is now {v}" for k, v in request.data.items() if v)
-            episode_body = f"Update for {entity_id}: {fields_text}." if fields_text else f"{entity_id} updated."
+            # Get current entity type first
+            existing = await svc.get_entity(entity_id)
+            if existing is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Entity not found: {entity_id}")
+            entity_type = existing.get("entity_type", "Unknown")
             try:
-                await svc.add_episode(
-                    name=f"Update: {entity_id}",
-                    episode_body=episode_body,
-                    source_description="Manual entity update",
+                entity = await svc.upsert_entity(
+                    entity_type=entity_type,
+                    name=entity_id,
+                    attributes=request.data,
                 )
-                return CreateEntityResponse(success=True, entity_id=entity_id)
+                return {"success": True, "entity_id": entity_id, "entity": entity}
             except Exception as e:
                 logger.error(f"update_entity error: {e}", exc_info=True)
                 raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
         @router.delete("/entities/{entity_id}")
-        async def delete_entity(entity_id: str, request: Optional[DeleteEntityRequest] = None):
-            """Logically delete entity via episode."""
+        async def delete_entity(entity_id: str):
+            """Delete entity and all its relationships."""
             svc = await self._ensure_service()
             try:
-                await svc.add_episode(
-                    name=f"Delete: {entity_id}",
-                    episode_body=f"Aaron no longer tracks entity: {entity_id}.",
-                    source_description="Logical entity deletion",
-                )
+                deleted = await svc.delete_entity(entity_id)
+                if not deleted:
+                    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Entity not found: {entity_id}")
                 return {"success": True, "entity_id": entity_id}
+            except HTTPException:
+                raise
             except Exception as e:
                 logger.error(f"delete_entity error: {e}", exc_info=True)
                 raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
@@ -251,16 +348,17 @@ class BrainModule:
 
         @router.post("/relationships")
         async def create_relationship(request: CreateRelationshipRequest):
-            """Create relationship via episode."""
+            """Create relationship between two entities."""
             svc = await self._ensure_service()
-            episode_body = f"{request.from_id} {request.relationship} {request.to_id}."
             try:
-                await svc.add_episode(
-                    name=f"Relationship: {request.from_id} → {request.to_id}",
-                    episode_body=episode_body,
-                    source_description="Manual relationship creation",
+                result = await svc.upsert_relationship(
+                    from_name=request.from_id,
+                    label=request.relationship,
+                    to_name=request.to_id,
                 )
-                return {"success": True}
+                return {"success": True, **result}
+            except ValueError as e:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
             except Exception as e:
                 logger.error(f"create_relationship error: {e}", exc_info=True)
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
@@ -270,7 +368,7 @@ class BrainModule:
             """Traverse graph from starting entity."""
             svc = await self._ensure_service()
             try:
-                results = await svc.traverse_graph(
+                results = await svc.traverse(
                     start_name=request.start_id,
                     max_depth=min(request.max_depth, 5),
                 )
@@ -278,49 +376,6 @@ class BrainModule:
             except Exception as e:
                 logger.error(f"traverse_graph error: {e}", exc_info=True)
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-
-        # ── Schema types (legacy — returns info for compatibility) ────────────
-
-        @router.get("/schemas")
-        async def list_schemas():
-            """List entity schemas (Graphiti types)."""
-            await self._ensure_service()
-            types = self._service.list_types()
-            return {"success": True, "schemas": types}
-
-        @router.get("/types")
-        async def list_schema_types():
-            """List entity types with field definitions."""
-            await self._ensure_service()
-            return self._service.list_types()
-
-        @router.post("/types")
-        async def create_schema_type(body: dict):
-            """Not supported — schema is defined in code."""
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=(
-                    "Schema types are defined in code with the Graphiti backend. "
-                    "Entity types: Person, Project, Area, Topic. "
-                    "Use POST /episodes to contribute knowledge."
-                ),
-            )
-
-        @router.put("/types/{type_name}")
-        async def update_schema_type(type_name: str, body: dict):
-            """Not supported — schema is defined in code."""
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Schema types are defined in code with the Graphiti backend.",
-            )
-
-        @router.delete("/types/{type_name}")
-        async def delete_schema_type(type_name: str):
-            """Not supported — schema is defined in code."""
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Schema types are defined in code with the Graphiti backend.",
-            )
 
         # ── Saved queries ─────────────────────────────────────────────────────
 
@@ -371,9 +426,10 @@ class BrainModule:
         """Get module status for /api/modules listing."""
         return {
             "module": "brain",
+            "version": "3.0.0",
             "connected": self._service is not None and self._service._connected,
-            "kuzu_path": str(self.kuzu_path),
-            "group_id": self._service.group_id if self._service else "user-default",
+            "db_path": str(self.db_path),
+            "backend": "LadybugDB",
         }
 
     def get_mcp_tools(self) -> list[dict]:
@@ -392,6 +448,35 @@ class BrainModule:
 
     # ── BrainInterface methods ────────────────────────────────────────────────
 
+    async def upsert_entity(
+        self,
+        entity_type: str,
+        name: str,
+        attributes: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Public interface for other modules to write to Brain."""
+        svc = await self._ensure_service()
+        return await svc.upsert_entity(entity_type=entity_type, name=name, attributes=attributes)
+
+    async def search(self, query: str) -> list[dict[str, Any]]:
+        """Search entities by query. Used by chat/daily integration."""
+        svc = await self._ensure_service()
+        results = await svc.search(query=query, num_results=20)
+        return [
+            {
+                "para_id": r.get("name", ""),
+                "name": r.get("name", ""),
+                "type": r.get("entity_type", ""),
+                "content": " | ".join(
+                    f"{k}: {v}" for k, v in r.items()
+                    if k not in {"name", "entity_type", "created_at", "updated_at"} and v
+                ),
+            }
+            for r in results
+        ]
+
+    # ── Legacy BrainInterface (kept for Daily/Chat compat) ────────────────────
+
     async def add_episode(
         self,
         name: str,
@@ -399,26 +484,18 @@ class BrainModule:
         source_description: str,
         reference_time: datetime | None = None,
     ) -> dict[str, Any]:
-        """Public interface for Daily and Chat modules to add episodes."""
+        """Legacy interface — maps to upsert_entity."""
         svc = await self._ensure_service()
-        return await svc.add_episode(
-            name=name,
-            episode_body=episode_body,
-            source_description=source_description,
-            reference_time=reference_time,
+        entity_type = "Note"
+        entity_name = name
+        if ": " in name:
+            parts = name.split(": ", 1)
+            entity_types_known = load_entity_types(self.vault_path)
+            if parts[0] in entity_types_known:
+                entity_type = parts[0]
+                entity_name = parts[1]
+        return await svc.upsert_entity(
+            entity_type=entity_type,
+            name=entity_name,
+            attributes={},
         )
-
-    async def search(self, query: str) -> list[dict[str, Any]]:
-        """Search entities by query. Used by chat/daily integration."""
-        svc = await self._ensure_service()
-        results = await svc.search(query=query, num_results=20)
-        # Format for BrainInterface consumers
-        return [
-            {
-                "para_id": r.get("uuid", ""),
-                "name": r.get("source_entity") or r.get("fact", "")[:50],
-                "type": "EntityEdge",
-                "content": r.get("fact", ""),
-            }
-            for r in results
-        ]

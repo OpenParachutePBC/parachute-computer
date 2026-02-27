@@ -1,10 +1,9 @@
 name: brain
-version: "2.0.0"
-description: "Graphiti + Kuzu temporal knowledge graph with LLM entity extraction"
+version: "3.0.0"
+description: "LadybugDB embedded knowledge graph — agent-driven, no extraction pipeline"
 trust_level: vault
 provides:
   - BrainInterface
 dependencies:
-  - graphiti-core[anthropic,google-genai]>=0.28.0
-  - kuzu>=0.11.0
+  - real-ladybug>=0.14.0
   - aiofiles>=23.0.0

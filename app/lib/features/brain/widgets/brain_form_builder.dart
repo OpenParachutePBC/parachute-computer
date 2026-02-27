@@ -32,27 +32,36 @@ class _BrainFormBuilderState extends State<BrainFormBuilder> {
   }
 
   void _initializeControllers() {
-    for (final field in widget.schema.fields) {
-      final initialValue = widget.initialData?[field.name];
-
-      if (field.type == 'string' || field.type == 'integer' || field.type == 'datetime') {
-        final controller = TextEditingController(
-          text: initialValue?.toString() ?? '',
-        );
+    if (widget.schema.fields.isNotEmpty) {
+      // Crystallized schema: render defined fields
+      for (final field in widget.schema.fields) {
+        final initialValue = widget.initialData?[field.name];
+        if (field.type == 'string' || field.type == 'integer' || field.type == 'datetime') {
+          final controller = TextEditingController(text: initialValue?.toString() ?? '');
+          controller.addListener(() => _updateFormData());
+          _controllers[field.name] = controller;
+        } else if (field.type == 'boolean') {
+          _formData[field.name] = initialValue is bool ? initialValue : false;
+        } else if (field.isEnum) {
+          _formData[field.name] = initialValue?.toString();
+        } else if (field.type == 'array' && field.itemsType == 'string') {
+          final list = initialValue is List ? initialValue : [];
+          final text = list.join(', ');
+          final controller = TextEditingController(text: text);
+          controller.addListener(() => _updateFormData());
+          _controllers[field.name] = controller;
+        } else {
+          _formData[field.name] = initialValue;
+        }
+      }
+    } else if (widget.initialData != null) {
+      // Open-ontology fallback: make all existing entity fields editable as text
+      for (final entry in widget.initialData!.entries) {
+        if (entry.value == null) continue;
+        final controller = TextEditingController(text: entry.value.toString());
         controller.addListener(() => _updateFormData());
-        _controllers[field.name] = controller;
-      } else if (field.type == 'boolean') {
-        _formData[field.name] = initialValue is bool ? initialValue : false;
-      } else if (field.isEnum) {
-        _formData[field.name] = initialValue?.toString();
-      } else if (field.type == 'array' && field.itemsType == 'string') {
-        final list = initialValue is List ? initialValue : [];
-        final text = list.join(', ');
-        final controller = TextEditingController(text: text);
-        controller.addListener(() => _updateFormData());
-        _controllers[field.name] = controller;
-      } else {
-        _formData[field.name] = initialValue;
+        _controllers[entry.key] = controller;
+        _formData[entry.key] = entry.value.toString();
       }
     }
   }
@@ -62,21 +71,28 @@ class _BrainFormBuilderState extends State<BrainFormBuilder> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         setState(() {
-          for (final field in widget.schema.fields) {
-            if (_controllers.containsKey(field.name)) {
-              final text = _controllers[field.name]!.text;
-
-              if (field.type == 'integer') {
-                _formData[field.name] = text.isEmpty ? null : int.tryParse(text);
-              } else if (field.type == 'array' && field.itemsType == 'string') {
-                _formData[field.name] = text
-                    .split(',')
-                    .map((s) => s.trim())
-                    .where((s) => s.isNotEmpty)
-                    .toList();
-              } else {
-                _formData[field.name] = text.isEmpty ? null : text;
+          if (widget.schema.fields.isNotEmpty) {
+            for (final field in widget.schema.fields) {
+              if (_controllers.containsKey(field.name)) {
+                final text = _controllers[field.name]!.text;
+                if (field.type == 'integer') {
+                  _formData[field.name] = text.isEmpty ? null : int.tryParse(text);
+                } else if (field.type == 'array' && field.itemsType == 'string') {
+                  _formData[field.name] = text
+                      .split(',')
+                      .map((s) => s.trim())
+                      .where((s) => s.isNotEmpty)
+                      .toList();
+                } else {
+                  _formData[field.name] = text.isEmpty ? null : text;
+                }
               }
+            }
+          } else {
+            // Open-ontology fallback: all controllers are plain text fields
+            for (final entry in _controllers.entries) {
+              final text = entry.value.text;
+              _formData[entry.key] = text.isEmpty ? null : text;
             }
           }
         });
@@ -99,54 +115,101 @@ class _BrainFormBuilderState extends State<BrainFormBuilder> {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
+    if (widget.schema.fields.isNotEmpty) {
+      // Crystallized schema: render typed fields
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: widget.schema.fields.map((field) {
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Text(
+                      field.name,
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: isDark ? BrandColors.nightText : BrandColors.charcoal,
+                      ),
+                    ),
+                    if (field.required) ...[
+                      const SizedBox(width: 4),
+                      Text(
+                        '*',
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: isDark ? Colors.red.shade400 : Colors.red.shade700,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+                if (field.description != null) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    field.description!,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 8),
+                _buildFieldInput(field, isDark),
+              ],
+            ),
+          );
+        }).toList(),
+      );
+    }
+
+    // Open-ontology fallback: render existing fields as plain text inputs.
+    if (_controllers.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 16),
+        child: Text(
+          'No schema defined for this type.\nAgents write directly via MCP tools.',
+          style: TextStyle(
+            fontSize: 14,
+            color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+          ),
+        ),
+      );
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
-      children: widget.schema.fields.map((field) {
+      children: _controllers.keys.map((fieldName) {
         return Padding(
           padding: const EdgeInsets.only(bottom: 20),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Row(
-                children: [
-                  Text(
-                    field.name,
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: isDark
-                          ? BrandColors.nightText
-                          : BrandColors.charcoal,
-                    ),
-                  ),
-                  if (field.required) ...[
-                    const SizedBox(width: 4),
-                    Text(
-                      '*',
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: isDark
-                            ? Colors.red.shade400
-                            : Colors.red.shade700,
-                      ),
-                    ),
-                  ],
-                ],
+              Text(
+                fieldName,
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: isDark ? BrandColors.nightText : BrandColors.charcoal,
+                ),
               ),
-              if (field.description != null) ...[
-                const SizedBox(height: 4),
-                Text(
-                  field.description!,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: isDark
-                        ? BrandColors.nightTextSecondary
-                        : BrandColors.driftwood,
+              const SizedBox(height: 8),
+              TextField(
+                controller: _controllers[fieldName],
+                decoration: InputDecoration(
+                  hintText: 'Enter $fieldName',
+                  filled: true,
+                  fillColor: isDark ? BrandColors.nightSurfaceElevated : BrandColors.softWhite,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(Radii.md),
+                    borderSide: BorderSide.none,
                   ),
                 ),
-              ],
-              const SizedBox(height: 8),
-              _buildFieldInput(field, isDark),
+                maxLines: fieldName == 'description' ? 3 : 1,
+              ),
             ],
           ),
         );
