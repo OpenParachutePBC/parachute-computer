@@ -281,6 +281,7 @@ async def query_streaming(
     # When message_queue is provided, the iterable also monitors it for
     # injected user messages (mid-stream messaging).
     done_event: Optional[asyncio.Event] = None
+    consumer_task: Optional[asyncio.Task[None]] = None
     try:
         effective_prompt: Any = prompt
         # Always use AsyncIterable to keep stdin open for the CLI subprocess.
@@ -291,27 +292,57 @@ async def query_streaming(
         done_event = asyncio.Event()
         effective_prompt = _string_to_async_iterable(prompt, done_event, message_queue)
 
-        # The SDK's parse_message is patched (above) to return raw dicts
-        # for unknown event types instead of raising MessageParseError.
-        # This keeps the generator alive through rate_limit_event etc.
-        async for event in sdk_query(prompt=effective_prompt, options=options):
-            event_dict = _event_to_dict(event)
-            # Signal the iterable to finish once the turn is complete so
-            # stream_input can close stdin and the CLI process can exit.
-            if done_event is not None and event_dict.get("type") == "result":
+        # Isolate SDK iteration in a dedicated asyncio.Task so the SDK
+        # generator's anyio cancel scope is always entered and exited in the
+        # same task.  When our generator is abandoned (new message to the same
+        # session, SSE disconnect), Python's GC finalises it from a different
+        # task — causing "Attempted to exit cancel scope in a different task".
+        # By confining the SDK generator to its own task, cancellation cleanup
+        # always runs in the correct task context.
+        event_queue: asyncio.Queue[Optional[dict[str, Any]]] = asyncio.Queue()
+
+        async def _consume_sdk() -> None:
+            """Iterate SDK events and forward them through the queue."""
+            try:
+                async for event in sdk_query(prompt=effective_prompt, options=options):
+                    event_dict = _event_to_dict(event)
+                    event_queue.put_nowait(event_dict)
+                    if event_dict.get("type") == "result":
+                        done_event.set()
+            except ClaudeSDKError as e:
+                logger.error(f"Claude SDK error: {e}", exc_info=True)
+                event_queue.put_nowait({"type": "error", "error": str(e)})
+            except asyncio.CancelledError:
+                # Let cancellation propagate so `async for` closes the SDK
+                # generator in THIS task (preserving cancel-scope affinity).
+                raise
+            except Exception as e:
+                logger.error(f"SDK query error: {str(e)}", exc_info=True)
+                event_queue.put_nowait({"type": "error", "error": str(e)})
+            finally:
+                event_queue.put_nowait(None)  # sentinel
                 done_event.set()
+
+        consumer_task = asyncio.create_task(_consume_sdk())
+
+        while True:
+            event_dict = await event_queue.get()
+            if event_dict is None:
+                break
             yield event_dict
-    except ClaudeSDKError as e:
-        logger.error(f"Claude SDK error: {e}", exc_info=True)
-        yield {"type": "error", "error": str(e)}
-    except Exception as e:
-        error_msg = str(e)
-        logger.error(f"SDK query error: {error_msg}", exc_info=True)
-        yield {"type": "error", "error": error_msg}
     finally:
-        # Safety net: always release the iterable on exit
+        # Release the stdin iterable so the CLI subprocess can exit.
         if done_event is not None:
             done_event.set()
+        # Cancel the consumer task and wait for it to finish.  The SDK
+        # generator cleanup runs inside the consumer task (same task that
+        # entered the cancel scope), avoiding the cross-task RuntimeError.
+        if consumer_task is not None:
+            consumer_task.cancel()
+            try:
+                await consumer_task
+            except (asyncio.CancelledError, Exception):
+                pass
 
 
 def _event_to_dict(event: Any) -> dict[str, Any]:
