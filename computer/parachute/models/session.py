@@ -235,6 +235,12 @@ class Session(BaseModel):
         serialization_alias="curatorSessionId",
         description="SDK session ID of this session's curator background agent",
     )
+    bridge_context_log: Optional[str] = Field(
+        default=None,
+        alias="bridgeContextLog",
+        serialization_alias="bridgeContextLog",
+        description="JSON: list of {query, type, turn_number} — bridge agent context loaded/stored",
+    )
     metadata: Optional[dict[str, Any]] = Field(
         default=None, description="Additional metadata"
     )
@@ -311,6 +317,7 @@ class SessionUpdate(BaseModel):
     working_directory: Optional[str] = None
     workspace_id: Optional[str] = None
     curator_session_id: Optional[str] = None
+    bridge_context_log: Optional[str] = None
 
 
 class PairingRequest(BaseModel):

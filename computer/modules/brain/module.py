@@ -475,6 +475,30 @@ class BrainModule:
             for r in results
         ]
 
+    async def recall(self, query: str, num_results: int = 5) -> dict[str, Any]:
+        """
+        Structured context retrieval for bridge agent use.
+        Returns a bundle with query + results ready for system prompt injection.
+        Uses fewer results than search() to keep context window impact low.
+        """
+        svc = await self._ensure_service()
+        results = await svc.search(query=query, num_results=num_results)
+        return {
+            "query": query,
+            "results": [
+                {
+                    "name": r.get("name", ""),
+                    "type": r.get("entity_type", ""),
+                    "description": r.get("description") or " | ".join(
+                        f"{k}: {v}" for k, v in r.items()
+                        if k not in {"name", "entity_type", "created_at", "updated_at", "description"} and v
+                    ),
+                }
+                for r in results
+            ],
+            "count": len(results),
+        }
+
     # ── Legacy BrainInterface (kept for Daily/Chat compat) ────────────────────
 
     async def add_episode(

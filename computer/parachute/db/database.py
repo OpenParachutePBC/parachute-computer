@@ -441,6 +441,28 @@ class Database:
             await self._connection.commit()
             logger.info("Added curator_session_id column (v19)")
 
+        # v20: bridge_context_log for bridge agent context tracking
+        async with self._connection.execute(
+            "SELECT version FROM schema_version WHERE version = 20"
+        ) as cursor:
+            row = await cursor.fetchone()
+        if not row:
+            try:
+                async with self._connection.execute(
+                    "SELECT bridge_context_log FROM sessions LIMIT 1"
+                ):
+                    pass  # Column exists
+            except Exception:
+                await self._connection.execute(
+                    "ALTER TABLE sessions ADD COLUMN bridge_context_log TEXT"
+                )
+                logger.info("Added bridge_context_log column to sessions")
+            await self._connection.execute(
+                "INSERT OR IGNORE INTO schema_version (version, applied_at) VALUES (20, datetime('now'))"
+            )
+            await self._connection.commit()
+            logger.info("Added bridge_context_log column (v20)")
+
     async def close(self) -> None:
         """Close database connection."""
         if self._connection:
@@ -492,6 +514,7 @@ class Database:
         created_by = getattr(session, 'created_by', 'user')
 
         curator_session_id = getattr(session, 'curator_session_id', None)
+        bridge_context_log = getattr(session, 'bridge_context_log', None)
 
         await self.connection.execute(
             """
@@ -500,8 +523,9 @@ class Database:
                 message_count, archived, created_at, last_accessed,
                 continued_from, agent_type, trust_level,
                 linked_bot_platform, linked_bot_chat_id, linked_bot_chat_type,
-                workspace_id, parent_session_id, created_by, curator_session_id, metadata
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                workspace_id, parent_session_id, created_by, curator_session_id,
+                bridge_context_log, metadata
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 session.id,
@@ -525,6 +549,7 @@ class Database:
                 parent_session_id,
                 created_by,
                 curator_session_id,
+                bridge_context_log,
                 metadata_json,
             ),
         )
@@ -592,6 +617,10 @@ class Database:
         if update.curator_session_id is not None:
             updates.append("curator_session_id = ?")
             params.append(update.curator_session_id)
+
+        if update.bridge_context_log is not None:
+            updates.append("bridge_context_log = ?")
+            params.append(update.bridge_context_log)
 
         if not updates:
             return await self.get_session(session_id)
@@ -1295,6 +1324,7 @@ class Database:
             created_by=row["created_by"] if "created_by" in keys else "user",
             summary=row["summary"] if "summary" in keys else None,
             curator_session_id=row["curator_session_id"] if "curator_session_id" in keys else None,
+            bridge_context_log=row["bridge_context_log"] if "bridge_context_log" in keys else None,
             metadata=metadata,
         )
 

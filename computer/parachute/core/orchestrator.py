@@ -1056,6 +1056,27 @@ class Orchestrator:
                 f"is_new={is_new}, session={session.id[:8] if session.id else None}"
             )
 
+            # Bridge agent pre-hook: enrich system prompt with brain context.
+            # Awaited (result needed before chat agent starts). Degrades gracefully
+            # when Brain module is absent or bridge fails.
+            try:
+                from parachute.core.interfaces import get_registry
+                _bridge_brain = get_registry().get("BrainInterface")
+                if _bridge_brain and message:
+                    from parachute.core.bridge_agent import enrich as bridge_enrich
+                    _bridge_ctx = await bridge_enrich(
+                        message=message,
+                        session_summary=session.summary,
+                        brain=_bridge_brain,
+                        claude_token=self.settings.claude_code_oauth_token,
+                        vault_path=self.vault_path,
+                    )
+                    if _bridge_ctx:
+                        effective_prompt = (effective_prompt or "") + "\n\n" + _bridge_ctx
+                        logger.debug(f"Bridge: injected {len(_bridge_ctx)} chars into system prompt")
+            except Exception as _bridge_err:
+                logger.debug(f"Bridge enrich error (non-fatal): {_bridge_err}")
+
             async for event in query_streaming(
                 prompt=actual_message,
                 # Full prompt overrides preset, append content adds to it
@@ -1315,6 +1336,27 @@ class Orchestrator:
                         claude_token=self.settings.claude_code_oauth_token,
                     )
                 )
+
+            # Bridge agent post-turn writeback: store significant facts to brain.
+            # Fire-and-forget — never blocks the response.
+            if final_session_id and final_session_id != "pending" and message and result_text:
+                try:
+                    from parachute.core.interfaces import get_registry
+                    _wb_brain = get_registry().get("BrainInterface")
+                    if _wb_brain:
+                        from parachute.core.bridge_agent import writeback as bridge_writeback
+                        asyncio.create_task(
+                            bridge_writeback(
+                                session_id=final_session_id,
+                                message=message,
+                                result_text=result_text,
+                                brain=_wb_brain,
+                                claude_token=self.settings.claude_code_oauth_token,
+                                database=self.database,
+                            )
+                        )
+                except Exception as _wb_err:
+                    logger.debug(f"Bridge writeback setup error (non-fatal): {_wb_err}")
 
             # Yield done event
             yield DoneEvent(
