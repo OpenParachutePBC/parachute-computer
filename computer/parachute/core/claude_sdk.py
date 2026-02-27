@@ -259,6 +259,11 @@ async def query_streaming(
     sdk_env["CLAUDECODE"] = ""
     if claude_token:
         sdk_env["CLAUDE_CODE_OAUTH_TOKEN"] = claude_token
+    # Strip ANTHROPIC_API_KEY so it never leaks into the Claude CLI subprocess.
+    # Brain module stores its key in vault config.yaml (brain.anthropic_api_key)
+    # and passes it directly to Graphiti. If ANTHROPIC_API_KEY were present here,
+    # the CLI would use it for all inference, bypassing the OAuth subscription.
+    sdk_env.pop("ANTHROPIC_API_KEY", None)
     options_kwargs["env"] = sdk_env
 
     # Capture CLI stderr for debugging tool execution issues

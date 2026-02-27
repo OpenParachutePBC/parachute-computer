@@ -51,17 +51,40 @@ class BrainModule:
         self._init_lock = asyncio.Lock()
         self._queries_lock = asyncio.Lock()
 
+    def _load_brain_api_keys(self) -> tuple[Optional[str], Optional[str]]:
+        """Load Brain API keys from vault config.yaml under brain: namespace.
+
+        Keys are stored in vault/.parachute/config.yaml:
+            brain:
+              anthropic_api_key: sk-ant-api03-...
+              google_api_key: AIza...
+
+        Deliberately does NOT fall back to ANTHROPIC_API_KEY env var to prevent
+        the key from leaking into Claude CLI subprocesses (which inherit the full
+        process environment) and accidentally billing API instead of Max subscription.
+        """
+        import yaml
+        config_file = self.vault_path / ".parachute" / "config.yaml"
+        if not config_file.exists():
+            return None, None
+        try:
+            data = yaml.safe_load(config_file.read_text()) or {}
+            brain_cfg = data.get("brain", {}) if isinstance(data, dict) else {}
+            return brain_cfg.get("anthropic_api_key"), brain_cfg.get("google_api_key")
+        except Exception as e:
+            logger.warning(f"Brain: could not load config.yaml: {e}")
+            return None, None
+
     async def _ensure_service(self) -> GraphitiService:
         """Lazy-initialize GraphitiService with race condition protection."""
         if self._service is None:
             async with self._init_lock:
                 if self._service is None:
-                    # Read API keys from environment (set by user or config.yaml)
-                    import os
+                    anthropic_key, google_key = self._load_brain_api_keys()
                     svc = GraphitiService(
                         kuzu_path=self.kuzu_path,
-                        anthropic_api_key=os.getenv("ANTHROPIC_API_KEY"),
-                        google_api_key=os.getenv("GOOGLE_API_KEY"),
+                        anthropic_api_key=anthropic_key,
+                        google_api_key=google_key,
                     )
                     await svc.connect()
                     self._service = svc

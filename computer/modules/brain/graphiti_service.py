@@ -7,7 +7,6 @@ asyncio.Lock since Kuzu is embedded (single-process, single-writer).
 
 import asyncio
 import logging
-import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -32,8 +31,12 @@ class GraphitiService:
     ):
         self.kuzu_path = kuzu_path
         self.group_id = group_id
-        self._anthropic_api_key = anthropic_api_key or os.getenv("ANTHROPIC_API_KEY")
-        self._google_api_key = google_api_key or os.getenv("GOOGLE_API_KEY")
+        # Keys must be passed explicitly — no env var fallback.
+        # Falling back to ANTHROPIC_API_KEY would cause it to leak into the
+        # Claude CLI subprocess environment and bill all chat inference to the
+        # API key instead of the Claude Max subscription.
+        self._anthropic_api_key = anthropic_api_key
+        self._google_api_key = google_api_key
 
         self._graphiti = None
         self._driver = None
@@ -52,15 +55,18 @@ class GraphitiService:
         # Validate required API keys
         if not self._anthropic_api_key:
             raise ValueError(
-                "ANTHROPIC_API_KEY not set. Brain module requires an Anthropic API key "
-                "for LLM entity extraction. Set it in your environment or "
-                "vault/.parachute/config.yaml."
+                "Brain module requires an Anthropic API key for LLM entity extraction. "
+                "Add it to vault/.parachute/config.yaml:\n"
+                "  brain:\n"
+                "    anthropic_api_key: sk-ant-api03-..."
             )
         if not self._google_api_key:
             raise ValueError(
-                "GOOGLE_API_KEY not set. Brain module requires a Google API key "
-                "for Gemini embeddings. Set it in your environment or "
-                "vault/.parachute/config.yaml. Get one free at aistudio.google.com."
+                "Brain module requires a Google API key for Gemini embeddings. "
+                "Get one free at aistudio.google.com, then add it to "
+                "vault/.parachute/config.yaml:\n"
+                "  brain:\n"
+                "    google_api_key: AIza..."
             )
 
         from graphiti_core import Graphiti
