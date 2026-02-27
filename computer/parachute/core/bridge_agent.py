@@ -1,26 +1,35 @@
 """
-Brain Bridge Agent — Ambient context enrichment pre-hook.
+Brain Bridge Agent — Unified pre/post-turn context agent.
 
-Runs before the chat agent on every user message.
-Makes a fast intent judgment (Haiku) and optionally injects
-brain context into the chat agent's system prompt.
+Replaces the curator. Handles everything in a single background agent:
 
-Post-turn write-back runs as fire-and-forget (like curator).
+Pre-turn (enrich) — awaited before the chat agent:
+  - Haiku judges: enrich / step-back / pass-through
+  - If enriching: translates message references → brain queries, injects context
 
-Three modes:
-- ENRICH: Translate vague references to brain queries, inject context.
-- STEP_BACK: User is explicitly querying brain — load minimal orientation only.
-- PASS_THROUGH: Normal conversation, no brain involvement needed.
+Post-turn (observe) — fire-and-forget after the chat agent responds:
+  - Session metadata: title, summary, activity log (via MCP tools — agent-native)
+  - Brain writeback: stores significant facts as entities
+
+Key design:
+- One bridge_session_id per chat session (continuity across turns, like curator had)
+- MCP tools for session metadata (visible as tool calls in transcripts)
+- Direct brain calls for knowledge graph writes
+- Never raises — all failures are logged and swallowed
 """
 
 import json
 import logging
+import sys
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Optional
 
 from parachute.core.claude_sdk import query_streaming
 
 logger = logging.getLogger(__name__)
+
+# ── Prompts ──────────────────────────────────────────────────────────────────
 
 BRIDGE_ENRICH_PROMPT = """You are a context enrichment assistant. Evaluate the user message and conversation summary below.
 
@@ -37,29 +46,40 @@ If STEP_BACK or PASS_THROUGH: provide no queries.
 Respond in JSON only (no markdown fences):
 {"judgment": "enrich|step_back|pass_through", "queries": ["query1", "query2"]}"""
 
-BRIDGE_WRITEBACK_PROMPT = """You are a knowledge graph curator. Review the exchange below and decide:
-1. Was anything significant said? (commitment, decision, new relationship, fact about a person/project)
-2. If yes: what should be stored in the knowledge graph?
+BRIDGE_OBSERVE_PROMPT = """You are a background observer for a conversation. After each exchange, you have two responsibilities.
 
-Respond in JSON only (no markdown fences):
-{"should_store": true, "entities": [{"entity_type": "...", "name": "...", "description": "..."}]}
+**1. Session metadata** — use your MCP tools:
+- update_title: Set a concise 3-8 word title capturing the main topic.
+  Call when: title not yet set, or you have a meaningfully more accurate one.
+  Do NOT call if the title was set by the user, or if the current AI-set title is already accurate.
+- update_summary: Write 1-3 sentences summarizing what has been discussed and accomplished so far.
+  Call when: no summary yet, or current summary no longer reflects the conversation. Skip if up to date.
+- log_activity: Always call. Write 1-2 sentences about what happened in this specific exchange.
 
-Only store clear, durable facts. Do not store conversational filler or ephemeral details."""
+**2. Brain facts** — after calling MCP tools, output a JSON block:
+If something significant was said (commitment, decision, new fact about a person/project/entity/place):
+BRAIN_FACTS: {"should_store": true, "entities": [{"entity_type": "...", "name": "...", "description": "..."}]}
+If nothing significant:
+BRAIN_FACTS: {"should_store": false}
 
-# Token budget for injected brain context
-_MAX_CONTEXT_CHARS = 6000  # ~1500 tokens
+Guidelines:
+- Be concise and factual — focus on what matters for future context
+- Only store clear, durable facts — not conversational filler or ephemeral details
+- If the exchange was trivial (e.g. "thanks", "ok"), a minimal log entry is fine; skip title/summary updates"""
 
+# ── Token budget ──────────────────────────────────────────────────────────────
+
+_MAX_CONTEXT_CHARS = 6000  # ~1500 tokens for injected brain context
+
+
+# ── Enrich helpers ────────────────────────────────────────────────────────────
 
 async def _run_haiku(
     prompt: str,
     system_prompt: str,
     claude_token: Optional[str],
 ) -> Optional[str]:
-    """Run Haiku with a simple text prompt and return the text response.
-
-    Drains the query_streaming generator and collects all text from
-    assistant message blocks. Returns None on empty response.
-    """
+    """Run Haiku with a text-only prompt, return the text response."""
     text_parts: list[str] = []
 
     async for event in query_streaming(
@@ -77,7 +97,6 @@ async def _run_haiku(
                 if isinstance(block, dict) and block.get("type") == "text":
                     text_parts.append(block["text"])
         elif event.get("type") == "result" and event.get("result"):
-            # Prefer the final result event if present
             return event["result"]
 
     return "".join(text_parts) or None
@@ -88,7 +107,6 @@ def _parse_haiku_json(text: Optional[str]) -> Optional[dict[str, Any]]:
     if not text:
         return None
     stripped = text.strip()
-    # Strip ```json ... ``` or ``` ... ``` fences
     if stripped.startswith("```"):
         lines = stripped.splitlines()
         inner = [l for l in lines[1:] if not l.startswith("```")]
@@ -96,7 +114,7 @@ def _parse_haiku_json(text: Optional[str]) -> Optional[dict[str, Any]]:
     try:
         return json.loads(stripped)
     except (json.JSONDecodeError, ValueError):
-        logger.debug(f"Bridge: failed to parse Haiku JSON: {stripped[:200]}")
+        logger.debug(f"Bridge: failed to parse JSON: {stripped[:200]}")
         return None
 
 
@@ -120,7 +138,6 @@ def _format_context_block(query_results: list[dict[str, Any]]) -> str:
         results = bundle.get("results", [])
         if not results:
             continue
-
         query_count += 1
         lines.append(f'### From query: "{query}"')
         for r in results:
@@ -140,15 +157,80 @@ def _format_context_block(query_results: list[dict[str, Any]]) -> str:
     if total_count == 0:
         return ""
 
-    lines.append(f"_Context loaded: {total_count} result{'s' if total_count != 1 else ''} from {query_count} quer{'ies' if query_count != 1 else 'y'}._")
+    lines.append(
+        f"_Context loaded: {total_count} result{'s' if total_count != 1 else ''} "
+        f"from {query_count} quer{'ies' if query_count != 1 else 'y'}._"
+    )
 
     block = "\n".join(lines)
-    # Enforce token budget
     if len(block) > _MAX_CONTEXT_CHARS:
         block = block[:_MAX_CONTEXT_CHARS] + "\n\n_[Context truncated to stay within token budget.]_"
 
     return block
 
+
+# ── Observe helpers ───────────────────────────────────────────────────────────
+
+def _summarize_tool_calls(tool_calls: list[dict]) -> str:
+    """Build a readable summary of tool calls made during the exchange."""
+    if not tool_calls:
+        return "None"
+    parts = []
+    for tc in tool_calls:
+        name = tc.get("name", "unknown")
+        if "__" in name:
+            name = name.rsplit("__", 1)[-1]
+        inp = tc.get("input") or {}
+        preview = _pick_preview(name, inp)
+        parts.append(f"{name}({preview})" if preview else name)
+    return ", ".join(parts)
+
+
+def _pick_preview(tool_name: str, inp: dict) -> str:
+    """Return a short preview string for a tool call input."""
+    if not inp:
+        return ""
+    if tool_name in ("Read", "read"):
+        return _short_path(inp.get("file_path", ""))
+    if tool_name in ("Write", "write", "Edit", "edit", "MultiEdit"):
+        return _short_path(inp.get("file_path", ""))
+    if tool_name in ("Bash", "bash"):
+        cmd = inp.get("command", "")
+        return cmd[:50] if cmd else ""
+    if tool_name in ("Glob", "glob"):
+        return inp.get("pattern", "")[:40]
+    if tool_name in ("Grep", "grep"):
+        return inp.get("pattern", "")[:40]
+    if tool_name in ("WebFetch", "web_fetch"):
+        return inp.get("url", "")[:50]
+    for v in inp.values():
+        if isinstance(v, str) and v:
+            return v[:40]
+    return ""
+
+
+def _short_path(path: str) -> str:
+    """Return just the last two path components."""
+    if not path:
+        return ""
+    parts = path.replace("\\", "/").rstrip("/").split("/")
+    return "/".join(parts[-2:]) if len(parts) > 1 else parts[-1]
+
+
+def _parse_brain_facts(text: str) -> Optional[dict[str, Any]]:
+    """Extract BRAIN_FACTS JSON block from observe() response text."""
+    if "BRAIN_FACTS:" not in text:
+        return None
+    try:
+        json_part = text.split("BRAIN_FACTS:", 1)[1].strip()
+        # Grab up to first blank line to avoid trailing junk
+        json_part = json_part.split("\n\n")[0].strip()
+        return json.loads(json_part)
+    except (json.JSONDecodeError, ValueError, IndexError):
+        return None
+
+
+# ── Public API ────────────────────────────────────────────────────────────────
 
 async def enrich(
     message: str,
@@ -157,16 +239,14 @@ async def enrich(
     claude_token: Optional[str],
     vault_path: object,
 ) -> Optional[str]:
-    """Pre-hook: runs before the chat agent.
+    """Pre-hook: runs before the chat agent. Returns context string or None.
 
-    Returns a context string to inject into the system prompt, or None.
     Never raises — bridge failure must not crash the chat flow.
     """
     if brain is None:
         return None
 
     try:
-        # Short-circuit: skip bridge for very short messages (< 5 words)
         if len(message.split()) < 5:
             logger.info("Bridge enrich: short message, skipping")
             return None
@@ -196,7 +276,7 @@ async def enrich(
             return "_Brain context: stepping back — you are directly querying your knowledge graph._"
 
         # judgment == "enrich"
-        queries = parsed.get("queries", [])[:3]  # max 3 queries
+        queries = parsed.get("queries", [])[:3]
         if not queries:
             return None
 
@@ -224,86 +304,179 @@ async def enrich(
         return None
 
 
-async def writeback(
+async def observe(
     session_id: str,
     message: str,
     result_text: str,
+    tool_calls: list[dict],
+    exchange_number: int,
+    session_title: Optional[str],
+    title_source: Optional[str],
     brain: Any,
+    database: object,
+    vault_path: Path,
     claude_token: Optional[str],
-    database: Any,
 ) -> None:
-    """Post-turn: fire-and-forget after chat agent response.
+    """Fire-and-forget post-turn observer. Replaces curator.observe().
 
-    Stores significant facts to brain and updates bridge_context_log.
+    Handles:
+    - Session metadata (title, summary, activity log) via MCP tools
+    - Brain fact storage via direct upsert calls
+
     Never raises.
     """
-    if brain is None:
-        return
-
     try:
-        truncated_user = message[:800] + ("... [truncated]" if len(message) > 800 else "")
-        truncated_response = result_text[:1500] + ("... [truncated]" if len(result_text) > 1500 else "")
-
-        prompt = (
-            f"User: {truncated_user}\n\n"
-            f"Assistant: {truncated_response}\n\n"
-            f"Should any facts from this exchange be stored in the knowledge graph?"
-        )
-
-        response_text = await _run_haiku(prompt, BRIDGE_WRITEBACK_PROMPT, claude_token)
-        parsed = _parse_haiku_json(response_text)
-
-        if not parsed or not parsed.get("should_store"):
-            logger.info(f"Bridge writeback: nothing to store for {session_id[:8]}")
+        session = await database.get_session(session_id)
+        if session is None:
+            logger.debug(f"Bridge observe: session {session_id[:8]} not found, skipping")
             return
 
-        entities = parsed.get("entities", [])
-        stored = []
+        bridge_session_id: Optional[str] = session.bridge_session_id
 
-        for entity in entities:
-            entity_type = entity.get("entity_type", "").strip()
-            name = entity.get("name", "").strip()
-            description = entity.get("description", "").strip()
+        # Build title / summary notes
+        if title_source == "user":
+            title_note = f"Current title: {session_title!r} (user-set — do NOT call update_title)"
+        elif session_title:
+            title_note = f"Current title: {session_title!r} (AI-set — update only if more accurate)"
+        else:
+            title_note = "Current title: not yet set"
 
-            if not entity_type or not name:
-                continue
+        current_summary = session.summary
+        summary_note = (
+            f"Current summary: {current_summary}" if current_summary else "Current summary: not yet set"
+        )
 
-            try:
-                await brain.upsert_entity(
-                    entity_type=entity_type,
-                    name=name,
-                    attributes={"description": description} if description else {},
-                )
-                stored.append({"type": entity_type, "name": name})
-                logger.info(f"Bridge writeback: stored {entity_type}/{name!r}")
-            except Exception as e:
-                logger.warning(f"Bridge writeback: upsert failed for {name!r}: {e}")
+        tools_str = _summarize_tool_calls(tool_calls)
+        truncated_user = message[:1000] + ("... [truncated]" if len(message) > 1000 else "")
+        truncated_response = result_text[:2000] + ("... [truncated]" if len(result_text) > 2000 else "")
 
-        if stored:
-            # Append to session's bridge_context_log
-            session = await database.get_session(session_id)
-            if session:
-                from parachute.models.session import SessionUpdate
+        prompt = (
+            f"Observe exchange #{exchange_number} and update session context.\n\n"
+            f"{title_note}\n"
+            f"{summary_note}\n\n"
+            f"---\n"
+            f"User: {truncated_user}\n\n"
+            f"Tools used: {tools_str}\n"
+            f"Assistant: {truncated_response}\n"
+            f"---\n\n"
+            f"Call log_activity for this exchange, update title/summary if needed, "
+            f"then output a BRAIN_FACTS JSON block."
+        )
 
+        # MCP server for session metadata tools (reuses curator_mcp module)
+        mcp_servers = {
+            "bridge": {
+                "command": sys.executable,
+                "args": [
+                    "-m", "parachute.core.curator_mcp",
+                    "--session-id", session_id,
+                    "--vault-path", str(vault_path),
+                ],
+            }
+        }
+
+        new_session_id: Optional[str] = None
+        tool_calls_made: list[str] = []
+        new_title: Optional[str] = None
+        text_parts: list[str] = []
+
+        async for event in query_streaming(
+            prompt=prompt,
+            system_prompt=BRIDGE_OBSERVE_PROMPT,
+            model="claude-haiku-4-5-20251001",
+            use_claude_code_preset=False,
+            resume=bridge_session_id,
+            mcp_servers=mcp_servers,
+            setting_sources=[],
+            tools=[],
+            permission_mode="bypassPermissions",
+            claude_token=claude_token,
+        ):
+            if (
+                event.get("type") == "system"
+                and event.get("session_id")
+                and not bridge_session_id
+            ):
+                new_session_id = event["session_id"]
+
+            if event.get("type") == "assistant" and event.get("message"):
+                for block in event["message"].get("content", []):
+                    if isinstance(block, dict) and block.get("type") == "tool_use":
+                        tool_name = block.get("name", "")
+                        # Strip mcp__bridge__ prefix
+                        short_name = tool_name.removeprefix("mcp__bridge__") if tool_name else ""
+                        if short_name:
+                            tool_calls_made.append(short_name)
+                            if short_name == "update_title":
+                                new_title = (block.get("input") or {}).get("title")
+                    elif isinstance(block, dict) and block.get("type") == "text":
+                        text_parts.append(block["text"])
+
+            elif event.get("type") == "result" and event.get("result"):
+                text_parts.append(event["result"])
+
+        # Parse brain facts from the text response
+        full_text = "".join(text_parts)
+        brain_facts = _parse_brain_facts(full_text)
+
+        # Store brain facts if any
+        stored_entities: list[dict] = []
+        if brain_facts and brain and brain_facts.get("should_store"):
+            for entity in brain_facts.get("entities", []):
+                entity_type = entity.get("entity_type", "").strip()
+                name = entity.get("name", "").strip()
+                description = entity.get("description", "").strip()
+                if not entity_type or not name:
+                    continue
+                try:
+                    await brain.upsert_entity(
+                        entity_type=entity_type,
+                        name=name,
+                        attributes={"description": description} if description else {},
+                    )
+                    stored_entities.append({"type": entity_type, "name": name})
+                    logger.info(f"Bridge observe: stored {entity_type}/{name!r}")
+                except Exception as e:
+                    logger.warning(f"Bridge observe: upsert failed for {name!r}: {e}")
+
+        # Persist bridge_session_id, metadata, and bridge_context_log
+        refreshed = await database.get_session(session_id)
+        if refreshed:
+            from parachute.models.session import SessionUpdate
+
+            fresh_meta = dict(refreshed.metadata or {})
+            fresh_meta["bridge_last_run"] = {
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "exchange_number": exchange_number,
+                "actions": tool_calls_made,
+                "new_title": new_title,
+                "brain_stored": len(stored_entities),
+            }
+            update = SessionUpdate(metadata=fresh_meta)
+            if new_session_id:
+                update.bridge_session_id = new_session_id
+
+            if stored_entities:
                 existing_log: list[dict] = []
-                if session.bridge_context_log:
+                if refreshed.bridge_context_log:
                     try:
-                        existing_log = json.loads(session.bridge_context_log)
+                        existing_log = json.loads(refreshed.bridge_context_log)
                     except (json.JSONDecodeError, ValueError):
                         pass
-
                 existing_log.append({
                     "ts": datetime.now(timezone.utc).isoformat(),
                     "type": "writeback",
-                    "stored": stored,
+                    "stored": stored_entities,
                 })
+                update.bridge_context_log = json.dumps(existing_log)
 
-                await database.update_session(
-                    session_id,
-                    SessionUpdate(bridge_context_log=json.dumps(existing_log)),
-                )
+            await database.update_session(session_id, update)
 
-        logger.info(f"Bridge writeback: stored {len(stored)} entities for {session_id[:8]}")
+        logger.info(
+            f"Bridge observe ran for {session_id[:8]}: "
+            f"exchange={exchange_number}, actions={tool_calls_made}, "
+            f"brain_stored={len(stored_entities)}"
+        )
 
     except Exception as e:
-        logger.warning(f"Bridge writeback failed for {session_id[:8]}: {e}")
+        logger.warning(f"Bridge observe failed for {session_id[:8]}: {e}")

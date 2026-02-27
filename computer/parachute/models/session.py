@@ -229,11 +229,11 @@ class Session(BaseModel):
     summary: Optional[str] = Field(
         default=None, description="AI-generated session summary"
     )
-    curator_session_id: Optional[str] = Field(
+    bridge_session_id: Optional[str] = Field(
         default=None,
-        alias="curatorSessionId",
-        serialization_alias="curatorSessionId",
-        description="SDK session ID of this session's curator background agent",
+        alias="bridgeSessionId",
+        serialization_alias="bridgeSessionId",
+        description="SDK session ID of this session's bridge background agent",
     )
     bridge_context_log: Optional[str] = Field(
         default=None,
@@ -316,7 +316,7 @@ class SessionUpdate(BaseModel):
     trust_level: Optional[str] = None
     working_directory: Optional[str] = None
     workspace_id: Optional[str] = None
-    curator_session_id: Optional[str] = None
+    bridge_session_id: Optional[str] = None
     bridge_context_log: Optional[str] = None
 
 

@@ -1318,14 +1318,17 @@ class Orchestrator:
 
             duration_ms = int((time.time() - start_time) * 1000)
 
-            # Kick off curator as a fire-and-forget background task.
+            # Bridge agent post-turn observe: handles session metadata (title,
+            # summary, activity log) AND brain writeback in one fire-and-forget task.
             # Uses session.message_count (pre-increment) to compute exchange number.
             if final_session_id and final_session_id != "pending" and message and result_text:
-                from parachute.core.curator import observe as curator_observe
+                from parachute.core.bridge_agent import observe as bridge_observe
+                from parachute.core.interfaces import get_registry
                 exchange_number = session.message_count // 2 + 1
                 session_metadata = session.metadata or {}
+                _obs_brain = get_registry().get("BrainInterface")
                 asyncio.create_task(
-                    curator_observe(
+                    bridge_observe(
                         session_id=final_session_id,
                         message=message,
                         result_text=result_text,
@@ -1333,32 +1336,12 @@ class Orchestrator:
                         exchange_number=exchange_number,
                         session_title=session.title,
                         title_source=session_metadata.get("title_source"),
+                        brain=_obs_brain,
                         database=self.database,
                         vault_path=self.vault_path,
                         claude_token=self.settings.claude_code_oauth_token,
                     )
                 )
-
-            # Bridge agent post-turn writeback: store significant facts to brain.
-            # Fire-and-forget — never blocks the response.
-            if final_session_id and final_session_id != "pending" and message and result_text:
-                try:
-                    from parachute.core.interfaces import get_registry
-                    _wb_brain = get_registry().get("BrainInterface")
-                    if _wb_brain:
-                        from parachute.core.bridge_agent import writeback as bridge_writeback
-                        asyncio.create_task(
-                            bridge_writeback(
-                                session_id=final_session_id,
-                                message=message,
-                                result_text=result_text,
-                                brain=_wb_brain,
-                                claude_token=self.settings.claude_code_oauth_token,
-                                database=self.database,
-                            )
-                        )
-                except Exception as _wb_err:
-                    logger.debug(f"Bridge writeback setup error (non-fatal): {_wb_err}")
 
             # Yield done event
             yield DoneEvent(
