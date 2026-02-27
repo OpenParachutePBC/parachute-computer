@@ -1,9 +1,9 @@
 name: brain
-version: "1.0.0"
-description: "TerminusDB knowledge graph"
+version: "3.0.0"
+description: "LadybugDB embedded knowledge graph — agent-driven, no extraction pipeline"
 trust_level: vault
 provides:
   - BrainInterface
 dependencies:
-  - terminusdb-client>=10.2.0
+  - real-ladybug>=0.14.0
   - aiofiles>=23.0.0

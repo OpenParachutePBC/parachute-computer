@@ -1,10 +1,11 @@
 /// A Brain entity from the knowledge graph.
 ///
-/// Entities have an @id (IRI like "Person/Alice"), @type (entity type),
-/// and dynamic fields based on the schema definition.
+/// Entities have a name (primary key), entity_type (any string),
+/// and dynamic fields — always includes 'description', plus any
+/// type-specific fields added via brain_create_type.
 class BrainEntity {
-  final String id; // Entity IRI (e.g., "Person/Alice")
-  final String type; // Entity type (e.g., "Person")
+  final String id; // Entity name (primary key, e.g., "Kevin")
+  final String type; // Entity type string (e.g., "person", "project")
   final Map<String, dynamic> fields; // All entity data fields
 
   const BrainEntity({
@@ -14,16 +15,19 @@ class BrainEntity {
   });
 
   factory BrainEntity.fromJson(Map<String, dynamic> json) {
-    // TerminusDB uses '@id' and '@type' for system fields
-    final id = json['@id'] as String? ?? json['id'] as String? ?? '';
-    final type = json['@type'] as String? ?? json['type'] as String? ?? '';
+    // LadybugDB v3: flat shape — 'name' is primary key, 'entity_type' is the type label
+    final id = json['name'] as String? ?? '';
+    final type = json['entity_type'] as String? ?? '';
 
-    // All other fields are entity data
-    final fields = Map<String, dynamic>.from(json);
-    fields.remove('@id');
-    fields.remove('@type');
-    fields.remove('id');
-    fields.remove('type');
+    // Strip system fields — everything else is user data
+    final fields = Map<String, dynamic>.from(json)
+      ..remove('name')
+      ..remove('entity_type')
+      ..remove('created_at')
+      ..remove('updated_at');
+
+    // Drop null values so callers can check `field != null` reliably
+    fields.removeWhere((k, v) => v == null);
 
     return BrainEntity(
       id: id,
@@ -34,24 +38,14 @@ class BrainEntity {
 
   Map<String, dynamic> toJson() {
     return {
-      '@id': id,
-      '@type': type,
+      'name': id,
+      'entity_type': type,
       ...fields,
     };
   }
 
-  /// Get display name from 'name' or 'title' field, fallback to ID.
-  String get displayName {
-    final name = fields['name'] ?? fields['title'];
-    if (name != null) return name.toString();
-
-    // Fallback: extract name from IRI (e.g., "Person/Alice" -> "Alice")
-    if (id.contains('/')) {
-      return id.split('/').last;
-    }
-
-    return id;
-  }
+  /// The entity name is the primary key — use it directly as display name.
+  String get displayName => id.isNotEmpty ? id : 'Unnamed';
 
   /// Get tags if present.
   List<String> get tags {

@@ -220,8 +220,9 @@ class BrainEntityDetailScreen extends ConsumerWidget {
 
                     const SizedBox(height: 24),
 
-                    // All entity fields
-                    if (entitySchema != null)
+                    // Entity fields — use crystallized schema if defined,
+                    // otherwise show all non-empty fields directly (open ontology).
+                    if (entitySchema != null && entitySchema.fields.isNotEmpty)
                       ...entitySchema.fields.map((field) {
                         final value = entity[field.name];
                         return Padding(
@@ -261,7 +262,40 @@ class BrainEntityDetailScreen extends ConsumerWidget {
                             ],
                           ),
                         );
-                      }),
+                      })
+                    else
+                      // No crystallized schema — show all non-empty fields as plain text
+                      ...entity.fields.entries
+                          .where((e) => e.value != null && e.value.toString().isNotEmpty)
+                          .map((entry) => Padding(
+                            padding: const EdgeInsets.only(bottom: 20),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  entry.key,
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                    color: isDark
+                                        ? BrandColors.nightTextSecondary
+                                        : BrandColors.driftwood,
+                                    letterSpacing: 0.5,
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                SelectableText(
+                                  entry.value.toString(),
+                                  style: TextStyle(
+                                    fontSize: 15,
+                                    color: isDark
+                                        ? BrandColors.nightText
+                                        : BrandColors.charcoal,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          )),
 
                     // Tags section
                     if (entity.tags.isNotEmpty) ...[

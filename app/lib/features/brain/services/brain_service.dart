@@ -23,26 +23,10 @@ class BrainService {
 
   /// List all available schemas.
   Future<List<BrainSchema>> listSchemas() async {
-    try {
-      final uri = Uri.parse('$baseUrl/api/brain/schemas');
-      final response = await _client
-          .get(uri, headers: _headers)
-          .timeout(_requestTimeout);
-
-      if (response.statusCode != 200) {
-        throw BrainException('Failed to fetch schemas: ${response.statusCode}');
-      }
-
-      final data = json.decode(response.body) as Map<String, dynamic>;
-      final schemas = (data['schemas'] as List<dynamic>? ?? [])
-          .map((s) => BrainSchema.fromJson(s as Map<String, dynamic>))
-          .toList();
-
-      return schemas;
-    } catch (e) {
-      if (e is BrainException) rethrow;
-      throw BrainException('Error fetching schemas: $e');
-    }
+    // Delegate to listSchemaTypes() which uses /types and parses fields as List.
+    // BrainSchemaDetail.fromJson handles the list format; toSchema() converts to BrainSchema.
+    final details = await listSchemaTypes();
+    return details.map((d) => d.toSchema()).toList();
   }
 
   /// Query entities by type with optional pagination.
