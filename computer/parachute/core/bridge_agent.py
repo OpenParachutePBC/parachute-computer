@@ -168,7 +168,7 @@ async def enrich(
     try:
         # Short-circuit: skip bridge for very short messages (< 5 words)
         if len(message.split()) < 5:
-            logger.debug("Bridge enrich: short message, pass-through")
+            logger.info("Bridge enrich: short message, skipping")
             return None
 
         summary_section = f"\nConversation summary: {session_summary}" if session_summary else ""
@@ -182,16 +182,17 @@ async def enrich(
         parsed = _parse_haiku_json(response_text)
 
         if not parsed:
-            logger.debug("Bridge enrich: failed to parse judgment, pass-through")
+            logger.warning("Bridge enrich: failed to parse Haiku judgment, pass-through")
             return None
 
         judgment = parsed.get("judgment", "pass_through")
-        logger.debug(f"Bridge enrich: judgment={judgment}")
+        logger.info(f"Bridge enrich: judgment={judgment}")
 
         if judgment == "pass_through":
             return None
 
         if judgment == "step_back":
+            logger.info("Bridge enrich: step-back — chat agent will query brain directly")
             return "_Brain context: stepping back — you are directly querying your knowledge graph._"
 
         # judgment == "enrich"
@@ -203,20 +204,23 @@ async def enrich(
         for q in queries:
             try:
                 bundle = await brain.recall(query=q, num_results=5)
-                if bundle.get("count", 0) > 0:
+                count = bundle.get("count", 0)
+                logger.info(f"Bridge enrich: query={q!r} -> {count} results")
+                if count > 0:
                     query_results.append(bundle)
             except Exception as e:
-                logger.debug(f"Bridge enrich: recall failed for {q!r}: {e}")
+                logger.warning(f"Bridge enrich: recall failed for {q!r}: {e}")
 
         if not query_results:
+            logger.info("Bridge enrich: no results found, pass-through")
             return None
 
         block = _format_context_block(query_results)
-        logger.debug(f"Bridge enrich: injecting {len(block)} chars of context")
+        logger.info(f"Bridge enrich: injecting {len(block)} chars of brain context")
         return block or None
 
     except Exception as e:
-        logger.debug(f"Bridge enrich failed: {e}")
+        logger.warning(f"Bridge enrich failed (non-fatal): {e}")
         return None
 
 
@@ -250,7 +254,7 @@ async def writeback(
         parsed = _parse_haiku_json(response_text)
 
         if not parsed or not parsed.get("should_store"):
-            logger.debug(f"Bridge writeback: nothing to store for {session_id[:8]}")
+            logger.info(f"Bridge writeback: nothing to store for {session_id[:8]}")
             return
 
         entities = parsed.get("entities", [])
@@ -271,9 +275,9 @@ async def writeback(
                     attributes={"description": description} if description else {},
                 )
                 stored.append({"type": entity_type, "name": name})
-                logger.debug(f"Bridge writeback: stored {entity_type}/{name}")
+                logger.info(f"Bridge writeback: stored {entity_type}/{name!r}")
             except Exception as e:
-                logger.debug(f"Bridge writeback: upsert failed for {name!r}: {e}")
+                logger.warning(f"Bridge writeback: upsert failed for {name!r}: {e}")
 
         if stored:
             # Append to session's bridge_context_log
@@ -299,7 +303,7 @@ async def writeback(
                     SessionUpdate(bridge_context_log=json.dumps(existing_log)),
                 )
 
-        logger.debug(f"Bridge writeback: stored {len(stored)} entities for {session_id[:8]}")
+        logger.info(f"Bridge writeback: stored {len(stored)} entities for {session_id[:8]}")
 
     except Exception as e:
-        logger.debug(f"Bridge writeback failed for {session_id[:8]}: {e}")
+        logger.warning(f"Bridge writeback failed for {session_id[:8]}: {e}")

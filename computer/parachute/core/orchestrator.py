@@ -1073,9 +1073,11 @@ class Orchestrator:
                     )
                     if _bridge_ctx:
                         effective_prompt = (effective_prompt or "") + "\n\n" + _bridge_ctx
-                        logger.debug(f"Bridge: injected {len(_bridge_ctx)} chars into system prompt")
+                        logger.info(f"Bridge: injected {len(_bridge_ctx)} chars of brain context into system prompt")
+                else:
+                    logger.debug("Bridge: brain not available, skipping enrich")
             except Exception as _bridge_err:
-                logger.debug(f"Bridge enrich error (non-fatal): {_bridge_err}")
+                logger.warning(f"Bridge enrich error (non-fatal): {_bridge_err}")
 
             async for event in query_streaming(
                 prompt=actual_message,
