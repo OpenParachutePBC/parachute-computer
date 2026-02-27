@@ -20,7 +20,7 @@ import '../../settings/models/trust_level.dart';
 import '../../settings/screens/settings_screen.dart';
 import '../providers/workspace_providers.dart' show activeWorkspaceProvider;
 import '../widgets/workspace_chip_row.dart';
-import '../widgets/curator_session_viewer_sheet.dart';
+import '../widgets/bridge_session_viewer_sheet.dart';
 
 /// Main chat screen for AI conversations
 ///
@@ -431,7 +431,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                       ),
                     ),
                   PopupMenuItem(
-                    value: 'curator',
+                    value: 'bridge',
                     child: Row(
                       children: [
                         Icon(
@@ -440,7 +440,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                           color: BrandColors.turquoise,
                         ),
                         const SizedBox(width: Spacing.sm),
-                        const Text('Curator'),
+                        const Text('Bridge'),
                       ],
                     ),
                   ),
@@ -530,12 +530,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                 onSelected: (value) => _handleMenuAction(value, chatState.sessionId!),
                 itemBuilder: (context) => [
                   PopupMenuItem(
-                    value: 'curator',
+                    value: 'bridge',
                     child: Row(
                       children: [
                         Icon(Icons.auto_fix_high, size: 20, color: BrandColors.turquoise),
                         const SizedBox(width: Spacing.sm),
-                        const Text('Curator'),
+                        const Text('Bridge'),
                       ],
                     ),
                   ),
@@ -1347,9 +1347,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       case 'refresh':
         ref.read(chatMessagesProvider.notifier).refreshSession();
         break;
-      case 'curator':
+      case 'bridge':
         if (mounted) {
-          await CuratorSessionViewerSheet.show(context, sessionId);
+          await BridgeSessionViewerSheet.show(context, sessionId);
         }
         break;
       case 'archive':

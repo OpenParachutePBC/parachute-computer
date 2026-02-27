@@ -1,25 +1,25 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
-import '../providers/curator_providers.dart';
+import '../providers/bridge_providers.dart';
 import '../providers/chat_session_providers.dart';
-import 'curator_session_viewer_sheet.dart';
+import 'bridge_session_viewer_sheet.dart';
 
-/// A small chip in the chat header that shows what the curator did last.
+/// A small chip in the chat header that shows what the bridge agent did last.
 ///
-/// Tapping opens the full [CuratorSessionViewerSheet] with the curator's
+/// Tapping opens the full [BridgeSessionViewerSheet] with the bridge agent's
 /// conversation history and last-run summary.
-class CuratorChip extends ConsumerWidget {
-  const CuratorChip({super.key});
+class BridgeChip extends ConsumerWidget {
+  const BridgeChip({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final lastRun = ref.watch(curatorLastRunProvider);
+    final lastRun = ref.watch(bridgeLastRunProvider);
     final sessionId = ref.watch(currentSessionIdProvider);
     if (lastRun == null || sessionId == null) return const SizedBox.shrink();
 
     return GestureDetector(
-      onTap: () => CuratorSessionViewerSheet.show(context, sessionId),
+      onTap: () => BridgeSessionViewerSheet.show(context, sessionId),
       child: Container(
         margin: const EdgeInsets.only(right: Spacing.xs),
         padding: const EdgeInsets.symmetric(
