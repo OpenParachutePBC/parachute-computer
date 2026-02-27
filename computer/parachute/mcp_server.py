@@ -570,6 +570,69 @@ TOOLS = [
             "required": ["query_id"],
         },
     ),
+    Tool(
+        name="brain_add_episode",
+        description=(
+            "Ingest text as an episode into the knowledge graph. "
+            "Graphiti's LLM extracts Person, Project, Area, and Topic entities automatically. "
+            "Use this as the primary way to contribute knowledge to Brain."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Short title for this episode (e.g. 'Journal 2026-02-25 morning')",
+                },
+                "episode_body": {
+                    "type": "string",
+                    "description": "Text content to extract entities from",
+                },
+                "source_description": {
+                    "type": "string",
+                    "description": "Where this text comes from (e.g. 'Daily journal', 'Chat session')",
+                },
+                "reference_time": {
+                    "type": "string",
+                    "description": "ISO 8601 timestamp for temporal anchoring. Defaults to now.",
+                },
+            },
+            "required": ["name", "episode_body", "source_description"],
+        },
+    ),
+    Tool(
+        name="brain_search",
+        description=(
+            "Hybrid search (semantic + BM25) over the Brain knowledge graph. "
+            "Returns matching facts and relationships. "
+            "Preferred over brain_query_entities for natural language queries."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Natural language search query"},
+                "num_results": {
+                    "type": "integer",
+                    "description": "Maximum results (default 10, max 50)",
+                    "minimum": 1,
+                    "maximum": 50,
+                },
+            },
+            "required": ["query"],
+        },
+    ),
+    Tool(
+        name="brain_cypher_query",
+        description="Execute a raw Cypher query against the Brain Kuzu graph database.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Cypher query string"},
+                "params": {"type": "object", "description": "Optional query parameters"},
+            },
+            "required": ["query"],
+        },
+    ),
 ]
 
 
@@ -1289,6 +1352,23 @@ async def handle_tool_call(name: str, arguments: dict[str, Any]) -> str:
         elif name == "brain_delete_saved_query":
             query_id = urllib.parse.quote(arguments["query_id"], safe="")
             result = await _brain_call("delete", f"/queries/{query_id}")
+        elif name == "brain_add_episode":
+            result = await _brain_call("post", "/episodes", json={
+                "name": arguments["name"],
+                "episode_body": arguments["episode_body"],
+                "source_description": arguments["source_description"],
+                **({} if "reference_time" not in arguments else {"reference_time": arguments["reference_time"]}),
+            })
+        elif name == "brain_search":
+            result = await _brain_call("post", "/search", json={
+                "query": arguments["query"],
+                "num_results": arguments.get("num_results", 10),
+            })
+        elif name == "brain_cypher_query":
+            result = await _brain_call("post", "/cypher", json={
+                "query": arguments["query"],
+                "params": arguments.get("params"),
+            })
         else:
             return json.dumps({"error": f"Unknown tool: {name}"})
 

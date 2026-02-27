@@ -1,9 +1,10 @@
 name: brain
-version: "1.0.0"
-description: "TerminusDB knowledge graph"
+version: "2.0.0"
+description: "Graphiti + Kuzu temporal knowledge graph with LLM entity extraction"
 trust_level: vault
 provides:
   - BrainInterface
 dependencies:
-  - terminusdb-client>=10.2.0
+  - graphiti-core[anthropic,google-genai]>=0.28.0
+  - kuzu>=0.11.0
   - aiofiles>=23.0.0
