@@ -1,20 +1,17 @@
 """
 Brain Bridge Agent — Unified pre/post-turn context agent.
 
-Replaces the curator. Handles everything in a single background agent:
-
 Pre-turn (enrich) — awaited before the chat agent:
   - Haiku judges: enrich / step-back / pass-through
-  - If enriching: translates message references → brain queries, injects context
+  - If enriching: translates explicit personal references → brain queries, injects context
 
 Post-turn (observe) — fire-and-forget after the chat agent responds:
   - Session metadata: title, summary, activity log (via MCP tools — agent-native)
-  - Brain writeback: stores significant facts as entities
+  - Brain writes are intentional only — the main chat agent calls brain MCP tools directly
 
 Key design:
-- One bridge_session_id per chat session (continuity across turns, like curator had)
+- One bridge_session_id per chat session (continuity across turns)
 - MCP tools for session metadata (visible as tool calls in transcripts)
-- Direct brain calls for knowledge graph writes
 - Never raises — all failures are logged and swallowed
 """
 
@@ -31,41 +28,28 @@ logger = logging.getLogger(__name__)
 
 # ── Prompts ──────────────────────────────────────────────────────────────────
 
-BRIDGE_ENRICH_PROMPT = """You are a context enrichment assistant. Evaluate the user message and conversation summary below.
+BRIDGE_ENRICH_PROMPT = """You are a context enrichment pre-processor. Evaluate whether the user message contains an explicit reference to a specific person, project, organization, or commitment that might be in their knowledge graph.
 
 Make ONE judgment:
-- ENRICH: The user is making a request the chat agent will handle. You should translate vague references
-  into specific brain search queries to load relevant context.
-- STEP_BACK: The user explicitly wants to query or explore their brain/knowledge graph directly.
-  The chat agent will do this intentionally. Do not pre-load context.
-- PASS_THROUGH: Normal conversation with no brain involvement needed.
+- ENRICH: The message explicitly names a person, project, org, or commitment (e.g. "Kevin", "Woven Web", "the LVB cohort"). Generate 1-2 short keyword search queries to retrieve relevant context.
+- STEP_BACK: The user is explicitly asking to search or explore their brain/knowledge graph directly. The chat agent will handle this intentionally.
+- PASS_THROUGH: Everything else — general conversation, coding help, questions, tasks without personal references.
 
-If ENRICH: provide 1-3 short keyword search queries (not full sentences — keyword phrases work best).
+When in doubt, use PASS_THROUGH. Do not enrich on vague or generic messages.
+
+If ENRICH: provide 1-2 short keyword search queries (keyword phrases, not full sentences).
 If STEP_BACK or PASS_THROUGH: provide no queries.
 
 Respond in JSON only (no markdown fences):
 {"judgment": "enrich|step_back|pass_through", "queries": ["query1", "query2"]}"""
 
-BRIDGE_OBSERVE_PROMPT = """You are a background observer for a conversation. After each exchange, you have two responsibilities.
+BRIDGE_OBSERVE_PROMPT = """You are a background observer for a conversation. After each exchange, update the session metadata using your tools.
 
-**1. Session metadata** — use your MCP tools:
-- update_title: Set a concise 3-8 word title capturing the main topic.
-  Call when: title not yet set, or you have a meaningfully more accurate one.
-  Do NOT call if the title was set by the user, or if the current AI-set title is already accurate.
-- update_summary: Write 1-3 sentences summarizing what has been discussed and accomplished so far.
-  Call when: no summary yet, or current summary no longer reflects the conversation. Skip if up to date.
+- update_title: Set a concise 3-8 word title capturing the main topic. Call when the title is not yet set, or you have a meaningfully more accurate one. Do NOT call if the title was set by the user.
+- update_summary: Write 1-3 sentences summarizing what has been discussed and accomplished so far. Call when no summary exists, or the current one is outdated. Skip if already accurate.
 - log_activity: Always call. Write 1-2 sentences about what happened in this specific exchange.
 
-**2. Brain facts** — after calling MCP tools, output a JSON block:
-If something significant was said (commitment, decision, new fact about a person/project/entity/place):
-BRAIN_FACTS: {"should_store": true, "entities": [{"entity_type": "...", "name": "...", "description": "..."}]}
-If nothing significant:
-BRAIN_FACTS: {"should_store": false}
-
-Guidelines:
-- Be concise and factual — focus on what matters for future context
-- Only store clear, durable facts — not conversational filler or ephemeral details
-- If the exchange was trivial (e.g. "thanks", "ok"), a minimal log entry is fine; skip title/summary updates"""
+Be concise. If the exchange was trivial (e.g. "thanks", "ok"), a brief log entry is enough — skip title/summary updates."""
 
 # ── Token budget ──────────────────────────────────────────────────────────────
 
@@ -217,17 +201,6 @@ def _short_path(path: str) -> str:
     return "/".join(parts[-2:]) if len(parts) > 1 else parts[-1]
 
 
-def _parse_brain_facts(text: str) -> Optional[dict[str, Any]]:
-    """Extract BRAIN_FACTS JSON block from observe() response text."""
-    if "BRAIN_FACTS:" not in text:
-        return None
-    try:
-        json_part = text.split("BRAIN_FACTS:", 1)[1].strip()
-        # Grab up to first blank line to avoid trailing junk
-        json_part = json_part.split("\n\n")[0].strip()
-        return json.loads(json_part)
-    except (json.JSONDecodeError, ValueError, IndexError):
-        return None
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -312,16 +285,14 @@ async def observe(
     exchange_number: int,
     session_title: Optional[str],
     title_source: Optional[str],
-    brain: Any,
     database: object,
     vault_path: Path,
     claude_token: Optional[str],
 ) -> None:
-    """Fire-and-forget post-turn observer. Replaces curator.observe().
+    """Fire-and-forget post-turn observer.
 
-    Handles:
-    - Session metadata (title, summary, activity log) via MCP tools
-    - Brain fact storage via direct upsert calls
+    Handles session metadata (title, summary, activity log) via MCP tools.
+    Brain writes are intentional only — the main chat agent calls brain MCP tools directly.
 
     Never raises.
     """
@@ -415,31 +386,7 @@ async def observe(
             elif event.get("type") == "result" and event.get("result"):
                 text_parts.append(event["result"])
 
-        # Parse brain facts from the text response
-        full_text = "".join(text_parts)
-        brain_facts = _parse_brain_facts(full_text)
-
-        # Store brain facts if any
-        stored_entities: list[dict] = []
-        if brain_facts and brain and brain_facts.get("should_store"):
-            for entity in brain_facts.get("entities", []):
-                entity_type = entity.get("entity_type", "").strip()
-                name = entity.get("name", "").strip()
-                description = entity.get("description", "").strip()
-                if not entity_type or not name:
-                    continue
-                try:
-                    await brain.upsert_entity(
-                        entity_type=entity_type,
-                        name=name,
-                        attributes={"description": description} if description else {},
-                    )
-                    stored_entities.append({"type": entity_type, "name": name})
-                    logger.info(f"Bridge observe: stored {entity_type}/{name!r}")
-                except Exception as e:
-                    logger.warning(f"Bridge observe: upsert failed for {name!r}: {e}")
-
-        # Persist bridge_session_id, metadata, and bridge_context_log
+        # Persist bridge_session_id and bridge_last_run metadata
         refreshed = await database.get_session(session_id)
         if refreshed:
             from parachute.models.session import SessionUpdate
@@ -450,32 +397,16 @@ async def observe(
                 "exchange_number": exchange_number,
                 "actions": tool_calls_made,
                 "new_title": new_title,
-                "brain_stored": len(stored_entities),
             }
             update = SessionUpdate(metadata=fresh_meta)
             if new_session_id:
                 update.bridge_session_id = new_session_id
 
-            if stored_entities:
-                existing_log: list[dict] = []
-                if refreshed.bridge_context_log:
-                    try:
-                        existing_log = json.loads(refreshed.bridge_context_log)
-                    except (json.JSONDecodeError, ValueError):
-                        pass
-                existing_log.append({
-                    "ts": datetime.now(timezone.utc).isoformat(),
-                    "type": "writeback",
-                    "stored": stored_entities,
-                })
-                update.bridge_context_log = json.dumps(existing_log)
-
             await database.update_session(session_id, update)
 
         logger.info(
             f"Bridge observe ran for {session_id[:8]}: "
-            f"exchange={exchange_number}, actions={tool_calls_made}, "
-            f"brain_stored={len(stored_entities)}"
+            f"exchange={exchange_number}, actions={tool_calls_made}"
         )
 
     except Exception as e:

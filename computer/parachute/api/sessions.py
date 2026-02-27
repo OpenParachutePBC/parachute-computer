@@ -535,11 +535,9 @@ async def trigger_bridge(request: Request, session_id: str) -> dict[str, Any]:
     settings = request.app.state.settings
 
     from parachute.core.bridge_agent import observe as bridge_observe
-    from parachute.core.interfaces import get_registry
 
     session_metadata = session.metadata or {}
     exchange_number = max(1, (session.message_count or 2) // 2)
-    brain = get_registry().get("BrainInterface")
 
     asyncio.create_task(
         bridge_observe(
@@ -550,7 +548,6 @@ async def trigger_bridge(request: Request, session_id: str) -> dict[str, Any]:
             exchange_number=exchange_number,
             session_title=session.title,
             title_source=session_metadata.get("title_source"),
-            brain=brain,
             database=db,
             vault_path=orchestrator.vault_path,
             claude_token=settings.claude_code_oauth_token if settings else None,
