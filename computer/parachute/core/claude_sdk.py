@@ -248,10 +248,15 @@ async def query_streaming(
     if model:
         options_kwargs["model"] = model
 
-    # Build env vars for the SDK subprocess
-    # Always clear CLAUDECODE to prevent "nested session" detection when the
-    # server itself runs inside Claude Code (e.g. during development).
-    sdk_env: dict[str, str] = {"CLAUDECODE": ""}
+    # Build env vars for the SDK subprocess.
+    # Inherit the full process environment so the CLI (and any MCP server
+    # subprocesses it spawns) get PATH, HOME, PYTHONPATH, etc.
+    # Then override/add the specific vars we need.
+    import os
+    sdk_env: dict[str, str] = dict(os.environ)
+    # Clear CLAUDECODE to prevent "nested session" detection when the server
+    # itself runs inside Claude Code (e.g. during development).
+    sdk_env["CLAUDECODE"] = ""
     if claude_token:
         sdk_env["CLAUDE_CODE_OAUTH_TOKEN"] = claude_token
     options_kwargs["env"] = sdk_env

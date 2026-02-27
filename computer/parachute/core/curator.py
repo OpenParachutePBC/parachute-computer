@@ -188,7 +188,6 @@ async def observe(
                     "--session-id", session_id,
                     "--vault-path", str(vault_path),
                 ],
-                "env": {},
             }
         }
 
