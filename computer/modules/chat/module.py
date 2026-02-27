@@ -54,12 +54,12 @@ class ChatModule:
             "sdk_session_dir": str(self.vault_path / ".claude"),
         }
 
-    def search_brain_context(self, query: str) -> list[dict]:
+    async def search_brain_context(self, query: str) -> list[dict]:
         """Search Brain entities for chat context enrichment."""
         brain = self._get_brain()
         if not brain:
             return []
-        return brain.search(query)
+        return await brain.search(query)
 
     def get_router(self) -> Optional[APIRouter]:
         """Return None - core chat routes are already registered globally.
