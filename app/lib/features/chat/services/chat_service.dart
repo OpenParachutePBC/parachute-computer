@@ -31,6 +31,7 @@ part 'chat_server_import_service.dart';
 part 'chat_claude_code_service.dart';
 part 'chat_prompt_service.dart';
 part 'chat_migration_service.dart';
+part 'chat_settings_service.dart';
 
 /// Service for communicating with the parachute-base backend
 ///

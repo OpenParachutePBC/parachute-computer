@@ -25,6 +25,7 @@ import '../widgets/workspace_management_section.dart';
 import '../widgets/about_section.dart';
 import '../widgets/settings_card.dart';
 import 'capabilities_screen.dart';
+import 'instructions_screen.dart';
 import 'package:parachute/core/providers/supervisor_providers.dart';
 
 /// Unified Settings screen for Parachute
@@ -184,6 +185,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           // Capabilities Section (Agents, Skills, MCP Servers)
           if (showFullModeSettings) ...[
             _CapabilitiesNavCard(isDark: isDark),
+            SizedBox(height: Spacing.sm),
+            _InstructionsNavCard(isDark: isDark),
             SizedBox(height: Spacing.xl),
           ],
 
@@ -281,6 +284,81 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
           SizedBox(height: Spacing.xxl),
         ],
+      ),
+    );
+  }
+}
+
+/// Navigation card that opens the Instructions & Prompts screen.
+class _InstructionsNavCard extends StatelessWidget {
+  final bool isDark;
+  const _InstructionsNavCard({required this.isDark});
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: () => Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const InstructionsScreen()),
+      ),
+      borderRadius: BorderRadius.circular(Radii.md),
+      child: Container(
+        padding: EdgeInsets.all(Spacing.lg),
+        decoration: BoxDecoration(
+          color: isDark
+              ? BrandColors.nightSurfaceElevated
+              : BrandColors.softWhite,
+          borderRadius: BorderRadius.circular(Radii.md),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: isDark ? 0.3 : 0.05),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            Icon(
+              Icons.tune_outlined,
+              size: 28,
+              color: isDark ? BrandColors.nightForest : BrandColors.forest,
+            ),
+            SizedBox(width: Spacing.md),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Instructions & Prompts',
+                    style: TextStyle(
+                      fontSize: TypographyTokens.titleMedium,
+                      fontWeight: FontWeight.w600,
+                      color: isDark
+                          ? BrandColors.nightText
+                          : BrandColors.charcoal,
+                    ),
+                  ),
+                  SizedBox(height: Spacing.xxs),
+                  Text(
+                    'Personal instructions & system prompt viewer',
+                    style: TextStyle(
+                      fontSize: TypographyTokens.bodySmall,
+                      color: isDark
+                          ? BrandColors.nightTextSecondary
+                          : BrandColors.driftwood,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Icon(
+              Icons.chevron_right,
+              color: isDark
+                  ? BrandColors.nightTextSecondary
+                  : BrandColors.driftwood,
+            ),
+          ],
+        ),
       ),
     );
   }
