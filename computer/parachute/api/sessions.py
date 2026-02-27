@@ -508,16 +508,16 @@ async def deny_permission(
 
 
 # =========================================================================
-# Curator
+# Bridge Agent
 # =========================================================================
 
 
-@router.post("/chat/{session_id}/curator/trigger")
-async def trigger_curator(request: Request, session_id: str) -> dict[str, Any]:
+@router.post("/chat/{session_id}/bridge/trigger")
+async def trigger_bridge(request: Request, session_id: str) -> dict[str, Any]:
     """
-    Manually trigger a curator run for a session.
+    Manually trigger a bridge agent observe run for a session.
 
-    Returns immediately with {"status": "queued"} — the curator runs
+    Returns immediately with {"status": "queued"} — the bridge runs
     fire-and-forget in the background. Useful for dev/testing and for
     users who want to force a context update.
     """
@@ -534,14 +534,15 @@ async def trigger_curator(request: Request, session_id: str) -> dict[str, Any]:
     orchestrator = get_orchestrator(request)
     settings = request.app.state.settings
 
-    from parachute.core.curator import observe as curator_observe
+    from parachute.core.bridge_agent import observe as bridge_observe
+    from parachute.core.interfaces import get_registry
 
     session_metadata = session.metadata or {}
-    # Use current message count to estimate exchange number
     exchange_number = max(1, (session.message_count or 2) // 2)
+    brain = get_registry().get("BrainInterface")
 
     asyncio.create_task(
-        curator_observe(
+        bridge_observe(
             session_id=session_id,
             message="(manual trigger — no specific exchange)",
             result_text="",
@@ -549,6 +550,7 @@ async def trigger_curator(request: Request, session_id: str) -> dict[str, Any]:
             exchange_number=exchange_number,
             session_title=session.title,
             title_source=session_metadata.get("title_source"),
+            brain=brain,
             database=db,
             vault_path=orchestrator.vault_path,
             claude_token=settings.claude_code_oauth_token if settings else None,
@@ -558,14 +560,14 @@ async def trigger_curator(request: Request, session_id: str) -> dict[str, Any]:
     return {"status": "queued", "sessionId": session_id}
 
 
-@router.get("/chat/{session_id}/curator/messages")
-async def get_curator_messages(request: Request, session_id: str) -> dict[str, Any]:
+@router.get("/chat/{session_id}/bridge/messages")
+async def get_bridge_messages(request: Request, session_id: str) -> dict[str, Any]:
     """
-    Load the curator's conversation transcript for a chat session.
+    Load the bridge agent's conversation transcript for a chat session.
 
-    Reads the curator SDK session's JSONL directly — the curator session is
+    Reads the bridge SDK session's JSONL directly — the bridge session is
     never stored in SQLite, so it won't appear in the chat list.
-    Returns 404 if no curator session exists yet.
+    Returns 404 if no bridge session exists yet.
     """
     db = request.app.state.database
     if not db:
@@ -575,16 +577,16 @@ async def get_curator_messages(request: Request, session_id: str) -> dict[str, A
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    curator_session_id = session.curator_session_id
-    if not curator_session_id:
-        raise HTTPException(status_code=404, detail="No curator session yet")
+    bridge_session_id = session.bridge_session_id
+    if not bridge_session_id:
+        raise HTTPException(status_code=404, detail="No bridge session yet")
 
     orchestrator = get_orchestrator(request)
     session_manager = orchestrator.session_manager
 
-    transcript_path = session_manager._find_sdk_transcript(curator_session_id)
+    transcript_path = session_manager._find_sdk_transcript(bridge_session_id)
     if not transcript_path or not transcript_path.exists():
-        raise HTTPException(status_code=404, detail="Curator transcript not found")
+        raise HTTPException(status_code=404, detail="Bridge transcript not found")
 
     messages = []
     try:

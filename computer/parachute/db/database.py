@@ -463,6 +463,37 @@ class Database:
             await self._connection.commit()
             logger.info("Added bridge_context_log column (v20)")
 
+        # v21: bridge_session_id replaces curator_session_id
+        async with self._connection.execute(
+            "SELECT version FROM schema_version WHERE version = 21"
+        ) as cursor:
+            row = await cursor.fetchone()
+        if not row:
+            try:
+                async with self._connection.execute(
+                    "SELECT bridge_session_id FROM sessions LIMIT 1"
+                ):
+                    pass  # Column exists
+            except Exception:
+                await self._connection.execute(
+                    "ALTER TABLE sessions ADD COLUMN bridge_session_id TEXT"
+                )
+                logger.info("Added bridge_session_id column to sessions")
+            # Backfill from curator_session_id for existing sessions
+            await self._connection.execute(
+                """
+                UPDATE sessions
+                SET bridge_session_id = curator_session_id
+                WHERE bridge_session_id IS NULL
+                  AND curator_session_id IS NOT NULL
+                """
+            )
+            await self._connection.execute(
+                "INSERT OR IGNORE INTO schema_version (version, applied_at) VALUES (21, datetime('now'))"
+            )
+            await self._connection.commit()
+            logger.info("Added bridge_session_id column (v21), backfilled from curator_session_id")
+
     async def close(self) -> None:
         """Close database connection."""
         if self._connection:
@@ -513,7 +544,7 @@ class Database:
         parent_session_id = getattr(session, 'parent_session_id', None)
         created_by = getattr(session, 'created_by', 'user')
 
-        curator_session_id = getattr(session, 'curator_session_id', None)
+        bridge_session_id = getattr(session, 'bridge_session_id', None)
         bridge_context_log = getattr(session, 'bridge_context_log', None)
 
         await self.connection.execute(
@@ -523,7 +554,7 @@ class Database:
                 message_count, archived, created_at, last_accessed,
                 continued_from, agent_type, trust_level,
                 linked_bot_platform, linked_bot_chat_id, linked_bot_chat_type,
-                workspace_id, parent_session_id, created_by, curator_session_id,
+                workspace_id, parent_session_id, created_by, bridge_session_id,
                 bridge_context_log, metadata
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
@@ -548,7 +579,7 @@ class Database:
                 workspace_id,
                 parent_session_id,
                 created_by,
-                curator_session_id,
+                bridge_session_id,
                 bridge_context_log,
                 metadata_json,
             ),
@@ -614,9 +645,9 @@ class Database:
             updates.append("workspace_id = ?")
             params.append(update.workspace_id)
 
-        if update.curator_session_id is not None:
-            updates.append("curator_session_id = ?")
-            params.append(update.curator_session_id)
+        if update.bridge_session_id is not None:
+            updates.append("bridge_session_id = ?")
+            params.append(update.bridge_session_id)
 
         if update.bridge_context_log is not None:
             updates.append("bridge_context_log = ?")
@@ -1323,7 +1354,7 @@ class Database:
             parent_session_id=row["parent_session_id"] if "parent_session_id" in keys else None,
             created_by=row["created_by"] if "created_by" in keys else "user",
             summary=row["summary"] if "summary" in keys else None,
-            curator_session_id=row["curator_session_id"] if "curator_session_id" in keys else None,
+            bridge_session_id=row["bridge_session_id"] if "bridge_session_id" in keys else None,
             bridge_context_log=row["bridge_context_log"] if "bridge_context_log" in keys else None,
             metadata=metadata,
         )
