@@ -629,7 +629,7 @@ async def get_bridge_messages(request: Request, session_id: str) -> dict[str, An
         raise HTTPException(status_code=500, detail=f"Error reading transcript: {e}") from e
 
     return {
-        "curatorSessionId": curator_session_id,
+        "bridgeSessionId": bridge_session_id,
         "messages": messages,
     }
 
