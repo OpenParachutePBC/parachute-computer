@@ -1,4 +1,4 @@
-import 'curator_run.dart';
+import 'bridge_run.dart';
 
 /// Source of a chat session
 enum ChatSource {
@@ -124,8 +124,8 @@ class ChatSession {
   /// Workspace slug this session belongs to
   final String? workspaceId;
 
-  /// SDK session ID of this session's curator background agent
-  final String? curatorSessionId;
+  /// SDK session ID of this session's bridge background agent
+  final String? bridgeSessionId;
 
   /// Additional metadata from the server (pending approval, pairing info, etc.)
   final Map<String, dynamic>? metadata;
@@ -148,11 +148,11 @@ class ChatSession {
   /// The first message sent by the unknown user
   String? get firstMessage => metadata?['first_message'] as String?;
 
-  /// The most recent curator run result, if curator has run for this session
-  CuratorRun? get curatorLastRun {
-    final raw = metadata?['curator_last_run'];
+  /// The most recent bridge run result, if the bridge has run for this session
+  BridgeRun? get bridgeLastRun {
+    final raw = metadata?['bridge_last_run'];
     if (raw == null || raw is! Map<String, dynamic>) return null;
-    return CuratorRun.fromJson(raw);
+    return BridgeRun.fromJson(raw);
   }
 
   const ChatSession({
@@ -175,7 +175,7 @@ class ChatSession {
     this.linkedBotChatId,
     this.linkedBotChatType,
     this.workspaceId,
-    this.curatorSessionId,
+    this.bridgeSessionId,
     this.metadata,
   });
 
@@ -215,7 +215,7 @@ class ChatSession {
       linkedBotChatId: json['linkedBotChatId'] as String? ?? json['linked_bot_chat_id'] as String?,
       linkedBotChatType: json['linkedBotChatType'] as String? ?? json['linked_bot_chat_type'] as String?,
       workspaceId: json['workspaceId'] as String? ?? json['workspace_id'] as String?,
-      curatorSessionId: json['curatorSessionId'] as String?,
+      bridgeSessionId: json['bridgeSessionId'] as String?,
       metadata: json['metadata'] as Map<String, dynamic>?,
     );
   }

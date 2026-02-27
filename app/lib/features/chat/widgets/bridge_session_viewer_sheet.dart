@@ -2,15 +2,15 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
-import '../models/curator_run.dart';
-import '../providers/curator_providers.dart';
+import '../models/bridge_run.dart';
+import '../providers/bridge_providers.dart';
 import '../providers/chat_session_providers.dart';
 
-/// Bottom sheet showing the curator's conversation with last run summary at the bottom.
-class CuratorSessionViewerSheet extends ConsumerStatefulWidget {
+/// Bottom sheet showing the bridge agent's conversation with last run summary at the bottom.
+class BridgeSessionViewerSheet extends ConsumerStatefulWidget {
   final String chatSessionId;
 
-  const CuratorSessionViewerSheet({
+  const BridgeSessionViewerSheet({
     super.key,
     required this.chatSessionId,
   });
@@ -21,30 +21,30 @@ class CuratorSessionViewerSheet extends ConsumerStatefulWidget {
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) =>
-          CuratorSessionViewerSheet(chatSessionId: chatSessionId),
+          BridgeSessionViewerSheet(chatSessionId: chatSessionId),
     );
   }
 
   @override
-  ConsumerState<CuratorSessionViewerSheet> createState() =>
-      _CuratorSessionViewerSheetState();
+  ConsumerState<BridgeSessionViewerSheet> createState() =>
+      _BridgeSessionViewerSheetState();
 }
 
-class _CuratorSessionViewerSheetState
-    extends ConsumerState<CuratorSessionViewerSheet> {
+class _BridgeSessionViewerSheetState
+    extends ConsumerState<BridgeSessionViewerSheet> {
   bool _isTriggering = false;
 
-  Future<void> _triggerCurator() async {
+  Future<void> _triggerBridge() async {
     setState(() => _isTriggering = true);
     try {
-      final trigger = ref.read(triggerCuratorProvider);
+      final trigger = ref.read(triggerBridgeProvider);
       await trigger(widget.chatSessionId);
       ref.invalidate(sessionWithMessagesProvider(widget.chatSessionId));
-      ref.invalidate(curatorMessagesProvider(widget.chatSessionId));
+      ref.invalidate(bridgeMessagesProvider(widget.chatSessionId));
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error triggering curator: $e')),
+          SnackBar(content: Text('Error triggering bridge: $e')),
         );
       }
     } finally {
@@ -55,9 +55,9 @@ class _CuratorSessionViewerSheetState
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final messagesAsync = ref.watch(curatorMessagesProvider(widget.chatSessionId));
+    final messagesAsync = ref.watch(bridgeMessagesProvider(widget.chatSessionId));
     final sessionAsync = ref.watch(sessionWithMessagesProvider(widget.chatSessionId));
-    final lastRun = sessionAsync.valueOrNull?.session.curatorLastRun;
+    final lastRun = sessionAsync.valueOrNull?.session.bridgeLastRun;
 
     return Container(
       constraints: BoxConstraints(
@@ -90,7 +90,7 @@ class _CuratorSessionViewerSheetState
                 Icon(Icons.auto_fix_high, size: 24, color: BrandColors.turquoise),
                 const SizedBox(width: Spacing.sm),
                 Text(
-                  'Curator',
+                  'Bridge',
                   style: TextStyle(
                     fontSize: TypographyTokens.titleLarge,
                     fontWeight: FontWeight.w600,
@@ -99,7 +99,7 @@ class _CuratorSessionViewerSheetState
                 ),
                 const Spacer(),
                 IconButton(
-                  onPressed: _isTriggering ? null : _triggerCurator,
+                  onPressed: _isTriggering ? null : _triggerBridge,
                   icon: _isTriggering
                       ? const SizedBox(
                           width: 20,
@@ -107,7 +107,7 @@ class _CuratorSessionViewerSheetState
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : Icon(Icons.play_arrow, color: BrandColors.turquoise),
-                  tooltip: 'Run curator now',
+                  tooltip: 'Run bridge now',
                 ),
                 IconButton(
                   onPressed: () => Navigator.pop(context),
@@ -129,8 +129,8 @@ class _CuratorSessionViewerSheetState
                 if (messages.isEmpty && lastRun == null) {
                   return _EmptyState(
                     icon: Icons.chat_bubble_outline,
-                    message: 'No curator conversation yet',
-                    detail: 'The curator will start after\nyour first chat message.',
+                    message: 'No bridge conversation yet',
+                    detail: 'The bridge will start after\nyour first chat message.',
                     isDark: isDark,
                   );
                 }
@@ -182,7 +182,7 @@ class _CuratorSessionViewerSheetState
 // ---------------------------------------------------------------------------
 
 class _MessageBubble extends StatefulWidget {
-  final CuratorMessage message;
+  final BridgeMessage message;
   final bool isDark;
 
   const _MessageBubble({required this.message, required this.isDark});
@@ -248,7 +248,7 @@ class _MessageBubbleState extends State<_MessageBubble> {
                   ),
                   const SizedBox(width: 4),
                   Text(
-                    isUser ? 'Context' : 'Curator',
+                    isUser ? 'Context' : 'Bridge',
                     style: TextStyle(
                       fontSize: TypographyTokens.labelSmall,
                       fontWeight: FontWeight.w500,
@@ -320,7 +320,7 @@ class _MessageBubbleState extends State<_MessageBubble> {
 // ---------------------------------------------------------------------------
 
 class _ToolCallChip extends StatefulWidget {
-  final CuratorToolCall tool;
+  final BridgeToolCall tool;
   final bool isDark;
 
   const _ToolCallChip({required this.tool, required this.isDark});
@@ -419,7 +419,7 @@ class _ToolCallChipState extends State<_ToolCallChip> {
 // ---------------------------------------------------------------------------
 
 class _LastRunCard extends StatelessWidget {
-  final CuratorRun run;
+  final BridgeRun run;
   final bool isDark;
 
   const _LastRunCard({required this.run, required this.isDark});

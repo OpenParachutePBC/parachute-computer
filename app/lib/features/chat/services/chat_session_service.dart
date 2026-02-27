@@ -133,55 +133,55 @@ extension ChatSessionService on ChatService {
     }
   }
 
-  /// Trigger a manual curator run for a session.
+  /// Trigger a manual bridge run for a session.
   ///
-  /// Returns immediately — the curator runs fire-and-forget on the server.
-  Future<void> triggerCurator(String sessionId) async {
+  /// Returns immediately — the bridge runs fire-and-forget on the server.
+  Future<void> triggerBridge(String sessionId) async {
     try {
       final response = await client.post(
-        Uri.parse('$baseUrl/api/chat/${Uri.encodeComponent(sessionId)}/curator/trigger'),
+        Uri.parse('$baseUrl/api/chat/${Uri.encodeComponent(sessionId)}/bridge/trigger'),
         headers: defaultHeaders,
       ).timeout(ChatService.requestTimeout);
 
       if (response.statusCode != 200) {
         throw NetworkError(
-          'Failed to trigger curator',
+          'Failed to trigger bridge',
           statusCode: response.statusCode,
         );
       }
     } on SocketException catch (e) {
-      debugPrint('[ChatService] Socket error triggering curator: $e');
+      debugPrint('[ChatService] Socket error triggering bridge: $e');
       throw ServerUnreachableError(cause: e);
     } on http.ClientException catch (e) {
-      debugPrint('[ChatService] HTTP client error triggering curator: $e');
-      throw NetworkError('Network error triggering curator', cause: e);
+      debugPrint('[ChatService] HTTP client error triggering bridge: $e');
+      throw NetworkError('Network error triggering bridge', cause: e);
     } on TimeoutException catch (e) {
-      debugPrint('[ChatService] Timeout triggering curator: $e');
+      debugPrint('[ChatService] Timeout triggering bridge: $e');
       throw ServerUnreachableError(cause: e);
     } catch (e) {
-      debugPrint('[ChatService] Error triggering curator: $e');
+      debugPrint('[ChatService] Error triggering bridge: $e');
       rethrow;
     }
   }
 
-  /// Fetch the curator's conversation messages for a session.
+  /// Fetch the bridge agent's conversation messages for a session.
   ///
-  /// The curator session is never stored in SQLite — messages are read
+  /// The bridge session is never stored in SQLite — messages are read
   /// directly from the JSONL transcript on the server side.
-  /// Returns an empty list if no curator session exists yet.
-  Future<List<Map<String, dynamic>>> getCuratorMessages(
+  /// Returns an empty list if no bridge session exists yet.
+  Future<List<Map<String, dynamic>>> getBridgeMessages(
       String sessionId) async {
     try {
       final response = await client.get(
         Uri.parse(
-            '$baseUrl/api/chat/${Uri.encodeComponent(sessionId)}/curator/messages'),
+            '$baseUrl/api/chat/${Uri.encodeComponent(sessionId)}/bridge/messages'),
         headers: defaultHeaders,
       ).timeout(ChatService.requestTimeout);
 
       if (response.statusCode == 404) return [];
       if (response.statusCode != 200) {
         throw NetworkError(
-          'Failed to get curator messages',
+          'Failed to get bridge messages',
           statusCode: response.statusCode,
         );
       }
@@ -189,13 +189,13 @@ extension ChatSessionService on ChatService {
       return (data['messages'] as List<dynamic>)
           .cast<Map<String, dynamic>>();
     } on SocketException catch (e) {
-      debugPrint('[ChatService] Socket error fetching curator messages: $e');
+      debugPrint('[ChatService] Socket error fetching bridge messages: $e');
       throw ServerUnreachableError(cause: e);
     } on TimeoutException catch (e) {
-      debugPrint('[ChatService] Timeout fetching curator messages: $e');
+      debugPrint('[ChatService] Timeout fetching bridge messages: $e');
       throw ServerUnreachableError(cause: e);
     } catch (e) {
-      debugPrint('[ChatService] Error fetching curator messages: $e');
+      debugPrint('[ChatService] Error fetching bridge messages: $e');
       rethrow;
     }
   }

@@ -363,12 +363,12 @@ async def observe(
             f"then output a BRAIN_FACTS JSON block."
         )
 
-        # MCP server for session metadata tools (reuses curator_mcp module)
+        # MCP server for session metadata tools
         mcp_servers = {
             "bridge": {
                 "command": sys.executable,
                 "args": [
-                    "-m", "parachute.core.curator_mcp",
+                    "-m", "parachute.core.bridge_mcp",
                     "--session-id", session_id,
                     "--vault-path", str(vault_path),
                 ],
