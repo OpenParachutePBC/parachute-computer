@@ -1072,8 +1072,8 @@ class Orchestrator:
                         vault_path=self.vault_path,
                     )
                     if _bridge_ctx:
-                        effective_prompt = (effective_prompt or "") + "\n\n" + _bridge_ctx
-                        logger.info(f"Bridge: injected {len(_bridge_ctx)} chars of brain context into system prompt")
+                        actual_message = f"<brain_context>\n{_bridge_ctx}\n</brain_context>\n\n{actual_message}"
+                        logger.info(f"Bridge: injected {len(_bridge_ctx)} chars of brain context into user message")
                 else:
                     logger.debug("Bridge: brain not available, skipping enrich")
             except Exception as _bridge_err:
@@ -1323,10 +1323,8 @@ class Orchestrator:
             # Uses session.message_count (pre-increment) to compute exchange number.
             if final_session_id and final_session_id != "pending" and message and result_text:
                 from parachute.core.bridge_agent import observe as bridge_observe
-                from parachute.core.interfaces import get_registry
                 exchange_number = session.message_count // 2 + 1
                 session_metadata = session.metadata or {}
-                _obs_brain = get_registry().get("BrainInterface")
                 asyncio.create_task(
                     bridge_observe(
                         session_id=final_session_id,
@@ -1336,7 +1334,6 @@ class Orchestrator:
                         exchange_number=exchange_number,
                         session_title=session.title,
                         title_source=session_metadata.get("title_source"),
-                        brain=_obs_brain,
                         database=self.database,
                         vault_path=self.vault_path,
                         claude_token=self.settings.claude_code_oauth_token,
