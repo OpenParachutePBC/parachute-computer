@@ -26,6 +26,13 @@ from parachute.core.claude_sdk import query_streaming
 
 logger = logging.getLogger(__name__)
 
+# ── Exchange truncation limits ────────────────────────────────────────────────
+
+_USER_MSG_LIMIT = 1000       # chars stored in user_message column
+_AI_RESP_LIMIT = 2000        # chars stored in ai_response column
+_DESC_USER_LIMIT = 300       # chars of user message in description (search target)
+_DESC_AI_LIMIT = 500         # chars of AI response in description (search target)
+
 # ── Prompts ──────────────────────────────────────────────────────────────────
 
 BRIDGE_ENRICH_PROMPT = """You are a context enrichment pre-processor. Evaluate whether the user message contains an explicit reference to a specific person, project, organization, or commitment that might be in their knowledge graph.
@@ -201,6 +208,44 @@ def _short_path(path: str) -> str:
     return "/".join(parts[-2:]) if len(parts) > 1 else parts[-1]
 
 
+
+
+# ── Exchange storage ─────────────────────────────────────────────────────────
+
+async def _store_exchange(
+    session_id: str,
+    exchange_number: int,
+    message: str,
+    result_text: str,
+    brain: Any,
+) -> None:
+    """Write this exchange to LadybugDB for long-term retrieval.
+
+    Stores a Chat_Exchange entity with truncated user message and AI response.
+    The description field packs a short snippet of both sides for text search.
+    Skips trivial exchanges (very short user message AND very short AI response).
+    """
+    if len(message.split()) < 3 and len(result_text.split()) < 10:
+        logger.debug("Bridge: skipping trivial exchange for storage")
+        return
+
+    exchange_name = f"{session_id[:8]}:ex:{exchange_number}"
+    user_snippet = message[:_DESC_USER_LIMIT]
+    ai_snippet = result_text[:_DESC_AI_LIMIT]
+    description = f"User: {user_snippet} | AI: {ai_snippet}"
+
+    await brain.upsert_entity(
+        entity_type="Chat_Exchange",
+        name=exchange_name,
+        attributes={
+            "description": description,
+            "session_id": session_id,
+            "exchange_number": str(exchange_number),
+            "user_message": message[:_USER_MSG_LIMIT],
+            "ai_response": result_text[:_AI_RESP_LIMIT],
+        },
+    )
+    logger.debug(f"Bridge: stored exchange {exchange_name}")
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -407,6 +452,21 @@ async def observe(
             f"Bridge observe ran for {session_id[:8]}: "
             f"exchange={exchange_number}, actions={tool_calls_made}"
         )
+
+        # Store exchange in LadybugDB for long-term retrieval
+        try:
+            from parachute.core.interfaces import get_registry
+            brain = get_registry().get("BrainInterface")
+            if brain:
+                await _store_exchange(
+                    session_id=session_id,
+                    exchange_number=exchange_number,
+                    message=message,
+                    result_text=result_text,
+                    brain=brain,
+                )
+        except Exception as store_err:
+            logger.debug(f"Bridge: exchange store failed (non-fatal): {store_err}")
 
     except Exception as e:
         logger.warning(f"Bridge observe failed for {session_id[:8]}: {e}")
