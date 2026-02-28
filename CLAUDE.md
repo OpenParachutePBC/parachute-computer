@@ -112,10 +112,10 @@ The app connects to the server at `localhost:3333`. Chat, Vault, and Brain featu
 
 The GitHub issue number is the handle that threads through the entire lifecycle:
 
-1. **Brainstorm** — Run `/para-brainstorm` to explore an idea collaboratively. Creates a GitHub issue and writes `**Issue:** #NN` back into the brainstorm file.
-2. **Pick up** — Run `/para-next` to find the next issue to work on.
-3. **Plan** — Run `/para-plan #NN` to create an implementation plan. The plan replaces the issue body and the label is swapped from `brainstorm` to `plan`.
-4. **Work** — Run `/para-work #NN` to implement. Creates a PR with `Closes #NN`.
+1. **Brainstorm** — Run `/brainstorm` to explore an idea collaboratively. Creates a GitHub issue and writes `**Issue:** #NN` back into the brainstorm file.
+2. **Pick up** — Run `/next` to find the next issue to work on.
+3. **Plan** — Run `/plan #NN` to create an implementation plan. The plan replaces the issue body and the label is swapped from `brainstorm` to `plan`.
+4. **Work** — Run `/work #NN` to implement. Creates a PR with `Closes #NN`.
 
 All commands accept `#NN` as input. The issue is the durable tracking artifact; local files (`docs/brainstorms/`, `docs/plans/`) are working documents linked by `issue:` in their frontmatter.
 
@@ -133,7 +133,7 @@ Workflow commands, research agents, review agents, and skills live in `.claude/`
 
 ```
 .claude/
-├── commands/             # /para-brainstorm, /para-plan, /para-work, etc.
+├── commands/             # /brainstorm, /plan, /work, etc.
 ├── agents/research/      # repo-research-analyst, best-practices, framework-docs, etc.
 ├── agents/review/        # security-sentinel, architecture-strategist, performance-oracle, etc.
 ├── agents/workflow/      # bug-reproduction-validator, pr-comment-resolver, spec-flow-analyzer

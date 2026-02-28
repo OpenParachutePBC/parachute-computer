@@ -176,6 +176,32 @@ Manage config via CLI: `parachute config show/set/get`.
 
 ---
 
+## Testing
+
+```bash
+# Run all unit tests (fast, no server needed)
+cd computer
+.venv/bin/python -m pytest tests/unit/ -x -q
+
+# Run a specific file
+.venv/bin/python -m pytest tests/unit/test_session_manager.py -q
+
+# Run with output on failure
+.venv/bin/python -m pytest tests/unit/ -x -s
+```
+
+**Always run tests before declaring work done.** If tests fail, fix them — don't skip.
+
+**When adding new code, add tests.** Test files mirror the source structure:
+- `parachute/core/foo.py` → `tests/unit/test_foo.py`
+- `modules/brain/bar.py` → `tests/unit/test_brain_bar.py`
+
+**Test the interface, not the internals.** Focus on: what does this function return given X input? Does the MCP tool return the right shape? Does the API endpoint respond correctly?
+
+**Known state (Feb 2026):** ~37 tests currently failing due to `TrustLevel` API rename (FULL→DIRECT, VAULT removed) and workspace model changes. These need to be updated — do not add more tests on top of broken ones without fixing the underlying drift first. Track via GitHub issue.
+
+---
+
 ## Gotchas
 
 - SDK session IDs are in SQLite, but transcripts are SDK-managed JSONL files

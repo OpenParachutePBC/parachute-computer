@@ -30,7 +30,7 @@ Issues with `brainstorm` label AND `P2`. Thought through, moderate priority.
 Issues with `bug` label. Fix what's broken.
 
 **Tier 4 — Enhancements without brainstorm**
-Issues with `enhancement` but no `brainstorm`. May need `/para-brainstorm` first.
+Issues with `enhancement` but no `brainstorm`. May need `/brainstorm` first.
 
 **Tier 5 — Needs thinking**
 Issues with `needs-thinking`. Not ready to build yet.
@@ -67,7 +67,7 @@ Use **AskUserQuestion tool** to ask:
 
 If the user picks an issue, check its labels to determine the right next step:
 
-- **Has `plan` label** → "This issue has a plan. Run `/para-work #NN` to start implementing."
-- **Has `brainstorm` label but no `plan`** → "This issue has a brainstorm but no plan yet. Run `/para-plan #NN` to create one."
-- **Has neither** → Ask: "This issue hasn't been brainstormed yet. Would you like to `/para-brainstorm` first, or jump to `/para-plan #NN`?"
+- **Has `plan` label** → "This issue has a plan. Run `/work #NN` to start implementing."
+- **Has `brainstorm` label but no `plan`** → "This issue has a brainstorm but no plan yet. Run `/plan #NN` to create one."
+- **Has neither** → Ask: "This issue hasn't been brainstormed yet. Would you like to `/brainstorm` first, or jump to `/plan #NN`?"
 - **User wants to read it** → Show the full issue body with `gh issue view NN`

@@ -8,7 +8,7 @@ argument-hint: ""
 
 **Note: The current year is 2026.**
 
-A fast local health check for development coherence. No agents, no external research — just `gh` CLI, grep, and find. Run this periodically to catch drift before it becomes a problem. Similar to `/para-next` (which finds work), this finds what's out of sync.
+A fast local health check for development coherence. No agents, no external research — just `gh` CLI, grep, and find. Run this periodically to catch drift before it becomes a problem. Similar to `/next` (which finds work), this finds what's out of sync.
 
 ## Checks
 
