@@ -330,8 +330,7 @@ async def observe(
             f"Tools used: {tools_str}\n"
             f"Assistant: {truncated_response}\n"
             f"---\n\n"
-            f"Call log_activity for this exchange, update title/summary if needed, "
-            f"then output a BRAIN_FACTS JSON block."
+            f"Call log_activity for this exchange, then update title/summary if needed."
         )
 
         # MCP server for session metadata tools

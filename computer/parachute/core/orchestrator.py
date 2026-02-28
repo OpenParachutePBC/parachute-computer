@@ -1072,8 +1072,8 @@ class Orchestrator:
                         vault_path=self.vault_path,
                     )
                     if _bridge_ctx:
-                        effective_prompt = (effective_prompt or "") + "\n\n" + _bridge_ctx
-                        logger.info(f"Bridge: injected {len(_bridge_ctx)} chars of brain context into system prompt")
+                        actual_message = f"<brain_context>\n{_bridge_ctx}\n</brain_context>\n\n{actual_message}"
+                        logger.info(f"Bridge: injected {len(_bridge_ctx)} chars of brain context into user message")
                 else:
                     logger.debug("Bridge: brain not available, skipping enrich")
             except Exception as _bridge_err:
