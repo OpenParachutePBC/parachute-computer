@@ -26,10 +26,10 @@ from parachute.core.claude_sdk import query_streaming
 
 logger = logging.getLogger(__name__)
 
-# ── Exchange truncation limits ────────────────────────────────────────────────
+# ── Exchange storage limits ───────────────────────────────────────────────────
+# Full messages are stored (voice transcripts can be 7000+ chars).
+# Only the description field (BM25 search target) is truncated.
 
-_USER_MSG_LIMIT = 1000       # chars stored in user_message column
-_AI_RESP_LIMIT = 2000        # chars stored in ai_response column
 _DESC_USER_LIMIT = 300       # chars of user message in description (search target)
 _DESC_AI_LIMIT = 500         # chars of AI response in description (search target)
 
@@ -217,12 +217,16 @@ async def _store_exchange(
     exchange_number: int,
     message: str,
     result_text: str,
+    tool_calls: list[dict],
     brain: Any,
 ) -> None:
     """Write this exchange to LadybugDB for long-term retrieval.
 
-    Stores a Chat_Exchange entity with truncated user message and AI response.
-    The description field packs a short snippet of both sides for text search.
+    Stores full user message and AI response (no truncation — voice transcripts
+    can be 7000+ chars and contain high-fidelity information). The description
+    field is truncated for BM25 search matching. Tool calls are stored as a
+    compact summary (e.g. "Read orchestrator.py, Edit bridge_agent.py").
+
     Skips trivial exchanges (very short user message AND very short AI response).
     """
     if len(message.split()) < 3 and len(result_text.split()) < 10:
@@ -234,16 +238,22 @@ async def _store_exchange(
     ai_snippet = result_text[:_DESC_AI_LIMIT]
     description = f"User: {user_snippet} | AI: {ai_snippet}"
 
+    attrs: dict[str, Any] = {
+        "description": description,
+        "session_id": session_id,
+        "exchange_number": str(exchange_number),
+        "user_message": message,
+        "ai_response": result_text,
+    }
+
+    tools_summary = _summarize_tool_calls(tool_calls)
+    if tools_summary and tools_summary != "None":
+        attrs["tools_used"] = tools_summary
+
     await brain.upsert_entity(
         entity_type="Chat_Exchange",
         name=exchange_name,
-        attributes={
-            "description": description,
-            "session_id": session_id,
-            "exchange_number": str(exchange_number),
-            "user_message": message[:_USER_MSG_LIMIT],
-            "ai_response": result_text[:_AI_RESP_LIMIT],
-        },
+        attributes=attrs,
     )
     logger.debug(f"Bridge: stored exchange {exchange_name}")
 
@@ -463,6 +473,7 @@ async def observe(
                     exchange_number=exchange_number,
                     message=message,
                     result_text=result_text,
+                    tool_calls=tool_calls,
                     brain=brain,
                 )
         except Exception as store_err:
