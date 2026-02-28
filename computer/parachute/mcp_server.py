@@ -1042,6 +1042,11 @@ def get_journals_path() -> Path:
     return Path(_vault_path) / "Daily" / "journals"
 
 
+def _is_legacy_journal(content: str) -> bool:
+    """Return True if content lacks para:daily: markers (pre-Dec 15, 2025 Obsidian format)."""
+    return "# para:daily:" not in content
+
+
 async def search_journals(
     query: str,
     limit: int = 10,
@@ -1078,38 +1083,56 @@ async def search_journals(
 
             # Search in content
             if query_lower in content.lower():
-                # Extract matching entries
-                entries = content.split("\n# para:daily:")
-                for i, entry in enumerate(entries[1:], 1):  # Skip first (frontmatter)
-                    if query_lower in entry.lower():
-                        # Extract entry ID and time from header
-                        lines = entry.strip().split("\n")
-                        if lines:
-                            header = lines[0]
-                            entry_content = "\n".join(lines[1:]).strip()
+                if _is_legacy_journal(content):
+                    # Legacy Obsidian file — treat whole document as one searchable unit
+                    match_pos = content.lower().find(query_lower)
+                    start = max(0, match_pos - 50)
+                    end = min(len(content), match_pos + len(query) + 100)
+                    snippet = content[start:end]
+                    if start > 0:
+                        snippet = "..." + snippet
+                    if end < len(content):
+                        snippet = snippet + "..."
+                    results.append({
+                        "date": journal_file.stem,
+                        "entry_header": f"legacy:{journal_file.stem}",
+                        "snippet": snippet,
+                        "file": str(journal_file.name),
+                        "type": "legacy",
+                    })
+                else:
+                    # New structured format — extract matching para:daily: entries
+                    entries = content.split("\n# para:daily:")
+                    for i, entry in enumerate(entries[1:], 1):  # Skip first (frontmatter)
+                        if query_lower in entry.lower():
+                            # Extract entry ID and time from header
+                            lines = entry.strip().split("\n")
+                            if lines:
+                                header = lines[0]
+                                entry_content = "\n".join(lines[1:]).strip()
 
-                            # Create snippet around match
-                            match_pos = entry_content.lower().find(query_lower)
-                            if match_pos >= 0:
-                                start = max(0, match_pos - 50)
-                                end = min(len(entry_content), match_pos + len(query) + 100)
-                                snippet = entry_content[start:end]
-                                if start > 0:
-                                    snippet = "..." + snippet
-                                if end < len(entry_content):
-                                    snippet = snippet + "..."
-                            else:
-                                snippet = entry_content[:150] + "..." if len(entry_content) > 150 else entry_content
+                                # Create snippet around match
+                                match_pos = entry_content.lower().find(query_lower)
+                                if match_pos >= 0:
+                                    start = max(0, match_pos - 50)
+                                    end = min(len(entry_content), match_pos + len(query) + 100)
+                                    snippet = entry_content[start:end]
+                                    if start > 0:
+                                        snippet = "..." + snippet
+                                    if end < len(entry_content):
+                                        snippet = snippet + "..."
+                                else:
+                                    snippet = entry_content[:150] + "..." if len(entry_content) > 150 else entry_content
 
-                            results.append({
-                                "date": journal_file.stem,
-                                "entry_header": header.strip(),
-                                "snippet": snippet,
-                                "file": str(journal_file.name),
-                            })
+                                results.append({
+                                    "date": journal_file.stem,
+                                    "entry_header": header.strip(),
+                                    "snippet": snippet,
+                                    "file": str(journal_file.name),
+                                })
 
-                            if len(results) >= limit:
-                                break
+                                if len(results) >= limit:
+                                    break
         except Exception as e:
             logger.warning(f"Error reading journal {journal_file}: {e}")
             continue
@@ -1134,14 +1157,20 @@ async def list_recent_journals(limit: int = 14) -> list[dict[str, Any]]:
     for journal_file in journal_files:
         try:
             content = await asyncio.to_thread(journal_file.read_text, encoding="utf-8")
-            # Count entries (each starts with # para:daily:)
-            entry_count = content.count("# para:daily:")
-
-            results.append({
-                "date": journal_file.stem,
-                "entry_count": entry_count,
-                "file": str(journal_file.name),
-            })
+            if _is_legacy_journal(content):
+                results.append({
+                    "date": journal_file.stem,
+                    "entry_count": 1,
+                    "file": str(journal_file.name),
+                    "type": "legacy",
+                })
+            else:
+                entry_count = content.count("# para:daily:")
+                results.append({
+                    "date": journal_file.stem,
+                    "entry_count": entry_count,
+                    "file": str(journal_file.name),
+                })
         except Exception as e:
             logger.warning(f"Error reading journal {journal_file}: {e}")
             results.append({
@@ -1165,7 +1194,22 @@ async def get_journal(date: str) -> Optional[dict[str, Any]]:
     try:
         content = await asyncio.to_thread(journal_file.read_text, encoding="utf-8")
 
-        # Parse entries
+        # Legacy Obsidian files have no para:daily: markers — return as single entry
+        if _is_legacy_journal(content):
+            return {
+                "date": date,
+                "file": str(journal_file.name),
+                "entry_count": 1,
+                "entries": [{
+                    "id": f"legacy-{date}",
+                    "time": None,
+                    "type": "legacy",
+                    "content": content,
+                }],
+                "raw_content": content,
+            }
+
+        # Parse structured entries
         entries = []
         parts = content.split("\n# para:daily:")
 
