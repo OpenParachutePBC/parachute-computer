@@ -219,13 +219,22 @@ async def _store_exchange(
     result_text: str,
     tool_calls: list[dict],
     brain: Any,
+    activity_summary: Optional[str] = None,
+    session_summary: Optional[str] = None,
+    session_title: Optional[str] = None,
 ) -> None:
     """Write this exchange to LadybugDB for long-term retrieval.
 
     Stores full user message and AI response (no truncation — voice transcripts
-    can be 7000+ chars and contain high-fidelity information). The description
-    field is truncated for BM25 search matching. Tool calls are stored as a
-    compact summary (e.g. "Read orchestrator.py, Edit bridge_agent.py").
+    can be 7000+ chars and contain high-fidelity information).
+
+    The description uses Haiku's log_activity summary when available (already
+    generated during observe — no extra LLM call). Falls back to truncated
+    snippets if Haiku didn't produce a summary.
+
+    The context field captures the session summary at time of exchange, giving
+    each exchange a "what was happening when this was said" anchor. Without it,
+    "User: Yes | AI: [detailed plan]" is meaningless.
 
     Skips trivial exchanges (very short user message AND very short AI response).
     """
@@ -234,9 +243,14 @@ async def _store_exchange(
         return
 
     exchange_name = f"{session_id[:8]}:ex:{exchange_number}"
-    user_snippet = message[:_DESC_USER_LIMIT]
-    ai_snippet = result_text[:_DESC_AI_LIMIT]
-    description = f"User: {user_snippet} | AI: {ai_snippet}"
+
+    # Prefer Haiku's curated summary; fall back to truncated snippets
+    if activity_summary:
+        description = activity_summary
+    else:
+        user_snippet = message[:_DESC_USER_LIMIT]
+        ai_snippet = result_text[:_DESC_AI_LIMIT]
+        description = f"User: {user_snippet} | AI: {ai_snippet}"
 
     attrs: dict[str, Any] = {
         "description": description,
@@ -245,6 +259,11 @@ async def _store_exchange(
         "user_message": message,
         "ai_response": result_text,
     }
+
+    if session_summary:
+        attrs["context"] = session_summary
+    if session_title:
+        attrs["session_title"] = session_title
 
     tools_summary = _summarize_tool_calls(tool_calls)
     if tools_summary and tools_summary != "None":
@@ -403,6 +422,7 @@ async def observe(
         new_session_id: Optional[str] = None
         tool_calls_made: list[str] = []
         new_title: Optional[str] = None
+        activity_summary: Optional[str] = None
         text_parts: list[str] = []
 
         async for event in query_streaming(
@@ -434,6 +454,8 @@ async def observe(
                             tool_calls_made.append(short_name)
                             if short_name == "update_title":
                                 new_title = (block.get("input") or {}).get("title")
+                            elif short_name == "log_activity":
+                                activity_summary = (block.get("input") or {}).get("summary")
                     elif isinstance(block, dict) and block.get("type") == "text":
                         text_parts.append(block["text"])
 
@@ -475,6 +497,9 @@ async def observe(
                     result_text=result_text,
                     tool_calls=tool_calls,
                     brain=brain,
+                    activity_summary=activity_summary,
+                    session_summary=current_summary,
+                    session_title=session_title,
                 )
         except Exception as store_err:
             logger.debug(f"Bridge: exchange store failed (non-fatal): {store_err}")
