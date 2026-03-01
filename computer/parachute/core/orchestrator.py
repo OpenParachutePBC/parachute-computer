@@ -1703,16 +1703,13 @@ The user is now continuing this conversation with you. Respond naturally as if y
         return result
 
     async def archive_session(self, session_id: str) -> Optional[dict[str, Any]]:
-        """Archive a session and stop its private container if sandboxed."""
-        session = await self.session_manager.get_session(session_id)
+        """Archive a session.
+
+        The private container (if any) is left running so the session can be resumed
+        if unarchived. reconcile() will eventually clean up containers for sessions
+        that are no longer active.
+        """
         archived = await self.session_manager.archive_session(session_id)
-        if archived and session and session.get_trust_level().value == "sandboxed":
-            if not session.container_env_id:
-                # Private session container — remove it
-                try:
-                    await self._sandbox.stop_session_container(session_id)
-                except Exception as e:
-                    logger.warning(f"Failed to stop session container for {session_id[:8]}: {e}")
         if archived:
             return archived.model_dump(by_alias=True)
         return None

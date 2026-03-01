@@ -251,13 +251,6 @@ class TestDockerSandbox:
         args, _ = sandbox._build_run_args(config)
         assert "parachute-sandbox-abcdef12" in args
 
-    def test_get_session_claude_dir(self, vault_path):
-        sandbox = DockerSandbox(vault_path=vault_path)
-        session_id = "abcdef1234567890"
-        claude_dir = sandbox._get_session_claude_dir(session_id)
-        expected = vault_path / ".parachute" / "sandbox" / "sessions" / "abcdef12" / ".claude"
-        assert claude_dir == expected
-
     def test_get_named_env_claude_dir(self, vault_path):
         sandbox = DockerSandbox(vault_path=vault_path)
         claude_dir = sandbox._get_named_env_claude_dir("my-env")
@@ -293,18 +286,31 @@ class TestDockerSandbox:
         assert "/opt/parachute-tools" in arg_str
         assert "readonly" in arg_str
 
-    def test_persistent_container_args_mounts_claude_dir(self, vault_path):
+    def test_persistent_container_args_named_env_mounts_claude_dir(self, vault_path):
+        """Named env containers host-mount .claude/ for durability across sessions."""
         sandbox = DockerSandbox(vault_path=vault_path)
         config = AgentSandboxConfig(session_id="test123")
-        labels = {"app": "parachute"}
-        claude_dir = vault_path / ".parachute" / "sandbox" / "sessions" / "test123" / ".claude"
+        labels = {"app": "parachute", "type": "named-env"}
+        claude_dir = vault_path / ".parachute" / "sandbox" / "envs" / "my-env" / ".claude"
         vault_mounts = ["-v", f"{vault_path}:/home/sandbox/Parachute:ro"]
         args = sandbox._build_persistent_container_args(
-            "parachute-session-test123", config, labels, claude_dir, vault_mounts
+            "parachute-env-my-env", config, labels, claude_dir, vault_mounts
         )
         arg_str = " ".join(args)
         assert "/home/sandbox/.claude:rw" in arg_str
         assert claude_dir.exists()  # Must be created by the method
+
+    def test_persistent_container_args_private_session_no_claude_mount(self, vault_path):
+        """.claude/ lives in the container overlay for private sessions — no host mount."""
+        sandbox = DockerSandbox(vault_path=vault_path)
+        config = AgentSandboxConfig(session_id="test123")
+        labels = {"app": "parachute", "type": "session"}
+        vault_mounts = ["-v", f"{vault_path}:/home/sandbox/Parachute:ro"]
+        args = sandbox._build_persistent_container_args(
+            "parachute-session-test123", config, labels, None, vault_mounts
+        )
+        arg_str = " ".join(args)
+        assert "/home/sandbox/.claude" not in arg_str
 
 
 # ---------------------------------------------------------------------------

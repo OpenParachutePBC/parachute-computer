@@ -465,10 +465,6 @@ class DockerSandbox:
             "sandbox_image": SANDBOX_IMAGE,
         }
 
-    def _get_session_claude_dir(self, session_id: str) -> Path:
-        """Host-side .claude/ directory for a private session container."""
-        return self.vault_path / SANDBOX_DATA_DIR / "sessions" / session_id[:8] / ".claude"
-
     def _get_named_env_claude_dir(self, slug: str) -> Path:
         """Host-side .claude/ directory for a named env container."""
         return self.vault_path / SANDBOX_DATA_DIR / "envs" / slug / ".claude"
@@ -476,7 +472,7 @@ class DockerSandbox:
     async def _ensure_container(
         self,
         container_name: str,
-        claude_dir: Path,
+        claude_dir: Path | None,
         labels: dict[str, str],
         config: AgentSandboxConfig,
     ) -> str:
@@ -525,16 +521,16 @@ class DockerSandbox:
 
         Container: parachute-session-<session_id[:12]>
         Creates lazily on first call; idempotent on subsequent calls.
+        .claude/ lives in the container's writable layer — no host mount.
         """
         container_name = f"parachute-session-{session_id[:12]}"
-        claude_dir = self._get_session_claude_dir(session_id)
         labels = {
             "app": "parachute",
             "type": "session",
             "session_id": session_id,
             "config_hash": self._calculate_config_hash(),
         }
-        return await self._ensure_container(container_name, claude_dir, labels, config)
+        return await self._ensure_container(container_name, None, labels, config)
 
     async def ensure_named_container(
         self, slug: str, config: AgentSandboxConfig
@@ -610,7 +606,7 @@ class DockerSandbox:
         container_name: str,
         config: AgentSandboxConfig,
         labels: dict[str, str],
-        claude_dir: Path,
+        claude_dir: Path | None,
         vault_mounts: list[str],
     ) -> list[str]:
         """Build docker run arguments for a persistent container.
@@ -619,7 +615,9 @@ class DockerSandbox:
             container_name: Name for the container
             config: Sandbox configuration
             labels: Docker labels for discovery
-            claude_dir: Host .claude/ directory to mount for SDK persistence
+            claude_dir: Host .claude/ directory to bind-mount for SDK persistence.
+                        None (private session containers) means .claude/ lives in the
+                        container's writable overlay and is cleaned up with it.
             vault_mounts: Vault volume mount arguments (from _build_mounts or custom)
 
         Returns:
@@ -665,10 +663,12 @@ class DockerSandbox:
             f"source={TOOLS_VOLUME_NAME},target=/opt/parachute-tools,readonly",
         ])
 
-        # SDK session persistence
-        claude_dir.mkdir(parents=True, exist_ok=True)
-        claude_dir.chmod(0o700)
-        args.extend(["-v", f"{claude_dir}:/home/sandbox/.claude:rw"])
+        # SDK session persistence — only host-mount for named env containers.
+        # Private session containers let .claude/ live in the writable overlay.
+        if claude_dir is not None:
+            claude_dir.mkdir(parents=True, exist_ok=True)
+            claude_dir.chmod(0o700)
+            args.extend(["-v", f"{claude_dir}:/home/sandbox/.claude:rw"])
 
         # Image + keep-alive command
         args.extend([SANDBOX_IMAGE, "sleep", "infinity"])
