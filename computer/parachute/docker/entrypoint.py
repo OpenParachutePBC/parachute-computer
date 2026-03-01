@@ -225,13 +225,15 @@ async def run():
         # Use the resolved CWD (either PARACHUTE_CWD or process default)
         effective_cwd = os.getcwd()
 
-        # Note: No setting_sources — Parachute explicitly constructs all parameters.
-        # The host passes system prompt, capabilities, model, etc. via mounted files
-        # and environment variables. No SDK auto-discovery.
+        # setting_sources=["project"] enables CWD-aware discovery of .claude/ settings
+        # (commands, custom agents, hooks) walking up from the working directory.
+        # Consistent with direct sessions. Scoped to mounted paths only — the vault
+        # is not fully mounted in sandboxed sessions, so no vault-wide leakage.
         options_kwargs: dict = {
             "permission_mode": "bypassPermissions",
             "env": {"CLAUDE_CODE_OAUTH_TOKEN": oauth_token},
             "cwd": effective_cwd,
+            "setting_sources": ["project"],
         }
 
         # System prompt: prefer stdin payload (persistent mode),
