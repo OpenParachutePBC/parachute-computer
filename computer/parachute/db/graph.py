@@ -55,6 +55,11 @@ class GraphService:
         """Serialized write access. Use: async with graph.write_lock: ..."""
         return self._write_lock
 
+    @property
+    def is_connected(self) -> bool:
+        """True if the database connection is open."""
+        return self._connected
+
     def _ensure_connected(self) -> None:
         if not self._connected or self._conn is None:
             raise RuntimeError("GraphService not connected. Call connect() first.")
@@ -159,14 +164,14 @@ class GraphService:
 
     # ── Query execution ───────────────────────────────────────────────────────
 
-    async def execute(
+    async def _execute(
         self,
         query: str,
         params: dict[str, Any] | None = None,
     ) -> Any:
         """
         Execute a Cypher query and return the raw QueryResult for iteration.
-        Use this when you need has_next() / get_next() / get_column_names().
+        Internal use only — prefer execute_cypher() in module code.
         """
         self._ensure_connected()
         return await self._conn.execute(query, params or None)

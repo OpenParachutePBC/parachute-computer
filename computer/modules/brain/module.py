@@ -431,7 +431,7 @@ class BrainModule:
         return {
             "module": "brain",
             "version": "3.0.0",
-            "connected": graph is not None and graph._connected,
+            "connected": graph is not None and graph.is_connected,
             "db_path": str(graph.db_path) if graph else "not initialized",
             "backend": "LadybugDB",
         }

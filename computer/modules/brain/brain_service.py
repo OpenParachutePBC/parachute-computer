@@ -74,7 +74,7 @@ class BrainService:
         existing = await self.graph.get_table_columns("Brain_Entity")
         if "description" not in existing:
             async with self.graph.write_lock:
-                await self.graph.execute(
+                await self.graph.execute_cypher(
                     "ALTER TABLE Brain_Entity ADD description STRING DEFAULT NULL"
                 )
             logger.info("Brain schema: migrated — added 'description' column")
@@ -95,7 +95,7 @@ class BrainService:
         async with self.graph.write_lock:
             for col in sorted(new_columns):
                 try:
-                    await self.graph.execute(
+                    await self.graph.execute_cypher(
                         f"ALTER TABLE Brain_Entity ADD {col} STRING DEFAULT NULL"
                     )
                     added.append(col)
@@ -147,7 +147,7 @@ class BrainService:
                 f"ON CREATE SET e.created_at = $updated_at "
                 f"SET {set_str}"
             )
-            await self.graph.execute(cypher, params)
+            await self.graph.execute_cypher(cypher, params)
 
         entity = await self.get_entity(name)
         return entity or {"name": name, "entity_type": entity_type}
@@ -198,7 +198,7 @@ class BrainService:
         if not existing:
             return False
         async with self.graph.write_lock:
-            await self.graph.execute(
+            await self.graph.execute_cypher(
                 "MATCH (e:Brain_Entity {name: $name}) DETACH DELETE e",
                 {"name": name},
             )
@@ -223,14 +223,14 @@ class BrainService:
         counts: dict[str, int] = {}
         db_type_names: set[str] = set()
         try:
-            result = await self.graph.execute(
+            rows = await self.graph.execute_cypher(
                 "MATCH (e:Brain_Entity) RETURN e.entity_type AS etype, count(*) AS cnt"
             )
-            while result.has_next():
-                row = result.get_next()
-                if row[0]:
-                    counts[row[0]] = row[1]
-                    db_type_names.add(row[0])
+            for row in rows:
+                etype = row.get("etype")
+                if etype:
+                    counts[etype] = row["cnt"]
+                    db_type_names.add(etype)
         except Exception as e:
             logger.warning(f"Could not get entity counts: {e}")
 
@@ -266,7 +266,7 @@ class BrainService:
 
         now = _now()
         async with self.graph.write_lock:
-            await self.graph.execute(
+            await self.graph.execute_cypher(
                 "MATCH (a:Brain_Entity {name: $from_name}), (b:Brain_Entity {name: $to_name}) "
                 "CREATE (a)-[:Brain_Relationship]->(b)",
                 {"from_name": from_name, "to_name": to_name},
@@ -274,7 +274,7 @@ class BrainService:
             esc_label = _esc(label)
             esc_desc = _esc(description)
             esc_now = _esc(now)
-            await self.graph.execute(
+            await self.graph.execute_cypher(
                 f"MATCH (a:Brain_Entity {{name: '{_esc(from_name)}'}})-[r:Brain_Relationship]->"
                 f"(b:Brain_Entity {{name: '{_esc(to_name)}'}}) "
                 f"SET r.label = '{esc_label}', r.description = '{esc_desc}', r.created_at = '{esc_now}'"
