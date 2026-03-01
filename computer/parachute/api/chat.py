@@ -89,6 +89,7 @@ async def event_generator(request: Request, chat_request: ChatRequest):
             trust_level=chat_request.trust_level,
             model=chat_request.model,
             workspace_id=chat_request.workspace_id,
+            container_id=chat_request.container_id,
         ):
             # Check if client disconnected
             if await request.is_disconnected():

@@ -241,6 +241,12 @@ class Session(BaseModel):
         serialization_alias="bridgeContextLog",
         description="JSON: list of {query, type, turn_number} — bridge agent context loaded/stored",
     )
+    container_env_id: Optional[str] = Field(
+        default=None,
+        alias="containerEnvId",
+        serialization_alias="containerEnvId",
+        description="Named container env slug this session runs in (NULL = private container)",
+    )
     metadata: Optional[dict[str, Any]] = Field(
         default=None, description="Additional metadata"
     )
@@ -280,6 +286,48 @@ class Session(BaseModel):
             return self.metadata["agent_type"]
         return None
 
+    @property
+    def container_env_docker_name(self) -> Optional[str]:
+        """Docker container name for named env sessions; None for private containers."""
+        if self.container_env_id:
+            return f"parachute-env-{self.container_env_id}"
+        return None
+
+    @property
+    def private_container_name(self) -> str:
+        """Docker container name for private session containers."""
+        return f"parachute-session-{self.id[:12]}"
+
+
+class ContainerEnv(BaseModel):
+    """A named container environment that can be shared across sessions."""
+
+    slug: str = Field(description="Unique slug (also the Docker container name suffix)")
+    display_name: str = Field(
+        alias="displayName",
+        serialization_alias="displayName",
+        description="Human-readable name",
+    )
+    created_at: datetime = Field(
+        alias="createdAt",
+        serialization_alias="createdAt",
+        description="Creation timestamp",
+    )
+
+    model_config = {"from_attributes": True, "populate_by_name": True}
+
+    @property
+    def docker_name(self) -> str:
+        """Docker container name for this named env."""
+        return f"parachute-env-{self.slug}"
+
+
+class ContainerEnvCreate(BaseModel):
+    """Data for creating a named container environment."""
+
+    display_name: str = Field(description="Human-readable name")
+    slug: Optional[str] = Field(default=None, description="URL-safe slug (auto-generated if omitted)")
+
 
 class SessionCreate(BaseModel):
     """Data for creating a new session."""
@@ -300,6 +348,7 @@ class SessionCreate(BaseModel):
     workspace_id: Optional[str] = None
     parent_session_id: Optional[str] = None
     created_by: str = "user"
+    container_env_id: Optional[str] = None
     metadata: Optional[dict[str, Any]] = None
 
 
@@ -318,6 +367,7 @@ class SessionUpdate(BaseModel):
     workspace_id: Optional[str] = None
     bridge_session_id: Optional[str] = None
     bridge_context_log: Optional[str] = None
+    container_env_id: Optional[str] = None
 
 
 class PairingRequest(BaseModel):

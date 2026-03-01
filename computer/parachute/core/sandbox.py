@@ -1,15 +1,16 @@
 """
 Docker sandbox for agent execution.
 
-Provides per-agent Docker containers with scoped filesystem mounts
+Provides per-session Docker containers with scoped filesystem mounts
 and credential propagation for the Claude Agent SDK.
 
 Used for all sandboxed sessions. Docker must be available — no fallback.
 
 Two container modes:
-- Workspace containers (parachute-ws-<slug>): persistent, per-workspace
-- Default container (parachute-default): persistent, full vault read-only,
-  used for sandboxed sessions with no workspace configured
+- Session containers (parachute-session-<session_id[:12]>): private, per-session,
+  removed when the session is deleted or archived
+- Named env containers (parachute-env-<slug>): shared, persist until explicitly deleted,
+  multiple sessions can join the same env and share /home/sandbox/
 """
 
 import asyncio
@@ -26,7 +27,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, AsyncGenerator
 
-from parachute.core.validation import validate_workspace_slug
 from parachute.lib.credentials import load_credentials
 from parachute.models.session import BOT_SOURCES, SessionSource
 
@@ -38,8 +38,8 @@ logger = logging.getLogger(__name__)
 # Default sandbox image (pre-built with Claude SDK + Python)
 SANDBOX_IMAGE = "parachute-sandbox:latest"
 
-# Default container for sandboxed sessions with no workspace
-DEFAULT_CONTAINER_NAME = "parachute-default"
+# Shared read-only tools volume — mounted at /opt/parachute-tools in all containers
+TOOLS_VOLUME_NAME = "parachute-tools"
 
 # Container resource limits
 # Ephemeral containers (--rm, short-lived) can run with less memory.
@@ -78,7 +78,7 @@ class DockerSandbox:
         self.claude_token = claude_token
         self._docker_available: bool | None = None
         self._checked_at: float = 0
-        # Per-workspace locks to prevent race conditions in ensure_container
+        # Per-container locks to prevent race conditions during container creation
         self._slug_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 
     async def is_available(self) -> bool:
@@ -465,61 +465,25 @@ class DockerSandbox:
             "sandbox_image": SANDBOX_IMAGE,
         }
 
-    # --- Persistent container methods ---
+    def _get_session_claude_dir(self, session_id: str) -> Path:
+        """Host-side .claude/ directory for a private session container."""
+        return self.vault_path / SANDBOX_DATA_DIR / "sessions" / session_id[:8] / ".claude"
 
-    def get_sandbox_claude_dir(self, workspace_slug: str) -> Path:
-        """Host-side .claude/ directory for a workspace's sandbox."""
-        validate_workspace_slug(workspace_slug)
-        return self.vault_path / SANDBOX_DATA_DIR / workspace_slug / ".claude"
+    def _get_named_env_claude_dir(self, slug: str) -> Path:
+        """Host-side .claude/ directory for a named env container."""
+        return self.vault_path / SANDBOX_DATA_DIR / "envs" / slug / ".claude"
 
-    def has_sdk_transcript(self, workspace_slug: str, session_id: str) -> bool:
-        """Check if an SDK transcript exists on the host mount for a workspace session.
-
-        Skips symlinks to defend against container-created symlink escapes.
-        Safe for use in asyncio.to_thread() — all I/O is synchronous.
-        """
-        if not session_id or not re.match(r'^[a-zA-Z0-9_-]+$', session_id):
-            return False
-        claude_dir = self.get_sandbox_claude_dir(workspace_slug)
-        projects_dir = claude_dir / "projects"
-        if not projects_dir.exists():
-            return False
-        filename = f"{session_id}.jsonl"
-        for project_dir in projects_dir.iterdir():
-            if project_dir.is_symlink():
-                continue
-            candidate = project_dir / filename
-            if candidate.exists() and not candidate.is_symlink():
-                return True
-        return False
-
-    def cleanup_workspace_data(self, workspace_slug: str) -> None:
-        """Remove persistent sandbox data for a workspace."""
-        validate_workspace_slug(workspace_slug)
-        sandbox_dir = self.vault_path / SANDBOX_DATA_DIR / workspace_slug
-        if sandbox_dir.is_symlink():
-            logger.warning(f"Sandbox dir is a symlink, removing link only: {sandbox_dir}")
-            sandbox_dir.unlink()
-        elif sandbox_dir.exists():
-            shutil.rmtree(sandbox_dir)
-
-    # TODO: Implement shared package cache volumes
-    # Requires: (1) PIP_CACHE_DIR and NPM_CONFIG_CACHE env vars in container
-    #           (2) Either :rw mounts or a cache-warming strategy for :ro
-    # See: todos/125-pending-p2-pip-cache-volume-not-wired.md
-
-    async def ensure_container(
-        self, workspace_slug: str, config: AgentSandboxConfig
+    async def ensure_session_container(
+        self, session_id: str, config: AgentSandboxConfig
     ) -> str:
-        """Ensure a persistent container is running for this workspace.
+        """Ensure a private session container is running.
 
-        Returns the container name. Creates the container lazily on first call.
-        Uses per-slug asyncio.Lock to prevent race conditions.
+        Container: parachute-session-<session_id[:12]>
+        Creates lazily on first call; idempotent on subsequent calls.
         """
-        validate_workspace_slug(workspace_slug)
-        container_name = f"parachute-ws-{workspace_slug}"
+        container_name = f"parachute-session-{session_id[:12]}"
 
-        async with self._slug_locks[workspace_slug]:
+        async with self._slug_locks[container_name]:
             status = await self._inspect_status(container_name)
 
             if status == "running":
@@ -528,18 +492,129 @@ class DockerSandbox:
                 await self._start_container(container_name)
                 return container_name
             elif status is not None:
-                # Bad state (dead, removing, etc.) — force remove and recreate
                 await self._remove_container(container_name)
 
-            # Ensure network exists before container creation
             if config.network_enabled:
                 await self._ensure_sandbox_network()
 
-            # Create new container
-            await self._create_persistent_container(
-                container_name, workspace_slug, config
+            claude_dir = self._get_session_claude_dir(session_id)
+            vault_mounts = ["-v", f"{self.vault_path}:/home/sandbox/Parachute:ro"]
+            vault_mounts.extend(self._build_capability_mounts(config))
+
+            labels = {
+                "app": "parachute",
+                "type": "session",
+                "session_id": session_id,
+                "config_hash": self._calculate_config_hash(),
+            }
+            args = self._build_persistent_container_args(
+                container_name, config, labels, claude_dir, vault_mounts
             )
+
+            proc = await asyncio.create_subprocess_exec(
+                *args,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            _, stderr = await proc.communicate()
+            if proc.returncode != 0:
+                raise RuntimeError(
+                    f"Failed to create session container {container_name}: {stderr.decode()}"
+                )
+            logger.info(f"Created session container {container_name}")
             return container_name
+
+    async def ensure_named_container(
+        self, slug: str, config: AgentSandboxConfig
+    ) -> str:
+        """Ensure a named env container is running.
+
+        Container: parachute-env-<slug>
+        Creates if absent, starts if stopped. Multiple sessions share one container.
+        """
+        container_name = f"parachute-env-{slug}"
+
+        async with self._slug_locks[container_name]:
+            status = await self._inspect_status(container_name)
+
+            if status == "running":
+                return container_name
+            elif status in ("exited", "created"):
+                await self._start_container(container_name)
+                return container_name
+            elif status is not None:
+                await self._remove_container(container_name)
+
+            if config.network_enabled:
+                await self._ensure_sandbox_network()
+
+            claude_dir = self._get_named_env_claude_dir(slug)
+            vault_mounts = ["-v", f"{self.vault_path}:/home/sandbox/Parachute:ro"]
+            vault_mounts.extend(self._build_capability_mounts(config))
+
+            labels = {
+                "app": "parachute",
+                "type": "named-env",
+                "env_slug": slug,
+                "config_hash": self._calculate_config_hash(),
+            }
+            args = self._build_persistent_container_args(
+                container_name, config, labels, claude_dir, vault_mounts
+            )
+
+            proc = await asyncio.create_subprocess_exec(
+                *args,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            _, stderr = await proc.communicate()
+            if proc.returncode != 0:
+                raise RuntimeError(
+                    f"Failed to create named env container {container_name}: {stderr.decode()}"
+                )
+            logger.info(f"Created named env container {container_name} for slug '{slug}'")
+            return container_name
+
+    async def run_session(
+        self,
+        session_id: str,
+        config: AgentSandboxConfig,
+        message: str,
+        resume_session_id: str | None = None,
+        container_name: str | None = None,
+    ) -> AsyncGenerator[dict, None]:
+        """Run an agent session in a container, yielding streaming events.
+
+        If container_name is provided (named env), exec into that container.
+        Otherwise, ensure a private session container and exec into it.
+        """
+        await self._validate_docker_ready()
+
+        if container_name is not None:
+            # Named env — extract slug from container name
+            slug = container_name.removeprefix("parachute-env-")
+            target = await self.ensure_named_container(slug, config)
+        else:
+            target = await self.ensure_session_container(session_id, config)
+
+        async for event in self._run_in_container(
+            target, config, message, resume_session_id, "sandbox"
+        ):
+            yield event
+
+    async def stop_session_container(self, session_id: str) -> None:
+        """Stop and remove a private session container."""
+        container_name = f"parachute-session-{session_id[:12]}"
+        await self._stop_container(container_name)
+        await self._remove_container(container_name)
+        self._slug_locks.pop(container_name, None)
+
+    async def delete_named_container(self, slug: str) -> None:
+        """Stop and remove a named env container."""
+        container_name = f"parachute-env-{slug}"
+        await self._stop_container(container_name)
+        await self._remove_container(container_name)
+        self._slug_locks.pop(container_name, None)
 
     async def _inspect_status(self, container_name: str) -> str | None:
         """Get container status via docker inspect. Returns None if not found."""
@@ -586,8 +661,7 @@ class DockerSandbox:
             "--pids-limit", "100",
             "--ulimit", "nproc=64:64",
             "--ulimit", "nofile=4096:8192",
-            # Per-session scratch space (tmpfs — no disk persistence)
-            "--tmpfs", "/scratch:size=512m,uid=1000,gid=1000",
+            # /tmp and /run as tmpfs (no disk persistence)
             "--tmpfs", "/tmp:size=128m,uid=1000,gid=1000",
             "--tmpfs", "/run:size=32m,uid=1000,gid=1000",
         ]
@@ -608,8 +682,11 @@ class DockerSandbox:
         # Vault mounts
         args.extend(vault_mounts)
 
-        # TODO: Add shared package cache volumes when properly wired
-        # See: todos/125-pending-p2-pip-cache-volume-not-wired.md
+        # Shared tools volume (read-only) — bin/ in PATH, python/ in PYTHONPATH
+        args.extend([
+            "--mount",
+            f"source={TOOLS_VOLUME_NAME},target=/opt/parachute-tools,readonly",
+        ])
 
         # SDK session persistence
         claude_dir.mkdir(parents=True, exist_ok=True)
@@ -620,41 +697,6 @@ class DockerSandbox:
         args.extend([SANDBOX_IMAGE, "sleep", "infinity"])
 
         return args
-
-    async def _create_persistent_container(
-        self, container_name: str, workspace_slug: str, config: AgentSandboxConfig
-    ) -> None:
-        """Create and start a persistent container for a workspace."""
-        sandbox_claude_dir = self.get_sandbox_claude_dir(workspace_slug)
-        vault_mounts = self._build_mounts(config)
-        labels = {
-            "app": "parachute",
-            "workspace": workspace_slug,
-            "config_hash": self._calculate_config_hash(),
-        }
-
-        args = self._build_persistent_container_args(
-            container_name,
-            config,
-            labels,
-            sandbox_claude_dir,
-            vault_mounts,
-        )
-
-        proc = await asyncio.create_subprocess_exec(
-            *args,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        _, stderr = await proc.communicate()
-        if proc.returncode != 0:
-            raise RuntimeError(
-                f"Failed to create container {container_name}: {stderr.decode()}"
-            )
-        logger.info(
-            f"Created persistent container {container_name} "
-            f"for workspace {workspace_slug}"
-        )
 
     async def _run_in_container(
         self,
@@ -777,108 +819,6 @@ class DockerSandbox:
                 except ProcessLookupError:
                     pass
 
-    async def run_persistent(
-        self,
-        workspace_slug: str,
-        config: AgentSandboxConfig,
-        message: str,
-        resume_session_id: str | None = None,
-    ) -> AsyncGenerator[dict, None]:
-        """Run an agent session in a persistent workspace container.
-
-        Uses docker exec to spawn a process in the running container.
-        Per-session data (capabilities, system_prompt, token) is passed
-        via enriched stdin JSON payload since docker exec cannot mount volumes.
-
-        If resume_session_id is set, the entrypoint will attempt SDK resume
-        from the persisted transcript on the mounted .claude/ directory.
-        """
-        await self._validate_docker_ready()
-        container_name = await self.ensure_container(workspace_slug, config)
-
-        async for event in self._run_in_container(
-            container_name, config, message, resume_session_id, "persistent sandbox"
-        ):
-            yield event
-
-    async def ensure_default_container(self, config: AgentSandboxConfig) -> str:
-        """Ensure the default sandbox container is running.
-
-        The default container (parachute-default) is used for sandboxed sessions
-        with no workspace. It mounts the full vault read-only.
-
-        Separate from ensure_container() to avoid validate_workspace_slug().
-        """
-        container_name = DEFAULT_CONTAINER_NAME
-
-        async with self._slug_locks[container_name]:
-            status = await self._inspect_status(container_name)
-
-            if status == "running":
-                return container_name
-            elif status in ("exited", "created"):
-                await self._start_container(container_name)
-                return container_name
-            elif status is not None:
-                # Bad state — force remove and recreate
-                await self._remove_container(container_name)
-
-            # Ensure network exists before container creation
-            if config.network_enabled:
-                await self._ensure_sandbox_network()
-
-            # Create the default container
-            default_claude_dir = self.vault_path / SANDBOX_DATA_DIR / "_default" / ".claude"
-
-            # Full vault read-only + capability mounts
-            vault_mounts = ["-v", f"{self.vault_path}:/home/sandbox/Parachute:ro"]
-            vault_mounts.extend(self._build_capability_mounts(config))
-
-            labels = {
-                "app": "parachute",
-                "type": "default-sandbox",
-                "config_hash": self._calculate_config_hash(),
-            }
-
-            args = self._build_persistent_container_args(
-                container_name,
-                config,
-                labels,
-                default_claude_dir,
-                vault_mounts,
-            )
-
-            proc = await asyncio.create_subprocess_exec(
-                *args,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            _, stderr = await proc.communicate()
-            if proc.returncode != 0:
-                raise RuntimeError(
-                    f"Failed to create default container: {stderr.decode()}"
-                )
-            logger.info("Created default sandbox container (parachute-default)")
-            return container_name
-
-    async def run_default(
-        self,
-        config: AgentSandboxConfig,
-        message: str,
-        resume_session_id: str | None = None,
-    ) -> AsyncGenerator[dict, None]:
-        """Run an agent session in the default sandbox container.
-
-        Used for sandboxed sessions with no workspace configured.
-        """
-        await self._validate_docker_ready()
-        container_name = await self.ensure_default_container(config)
-
-        async for event in self._run_in_container(
-            container_name, config, message, resume_session_id, "default sandbox"
-        ):
-            yield event
-
     async def _ensure_sandbox_network(self) -> None:
         """Create the parachute-sandbox bridge network if it doesn't exist.
 
@@ -895,20 +835,6 @@ class DockerSandbox:
         )
         await proc.wait()
         # returncode 0 = created, 1 = already exists — both are fine
-
-    async def stop_default_container(self) -> None:
-        """Stop and remove the default sandbox container."""
-        await self._stop_container(DEFAULT_CONTAINER_NAME)
-        await self._remove_container(DEFAULT_CONTAINER_NAME)
-        self._slug_locks.pop(DEFAULT_CONTAINER_NAME, None)
-
-    async def stop_container(self, workspace_slug: str) -> None:
-        """Stop and remove a workspace's persistent container."""
-        validate_workspace_slug(workspace_slug)
-        container_name = f"parachute-ws-{workspace_slug}"
-        await self._stop_container(container_name)
-        await self._remove_container(container_name)
-        self._slug_locks.pop(workspace_slug, None)
 
     async def _start_container(self, container_name: str) -> None:
         """Start a stopped container."""
@@ -944,17 +870,40 @@ class DockerSandbox:
         )
         await proc.wait()
 
-    async def reconcile(self) -> None:
-        """Discover existing parachute containers on server startup.
+    async def _ensure_tools_volume(self) -> None:
+        """Create the parachute-tools named volume if it doesn't exist.
 
-        Removes containers with mismatched config_hash (outdated image/resources).
-        Logs the count of existing workspace containers.
+        The tools volume is mounted read-only at /opt/parachute-tools in all
+        containers. Anything written to it is immediately visible to all running
+        containers (for tool installs, pip packages, etc.).
+        """
+        proc = await asyncio.create_subprocess_exec(
+            "docker", "volume", "create", TOOLS_VOLUME_NAME,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        await proc.wait()
+        # returncode 0 = created, may also succeed if already exists
+
+    async def reconcile(self, active_session_ids: set[str] | None = None) -> None:
+        """Reconcile parachute containers on server startup.
+
+        Actions:
+        - Create parachute-tools volume if absent
+        - Remove all legacy parachute-ws-* and parachute-default containers immediately
+        - Remove orphaned parachute-session-* containers (no matching active session)
+        - Log discovered parachute-env-* (named env) containers
+
+        Args:
+            active_session_ids: Set of session IDs currently in the DB (short prefix
+                not needed — full IDs compared against container name prefix).
+                If None, skip orphan cleanup for session containers.
         """
         if not await self.is_available():
             return
 
-        # Get current config hash for comparison
-        current_hash = self._calculate_config_hash()
+        # Ensure shared tools volume exists
+        await self._ensure_tools_volume()
 
         proc = await asyncio.create_subprocess_exec(
             "docker", "ps", "-a",
@@ -965,12 +914,11 @@ class DockerSandbox:
         )
         stdout, _ = await proc.communicate()
         if proc.returncode != 0:
-            logger.warning("Failed to discover existing workspace containers")
+            logger.warning("Failed to list parachute containers for reconcile")
             return
 
-        count = 0
-        has_default = False
-        containers_to_remove = []
+        containers_to_remove: list[str] = []
+        named_env_names: list[str] = []
 
         for line in stdout.decode().strip().split("\n"):
             if not line:
@@ -979,56 +927,39 @@ class DockerSandbox:
             try:
                 container = json.loads(line)
                 name = container.get("Names", "")
-                state = container.get("State", "")
-                labels = container.get("Labels", "")
 
-                # Parse labels (format: "key1=val1,key2=val2,...")
-                label_dict = {}
-                if labels:
-                    for pair in labels.split(","):
-                        if "=" in pair:
-                            key, val = pair.split("=", 1)
-                            label_dict[key] = val
-
-                config_hash = label_dict.get("config_hash", "")
-
-                # Check if config hash matches
-                if config_hash and config_hash != current_hash:
-                    # Skip running containers — they may have active sessions
-                    # They'll be reconciled when stopped or on next server restart
-                    if state.lower() == "running":
-                        logger.warning(
-                            f"Skipping running container {name} with outdated config "
-                            f"(hash: {config_hash[:8]}... != {current_hash[:8]}...) — "
-                            f"will be reconciled when stopped"
-                        )
-                        continue
-
-                    logger.info(
-                        f"Will remove container {name} with outdated config "
-                        f"(hash: {config_hash[:8]}... != {current_hash[:8]}...)"
-                    )
+                # Immediately remove legacy containers
+                if name.startswith("parachute-ws-") or name == "parachute-default":
+                    logger.info(f"Removing legacy container: {name}")
                     containers_to_remove.append(name)
                     continue
 
-                # Count valid containers
-                if name.startswith("parachute-ws-"):
-                    count += 1
-                elif name == DEFAULT_CONTAINER_NAME:
-                    has_default = True
+                # Named env containers — log and leave running
+                if name.startswith("parachute-env-"):
+                    named_env_names.append(name)
+                    continue
+
+                # Session containers — remove if orphaned (no active session)
+                if name.startswith("parachute-session-"):
+                    if active_session_ids is not None:
+                        # Container name prefix is 12 chars of session_id
+                        prefix = name[len("parachute-session-"):]
+                        # Check if any active session starts with this prefix
+                        is_active = any(sid.startswith(prefix) for sid in active_session_ids)
+                        if not is_active:
+                            logger.info(f"Removing orphaned session container: {name}")
+                            containers_to_remove.append(name)
 
             except json.JSONDecodeError:
                 logger.warning(f"Failed to parse container JSON: {line[:100]}")
                 continue
 
-        # Remove stale containers in parallel
         if containers_to_remove:
             await asyncio.gather(*[
                 self._remove_container(name)
                 for name in containers_to_remove
             ], return_exceptions=True)
-            logger.info(f"Removed {len(containers_to_remove)} container(s) with outdated configuration")
-        if count:
-            logger.info(f"Reconciled {count} existing workspace container(s)")
-        if has_default:
-            logger.info("Default sandbox container (parachute-default) is present")
+            logger.info(f"Removed {len(containers_to_remove)} container(s) during reconcile")
+
+        if named_env_names:
+            logger.info(f"Named env containers present: {', '.join(named_env_names)}")

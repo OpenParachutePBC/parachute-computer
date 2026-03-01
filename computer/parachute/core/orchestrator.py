@@ -222,17 +222,20 @@ class Orchestrator:
         """Public access to the Docker sandbox instance."""
         return self._sandbox
 
-    async def stop_workspace_container(self, workspace_slug: str) -> None:
-        """Stop and remove a workspace's persistent container."""
-        await self._sandbox.stop_container(workspace_slug)
+    async def stop_session_container(self, session_id: str) -> None:
+        """Stop and remove a private session container (called on session delete/archive)."""
+        await self._sandbox.stop_session_container(session_id)
 
-    async def stop_default_container(self) -> None:
-        """Stop and remove the default sandbox container."""
-        await self._sandbox.stop_default_container()
+    async def delete_named_container(self, slug: str) -> None:
+        """Stop and remove a named env container."""
+        await self._sandbox.delete_named_container(slug)
 
     async def reconcile_containers(self) -> None:
-        """Discover existing workspace containers on startup."""
-        await self._sandbox.reconcile()
+        """Reconcile sandbox containers on startup."""
+        # Collect active session IDs for orphan cleanup
+        active_sessions = await self.database.list_sessions(archived=False, limit=10000)
+        active_ids = {s.id for s in active_sessions}
+        await self._sandbox.reconcile(active_session_ids=active_ids)
 
     async def run_streaming(
         self,
@@ -251,6 +254,7 @@ class Orchestrator:
         trust_level: Optional[str] = None,
         model: Optional[str] = None,
         workspace_id: Optional[str] = None,
+        container_id: Optional[str] = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         """
         Run an agent with streaming response.
@@ -290,6 +294,7 @@ class Orchestrator:
             module=module,
             working_directory=working_directory,
             trust_level=trust_level,
+            container_env_id=container_id,
         )
 
         # Fall back to session's stored workspace for workspace defaults
@@ -843,18 +848,9 @@ class Orchestrator:
                     sandbox_message = actual_message
                     resume_session_id: str | None = None
                     if not is_new:
-                        # For workspace sessions, verify host-side transcript exists
-                        if workspace_id:
-                            has_transcript = await asyncio.to_thread(
-                                self._sandbox.has_sdk_transcript, workspace_id, sandbox_sid
-                            )
-                            if has_transcript:
-                                resume_session_id = sandbox_sid
-                        else:
-                            # Default sandbox: transcript lives inside the container
-                            # (no host mount to check). Always attempt resume — the
-                            # entrypoint's resume_failed handler provides the safety net.
-                            resume_session_id = sandbox_sid
+                        # All containers mount .claude/ from host, so always attempt resume.
+                        # The entrypoint's resume_failed handler provides the safety net.
+                        resume_session_id = sandbox_sid
 
                         if resume_session_id:
                             logger.info(
@@ -893,21 +889,15 @@ class Orchestrator:
                     had_text = False
                     sandbox_response_text = ""
 
-                    # Use persistent container for workspace sessions,
-                    # default persistent container for workspace-less sessions
-                    if workspace_id:
-                        sandbox_stream = self._sandbox.run_persistent(
-                            workspace_slug=workspace_id,
-                            config=sandbox_config,
-                            message=sandbox_message,
-                            resume_session_id=resume_session_id,
-                        )
-                    else:
-                        sandbox_stream = self._sandbox.run_default(
-                            config=sandbox_config,
-                            message=sandbox_message,
-                            resume_session_id=resume_session_id,
-                        )
+                    # Route to named env container or private session container
+                    container_name = session.container_env_docker_name  # None = private
+                    sandbox_stream = self._sandbox.run_session(
+                        session_id=sandbox_sid,
+                        config=sandbox_config,
+                        message=sandbox_message,
+                        resume_session_id=resume_session_id,
+                        container_name=container_name,
+                    )
 
                     # Mutable state container for sandbox event processing
                     sbx = {
@@ -992,17 +982,12 @@ class Orchestrator:
                                 f"<conversation_history>\n{history_block}\n"
                                 f"</conversation_history>\n\n{actual_message}"
                             )
-                        if workspace_id:
-                            retry_stream = self._sandbox.run_persistent(
-                                workspace_slug=workspace_id,
-                                config=sandbox_config,
-                                message=retry_message,
-                            )
-                        else:
-                            retry_stream = self._sandbox.run_default(
-                                config=sandbox_config,
-                                message=retry_message,
-                            )
+                        retry_stream = self._sandbox.run_session(
+                            session_id=sandbox_sid,
+                            config=sandbox_config,
+                            message=retry_message,
+                            container_name=container_name,
+                        )
                         async for event in retry_stream:
                             async for yielded in _process_sandbox_event(event):
                                 yield yielded
@@ -1706,14 +1691,31 @@ The user is now continuing this conversation with you. Respond naturally as if y
         return session.model_dump(by_alias=True)
 
     async def delete_session(self, session_id: str) -> bool:
-        """Delete a session."""
-        return await self.session_manager.delete_session(session_id)
+        """Delete a session and stop its private container if sandboxed."""
+        session = await self.session_manager.get_session(session_id)
+        result = await self.session_manager.delete_session(session_id)
+        if result and session and session.get_trust_level().value == "sandboxed":
+            if not session.container_env_id:
+                # Private session container — remove it
+                try:
+                    await self._sandbox.stop_session_container(session_id)
+                except Exception as e:
+                    logger.warning(f"Failed to stop session container for {session_id[:8]}: {e}")
+        return result
 
     async def archive_session(self, session_id: str) -> Optional[dict[str, Any]]:
-        """Archive a session."""
-        session = await self.session_manager.archive_session(session_id)
-        if session:
-            return session.model_dump(by_alias=True)
+        """Archive a session and stop its private container if sandboxed."""
+        session = await self.session_manager.get_session(session_id)
+        archived = await self.session_manager.archive_session(session_id)
+        if archived and session and session.get_trust_level().value == "sandboxed":
+            if not session.container_env_id:
+                # Private session container — remove it
+                try:
+                    await self._sandbox.stop_session_container(session_id)
+                except Exception as e:
+                    logger.warning(f"Failed to stop session container for {session_id[:8]}: {e}")
+        if archived:
+            return archived.model_dump(by_alias=True)
         return None
 
     async def unarchive_session(self, session_id: str) -> Optional[dict[str, Any]]:

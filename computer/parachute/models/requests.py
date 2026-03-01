@@ -142,6 +142,12 @@ class ChatRequest(BaseModel):
         pattern=r"^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$",
         description="Workspace slug to use for this session's capabilities and defaults.",
     )
+    container_id: Optional[str] = Field(
+        alias="containerId",
+        default=None,
+        pattern=r"^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$",
+        description="Named container env slug to run this session in. NULL = private container.",
+    )
 
     # Legacy fields for compatibility
     agent_path: Optional[str] = Field(alias="agentPath", default=None)

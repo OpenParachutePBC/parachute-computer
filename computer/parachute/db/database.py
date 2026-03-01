@@ -12,7 +12,7 @@ from typing import Any, Optional, Union
 
 import aiosqlite
 
-from parachute.models.session import PairingRequest, Session, SessionCreate, SessionSource, SessionUpdate
+from parachute.models.session import ContainerEnv, PairingRequest, Session, SessionCreate, SessionSource, SessionUpdate
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +122,14 @@ CREATE TABLE IF NOT EXISTS pairing_requests (
 
 CREATE INDEX IF NOT EXISTS idx_pairing_requests_status ON pairing_requests(status);
 CREATE INDEX IF NOT EXISTS idx_pairing_requests_platform ON pairing_requests(platform, platform_user_id);
+
+-- Named container environments (shared execution envs across sessions)
+CREATE TABLE IF NOT EXISTS container_envs (
+    slug TEXT PRIMARY KEY,
+    display_name TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+-- docker name is always: parachute-env-<slug>
 
 -- Schema version tracking
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -494,6 +502,36 @@ class Database:
             await self._connection.commit()
             logger.info("Added bridge_session_id column (v21), backfilled from curator_session_id")
 
+        # v22: container_envs table + container_env_id on sessions
+        async with self._connection.execute(
+            "SELECT version FROM schema_version WHERE version = 22"
+        ) as cursor:
+            row = await cursor.fetchone()
+        if not row:
+            # Create container_envs table if not in base schema
+            await self._connection.executescript("""
+                CREATE TABLE IF NOT EXISTS container_envs (
+                    slug TEXT PRIMARY KEY,
+                    display_name TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+            """)
+            try:
+                async with self._connection.execute(
+                    "SELECT container_env_id FROM sessions LIMIT 1"
+                ):
+                    pass  # Column exists
+            except Exception:
+                await self._connection.execute(
+                    "ALTER TABLE sessions ADD COLUMN container_env_id TEXT"
+                )
+                logger.info("Added container_env_id column to sessions")
+            await self._connection.execute(
+                "INSERT OR IGNORE INTO schema_version (version, applied_at) VALUES (22, datetime('now'))"
+            )
+            await self._connection.commit()
+            logger.info("Added container_envs table and container_env_id column (v22)")
+
     async def close(self) -> None:
         """Close database connection."""
         if self._connection:
@@ -546,6 +584,7 @@ class Database:
 
         bridge_session_id = getattr(session, 'bridge_session_id', None)
         bridge_context_log = getattr(session, 'bridge_context_log', None)
+        container_env_id = getattr(session, 'container_env_id', None)
 
         await self.connection.execute(
             """
@@ -555,8 +594,8 @@ class Database:
                 continued_from, agent_type, trust_level,
                 linked_bot_platform, linked_bot_chat_id, linked_bot_chat_type,
                 workspace_id, parent_session_id, created_by, bridge_session_id,
-                bridge_context_log, metadata
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                bridge_context_log, container_env_id, metadata
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 session.id,
@@ -581,6 +620,7 @@ class Database:
                 created_by,
                 bridge_session_id,
                 bridge_context_log,
+                container_env_id,
                 metadata_json,
             ),
         )
@@ -652,6 +692,10 @@ class Database:
         if update.bridge_context_log is not None:
             updates.append("bridge_context_log = ?")
             params.append(update.bridge_context_log)
+
+        if update.container_env_id is not None:
+            updates.append("container_env_id = ?")
+            params.append(update.container_env_id)
 
         if not updates:
             return await self.get_session(session_id)
@@ -1106,6 +1150,54 @@ class Database:
         )
 
     # =========================================================================
+    # Container Envs
+    # =========================================================================
+
+    async def create_container_env(self, slug: str, display_name: str) -> ContainerEnv:
+        """Create a named container environment."""
+        now = datetime.now(timezone.utc).isoformat()
+        await self.connection.execute(
+            "INSERT INTO container_envs (slug, display_name, created_at) VALUES (?, ?, ?)",
+            (slug, display_name, now),
+        )
+        await self.connection.commit()
+        return ContainerEnv(slug=slug, display_name=display_name, created_at=datetime.fromisoformat(now))
+
+    async def get_container_env(self, slug: str) -> Optional[ContainerEnv]:
+        """Get a named container environment by slug."""
+        async with self.connection.execute(
+            "SELECT * FROM container_envs WHERE slug = ?", (slug,)
+        ) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                return self._row_to_container_env(row)
+            return None
+
+    async def list_container_envs(self) -> list[ContainerEnv]:
+        """List all named container environments."""
+        async with self.connection.execute(
+            "SELECT * FROM container_envs ORDER BY created_at DESC"
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [self._row_to_container_env(row) for row in rows]
+
+    async def delete_container_env(self, slug: str) -> bool:
+        """Delete a named container environment record."""
+        cursor = await self.connection.execute(
+            "DELETE FROM container_envs WHERE slug = ?", (slug,)
+        )
+        await self.connection.commit()
+        return cursor.rowcount > 0
+
+    def _row_to_container_env(self, row: aiosqlite.Row) -> ContainerEnv:
+        """Convert a database row to a ContainerEnv model."""
+        return ContainerEnv(
+            slug=row["slug"],
+            display_name=row["display_name"],
+            created_at=datetime.fromisoformat(row["created_at"]),
+        )
+
+    # =========================================================================
     # Session Config Update
     # =========================================================================
 
@@ -1356,6 +1448,7 @@ class Database:
             summary=row["summary"] if "summary" in keys else None,
             bridge_session_id=row["bridge_session_id"] if "bridge_session_id" in keys else None,
             bridge_context_log=row["bridge_context_log"] if "bridge_context_log" in keys else None,
+            container_env_id=row["container_env_id"] if "container_env_id" in keys else None,
             metadata=metadata,
         )
 
