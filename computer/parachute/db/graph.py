@@ -5,7 +5,7 @@ Shared Kuzu/LadybugDB connection for all modules. Each module registers its
 own schema segment via ensure_node_table() / ensure_rel_table() on load.
 
 This is infrastructure, not a Brain feature. The Brain module wraps this with
-brain-specific logic (LadybugService). Other modules (Chat, Daily) will use
+brain-specific logic (BrainService). Other modules (Chat, Daily) will use
 this directly to register and query their own node types.
 
 LadybugDB quirks:

@@ -1,11 +1,11 @@
 """
-LadybugService — Brain-specific graph operations.
+BrainService — Brain-specific graph operations.
 
 Wraps GraphService with Brain ontology logic: entity types, open-schema
 columns from entity_types.yaml, BM25 text search, relationships, traversal.
 
 This is NOT the database connection — that's GraphService (core infrastructure).
-LadybugService is the brain-flavored API over the shared graph.
+BrainService is the brain-flavored API over the shared graph.
 
 LadybugDB quirks discovered during development:
   - Parameters are positional: conn.execute(query, params_dict) not parameters=...
@@ -40,7 +40,7 @@ def _esc(value: str) -> str:
     return str(value).replace("'", "\\'")
 
 
-class LadybugService:
+class BrainService:
     """Brain-specific graph operations. Wraps GraphService with brain ontology logic."""
 
     def __init__(self, graph: GraphService, vault_path: Path):

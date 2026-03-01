@@ -16,7 +16,7 @@ from typing import Optional, Any
 
 from fastapi import APIRouter, HTTPException, status
 
-from .ladybug_service import LadybugService
+from .brain_service import BrainService
 from .schema import load_entity_types, save_entity_types
 from .models import (
     CreateEntityRequest,
@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 
 
 class BrainModule:
-    """Brain module with LadybugDB embedded knowledge graph"""
+    """Brain module — embedded graph knowledge store"""
 
     name = "brain"
     provides = ["BrainInterface"]
@@ -46,12 +46,12 @@ class BrainModule:
         (vault_path / ".brain").mkdir(parents=True, exist_ok=True)
 
         # Lazy-loaded service
-        self._service: Optional[LadybugService] = None
+        self._service: Optional[BrainService] = None
         self._init_lock = asyncio.Lock()
         self._queries_lock = asyncio.Lock()
 
-    async def _ensure_service(self) -> LadybugService:
-        """Lazy-initialize LadybugService using shared GraphDB from registry."""
+    async def _ensure_service(self) -> BrainService:
+        """Lazy-initialize BrainService using shared GraphDB from registry."""
         if self._service is None:
             async with self._init_lock:
                 if self._service is None:
@@ -62,10 +62,10 @@ class BrainModule:
                             "Brain: GraphDB not found in registry. "
                             "GraphService must be initialized before Brain module loads."
                         )
-                    svc = LadybugService(graph=graph, vault_path=self.vault_path)
+                    svc = BrainService(graph=graph, vault_path=self.vault_path)
                     await svc.init_brain_schema()
                     self._service = svc
-                    logger.info("Brain: LadybugService initialized via shared GraphDB")
+                    logger.info("Brain: BrainService initialized via shared GraphDB")
         return self._service
 
     def get_router(self) -> APIRouter:
