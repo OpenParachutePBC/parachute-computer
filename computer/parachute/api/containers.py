@@ -73,13 +73,13 @@ async def delete_container_env(request: Request, slug: str):
     if not env:
         raise HTTPException(status_code=404, detail=f"Container env '{slug}' not found")
 
-    # Stop and remove the Docker container
+    # Stop, remove the Docker container, and clean up the home dir
     orchestrator = getattr(request.app.state, "orchestrator", None)
     if orchestrator:
         try:
-            await orchestrator.delete_named_container(slug)
+            await orchestrator.delete_container(slug)
         except Exception as e:
-            logger.warning(f"Failed to stop named env container '{slug}': {e}")
+            logger.warning(f"Failed to remove container env '{slug}': {e}")
 
     deleted = await db.delete_container_env(slug)
     return {"deleted": deleted, "slug": slug}

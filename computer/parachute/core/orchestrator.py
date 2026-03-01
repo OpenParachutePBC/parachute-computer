@@ -52,7 +52,7 @@ from parachute.models.events import (
     UserQuestionEvent,
     WarningEvent,
 )
-from parachute.models.session import BOT_SOURCES, ResumeInfo, Session, SessionSource, TrustLevel
+from parachute.models.session import BOT_SOURCES, ResumeInfo, Session, SessionSource, SessionUpdate, TrustLevel
 
 logger = logging.getLogger(__name__)
 
@@ -222,20 +222,16 @@ class Orchestrator:
         """Public access to the Docker sandbox instance."""
         return self._sandbox
 
-    async def stop_session_container(self, session_id: str) -> None:
-        """Stop and remove a private session container (called on session delete/archive)."""
-        await self._sandbox.stop_session_container(session_id)
-
-    async def delete_named_container(self, slug: str) -> None:
-        """Stop and remove a named env container."""
-        await self._sandbox.delete_named_container(slug)
+    async def delete_container(self, slug: str) -> None:
+        """Stop and remove a container env (container + vault home dir)."""
+        await self._sandbox.delete_container(slug)
 
     async def reconcile_containers(self) -> None:
         """Reconcile sandbox containers on startup."""
-        # Collect active session IDs for orphan cleanup
-        active_sessions = await self.database.list_sessions(archived=False, limit=10000)
-        active_ids = {s.id for s in active_sessions}
-        await self._sandbox.reconcile(active_session_ids=active_ids)
+        # Use container_env slugs for orphan detection (not session IDs)
+        active_envs = await self.database.list_container_envs()
+        active_slugs = {env.slug for env in active_envs}
+        await self._sandbox.reconcile(active_slugs=active_slugs)
 
     async def run_streaming(
         self,
@@ -876,6 +872,23 @@ class Orchestrator:
                                 f"into sandbox prompt for session {sandbox_sid[:8]}"
                             )
 
+                    # Ensure every sandboxed session has a container_env record.
+                    # Auto-create one on the first turn if none was assigned.
+                    if not session.container_env_id:
+                        auto_slug = str(uuid.uuid4()).replace("-", "")[:12]
+                        await self.database.create_container_env(
+                            slug=auto_slug,
+                            display_name=f"Session {sandbox_sid[:8]}",
+                        )
+                        await self.database.update_session(
+                            session.id,
+                            SessionUpdate(container_env_id=auto_slug),
+                        )
+                        session.container_env_id = auto_slug
+                        logger.info(
+                            f"Auto-created container env {auto_slug} for session {sandbox_sid[:8]}"
+                        )
+
                     # Pre-check sandbox image before starting container
                     if not await self._sandbox.image_exists():
                         from parachute.core.sandbox import SANDBOX_IMAGE
@@ -886,10 +899,7 @@ class Orchestrator:
                         ).model_dump(by_alias=True)
                         return
 
-                    had_text = False
-                    sandbox_response_text = ""
-
-                    # Route to named env container or private session container
+                    # Run session in its container env (auto-created above if needed)
                     sandbox_stream = self._sandbox.run_session(
                         session_id=sandbox_sid,
                         config=sandbox_config,
@@ -1690,16 +1700,24 @@ The user is now continuing this conversation with you. Respond naturally as if y
         return session.model_dump(by_alias=True)
 
     async def delete_session(self, session_id: str) -> bool:
-        """Delete a session and stop its private container if sandboxed."""
+        """Delete a session and clean up its container env if it was private."""
         session = await self.session_manager.get_session(session_id)
+        container_env_id = session.container_env_id if session else None
+
         result = await self.session_manager.delete_session(session_id)
-        if result and session and session.get_trust_level().value == "sandboxed":
-            if not session.container_env_id:
-                # Private session container — remove it
-                try:
-                    await self._sandbox.stop_session_container(session_id)
-                except Exception as e:
-                    logger.warning(f"Failed to stop session container for {session_id[:8]}: {e}")
+
+        if result and container_env_id:
+            # Remove the container env if no other sessions reference it.
+            # Atomic check-and-delete prevents double-remove when two sessions
+            # sharing the same env are deleted concurrently.
+            try:
+                deleted = await self.database.delete_container_env_if_unreferenced(container_env_id)
+                if deleted:
+                    await self._sandbox.delete_container(container_env_id)
+                    logger.info(f"Removed container env {container_env_id} with session {session_id[:8]}")
+            except Exception as e:
+                logger.warning(f"Failed to clean up container env {container_env_id}: {e}")
+
         return result
 
     async def archive_session(self, session_id: str) -> Optional[dict[str, Any]]:

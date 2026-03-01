@@ -1196,6 +1196,29 @@ class Database:
         await self.connection.commit()
         return cursor.rowcount > 0
 
+    async def delete_container_env_if_unreferenced(self, slug: str) -> bool:
+        """Delete a container env only if no sessions reference it.
+
+        Atomically checks for remaining sessions and deletes in one query,
+        preventing double-delete races when two sessions sharing an env are
+        deleted concurrently.
+
+        Returns True if the record was deleted, False if other sessions still
+        reference it (env should be preserved).
+        """
+        cursor = await self.connection.execute(
+            """
+            DELETE FROM container_envs
+            WHERE slug = ?
+              AND NOT EXISTS (
+                  SELECT 1 FROM sessions WHERE container_env_id = ?
+              )
+            """,
+            (slug, slug),
+        )
+        await self.connection.commit()
+        return cursor.rowcount > 0
+
     def _row_to_container_env(self, row: aiosqlite.Row) -> ContainerEnv:
         """Convert a database row to a ContainerEnv model."""
         return ContainerEnv(
