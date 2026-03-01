@@ -68,15 +68,15 @@ Copy vault to new machine
 
 ## Acceptance Criteria
 
-- [ ] All sandboxed sessions always have a `container_env_id` (never NULL for sandboxed)
-- [ ] Auto-slug container_env created on first turn if session has no container_env_id
-- [ ] Container always named `parachute-env-<slug>` (no more `parachute-session-*`)
-- [ ] Home dir always bind-mounted: `vault/.parachute/sandbox/envs/<slug>/home/` → `/home/sandbox/`
-- [ ] `.claude/` persistence covered by home bind mount (no separate `.claude/` mount)
-- [ ] Session deleted → container_env deleted (if no other sessions reference it) → container + home dir removed
-- [ ] Named env deleted → container_env deleted → container + home dir removed
-- [ ] `reconcile()` removes orphaned `parachute-env-*` containers (slug has no container_env record)
-- [ ] `reconcile()` removes legacy `parachute-session-*` containers on startup
+- [x] All sandboxed sessions always have a `container_env_id` (never NULL for sandboxed)
+- [x] Auto-slug container_env created on first turn if session has no container_env_id
+- [x] Container always named `parachute-env-<slug>` (no more `parachute-session-*`)
+- [x] Home dir always bind-mounted: `vault/.parachute/sandbox/envs/<slug>/home/` → `/home/sandbox/`
+- [x] `.claude/` persistence covered by home bind mount (no separate `.claude/` mount)
+- [x] Session deleted → container_env deleted (if no other sessions reference it) → container + home dir removed
+- [x] Named env deleted → container_env deleted → container + home dir removed
+- [x] `reconcile()` removes orphaned `parachute-env-*` containers (slug has no container_env record)
+- [x] `reconcile()` removes legacy `parachute-session-*` containers on startup
 - [ ] Vault portability: moving vault to new machine and restarting server recreates containers against existing home/ dirs, allowing resume
 
 ## Technical Design

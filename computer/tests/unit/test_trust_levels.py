@@ -251,22 +251,14 @@ class TestDockerSandbox:
         args, _ = sandbox._build_run_args(config)
         assert "parachute-sandbox-abcdef12" in args
 
-    def test_get_named_env_claude_dir(self, vault_path):
+    def test_get_container_home_dir(self, vault_path):
         sandbox = DockerSandbox(vault_path=vault_path)
-        claude_dir = sandbox._get_named_env_claude_dir("my-env")
-        expected = vault_path / ".parachute" / "sandbox" / "envs" / "my-env" / ".claude"
-        assert claude_dir == expected
+        home_dir = sandbox._get_container_home_dir("my-env")
+        expected = vault_path / ".parachute" / "sandbox" / "envs" / "my-env" / "home"
+        assert home_dir == expected
 
-    def test_session_container_name_prefix(self, vault_path):
-        sandbox = DockerSandbox(vault_path=vault_path)
-        session_id = "abcdef1234567890xyz"
-        # Verify the container name used in stop_session_container
-        container_name = f"parachute-session-{session_id[:12]}"
-        assert container_name == "parachute-session-abcdef123456"
-
-    def test_named_env_container_name_prefix(self, vault_path):
-        sandbox = DockerSandbox(vault_path=vault_path)
-        # Verify the container name used in ensure_named_container / delete_named_container
+    def test_container_name_always_env_prefix(self, vault_path):
+        """All containers use parachute-env-<slug> regardless of private/named."""
         slug = "my-project"
         container_name = f"parachute-env-{slug}"
         assert container_name == "parachute-env-my-project"
@@ -275,42 +267,46 @@ class TestDockerSandbox:
         from parachute.core.sandbox import TOOLS_VOLUME_NAME
         sandbox = DockerSandbox(vault_path=vault_path)
         config = AgentSandboxConfig(session_id="test123")
-        labels = {"app": "parachute", "type": "session"}
-        claude_dir = vault_path / ".parachute" / "sandbox" / "sessions" / "test123" / ".claude"
+        labels = {"app": "parachute", "type": "env"}
+        home_dir = vault_path / ".parachute" / "sandbox" / "envs" / "test123" / "home"
         vault_mounts = ["-v", f"{vault_path}:/home/sandbox/Parachute:ro"]
         args = sandbox._build_persistent_container_args(
-            "parachute-session-test123", config, labels, claude_dir, vault_mounts
+            "parachute-env-test123", config, labels, home_dir, vault_mounts
         )
         arg_str = " ".join(args)
         assert TOOLS_VOLUME_NAME in arg_str
         assert "/opt/parachute-tools" in arg_str
         assert "readonly" in arg_str
 
-    def test_persistent_container_args_named_env_mounts_claude_dir(self, vault_path):
-        """Named env containers host-mount .claude/ for durability across sessions."""
+    def test_persistent_container_args_mounts_home_dir(self, vault_path):
+        """All containers bind-mount the vault home dir to /home/sandbox/."""
         sandbox = DockerSandbox(vault_path=vault_path)
         config = AgentSandboxConfig(session_id="test123")
-        labels = {"app": "parachute", "type": "named-env"}
-        claude_dir = vault_path / ".parachute" / "sandbox" / "envs" / "my-env" / ".claude"
+        labels = {"app": "parachute", "type": "env"}
+        home_dir = vault_path / ".parachute" / "sandbox" / "envs" / "my-env" / "home"
         vault_mounts = ["-v", f"{vault_path}:/home/sandbox/Parachute:ro"]
         args = sandbox._build_persistent_container_args(
-            "parachute-env-my-env", config, labels, claude_dir, vault_mounts
+            "parachute-env-my-env", config, labels, home_dir, vault_mounts
         )
         arg_str = " ".join(args)
-        assert "/home/sandbox/.claude:rw" in arg_str
-        assert claude_dir.exists()  # Must be created by the method
+        assert f"{home_dir}:/home/sandbox:rw" in arg_str
+        assert home_dir.exists()  # Must be created by the method
 
-    def test_persistent_container_args_private_session_no_claude_mount(self, vault_path):
-        """.claude/ lives in the container overlay for private sessions — no host mount."""
+    def test_persistent_container_args_vault_nested_in_home(self, vault_path):
+        """Vault is mounted inside home (/home/sandbox/Parachute) for nested overlay."""
         sandbox = DockerSandbox(vault_path=vault_path)
         config = AgentSandboxConfig(session_id="test123")
-        labels = {"app": "parachute", "type": "session"}
+        labels = {"app": "parachute", "type": "env"}
+        home_dir = vault_path / ".parachute" / "sandbox" / "envs" / "my-env" / "home"
         vault_mounts = ["-v", f"{vault_path}:/home/sandbox/Parachute:ro"]
         args = sandbox._build_persistent_container_args(
-            "parachute-session-test123", config, labels, None, vault_mounts
+            "parachute-env-my-env", config, labels, home_dir, vault_mounts
         )
         arg_str = " ".join(args)
-        assert "/home/sandbox/.claude" not in arg_str
+        # Home mount comes first, vault overlay comes second
+        home_idx = arg_str.index("/home/sandbox:rw")
+        vault_idx = arg_str.index("/home/sandbox/Parachute:ro")
+        assert home_idx < vault_idx
 
 
 # ---------------------------------------------------------------------------

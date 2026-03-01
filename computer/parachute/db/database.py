@@ -1196,6 +1196,14 @@ class Database:
         await self.connection.commit()
         return cursor.rowcount > 0
 
+    async def count_sessions_for_container_env(self, slug: str) -> int:
+        """Count sessions that reference this container env slug."""
+        cursor = await self.connection.execute(
+            "SELECT COUNT(*) FROM sessions WHERE container_env_id = ?", (slug,)
+        )
+        row = await cursor.fetchone()
+        return row[0] if row else 0
+
     def _row_to_container_env(self, row: aiosqlite.Row) -> ContainerEnv:
         """Convert a database row to a ContainerEnv model."""
         return ContainerEnv(

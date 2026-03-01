@@ -6,11 +6,17 @@ and credential propagation for the Claude Agent SDK.
 
 Used for all sandboxed sessions. Docker must be available — no fallback.
 
-Two container modes:
-- Session containers (parachute-session-<session_id[:12]>): private, per-session,
-  removed when the session is deleted or archived
-- Named env containers (parachute-env-<slug>): shared, persist until explicitly deleted,
-  multiple sessions can join the same env and share /home/sandbox/
+All sandboxed sessions use containers named `parachute-env-<slug>`. Every container
+has its home directory bind-mounted from the vault at:
+
+    vault/.parachute/sandbox/envs/<slug>/home/ → /home/sandbox/
+
+This makes container state fully portable: moving the vault to another machine and
+restarting the server recreates containers against the same home dirs, allowing any
+session to resume exactly where it left off.
+
+"Private" sessions get an auto-generated slug. "Named" envs are the same structure
+with a user-readable slug — the distinction is purely social (can other sessions join?).
 """
 
 import asyncio
@@ -465,21 +471,18 @@ class DockerSandbox:
             "sandbox_image": SANDBOX_IMAGE,
         }
 
-    def _get_named_env_claude_dir(self, slug: str) -> Path:
-        """Host-side .claude/ directory for a named env container."""
-        return self.vault_path / SANDBOX_DATA_DIR / "envs" / slug / ".claude"
+    def _get_container_home_dir(self, slug: str) -> Path:
+        """Host-side home directory for a container env (bind-mounted to /home/sandbox/)."""
+        return self.vault_path / SANDBOX_DATA_DIR / "envs" / slug / "home"
 
     async def _ensure_container(
         self,
         container_name: str,
-        claude_dir: Path | None,
+        home_dir: Path,
         labels: dict[str, str],
         config: AgentSandboxConfig,
     ) -> str:
-        """Ensure a persistent container is running; create if absent, start if stopped.
-
-        Shared implementation for session and named-env containers.
-        """
+        """Ensure a persistent container is running; create if absent, start if stopped."""
         async with self._slug_locks[container_name]:
             status = await self._inspect_status(container_name)
 
@@ -498,7 +501,7 @@ class DockerSandbox:
             vault_mounts.extend(self._build_capability_mounts(config))
 
             args = self._build_persistent_container_args(
-                container_name, config, labels, claude_dir, vault_mounts
+                container_name, config, labels, home_dir, vault_mounts
             )
 
             proc = await asyncio.create_subprocess_exec(
@@ -514,41 +517,24 @@ class DockerSandbox:
             logger.info(f"Created container {container_name}")
             return container_name
 
-    async def ensure_session_container(
-        self, session_id: str, config: AgentSandboxConfig
-    ) -> str:
-        """Ensure a private session container is running.
-
-        Container: parachute-session-<session_id[:12]>
-        Creates lazily on first call; idempotent on subsequent calls.
-        .claude/ lives in the container's writable layer — no host mount.
-        """
-        container_name = f"parachute-session-{session_id[:12]}"
-        labels = {
-            "app": "parachute",
-            "type": "session",
-            "session_id": session_id,
-            "config_hash": self._calculate_config_hash(),
-        }
-        return await self._ensure_container(container_name, None, labels, config)
-
-    async def ensure_named_container(
+    async def ensure_container(
         self, slug: str, config: AgentSandboxConfig
     ) -> str:
-        """Ensure a named env container is running.
+        """Ensure a container env is running.
 
         Container: parachute-env-<slug>
-        Creates if absent, starts if stopped. Multiple sessions share one container.
+        Home dir: vault/.parachute/sandbox/envs/<slug>/home/ → /home/sandbox/
+        Creates if absent, starts if stopped. Idempotent.
         """
         container_name = f"parachute-env-{slug}"
-        claude_dir = self._get_named_env_claude_dir(slug)
+        home_dir = self._get_container_home_dir(slug)
         labels = {
             "app": "parachute",
-            "type": "named-env",
+            "type": "env",
             "env_slug": slug,
             "config_hash": self._calculate_config_hash(),
         }
-        return await self._ensure_container(container_name, claude_dir, labels, config)
+        return await self._ensure_container(container_name, home_dir, labels, config)
 
     async def run_session(
         self,
@@ -560,34 +546,30 @@ class DockerSandbox:
     ) -> AsyncGenerator[dict, None]:
         """Run an agent session in a container, yielding streaming events.
 
-        If container_env_slug is provided, exec into the named env container.
-        Otherwise, ensure a private session container and exec into it.
+        container_env_slug must be set by the caller (orchestrator auto-creates one
+        if the session doesn't have one yet). If None, falls back to session_id prefix
+        for backward compatibility.
         """
         await self._validate_docker_ready()
 
-        if container_env_slug is not None:
-            target = await self.ensure_named_container(container_env_slug, config)
-        else:
-            target = await self.ensure_session_container(session_id, config)
+        slug = container_env_slug or session_id[:12]
+        target = await self.ensure_container(slug, config)
 
         async for event in self._run_in_container(
             target, config, message, resume_session_id, "sandbox"
         ):
             yield event
 
-    async def stop_session_container(self, session_id: str) -> None:
-        """Stop and remove a private session container."""
-        container_name = f"parachute-session-{session_id[:12]}"
-        await self._stop_container(container_name)
-        await self._remove_container(container_name)
-        self._slug_locks.pop(container_name, None)
-
-    async def delete_named_container(self, slug: str) -> None:
-        """Stop and remove a named env container."""
+    async def delete_container(self, slug: str) -> None:
+        """Stop and remove a container env and its vault home directory."""
         container_name = f"parachute-env-{slug}"
         await self._stop_container(container_name)
         await self._remove_container(container_name)
         self._slug_locks.pop(container_name, None)
+        home_dir = self._get_container_home_dir(slug)
+        if home_dir.exists():
+            shutil.rmtree(home_dir, ignore_errors=True)
+            logger.info(f"Removed home dir for container env {slug}")
 
     async def _inspect_status(self, container_name: str) -> str | None:
         """Get container status via docker inspect. Returns None if not found."""
@@ -606,7 +588,7 @@ class DockerSandbox:
         container_name: str,
         config: AgentSandboxConfig,
         labels: dict[str, str],
-        claude_dir: Path | None,
+        home_dir: Path,
         vault_mounts: list[str],
     ) -> list[str]:
         """Build docker run arguments for a persistent container.
@@ -615,10 +597,9 @@ class DockerSandbox:
             container_name: Name for the container
             config: Sandbox configuration
             labels: Docker labels for discovery
-            claude_dir: Host .claude/ directory to bind-mount for SDK persistence.
-                        None (private session containers) means .claude/ lives in the
-                        container's writable overlay and is cleaned up with it.
-            vault_mounts: Vault volume mount arguments (from _build_mounts or custom)
+            home_dir: Host directory bind-mounted to /home/sandbox/ for portability.
+                      .claude/ lives inside here, so SDK state survives Docker restarts.
+            vault_mounts: Vault volume mount arguments (nested inside /home/sandbox/)
 
         Returns:
             Complete docker run command arguments
@@ -654,7 +635,13 @@ class DockerSandbox:
                 "--add-host", "host.docker.internal:host-gateway",
             ])
 
-        # Vault mounts
+        # Home dir bind-mount: vault-backed for portability and SDK resume.
+        # .claude/ lives inside here, so transcripts survive Docker restarts and
+        # the vault can be moved to another machine and sessions will resume.
+        home_dir.mkdir(parents=True, exist_ok=True)
+        args.extend(["-v", f"{home_dir}:/home/sandbox:rw"])
+
+        # Vault mounts (nested inside /home/sandbox/Parachute/ — read-only overlay)
         args.extend(vault_mounts)
 
         # Shared tools volume (read-only) — bin/ in PATH, python/ in PYTHONPATH
@@ -662,13 +649,6 @@ class DockerSandbox:
             "--mount",
             f"source={TOOLS_VOLUME_NAME},target=/opt/parachute-tools,readonly",
         ])
-
-        # SDK session persistence — only host-mount for named env containers.
-        # Private session containers let .claude/ live in the writable overlay.
-        if claude_dir is not None:
-            claude_dir.mkdir(parents=True, exist_ok=True)
-            claude_dir.chmod(0o700)
-            args.extend(["-v", f"{claude_dir}:/home/sandbox/.claude:rw"])
 
         # Image + keep-alive command
         args.extend([SANDBOX_IMAGE, "sleep", "infinity"])
@@ -862,19 +842,18 @@ class DockerSandbox:
         await proc.wait()
         # returncode 0 = created, may also succeed if already exists
 
-    async def reconcile(self, active_session_ids: set[str] | None = None) -> None:
+    async def reconcile(self, active_slugs: set[str] | None = None) -> None:
         """Reconcile parachute containers on server startup.
 
         Actions:
         - Create parachute-tools volume if absent
-        - Remove all legacy parachute-ws-* and parachute-default containers immediately
-        - Remove orphaned parachute-session-* containers (no matching active session)
-        - Log discovered parachute-env-* (named env) containers
+        - Remove all legacy parachute-ws-*, parachute-default, parachute-session-* immediately
+        - Remove orphaned parachute-env-* containers (no matching container_env record)
+        - Log active parachute-env-* containers
 
         Args:
-            active_session_ids: Set of session IDs currently in the DB (short prefix
-                not needed — full IDs compared against container name prefix).
-                If None, skip orphan cleanup for session containers.
+            active_slugs: Set of container_env slugs in the DB.
+                If None, skip orphan cleanup for env containers.
         """
         if not await self.is_available():
             return
@@ -895,7 +874,7 @@ class DockerSandbox:
             return
 
         containers_to_remove: list[str] = []
-        named_env_names: list[str] = []
+        active_env_names: list[str] = []
 
         for line in stdout.decode().strip().split("\n"):
             if not line:
@@ -905,27 +884,22 @@ class DockerSandbox:
                 container = json.loads(line)
                 name = container.get("Names", "")
 
-                # Immediately remove legacy containers
-                if name.startswith("parachute-ws-") or name == "parachute-default":
+                # Remove all legacy container formats immediately
+                if (name.startswith("parachute-ws-")
+                        or name == "parachute-default"
+                        or name.startswith("parachute-session-")):
                     logger.info(f"Removing legacy container: {name}")
                     containers_to_remove.append(name)
                     continue
 
-                # Named env containers — log and leave running
+                # Env containers — remove orphans (no matching container_env record)
                 if name.startswith("parachute-env-"):
-                    named_env_names.append(name)
-                    continue
-
-                # Session containers — remove if orphaned (no active session)
-                if name.startswith("parachute-session-"):
-                    if active_session_ids is not None:
-                        # Container name prefix is 12 chars of session_id
-                        prefix = name[len("parachute-session-"):]
-                        # Check if any active session starts with this prefix
-                        is_active = any(sid.startswith(prefix) for sid in active_session_ids)
-                        if not is_active:
-                            logger.info(f"Removing orphaned session container: {name}")
-                            containers_to_remove.append(name)
+                    slug = name[len("parachute-env-"):]
+                    if active_slugs is not None and slug not in active_slugs:
+                        logger.info(f"Removing orphaned env container: {name}")
+                        containers_to_remove.append(name)
+                    else:
+                        active_env_names.append(name)
 
             except json.JSONDecodeError:
                 logger.warning(f"Failed to parse container JSON: {line[:100]}")
@@ -942,5 +916,5 @@ class DockerSandbox:
             removed = sum(1 for r in results if not isinstance(r, Exception))
             logger.info(f"Removed {removed}/{len(containers_to_remove)} container(s) during reconcile")
 
-        if named_env_names:
-            logger.info(f"Named env containers present: {', '.join(named_env_names)}")
+        if active_env_names:
+            logger.info(f"Active env containers: {', '.join(active_env_names)}")
