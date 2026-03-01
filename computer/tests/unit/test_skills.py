@@ -458,9 +458,11 @@ Content.
 
         prompt_section = get_skills_for_system_prompt(tmp_path)
 
-        assert "## Available Skills" in prompt_section
-        assert "**Alpha**: Does alpha things" in prompt_section
-        assert "**Beta**: Does beta things" in prompt_section
+        assert "<vault_skills>" in prompt_section
+        assert 'name="Alpha"' in prompt_section
+        assert "Does alpha things" in prompt_section
+        assert 'name="Beta"' in prompt_section
+        assert "Does beta things" in prompt_section
 
     def test_returns_empty_when_no_skills(self, tmp_path):
         """Test returns empty string when no skills."""

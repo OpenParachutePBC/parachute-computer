@@ -237,6 +237,10 @@ class TestCreateSession:
     @pytest.mark.asyncio
     async def test_create_session_spawn_limit(self, db, parent_session, session_context_direct, vault_path):
         """Test create_session enforces spawn limit (max 10 children)."""
+        # Mock get_last_child_created to return an old timestamp so rate limiter doesn't trigger
+        old_timestamp = datetime.now(timezone.utc) - timedelta(seconds=5)
+        db.get_last_child_created = AsyncMock(return_value=old_timestamp)
+
         with patch("parachute.mcp_server._session_context", session_context_direct), \
              patch("parachute.mcp_server._vault_path", vault_path), \
              patch("parachute.mcp_server.get_db", return_value=db):
@@ -294,7 +298,7 @@ class TestCreateSession:
 class TestSendMessage:
     @pytest.mark.asyncio
     async def test_send_message_success(self, db, parent_session, session_context_direct):
-        """Test successful message sending."""
+        """Test successful message validation (delivery pending SDK support)."""
         # Create a recipient session in the same workspace
         recipient = SessionCreate(
             id="recipient_sess_789",
@@ -312,7 +316,8 @@ class TestSendMessage:
                 message="Hello from parent!",
             )
 
-            assert result["success"] is True
+            # Validation passes; delivery is not yet implemented
+            assert result.get("validation_passed") is True
             assert result["sender_session_id"] == "parent_sess_abc123"
             assert result["recipient_session_id"] == "recipient_sess_789"
 
