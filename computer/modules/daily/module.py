@@ -38,6 +38,32 @@ class DailyModule:
         self.entries_dir.mkdir(parents=True, exist_ok=True)
         self._brain = None
 
+    async def on_load(self) -> None:
+        """Register Daily schema tables in the shared graph."""
+        from parachute.core.interfaces import get_registry
+        graph = get_registry().get("GraphDB")
+        if graph is None:
+            logger.warning("Daily: GraphDB not in registry, schema registration skipped")
+            return
+        await graph.ensure_node_table(
+            "Journal_Entry",
+            {
+                "entry_id": "STRING",
+                "date": "STRING",
+                "content": "STRING",
+                "snippet": "STRING",
+                "created_at": "STRING",
+            },
+            primary_key="entry_id",
+        )
+        await graph.ensure_node_table(
+            "Day",
+            {"date": "STRING", "created_at": "STRING"},
+            primary_key="date",
+        )
+        await graph.ensure_rel_table("HAS_ENTRY", "Day", "Journal_Entry")
+        logger.info("Daily: graph schema registered (Journal_Entry, Day, HAS_ENTRY)")
+
     def _get_brain(self):
         """Lazily get BrainInterface from registry."""
         if self._brain is None:
@@ -84,7 +110,7 @@ class DailyModule:
 
         return suggestions
 
-    def create_entry(self, content: str, metadata: dict = None) -> dict:
+    async def create_entry(self, content: str, metadata: dict = None) -> dict:
         """Create a new daily entry."""
         now = datetime.now(timezone.utc)
         entry_id = now.strftime("%Y-%m-%d-%H-%M")
@@ -110,12 +136,66 @@ class DailyModule:
 
         logger.info(f"Created daily entry: {filename}")
 
+        # Write to graph (silently skips if GraphDB not available)
+        await self._write_entry_to_graph(entry_id, now)
+
         return {
             "id": entry_id,
             "path": str(filepath),
             "created_at": now.isoformat(),
             "brain_suggestions": brain_suggestions,
         }
+
+    async def _write_entry_to_graph(self, entry_id: str, now: datetime) -> None:
+        """Write a new journal entry to the graph index. Silent no-op if unavailable."""
+        from parachute.core.interfaces import get_registry
+        graph = get_registry().get("GraphDB")
+        if graph is None:
+            logger.debug("Daily: GraphDB not in registry, skipping graph write")
+            return
+
+        # Re-read the file we just wrote so content is authoritative
+        filepath = self.entries_dir / f"{entry_id}.md"
+        try:
+            post = frontmatter.load(str(filepath))
+            content = post.content
+        except Exception as e:
+            logger.warning(f"Daily: could not read entry for graph write: {e}")
+            return
+
+        date = entry_id[:10]  # "YYYY-MM-DD" prefix of "YYYY-MM-DD-HH-MM"
+        created_at = now.isoformat()
+        snippet = content[:200]
+
+        try:
+            async with graph.write_lock:
+                # 1. Lazy-upsert Day node
+                await graph.execute_cypher(
+                    "MERGE (d:Day {date: $date}) ON CREATE SET d.created_at = $created_at",
+                    {"date": date, "created_at": created_at},
+                )
+                # 2. Upsert Journal_Entry node (ON CREATE SET protects original timestamp)
+                await graph.execute_cypher(
+                    "MERGE (e:Journal_Entry {entry_id: $entry_id}) "
+                    "ON CREATE SET e.created_at = $created_at "
+                    "SET e.date = $date, e.content = $content, e.snippet = $snippet",
+                    {
+                        "entry_id": entry_id,
+                        "date": date,
+                        "content": content,
+                        "snippet": snippet,
+                        "created_at": created_at,
+                    },
+                )
+                # 3. HAS_ENTRY relationship
+                await graph.execute_cypher(
+                    "MATCH (d:Day {date: $date}), (e:Journal_Entry {entry_id: $entry_id}) "
+                    "MERGE (d)-[:HAS_ENTRY]->(e)",
+                    {"date": date, "entry_id": entry_id},
+                )
+            logger.debug(f"Daily: wrote entry {entry_id} to graph")
+        except Exception as e:
+            logger.warning(f"Daily: graph write failed for {entry_id}: {e}")
 
     def list_entries(self, limit: int = 20, offset: int = 0) -> list[dict]:
         """List daily entries with pagination."""
@@ -164,7 +244,7 @@ class DailyModule:
         @router.post("/entries")
         async def create_entry(body: CreateEntryRequest):
             """Create a new daily journal entry."""
-            result = self.create_entry(body.content, body.metadata)
+            result = await self.create_entry(body.content, body.metadata)
             return result
 
         @router.get("/entries")
