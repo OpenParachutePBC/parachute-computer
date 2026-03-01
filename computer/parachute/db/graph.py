@@ -104,7 +104,7 @@ class GraphService:
         self._ensure_connected()
         col_defs = ", ".join(f"{col} {typ}" for col, typ in columns.items())
         ddl = (
-            f"CREATE NODE TABLE IF NOT EXISTS {name}"
+            f"CREATE NODE TABLE IF NOT EXISTS {name} "
             f"({col_defs}, PRIMARY KEY({primary_key}))"
         )
         async with self._write_lock:

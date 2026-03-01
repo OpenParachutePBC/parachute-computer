@@ -427,11 +427,12 @@ class BrainModule:
 
     def get_status(self) -> dict:
         """Get module status for /api/modules listing."""
+        graph = self._service.graph if self._service else None
         return {
             "module": "brain",
             "version": "3.0.0",
-            "connected": self._service is not None and self._service._connected,
-            "db_path": str(self.db_path),
+            "connected": graph is not None and graph._connected,
+            "db_path": str(graph.db_path) if graph else "not initialized",
             "backend": "LadybugDB",
         }
 

@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from parachute.db.graph import GraphService, _clean_node
+from parachute.db.graph import GraphService
 
 from .schema import all_field_names, load_entity_types, to_api_schema
 
@@ -154,14 +154,11 @@ class LadybugService:
 
     async def get_entity(self, name: str) -> dict[str, Any] | None:
         """Retrieve entity by name."""
-        result = await self.graph.execute(
+        rows = await self.graph.execute_cypher(
             "MATCH (e:Brain_Entity {name: $name}) RETURN e LIMIT 1",
             {"name": name},
         )
-        if result.has_next():
-            row = result.get_next()
-            return _clean_node(row[0])
-        return None
+        return rows[0] if rows else None
 
     async def query_entities(
         self,
@@ -192,12 +189,7 @@ class LadybugService:
             f"RETURN e ORDER BY e.updated_at DESC "
             f"SKIP {int(offset)} LIMIT {min(int(limit), 1000)}"
         )
-        result = await self.graph.execute(cypher, params)
-        rows = []
-        while result.has_next():
-            row = result.get_next()
-            rows.append(_clean_node(row[0]))
-
+        rows = await self.graph.execute_cypher(cypher, params)
         return {"results": rows, "count": len(rows), "offset": offset, "limit": limit}
 
     async def delete_entity(self, name: str) -> bool:
@@ -300,16 +292,11 @@ class LadybugService:
         if not 1 <= max_depth <= 5:
             raise ValueError("max_depth must be 1–5")
 
-        result = await self.graph.execute(
+        return await self.graph.execute_cypher(
             f"MATCH (s:Brain_Entity {{name: $start}})-[*1..{max_depth}]-(n:Brain_Entity) "
             "RETURN DISTINCT n LIMIT 100",
             {"start": start_name},
         )
-        rows = []
-        while result.has_next():
-            row = result.get_next()
-            rows.append(_clean_node(row[0]))
-        return rows
 
     # ── Search ───────────────────────────────────────────────────────────────
 
@@ -340,16 +327,11 @@ class LadybugService:
             where = f"({where_search})"
             params = {"q": query}
 
-        result = await self.graph.execute(
+        return await self.graph.execute_cypher(
             f"MATCH (e:Brain_Entity) WHERE {where} "
             f"RETURN e ORDER BY e.updated_at DESC LIMIT {min(int(num_results), 50)}",
             params,
         )
-        rows = []
-        while result.has_next():
-            row = result.get_next()
-            rows.append(_clean_node(row[0]))
-        return rows
 
     # ── Raw Cypher (passthrough) ──────────────────────────────────────────────
 
