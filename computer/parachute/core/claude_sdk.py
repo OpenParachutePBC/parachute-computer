@@ -156,6 +156,7 @@ async def query_streaming(
     claude_token: Optional[str] = None,
     model: Optional[str] = None,
     message_queue: asyncio.Queue[str] | None = None,
+    output_format: Optional[dict[str, Any]] = None,
 ) -> AsyncGenerator[dict[str, Any], None]:
     """
     Run a Claude SDK query with streaming response.
@@ -177,6 +178,7 @@ async def query_streaming(
         agents: Dict of agent definitions for subagents
         claude_token: OAuth token from `claude setup-token` (CLAUDE_CODE_OAUTH_TOKEN)
         message_queue: Queue for injecting user messages mid-stream
+        output_format: Structured output config, e.g. {"type": "json_schema", "schema": {...}}
 
     Yields:
         SDK events as dictionaries
@@ -247,6 +249,10 @@ async def query_streaming(
     # Model override
     if model:
         options_kwargs["model"] = model
+
+    # Structured output
+    if output_format:
+        options_kwargs["output_format"] = output_format
 
     # Build env vars for the SDK subprocess.
     # Inherit the full process environment so the CLI (and any MCP server
@@ -417,6 +423,9 @@ def _event_to_dict(event: Any) -> dict[str, Any]:
 
     if hasattr(event, "result"):
         event_dict["result"] = event.result
+
+    if hasattr(event, "structured_output") and event.structured_output is not None:
+        event_dict["structured_output"] = event.structured_output
 
     if hasattr(event, "subtype"):
         event_dict["subtype"] = event.subtype
