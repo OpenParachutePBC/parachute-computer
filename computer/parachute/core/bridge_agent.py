@@ -1,23 +1,21 @@
 """
 Brain Bridge Agent — Unified pre/post-turn context agent.
 
-Pre-turn (enrich) — awaited before the chat agent:
-  - Haiku judges: enrich / step-back / pass-through
-  - If enriching: translates explicit personal references → brain queries, injects context
+Pre-turn (enrich) — currently paused, returns None immediately.
 
 Post-turn (observe) — fire-and-forget after the chat agent responds:
-  - Session metadata: title, summary, activity log (via MCP tools — agent-native)
-  - Brain writes are intentional only — the main chat agent calls brain MCP tools directly
+  - Haiku analyzes the exchange via structured JSON output (no MCP subprocess)
+  - Python handles all side effects: activity log, SQLite session updates,
+    LadybugDB exchange storage
 
 Key design:
-- One bridge_session_id per chat session (continuity across turns)
-- MCP tools for session metadata (visible as tool calls in transcripts)
+- One bridge_session_id per chat session (Haiku continuity across turns)
+- Structured output for Haiku → Python side effects (not MCP tools)
 - Never raises — all failures are logged and swallowed
 """
 
 import json
 import logging
-import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -25,6 +23,13 @@ from typing import Any, Optional
 from parachute.core.claude_sdk import query_streaming
 
 logger = logging.getLogger(__name__)
+
+# ── Exchange storage limits ───────────────────────────────────────────────────
+# Full messages are stored (voice transcripts can be 7000+ chars).
+# Only the description field (BM25 search target) is truncated.
+
+_DESC_USER_LIMIT = 300       # chars of user message in description (search target)
+_DESC_AI_LIMIT = 500         # chars of AI response in description (search target)
 
 # ── Prompts ──────────────────────────────────────────────────────────────────
 
@@ -43,13 +48,44 @@ If STEP_BACK or PASS_THROUGH: provide no queries.
 Respond in JSON only (no markdown fences):
 {"judgment": "enrich|step_back|pass_through", "queries": ["query1", "query2"]}"""
 
-BRIDGE_OBSERVE_PROMPT = """You are a background observer for a conversation. After each exchange, update the session metadata using your tools.
+BRIDGE_OBSERVE_PROMPT = """You are a background observer for a chat conversation. After each exchange, analyze what happened and return structured metadata.
 
-- update_title: Set a concise 3-8 word title capturing the main topic. Call when the title is not yet set, or you have a meaningfully more accurate one. Do NOT call if the title was set by the user.
-- update_summary: Write 1-3 sentences summarizing what has been discussed and accomplished so far. Call when no summary exists, or the current one is outdated. Skip if already accurate.
-- log_activity: Always call. Write 1-2 sentences about what happened in this specific exchange.
+Your response will be used to:
+1. Update the session title and summary in the database
+2. Log what happened to a daily activity journal
+3. Store a searchable record of this exchange in the knowledge graph
 
-Be concise. If the exchange was trivial (e.g. "thanks", "ok"), a brief log entry is enough — skip title/summary updates."""
+Guidelines:
+- activity: ALWAYS provide. 1-2 sentences about what happened in this specific exchange.
+- exchange_description: A concise description of this exchange suitable for search retrieval. What was discussed, decided, or accomplished.
+- title: Set a concise 3-8 word title capturing the main topic. Set to null if the current title is already accurate.
+- summary: 1-3 sentences summarizing the FULL conversation so far (not just this exchange). Set to null if the current summary is still accurate.
+
+Be concise. For trivial exchanges ("thanks", "ok"), a brief activity entry is enough — leave title and summary as null."""
+
+# JSON schema for structured output from observe
+OBSERVE_OUTPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "title": {
+            "type": ["string", "null"],
+            "description": "New session title (3-8 words), or null to keep current",
+        },
+        "summary": {
+            "type": ["string", "null"],
+            "description": "Updated conversation summary (1-3 sentences), or null to keep current",
+        },
+        "activity": {
+            "type": "string",
+            "description": "What happened in this specific exchange (1-2 sentences)",
+        },
+        "exchange_description": {
+            "type": "string",
+            "description": "Concise description of this exchange for search retrieval",
+        },
+    },
+    "required": ["activity", "exchange_description"],
+}
 
 # ── Token budget ──────────────────────────────────────────────────────────────
 
@@ -202,6 +238,100 @@ def _short_path(path: str) -> str:
 
 
 
+def _write_activity_log(
+    vault_path: Path,
+    session_id: str,
+    session_title: Optional[str],
+    exchange_number: int,
+    summary: str,
+) -> None:
+    """Append a JSONL entry to the daily activity log.
+
+    File: vault/Daily/.activity/{YYYY-MM-DD}.jsonl
+    Synchronous I/O — fast enough for a single line append.
+    """
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    log_dir = vault_path / "Daily" / ".activity"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / f"{today}.jsonl"
+
+    entry = {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "session_id": session_id,
+        "session_title": session_title,
+        "exchange_number": exchange_number,
+        "summary": summary,
+    }
+    with open(log_file, "a") as f:
+        f.write(json.dumps(entry) + "\n")
+
+
+# ── Exchange storage ─────────────────────────────────────────────────────────
+
+async def _store_exchange(
+    session_id: str,
+    exchange_number: int,
+    message: str,
+    result_text: str,
+    tool_calls: list[dict],
+    brain: Any,
+    activity_summary: Optional[str] = None,
+    session_summary: Optional[str] = None,
+    session_title: Optional[str] = None,
+) -> None:
+    """Write this exchange to LadybugDB for long-term retrieval.
+
+    Stores full user message and AI response (no truncation — voice transcripts
+    can be 7000+ chars and contain high-fidelity information).
+
+    The description uses Haiku's log_activity summary when available (already
+    generated during observe — no extra LLM call). Falls back to truncated
+    snippets if Haiku didn't produce a summary.
+
+    The context field captures the session summary at time of exchange, giving
+    each exchange a "what was happening when this was said" anchor. Without it,
+    "User: Yes | AI: [detailed plan]" is meaningless.
+
+    Skips trivial exchanges (very short user message AND very short AI response).
+    """
+    if len(message.split()) < 3 and len(result_text.split()) < 10:
+        logger.debug("Bridge: skipping trivial exchange for storage")
+        return
+
+    exchange_name = f"{session_id[:8]}:ex:{exchange_number}"
+
+    # Prefer Haiku's curated summary; fall back to truncated snippets
+    if activity_summary:
+        description = activity_summary
+    else:
+        user_snippet = message[:_DESC_USER_LIMIT]
+        ai_snippet = result_text[:_DESC_AI_LIMIT]
+        description = f"User: {user_snippet} | AI: {ai_snippet}"
+
+    attrs: dict[str, Any] = {
+        "description": description,
+        "session_id": session_id,
+        "exchange_number": str(exchange_number),
+        "user_message": message,
+        "ai_response": result_text,
+    }
+
+    if session_summary:
+        attrs["context"] = session_summary
+    if session_title:
+        attrs["session_title"] = session_title
+
+    tools_summary = _summarize_tool_calls(tool_calls)
+    if tools_summary and tools_summary != "None":
+        attrs["tools_used"] = tools_summary
+
+    await brain.upsert_entity(
+        entity_type="Chat_Exchange",
+        name=exchange_name,
+        attributes=attrs,
+    )
+    logger.debug(f"Bridge: stored exchange {exchange_name}")
+
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
@@ -214,67 +344,13 @@ async def enrich(
 ) -> Optional[str]:
     """Pre-hook: runs before the chat agent. Returns context string or None.
 
+    Currently paused — returns None immediately. The enrich concept (pre-turn
+    brain context injection) needs more thought on when and how to trigger it
+    without adding latency to every exchange.
+
     Never raises — bridge failure must not crash the chat flow.
     """
-    if brain is None:
-        return None
-
-    try:
-        if len(message.split()) < 5:
-            logger.info("Bridge enrich: short message, skipping")
-            return None
-
-        summary_section = f"\nConversation summary: {session_summary}" if session_summary else ""
-        prompt = (
-            f"User message: {message[:500]}"
-            f"{summary_section}\n\n"
-            f"Make your judgment."
-        )
-
-        response_text = await _run_haiku(prompt, BRIDGE_ENRICH_PROMPT, claude_token)
-        parsed = _parse_haiku_json(response_text)
-
-        if not parsed:
-            logger.warning("Bridge enrich: failed to parse Haiku judgment, pass-through")
-            return None
-
-        judgment = parsed.get("judgment", "pass_through")
-        logger.info(f"Bridge enrich: judgment={judgment}")
-
-        if judgment == "pass_through":
-            return None
-
-        if judgment == "step_back":
-            logger.info("Bridge enrich: step-back — chat agent will query brain directly")
-            return "_Brain context: stepping back — you are directly querying your knowledge graph._"
-
-        # judgment == "enrich"
-        queries = parsed.get("queries", [])[:3]
-        if not queries:
-            return None
-
-        query_results = []
-        for q in queries:
-            try:
-                bundle = await brain.recall(query=q, num_results=5)
-                count = bundle.get("count", 0)
-                logger.info(f"Bridge enrich: query={q!r} -> {count} results")
-                if count > 0:
-                    query_results.append(bundle)
-            except Exception as e:
-                logger.warning(f"Bridge enrich: recall failed for {q!r}: {e}")
-
-        if not query_results:
-            logger.info("Bridge enrich: no results found, pass-through")
-            return None
-
-        block = _format_context_block(query_results)
-        logger.info(f"Bridge enrich: injecting {len(block)} chars of brain context")
-        return block or None
-
-    except Exception as e:
-        logger.warning(f"Bridge enrich failed (non-fatal): {e}")
-        return None
+    return None
 
 
 async def observe(
@@ -291,8 +367,12 @@ async def observe(
 ) -> None:
     """Fire-and-forget post-turn observer.
 
-    Handles session metadata (title, summary, activity log) via MCP tools.
-    Brain writes are intentional only — the main chat agent calls brain MCP tools directly.
+    Uses structured output (JSON schema) instead of MCP tools. Haiku analyzes
+    the exchange and returns a structured response. Python handles all side
+    effects: SQLite session updates, activity log JSONL, brain exchange storage.
+
+    The long-running session context (resume) gives Haiku memory across exchanges
+    so it can make better judgments about title/summary updates.
 
     Never raises.
     """
@@ -303,52 +383,36 @@ async def observe(
             return
 
         bridge_session_id: Optional[str] = session.bridge_session_id
+        current_summary = session.summary
 
-        # Build title / summary notes
+        # Build context notes for the prompt
         if title_source == "user":
-            title_note = f"Current title: {session_title!r} (user-set — do NOT call update_title)"
+            title_note = f"Current title: {session_title!r} (user-set — do NOT update)"
         elif session_title:
             title_note = f"Current title: {session_title!r} (AI-set — update only if more accurate)"
         else:
             title_note = "Current title: not yet set"
 
-        current_summary = session.summary
         summary_note = (
             f"Current summary: {current_summary}" if current_summary else "Current summary: not yet set"
         )
 
+        # Build the full exchange context
         tools_str = _summarize_tool_calls(tool_calls)
-        truncated_user = message[:1000] + ("... [truncated]" if len(message) > 1000 else "")
-        truncated_response = result_text[:2000] + ("... [truncated]" if len(result_text) > 2000 else "")
-
         prompt = (
-            f"Observe exchange #{exchange_number} and update session context.\n\n"
+            f"Observe exchange #{exchange_number} and return structured metadata.\n\n"
             f"{title_note}\n"
             f"{summary_note}\n\n"
             f"---\n"
-            f"User: {truncated_user}\n\n"
-            f"Tools used: {tools_str}\n"
-            f"Assistant: {truncated_response}\n"
-            f"---\n\n"
-            f"Call log_activity for this exchange, then update title/summary if needed."
+            f"User: {message}\n\n"
+            f"Tools used: {tools_str}\n\n"
+            f"Assistant: {result_text}\n"
+            f"---"
         )
 
-        # MCP server for session metadata tools
-        mcp_servers = {
-            "bridge": {
-                "command": sys.executable,
-                "args": [
-                    "-m", "parachute.core.bridge_mcp",
-                    "--session-id", session_id,
-                    "--vault-path", str(vault_path),
-                ],
-            }
-        }
-
+        # Call Haiku with structured output — no MCP subprocess needed
         new_session_id: Optional[str] = None
-        tool_calls_made: list[str] = []
-        new_title: Optional[str] = None
-        text_parts: list[str] = []
+        structured_data: Optional[dict[str, Any]] = None
 
         async for event in query_streaming(
             prompt=prompt,
@@ -356,11 +420,11 @@ async def observe(
             model="claude-haiku-4-5-20251001",
             use_claude_code_preset=False,
             resume=bridge_session_id,
-            mcp_servers=mcp_servers,
             setting_sources=[],
             tools=[],
             permission_mode="bypassPermissions",
             claude_token=claude_token,
+            output_format={"type": "json_schema", "schema": OBSERVE_OUTPUT_SCHEMA},
         ):
             if (
                 event.get("type") == "system"
@@ -369,44 +433,91 @@ async def observe(
             ):
                 new_session_id = event["session_id"]
 
-            if event.get("type") == "assistant" and event.get("message"):
-                for block in event["message"].get("content", []):
-                    if isinstance(block, dict) and block.get("type") == "tool_use":
-                        tool_name = block.get("name", "")
-                        # Strip mcp__bridge__ prefix
-                        short_name = tool_name.removeprefix("mcp__bridge__") if tool_name else ""
-                        if short_name:
-                            tool_calls_made.append(short_name)
-                            if short_name == "update_title":
-                                new_title = (block.get("input") or {}).get("title")
-                    elif isinstance(block, dict) and block.get("type") == "text":
-                        text_parts.append(block["text"])
+            if event.get("type") == "result":
+                structured_data = event.get("structured_output")
 
-            elif event.get("type") == "result" and event.get("result"):
-                text_parts.append(event["result"])
+        # ── Side effects: all handled in Python ──────────────────────────
 
-        # Persist bridge_session_id and bridge_last_run metadata
+        new_title: Optional[str] = None
+        activity_summary: Optional[str] = None
+        actions: list[str] = []
+
+        if structured_data:
+            activity_summary = structured_data.get("activity")
+            new_title = structured_data.get("title")
+            new_summary = structured_data.get("summary")
+
+            # 1. Activity log (JSONL append)
+            if activity_summary:
+                actions.append("log_activity")
+                _write_activity_log(
+                    vault_path=vault_path,
+                    session_id=session_id,
+                    session_title=session_title,
+                    exchange_number=exchange_number,
+                    summary=activity_summary,
+                )
+
+            # 2. Session title/summary updates (SQLite)
+            from parachute.models.session import SessionUpdate
+            session_update = SessionUpdate()
+            needs_update = False
+
+            if new_title and title_source != "user":
+                session_update.title = new_title
+                actions.append("update_title")
+                needs_update = True
+
+            if new_summary:
+                session_update.summary = new_summary
+                actions.append("update_summary")
+                needs_update = True
+
+            if needs_update:
+                await database.update_session(session_id, session_update)
+
+        # 3. Persist bridge_session_id and bridge_last_run metadata
         refreshed = await database.get_session(session_id)
         if refreshed:
-            from parachute.models.session import SessionUpdate
-
             fresh_meta = dict(refreshed.metadata or {})
             fresh_meta["bridge_last_run"] = {
                 "ts": datetime.now(timezone.utc).isoformat(),
                 "exchange_number": exchange_number,
-                "actions": tool_calls_made,
+                "actions": actions,
                 "new_title": new_title,
             }
-            update = SessionUpdate(metadata=fresh_meta)
+            meta_update = SessionUpdate(metadata=fresh_meta)
             if new_session_id:
-                update.bridge_session_id = new_session_id
+                meta_update.bridge_session_id = new_session_id
 
-            await database.update_session(session_id, update)
+            await database.update_session(session_id, meta_update)
 
         logger.info(
             f"Bridge observe ran for {session_id[:8]}: "
-            f"exchange={exchange_number}, actions={tool_calls_made}"
+            f"exchange={exchange_number}, actions={actions}"
         )
+
+        # 4. Store exchange in LadybugDB for long-term retrieval
+        try:
+            from parachute.core.interfaces import get_registry
+            brain = get_registry().get("BrainInterface")
+            if brain:
+                await _store_exchange(
+                    session_id=session_id,
+                    exchange_number=exchange_number,
+                    message=message,
+                    result_text=result_text,
+                    tool_calls=tool_calls,
+                    brain=brain,
+                    activity_summary=(
+                        structured_data.get("exchange_description")
+                        if structured_data else None
+                    ),
+                    session_summary=current_summary,
+                    session_title=session_title,
+                )
+        except Exception as store_err:
+            logger.debug(f"Bridge: exchange store failed (non-fatal): {store_err}")
 
     except Exception as e:
         logger.warning(f"Bridge observe failed for {session_id[:8]}: {e}")
