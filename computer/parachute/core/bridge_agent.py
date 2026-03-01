@@ -322,7 +322,7 @@ async def _store_exchange(
     async with graph.write_lock:
         # 1. Lazy-upsert Chat_Session node
         if session_meta:
-            await graph.execute(
+            await graph.execute_cypher(
                 "MERGE (s:Chat_Session {session_id: $session_id}) "
                 "ON CREATE SET s.title = $title, s.module = $module, "
                 "s.source = $source, s.agent_type = $agent_type, "
@@ -337,9 +337,10 @@ async def _store_exchange(
                 },
             )
 
-        # 2. Upsert Chat_Exchange node
-        await graph.execute(
+        # 2. Upsert Chat_Exchange node (ON CREATE SET protects the original timestamp)
+        await graph.execute_cypher(
             "MERGE (e:Chat_Exchange {exchange_id: $exchange_id}) "
+            "ON CREATE SET e.created_at = $created_at "
             "SET e.session_id = $session_id, "
             "e.exchange_number = $exchange_number, "
             "e.description = $description, "
@@ -347,8 +348,7 @@ async def _store_exchange(
             "e.ai_response = $ai_response, "
             "e.context = $context, "
             "e.session_title = $session_title, "
-            "e.tools_used = $tools_used, "
-            "e.created_at = $created_at",
+            "e.tools_used = $tools_used",
             {
                 "exchange_id": exchange_id,
                 "session_id": session_id,
@@ -358,14 +358,14 @@ async def _store_exchange(
                 "ai_response": result_text,
                 "context": session_summary or "",
                 "session_title": session_title or "",
-                "tools_used": tools_summary if tools_summary != "None" else "",
+                "tools_used": tools_summary or "",
                 "created_at": now,
             },
         )
 
         # 3. HAS_EXCHANGE relationship (requires Chat_Session node to exist)
         if session_meta:
-            await graph.execute(
+            await graph.execute_cypher(
                 "MATCH (s:Chat_Session {session_id: $sid}), "
                 "(e:Chat_Exchange {exchange_id: $eid}) "
                 "MERGE (s)-[:HAS_EXCHANGE]->(e)",
