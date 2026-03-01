@@ -274,12 +274,12 @@ async def _store_exchange(
     message: str,
     result_text: str,
     tool_calls: list[dict],
-    brain: Any,
     activity_summary: Optional[str] = None,
     session_summary: Optional[str] = None,
     session_title: Optional[str] = None,
+    session_meta: Optional[dict] = None,
 ) -> None:
-    """Write this exchange to LadybugDB for long-term retrieval.
+    """Write this exchange to the graph (Chat_Exchange table).
 
     Stores full user message and AI response (no truncation — voice transcripts
     can be 7000+ chars and contain high-fidelity information).
@@ -289,8 +289,10 @@ async def _store_exchange(
     snippets if Haiku didn't produce a summary.
 
     The context field captures the session summary at time of exchange, giving
-    each exchange a "what was happening when this was said" anchor. Without it,
-    "User: Yes | AI: [detailed plan]" is meaningless.
+    each exchange a "what was happening when this was said" anchor.
+
+    If session_meta is provided, lazily upserts a Chat_Session node and creates
+    a HAS_EXCHANGE relationship from session to exchange.
 
     Skips trivial exchanges (very short user message AND very short AI response).
     """
@@ -298,7 +300,14 @@ async def _store_exchange(
         logger.debug("Bridge: skipping trivial exchange for storage")
         return
 
-    exchange_name = f"{session_id[:8]}:ex:{exchange_number}"
+    from parachute.core.interfaces import get_registry
+    graph = get_registry().get("GraphDB")
+    if graph is None:
+        logger.debug("Bridge: GraphDB not in registry, skipping exchange storage")
+        return
+
+    exchange_id = f"{session_id[:8]}:ex:{exchange_number}"
+    now = datetime.now(timezone.utc).isoformat()
 
     # Prefer Haiku's curated summary; fall back to truncated snippets
     if activity_summary:
@@ -308,29 +317,62 @@ async def _store_exchange(
         ai_snippet = result_text[:_DESC_AI_LIMIT]
         description = f"User: {user_snippet} | AI: {ai_snippet}"
 
-    attrs: dict[str, Any] = {
-        "description": description,
-        "session_id": session_id,
-        "exchange_number": str(exchange_number),
-        "user_message": message,
-        "ai_response": result_text,
-    }
-
-    if session_summary:
-        attrs["context"] = session_summary
-    if session_title:
-        attrs["session_title"] = session_title
-
     tools_summary = _summarize_tool_calls(tool_calls)
-    if tools_summary and tools_summary != "None":
-        attrs["tools_used"] = tools_summary
 
-    await brain.upsert_entity(
-        entity_type="Chat_Exchange",
-        name=exchange_name,
-        attributes=attrs,
-    )
-    logger.debug(f"Bridge: stored exchange {exchange_name}")
+    async with graph.write_lock:
+        # 1. Lazy-upsert Chat_Session node
+        if session_meta:
+            await graph.execute(
+                "MERGE (s:Chat_Session {session_id: $session_id}) "
+                "ON CREATE SET s.title = $title, s.module = $module, "
+                "s.source = $source, s.agent_type = $agent_type, "
+                "s.created_at = $created_at",
+                {
+                    "session_id": session_id,
+                    "title": session_meta.get("title") or "",
+                    "module": session_meta.get("module") or "chat",
+                    "source": session_meta.get("source") or "parachute",
+                    "agent_type": session_meta.get("agent_type") or "",
+                    "created_at": session_meta.get("created_at") or now,
+                },
+            )
+
+        # 2. Upsert Chat_Exchange node
+        await graph.execute(
+            "MERGE (e:Chat_Exchange {exchange_id: $exchange_id}) "
+            "SET e.session_id = $session_id, "
+            "e.exchange_number = $exchange_number, "
+            "e.description = $description, "
+            "e.user_message = $user_message, "
+            "e.ai_response = $ai_response, "
+            "e.context = $context, "
+            "e.session_title = $session_title, "
+            "e.tools_used = $tools_used, "
+            "e.created_at = $created_at",
+            {
+                "exchange_id": exchange_id,
+                "session_id": session_id,
+                "exchange_number": str(exchange_number),
+                "description": description,
+                "user_message": message,
+                "ai_response": result_text,
+                "context": session_summary or "",
+                "session_title": session_title or "",
+                "tools_used": tools_summary if tools_summary != "None" else "",
+                "created_at": now,
+            },
+        )
+
+        # 3. HAS_EXCHANGE relationship (requires Chat_Session node to exist)
+        if session_meta:
+            await graph.execute(
+                "MATCH (s:Chat_Session {session_id: $sid}), "
+                "(e:Chat_Exchange {exchange_id: $eid}) "
+                "MERGE (s)-[:HAS_EXCHANGE]->(e)",
+                {"sid": session_id, "eid": exchange_id},
+            )
+
+    logger.debug(f"Bridge: stored exchange {exchange_id}")
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -497,25 +539,28 @@ async def observe(
             f"exchange={exchange_number}, actions={actions}"
         )
 
-        # 4. Store exchange in LadybugDB for long-term retrieval
+        # 4. Store exchange in the graph (Chat_Exchange table)
         try:
-            from parachute.core.interfaces import get_registry
-            brain = get_registry().get("BrainInterface")
-            if brain:
-                await _store_exchange(
-                    session_id=session_id,
-                    exchange_number=exchange_number,
-                    message=message,
-                    result_text=result_text,
-                    tool_calls=tool_calls,
-                    brain=brain,
-                    activity_summary=(
-                        structured_data.get("exchange_description")
-                        if structured_data else None
-                    ),
-                    session_summary=current_summary,
-                    session_title=session_title,
-                )
+            await _store_exchange(
+                session_id=session_id,
+                exchange_number=exchange_number,
+                message=message,
+                result_text=result_text,
+                tool_calls=tool_calls,
+                activity_summary=(
+                    structured_data.get("exchange_description")
+                    if structured_data else None
+                ),
+                session_summary=current_summary,
+                session_title=session_title,
+                session_meta={
+                    "title": session.title,
+                    "module": session.module,
+                    "source": session.source or "parachute",
+                    "agent_type": session.agent_type or "",
+                    "created_at": session.created_at.isoformat() if session.created_at else None,
+                },
+            )
         except Exception as store_err:
             logger.debug(f"Bridge: exchange store failed (non-fatal): {store_err}")
 

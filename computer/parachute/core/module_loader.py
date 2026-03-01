@@ -240,6 +240,8 @@ class ModuleLoader:
             if isinstance(attr, type) and hasattr(attr, 'name') and attr.name == name:
                 instance = attr(vault_path=self.vault_path)
                 instance.manifest = manifest
+                if hasattr(instance, 'on_load'):
+                    await instance.on_load()
                 return instance
 
         raise ValueError(f"No Module class found in {module_path}")

@@ -29,6 +29,44 @@ class ChatModule:
         self._ensure_claude_dir()
         self._brain = None
 
+    async def on_load(self) -> None:
+        """Register Chat schema tables in the shared graph."""
+        from parachute.core.interfaces import get_registry
+        graph = get_registry().get("GraphDB")
+        if graph is None:
+            logger.warning("Chat: GraphDB not in registry, schema registration skipped")
+            return
+        await graph.ensure_node_table(
+            "Chat_Session",
+            {
+                "session_id": "STRING",
+                "title": "STRING",
+                "module": "STRING",
+                "source": "STRING",
+                "agent_type": "STRING",
+                "created_at": "STRING",
+            },
+            primary_key="session_id",
+        )
+        await graph.ensure_node_table(
+            "Chat_Exchange",
+            {
+                "exchange_id": "STRING",
+                "session_id": "STRING",
+                "exchange_number": "STRING",
+                "description": "STRING",
+                "user_message": "STRING",
+                "ai_response": "STRING",
+                "context": "STRING",
+                "session_title": "STRING",
+                "tools_used": "STRING",
+                "created_at": "STRING",
+            },
+            primary_key="exchange_id",
+        )
+        await graph.ensure_rel_table("HAS_EXCHANGE", "Chat_Session", "Chat_Exchange")
+        logger.info("Chat: graph schema registered (Chat_Session, Chat_Exchange, HAS_EXCHANGE)")
+
     def _ensure_claude_dir(self):
         """Ensure vault/.claude/ directory exists for SDK session storage."""
         claude_dir = self.vault_path / ".claude"
