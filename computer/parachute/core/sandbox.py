@@ -546,14 +546,18 @@ class DockerSandbox:
     ) -> AsyncGenerator[dict, None]:
         """Run an agent session in a container, yielding streaming events.
 
-        container_env_slug must be set by the caller (orchestrator auto-creates one
-        if the session doesn't have one yet). If None, falls back to session_id prefix
-        for backward compatibility.
+        container_env_slug must be set by the caller. The orchestrator auto-creates
+        a container_env record before calling this method, so it is always set for
+        sandboxed sessions.
         """
+        if not container_env_slug:
+            raise ValueError(
+                f"container_env_slug is required for run_session (session {session_id[:8]}). "
+                "The orchestrator must create a container_env record before calling run_session."
+            )
         await self._validate_docker_ready()
 
-        slug = container_env_slug or session_id[:12]
-        target = await self.ensure_container(slug, config)
+        target = await self.ensure_container(container_env_slug, config)
 
         async for event in self._run_in_container(
             target, config, message, resume_session_id, "sandbox"
@@ -568,7 +572,7 @@ class DockerSandbox:
         self._slug_locks.pop(container_name, None)
         home_dir = self._get_container_home_dir(slug)
         if home_dir.exists():
-            shutil.rmtree(home_dir, ignore_errors=True)
+            await asyncio.to_thread(shutil.rmtree, home_dir, True)
             logger.info(f"Removed home dir for container env {slug}")
 
     async def _inspect_status(self, container_name: str) -> str | None:

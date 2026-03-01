@@ -899,10 +899,7 @@ class Orchestrator:
                         ).model_dump(by_alias=True)
                         return
 
-                    had_text = False
-                    sandbox_response_text = ""
-
-                    # Route to named env container or private session container
+                    # Run session in its container env (auto-created above if needed)
                     sandbox_stream = self._sandbox.run_session(
                         session_id=sandbox_sid,
                         config=sandbox_config,
@@ -1710,11 +1707,12 @@ The user is now continuing this conversation with you. Respond naturally as if y
         result = await self.session_manager.delete_session(session_id)
 
         if result and container_env_id:
-            # Remove the container env if no other sessions reference it
+            # Remove the container env if no other sessions reference it.
+            # Atomic check-and-delete prevents double-remove when two sessions
+            # sharing the same env are deleted concurrently.
             try:
-                remaining = await self.database.count_sessions_for_container_env(container_env_id)
-                if remaining == 0:
-                    await self.database.delete_container_env(container_env_id)
+                deleted = await self.database.delete_container_env_if_unreferenced(container_env_id)
+                if deleted:
                     await self._sandbox.delete_container(container_env_id)
                     logger.info(f"Removed container env {container_env_id} with session {session_id[:8]}")
             except Exception as e:
