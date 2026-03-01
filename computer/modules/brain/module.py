@@ -16,7 +16,7 @@ from typing import Optional, Any
 
 from fastapi import APIRouter, HTTPException, status
 
-from .ladybug_service import LadybugService
+from .brain_service import BrainService
 from .schema import load_entity_types, save_entity_types
 from .models import (
     CreateEntityRequest,
@@ -34,35 +34,38 @@ logger = logging.getLogger(__name__)
 
 
 class BrainModule:
-    """Brain module with LadybugDB embedded knowledge graph"""
+    """Brain module — embedded graph knowledge store"""
 
     name = "brain"
     provides = ["BrainInterface"]
 
     def __init__(self, vault_path: Path, **kwargs):
         self.vault_path = vault_path
-        self.db_path = vault_path / ".brain" / "brain.lbug"
 
         # Ensure required directories exist
         (vault_path / ".brain").mkdir(parents=True, exist_ok=True)
 
         # Lazy-loaded service
-        self._service: Optional[LadybugService] = None
+        self._service: Optional[BrainService] = None
         self._init_lock = asyncio.Lock()
         self._queries_lock = asyncio.Lock()
 
-    async def _ensure_service(self) -> LadybugService:
-        """Lazy-initialize LadybugService (idempotent, race-safe)."""
+    async def _ensure_service(self) -> BrainService:
+        """Lazy-initialize BrainService using shared GraphDB from registry."""
         if self._service is None:
             async with self._init_lock:
                 if self._service is None:
-                    svc = LadybugService(
-                        db_path=self.db_path,
-                        vault_path=self.vault_path,
-                    )
-                    await svc.connect()
+                    from parachute.core.interfaces import get_registry
+                    graph = get_registry().get("GraphDB")
+                    if graph is None:
+                        raise RuntimeError(
+                            "Brain: GraphDB not found in registry. "
+                            "GraphService must be initialized before Brain module loads."
+                        )
+                    svc = BrainService(graph=graph, vault_path=self.vault_path)
+                    await svc.init_brain_schema()
                     self._service = svc
-                    logger.info("Brain: LadybugService initialized")
+                    logger.info("Brain: BrainService initialized via shared GraphDB")
         return self._service
 
     def get_router(self) -> APIRouter:
@@ -424,11 +427,12 @@ class BrainModule:
 
     def get_status(self) -> dict:
         """Get module status for /api/modules listing."""
+        graph = self._service.graph if self._service else None
         return {
             "module": "brain",
             "version": "3.0.0",
-            "connected": self._service is not None and self._service._connected,
-            "db_path": str(self.db_path),
+            "connected": graph is not None and graph._connected,
+            "db_path": str(graph.db_path) if graph else "not initialized",
             "backend": "LadybugDB",
         }
 
