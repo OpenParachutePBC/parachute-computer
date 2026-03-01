@@ -815,6 +815,11 @@ def _server_restart() -> None:
         daemon.stop()
         time.sleep(1)
 
+        # Reinstall plist to pick up current Python path (venv may have been
+        # recreated with a different Python version since last install).
+        if daemon.is_installed():
+            daemon.install()
+
         # Kill any rogue process still holding the port
         if _port_in_use(port):
             _kill_port_holder(port)
@@ -825,6 +830,22 @@ def _server_restart() -> None:
             sys.exit(1)
 
         daemon.start()
+
+        # Poll until port is listening (up to 60s) — launchd starts the process
+        # asynchronously via RunAtLoad, and startup takes ~20-30s with module
+        # loading, Telegram connector init, etc.
+        print("Waiting for server to start", end="", flush=True)
+        for _ in range(120):
+            if _port_in_use(port):
+                break
+            time.sleep(0.5)
+            print(".", end="", flush=True)
+        else:
+            print()
+            print("Warning: server did not start within 60s. Check: parachute server status")
+            sys.exit(1)
+        print()
+
         print("Server restarted.")
     except Exception as e:
         print(f"Failed to restart server: {e}")
