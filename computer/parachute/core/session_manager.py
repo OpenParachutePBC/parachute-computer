@@ -126,6 +126,7 @@ class SessionManager:
         working_directory: Optional[str] = None,
         continued_from: Optional[str] = None,
         trust_level: Optional[str] = None,
+        container_env_id: str | None = None,
     ) -> tuple[Session, ResumeInfo, bool]:
         """
         Get an existing session or prepare for a new one.
@@ -193,8 +194,9 @@ class SessionManager:
                 working_directory=working_directory,
                 continued_from=continued_from,
                 trust_level=trust_level,
-                created_at=datetime.utcnow(),
-                last_accessed=datetime.utcnow(),
+                container_env_id=container_env_id,
+                created_at=datetime.now(timezone.utc),
+                last_accessed=datetime.now(timezone.utc),
             )
             resume_info = ResumeInfo(
                 method="new",
@@ -213,8 +215,9 @@ class SessionManager:
             working_directory=working_directory,
             continued_from=continued_from,
             trust_level=trust_level,
-            created_at=datetime.utcnow(),
-            last_accessed=datetime.utcnow(),
+            container_env_id=container_env_id,
+            created_at=datetime.now(timezone.utc),
+            last_accessed=datetime.now(timezone.utc),
         )
         resume_info = ResumeInfo(
             method="new",
@@ -252,6 +255,7 @@ class SessionManager:
         trust_level = getattr(placeholder, 'trust_level', None)
         metadata = getattr(placeholder, 'metadata', None)
         final_workspace_id = workspace_id or getattr(placeholder, 'workspace_id', None)
+        final_container_env_id = getattr(placeholder, 'container_env_id', None)
 
         if sdk_session_id == placeholder.id:
             # Session ID unchanged (e.g., sandbox reused a connector-created session ID).
@@ -281,6 +285,7 @@ class SessionManager:
                     linked_bot_chat_id=linked_bot_chat_id,
                     linked_bot_chat_type=linked_bot_chat_type,
                     workspace_id=final_workspace_id,
+                    container_env_id=final_container_env_id,
                     metadata=metadata,
                 )
             )

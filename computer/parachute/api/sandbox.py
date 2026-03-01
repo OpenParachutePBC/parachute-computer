@@ -55,16 +55,3 @@ async def build_sandbox_image(request: Request):
     return StreamingResponse(build_stream(), media_type="text/event-stream")
 
 
-@router.post("/default/stop")
-async def stop_default_container(request: Request):
-    """Stop and remove the default sandbox container.
-
-    Use this to force a clean restart of the default container when it is
-    in a bad state (OOM-killed, configuration drift, etc.). The container
-    will be recreated on the next sandboxed session.
-    """
-    orchestrator = getattr(request.app.state, "orchestrator", None)
-    if not orchestrator:
-        raise HTTPException(status_code=503, detail="Orchestrator not available")
-    await orchestrator.stop_default_container()
-    return {"stopped": True}

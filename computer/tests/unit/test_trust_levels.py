@@ -211,7 +211,7 @@ class TestDockerSandbox:
         mounts = sandbox._build_mounts(config)
         # Should mount entire vault read-only when no allowed_paths
         assert "-v" in mounts
-        assert f"{vault_path}:/vault:ro" in mounts
+        assert f"{vault_path}:/home/sandbox/Parachute:ro" in mounts
 
     def test_build_mounts_with_paths(self, vault_path):
         (vault_path / "Blogs").mkdir()
@@ -228,25 +228,83 @@ class TestDockerSandbox:
     def test_build_run_args_network_disabled(self, vault_path):
         sandbox = DockerSandbox(vault_path=vault_path)
         config = AgentSandboxConfig(session_id="test-session-id")
-        args, _, _ = sandbox._build_run_args(config)
+        args, _ = sandbox._build_run_args(config)
         assert "--network" in args
         assert "none" in args
         assert "--memory" in args
         assert CONTAINER_MEMORY_LIMIT_EPHEMERAL in args
 
     def test_build_run_args_network_enabled(self, vault_path):
+        from parachute.core.sandbox import SANDBOX_NETWORK_NAME
         sandbox = DockerSandbox(vault_path=vault_path)
         config = AgentSandboxConfig(
             session_id="test", network_enabled=True
         )
-        args, _, _ = sandbox._build_run_args(config)
-        assert "--network" not in args
+        args, _ = sandbox._build_run_args(config)
+        # Network-enabled containers use the named sandbox bridge (not "none")
+        assert SANDBOX_NETWORK_NAME in args
+        assert "none" not in args
 
     def test_build_run_args_container_name(self, vault_path):
         sandbox = DockerSandbox(vault_path=vault_path)
         config = AgentSandboxConfig(session_id="abcdef1234567890")
-        args, _, _ = sandbox._build_run_args(config)
+        args, _ = sandbox._build_run_args(config)
         assert "parachute-sandbox-abcdef12" in args
+
+    def test_get_session_claude_dir(self, vault_path):
+        sandbox = DockerSandbox(vault_path=vault_path)
+        session_id = "abcdef1234567890"
+        claude_dir = sandbox._get_session_claude_dir(session_id)
+        expected = vault_path / ".parachute" / "sandbox" / "sessions" / "abcdef12" / ".claude"
+        assert claude_dir == expected
+
+    def test_get_named_env_claude_dir(self, vault_path):
+        sandbox = DockerSandbox(vault_path=vault_path)
+        claude_dir = sandbox._get_named_env_claude_dir("my-env")
+        expected = vault_path / ".parachute" / "sandbox" / "envs" / "my-env" / ".claude"
+        assert claude_dir == expected
+
+    def test_session_container_name_prefix(self, vault_path):
+        sandbox = DockerSandbox(vault_path=vault_path)
+        session_id = "abcdef1234567890xyz"
+        # Verify the container name used in stop_session_container
+        container_name = f"parachute-session-{session_id[:12]}"
+        assert container_name == "parachute-session-abcdef123456"
+
+    def test_named_env_container_name_prefix(self, vault_path):
+        sandbox = DockerSandbox(vault_path=vault_path)
+        # Verify the container name used in ensure_named_container / delete_named_container
+        slug = "my-project"
+        container_name = f"parachute-env-{slug}"
+        assert container_name == "parachute-env-my-project"
+
+    def test_persistent_container_args_has_tools_volume(self, vault_path):
+        from parachute.core.sandbox import TOOLS_VOLUME_NAME
+        sandbox = DockerSandbox(vault_path=vault_path)
+        config = AgentSandboxConfig(session_id="test123")
+        labels = {"app": "parachute", "type": "session"}
+        claude_dir = vault_path / ".parachute" / "sandbox" / "sessions" / "test123" / ".claude"
+        vault_mounts = ["-v", f"{vault_path}:/home/sandbox/Parachute:ro"]
+        args = sandbox._build_persistent_container_args(
+            "parachute-session-test123", config, labels, claude_dir, vault_mounts
+        )
+        arg_str = " ".join(args)
+        assert TOOLS_VOLUME_NAME in arg_str
+        assert "/opt/parachute-tools" in arg_str
+        assert "readonly" in arg_str
+
+    def test_persistent_container_args_mounts_claude_dir(self, vault_path):
+        sandbox = DockerSandbox(vault_path=vault_path)
+        config = AgentSandboxConfig(session_id="test123")
+        labels = {"app": "parachute"}
+        claude_dir = vault_path / ".parachute" / "sandbox" / "sessions" / "test123" / ".claude"
+        vault_mounts = ["-v", f"{vault_path}:/home/sandbox/Parachute:ro"]
+        args = sandbox._build_persistent_container_args(
+            "parachute-session-test123", config, labels, claude_dir, vault_mounts
+        )
+        arg_str = " ".join(args)
+        assert "/home/sandbox/.claude:rw" in arg_str
+        assert claude_dir.exists()  # Must be created by the method
 
 
 # ---------------------------------------------------------------------------

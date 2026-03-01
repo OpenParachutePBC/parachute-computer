@@ -63,8 +63,15 @@ RUN if [ "$INCLUDE_PLAYWRIGHT" = "true" ]; then \
 # These will be mounted as named volumes at runtime
 RUN mkdir -p /cache/pip /cache/npm && chown -R 1000:1000 /cache
 
+# Create tools volume mount point (parachute-tools volume mounted read-only here)
+# bin/ is added to PATH; python/ to PYTHONPATH for instant tool propagation to all containers
+RUN mkdir -p /opt/parachute-tools/bin /opt/parachute-tools/python
+
 # Create non-root user for sandbox execution
 RUN useradd -m -u 1000 -s /bin/bash sandbox
+
+# Set ownership so sandbox user can read tools when mounted
+RUN chown -R sandbox:sandbox /opt/parachute-tools
 
 # Health check (verify Python is functional)
 HEALTHCHECK --interval=60s --timeout=10s --retries=2 \
@@ -74,6 +81,10 @@ WORKDIR /workspace
 
 # Copy entrypoint
 COPY entrypoint.py /workspace/entrypoint.py
+
+# Tools volume paths (mounted read-only at runtime from parachute-tools named volume)
+ENV PATH="/opt/parachute-tools/bin:${PATH}"
+ENV PYTHONPATH="/opt/parachute-tools/python/lib/python3.13/site-packages:${PYTHONPATH}"
 
 USER sandbox
 
