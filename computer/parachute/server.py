@@ -32,6 +32,7 @@ from parachute.core.module_loader import ModuleLoader
 from parachute.core.orchestrator import Orchestrator
 from parachute.core.scheduler import init_scheduler, stop_scheduler
 from parachute.db.database import Database, init_database, close_database
+from parachute.db.graph import GraphService
 from parachute.lib.logger import setup_logging, get_logger
 from parachute.lib.server_config import (
     init_server_config,
@@ -85,6 +86,15 @@ async def lifespan(app: FastAPI):
     scheduler = await init_scheduler(settings.vault_path)
     app.state.scheduler = scheduler
     logger.info("Scheduler initialized")
+
+    # Initialize shared graph database (before modules — they register schemas on load)
+    graph_db_path = settings.vault_path / ".brain" / "brain.lbug"
+    graph = GraphService(db_path=graph_db_path)
+    await graph.connect()
+    app.state.graph = graph
+    from parachute.core.interfaces import get_registry
+    get_registry().publish("GraphDB", graph)
+    logger.info(f"GraphDB initialized: {graph_db_path}")
 
     # Load modules from vault/.modules/
     module_loader = ModuleLoader(settings.vault_path)
@@ -181,6 +191,9 @@ async def lifespan(app: FastAPI):
 
     await stop_scheduler()
     await close_database()
+    if hasattr(app.state, "graph") and app.state.graph:
+        await app.state.graph.close()
+        app.state.graph = None
     app.state.orchestrator = None
     app.state.sandbox = None
     app.state.database = None

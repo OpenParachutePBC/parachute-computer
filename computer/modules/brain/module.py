@@ -41,7 +41,6 @@ class BrainModule:
 
     def __init__(self, vault_path: Path, **kwargs):
         self.vault_path = vault_path
-        self.db_path = vault_path / ".brain" / "brain.lbug"
 
         # Ensure required directories exist
         (vault_path / ".brain").mkdir(parents=True, exist_ok=True)
@@ -52,17 +51,21 @@ class BrainModule:
         self._queries_lock = asyncio.Lock()
 
     async def _ensure_service(self) -> LadybugService:
-        """Lazy-initialize LadybugService (idempotent, race-safe)."""
+        """Lazy-initialize LadybugService using shared GraphDB from registry."""
         if self._service is None:
             async with self._init_lock:
                 if self._service is None:
-                    svc = LadybugService(
-                        db_path=self.db_path,
-                        vault_path=self.vault_path,
-                    )
-                    await svc.connect()
+                    from parachute.core.interfaces import get_registry
+                    graph = get_registry().get("GraphDB")
+                    if graph is None:
+                        raise RuntimeError(
+                            "Brain: GraphDB not found in registry. "
+                            "GraphService must be initialized before Brain module loads."
+                        )
+                    svc = LadybugService(graph=graph, vault_path=self.vault_path)
+                    await svc.init_brain_schema()
                     self._service = svc
-                    logger.info("Brain: LadybugService initialized")
+                    logger.info("Brain: LadybugService initialized via shared GraphDB")
         return self._service
 
     def get_router(self) -> APIRouter:
