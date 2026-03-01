@@ -126,7 +126,7 @@ class SessionManager:
         working_directory: Optional[str] = None,
         continued_from: Optional[str] = None,
         trust_level: Optional[str] = None,
-        container_env_id: Optional[str] = None,
+        container_env_id: str | None = None,
     ) -> tuple[Session, ResumeInfo, bool]:
         """
         Get an existing session or prepare for a new one.
@@ -195,8 +195,8 @@ class SessionManager:
                 continued_from=continued_from,
                 trust_level=trust_level,
                 container_env_id=container_env_id,
-                created_at=datetime.utcnow(),
-                last_accessed=datetime.utcnow(),
+                created_at=datetime.now(timezone.utc),
+                last_accessed=datetime.now(timezone.utc),
             )
             resume_info = ResumeInfo(
                 method="new",
@@ -216,8 +216,8 @@ class SessionManager:
             continued_from=continued_from,
             trust_level=trust_level,
             container_env_id=container_env_id,
-            created_at=datetime.utcnow(),
-            last_accessed=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
+            last_accessed=datetime.now(timezone.utc),
         )
         resume_info = ResumeInfo(
             method="new",

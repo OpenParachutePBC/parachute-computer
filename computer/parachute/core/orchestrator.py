@@ -890,13 +890,12 @@ class Orchestrator:
                     sandbox_response_text = ""
 
                     # Route to named env container or private session container
-                    container_name = session.container_env_docker_name  # None = private
                     sandbox_stream = self._sandbox.run_session(
                         session_id=sandbox_sid,
                         config=sandbox_config,
                         message=sandbox_message,
                         resume_session_id=resume_session_id,
-                        container_name=container_name,
+                        container_env_slug=session.container_env_id,
                     )
 
                     # Mutable state container for sandbox event processing
@@ -986,7 +985,7 @@ class Orchestrator:
                             session_id=sandbox_sid,
                             config=sandbox_config,
                             message=retry_message,
-                            container_name=container_name,
+                            container_env_slug=session.container_env_id,
                         )
                         async for event in retry_stream:
                             async for yielded in _process_sandbox_event(event):

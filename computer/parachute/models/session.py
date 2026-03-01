@@ -286,17 +286,6 @@ class Session(BaseModel):
             return self.metadata["agent_type"]
         return None
 
-    @property
-    def container_env_docker_name(self) -> Optional[str]:
-        """Docker container name for named env sessions; None for private containers."""
-        if self.container_env_id:
-            return f"parachute-env-{self.container_env_id}"
-        return None
-
-    @property
-    def private_container_name(self) -> str:
-        """Docker container name for private session containers."""
-        return f"parachute-session-{self.id[:12]}"
 
 
 class ContainerEnv(BaseModel):
@@ -325,8 +314,13 @@ class ContainerEnv(BaseModel):
 class ContainerEnvCreate(BaseModel):
     """Data for creating a named container environment."""
 
-    display_name: str = Field(description="Human-readable name")
-    slug: Optional[str] = Field(default=None, description="URL-safe slug (auto-generated if omitted)")
+    display_name: str = Field(min_length=1, max_length=100, description="Human-readable name")
+    slug: str | None = Field(
+        default=None,
+        min_length=2,
+        max_length=50,
+        description="URL-safe slug (auto-generated if omitted)",
+    )
 
 
 class SessionCreate(BaseModel):

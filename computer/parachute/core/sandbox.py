@@ -473,16 +473,17 @@ class DockerSandbox:
         """Host-side .claude/ directory for a named env container."""
         return self.vault_path / SANDBOX_DATA_DIR / "envs" / slug / ".claude"
 
-    async def ensure_session_container(
-        self, session_id: str, config: AgentSandboxConfig
+    async def _ensure_container(
+        self,
+        container_name: str,
+        claude_dir: Path,
+        labels: dict[str, str],
+        config: AgentSandboxConfig,
     ) -> str:
-        """Ensure a private session container is running.
+        """Ensure a persistent container is running; create if absent, start if stopped.
 
-        Container: parachute-session-<session_id[:12]>
-        Creates lazily on first call; idempotent on subsequent calls.
+        Shared implementation for session and named-env containers.
         """
-        container_name = f"parachute-session-{session_id[:12]}"
-
         async with self._slug_locks[container_name]:
             status = await self._inspect_status(container_name)
 
@@ -497,16 +498,9 @@ class DockerSandbox:
             if config.network_enabled:
                 await self._ensure_sandbox_network()
 
-            claude_dir = self._get_session_claude_dir(session_id)
             vault_mounts = ["-v", f"{self.vault_path}:/home/sandbox/Parachute:ro"]
             vault_mounts.extend(self._build_capability_mounts(config))
 
-            labels = {
-                "app": "parachute",
-                "type": "session",
-                "session_id": session_id,
-                "config_hash": self._calculate_config_hash(),
-            }
             args = self._build_persistent_container_args(
                 container_name, config, labels, claude_dir, vault_mounts
             )
@@ -519,10 +513,28 @@ class DockerSandbox:
             _, stderr = await proc.communicate()
             if proc.returncode != 0:
                 raise RuntimeError(
-                    f"Failed to create session container {container_name}: {stderr.decode()}"
+                    f"Failed to create container {container_name}: {stderr.decode()}"
                 )
-            logger.info(f"Created session container {container_name}")
+            logger.info(f"Created container {container_name}")
             return container_name
+
+    async def ensure_session_container(
+        self, session_id: str, config: AgentSandboxConfig
+    ) -> str:
+        """Ensure a private session container is running.
+
+        Container: parachute-session-<session_id[:12]>
+        Creates lazily on first call; idempotent on subsequent calls.
+        """
+        container_name = f"parachute-session-{session_id[:12]}"
+        claude_dir = self._get_session_claude_dir(session_id)
+        labels = {
+            "app": "parachute",
+            "type": "session",
+            "session_id": session_id,
+            "config_hash": self._calculate_config_hash(),
+        }
+        return await self._ensure_container(container_name, claude_dir, labels, config)
 
     async def ensure_named_container(
         self, slug: str, config: AgentSandboxConfig
@@ -533,47 +545,14 @@ class DockerSandbox:
         Creates if absent, starts if stopped. Multiple sessions share one container.
         """
         container_name = f"parachute-env-{slug}"
-
-        async with self._slug_locks[container_name]:
-            status = await self._inspect_status(container_name)
-
-            if status == "running":
-                return container_name
-            elif status in ("exited", "created"):
-                await self._start_container(container_name)
-                return container_name
-            elif status is not None:
-                await self._remove_container(container_name)
-
-            if config.network_enabled:
-                await self._ensure_sandbox_network()
-
-            claude_dir = self._get_named_env_claude_dir(slug)
-            vault_mounts = ["-v", f"{self.vault_path}:/home/sandbox/Parachute:ro"]
-            vault_mounts.extend(self._build_capability_mounts(config))
-
-            labels = {
-                "app": "parachute",
-                "type": "named-env",
-                "env_slug": slug,
-                "config_hash": self._calculate_config_hash(),
-            }
-            args = self._build_persistent_container_args(
-                container_name, config, labels, claude_dir, vault_mounts
-            )
-
-            proc = await asyncio.create_subprocess_exec(
-                *args,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            _, stderr = await proc.communicate()
-            if proc.returncode != 0:
-                raise RuntimeError(
-                    f"Failed to create named env container {container_name}: {stderr.decode()}"
-                )
-            logger.info(f"Created named env container {container_name} for slug '{slug}'")
-            return container_name
+        claude_dir = self._get_named_env_claude_dir(slug)
+        labels = {
+            "app": "parachute",
+            "type": "named-env",
+            "env_slug": slug,
+            "config_hash": self._calculate_config_hash(),
+        }
+        return await self._ensure_container(container_name, claude_dir, labels, config)
 
     async def run_session(
         self,
@@ -581,19 +560,17 @@ class DockerSandbox:
         config: AgentSandboxConfig,
         message: str,
         resume_session_id: str | None = None,
-        container_name: str | None = None,
+        container_env_slug: str | None = None,
     ) -> AsyncGenerator[dict, None]:
         """Run an agent session in a container, yielding streaming events.
 
-        If container_name is provided (named env), exec into that container.
+        If container_env_slug is provided, exec into the named env container.
         Otherwise, ensure a private session container and exec into it.
         """
         await self._validate_docker_ready()
 
-        if container_name is not None:
-            # Named env — extract slug from container name
-            slug = container_name.removeprefix("parachute-env-")
-            target = await self.ensure_named_container(slug, config)
+        if container_env_slug is not None:
+            target = await self.ensure_named_container(container_env_slug, config)
         else:
             target = await self.ensure_session_container(session_id, config)
 
@@ -955,11 +932,15 @@ class DockerSandbox:
                 continue
 
         if containers_to_remove:
-            await asyncio.gather(*[
+            results = await asyncio.gather(*[
                 self._remove_container(name)
                 for name in containers_to_remove
             ], return_exceptions=True)
-            logger.info(f"Removed {len(containers_to_remove)} container(s) during reconcile")
+            for name, result in zip(containers_to_remove, results):
+                if isinstance(result, Exception):
+                    logger.warning(f"Failed to remove container {name} during reconcile: {result}")
+            removed = sum(1 for r in results if not isinstance(r, Exception))
+            logger.info(f"Removed {removed}/{len(containers_to_remove)} container(s) during reconcile")
 
         if named_env_names:
             logger.info(f"Named env containers present: {', '.join(named_env_names)}")

@@ -1182,7 +1182,14 @@ class Database:
             return [self._row_to_container_env(row) for row in rows]
 
     async def delete_container_env(self, slug: str) -> bool:
-        """Delete a named container environment record."""
+        """Delete a named container environment record.
+
+        Nullifies container_env_id on any sessions that were using this env
+        so they revert to private containers on the next turn.
+        """
+        await self.connection.execute(
+            "UPDATE sessions SET container_env_id = NULL WHERE container_env_id = ?", (slug,)
+        )
         cursor = await self.connection.execute(
             "DELETE FROM container_envs WHERE slug = ?", (slug,)
         )

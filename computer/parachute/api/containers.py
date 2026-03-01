@@ -10,7 +10,6 @@ import re
 import uuid
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
 
 from parachute.db.database import get_database
 from parachute.models.session import ContainerEnvCreate
@@ -29,7 +28,7 @@ def _slugify(name: str) -> str:
 
 
 @router.get("")
-async def list_container_envs(request: Request):
+async def list_container_envs():
     """List all named container environments."""
     db = await get_database()
     envs = await db.list_container_envs()
