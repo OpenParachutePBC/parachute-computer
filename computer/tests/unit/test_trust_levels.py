@@ -44,11 +44,10 @@ def vault_path(tmp_path):
     return vault
 
 
-def _make_session(trust_level=None, trust_mode=True, allowed_paths=None):
+def _make_session(trust_level="direct", allowed_paths=None):
     """Helper to create a session with given trust params."""
     perms = SessionPermissions(
-        trustLevel=TrustLevel(trust_level) if trust_level else TrustLevel.FULL,
-        trust_mode=trust_mode,
+        trustLevel=TrustLevel(trust_level),
         allowedPaths=allowed_paths or [],
     )
     return Session(
@@ -67,70 +66,57 @@ def _make_session(trust_level=None, trust_mode=True, allowed_paths=None):
 
 
 class TestTrustLevel:
-    def test_three_levels_exist(self):
-        assert TrustLevel.FULL == "full"
-        assert TrustLevel.VAULT == "vault"
+    def test_two_levels_exist(self):
+        assert TrustLevel.DIRECT == "direct"
         assert TrustLevel.SANDBOXED == "sandboxed"
 
-    def test_default_is_full(self):
+    def test_default_is_direct(self):
         perms = SessionPermissions()
-        assert perms.effective_trust_level == TrustLevel.FULL
+        assert perms.trust_level == TrustLevel.DIRECT
 
-    def test_legacy_trust_mode_false_maps_to_vault(self):
-        perms = SessionPermissions(trust_mode=False)
-        assert perms.effective_trust_level == TrustLevel.VAULT
+    def test_sandboxed_trust_level(self):
+        perms = SessionPermissions(trustLevel=TrustLevel.SANDBOXED)
+        assert perms.trust_level == TrustLevel.SANDBOXED
 
-    def test_explicit_sandboxed_overrides_trust_mode(self):
-        perms = SessionPermissions(
-            trustLevel=TrustLevel.SANDBOXED, trust_mode=True
-        )
-        assert perms.effective_trust_level == TrustLevel.SANDBOXED
+    def test_explicit_sandboxed(self):
+        perms = SessionPermissions(trustLevel=TrustLevel.SANDBOXED)
+        assert perms.trust_level == TrustLevel.SANDBOXED
 
-    def test_explicit_vault_overrides_trust_mode(self):
-        perms = SessionPermissions(
-            trustLevel=TrustLevel.VAULT, trust_mode=True
-        )
-        assert perms.effective_trust_level == TrustLevel.VAULT
+    def test_canonical_string_values(self):
+        assert TrustLevel("direct") == TrustLevel.DIRECT
+        assert TrustLevel("sandboxed") == TrustLevel.SANDBOXED
 
 
 class TestSessionPermissionsWithTrust:
-    def test_vault_uses_bash_whitelist(self):
-        perms = SessionPermissions(
-            trustLevel=TrustLevel.VAULT, trust_mode=False
-        )
-        # VAULT allows whitelisted commands (ls, pwd, tree by default)
-        assert perms.can_bash("ls")
-        assert perms.can_bash("pwd")
-        assert perms.can_bash("tree")
-        # But blocks non-whitelisted commands
-        assert not perms.can_bash("rm file.txt")
+    def test_sandboxed_denies_all_bash(self):
+        perms = SessionPermissions(trustLevel=TrustLevel.SANDBOXED)
+        # Sandboxed sessions run in Docker — no host bash at all
+        assert not perms.can_bash("ls")
+        assert not perms.can_bash("pwd")
         assert not perms.can_bash("git status")
+        assert not perms.can_bash("rm file.txt")
 
     def test_sandboxed_denies_bash(self):
-        perms = SessionPermissions(
-            trustLevel=TrustLevel.SANDBOXED, trust_mode=False
-        )
+        perms = SessionPermissions(trustLevel=TrustLevel.SANDBOXED)
         assert not perms.can_bash("ls")
 
-    def test_vault_allows_read_with_pattern(self):
+    def test_sandboxed_read_with_allowed_paths(self):
         perms = SessionPermissions(
-            trustLevel=TrustLevel.VAULT,
-            trust_mode=False,
+            trustLevel=TrustLevel.SANDBOXED,
             allowedPaths=["Blogs/**/*"],
         )
         assert perms.can_read("Blogs/post.md")
         assert not perms.can_read("Daily/journal.md")
 
-    def test_vault_allows_write_with_pattern(self):
+    def test_sandboxed_write_with_allowed_paths(self):
         perms = SessionPermissions(
-            trustLevel=TrustLevel.VAULT,
-            trust_mode=False,
+            trustLevel=TrustLevel.SANDBOXED,
             allowedPaths=["Blogs/**/*"],
         )
         assert perms.can_write("Blogs/post.md")
         assert not perms.can_write("Daily/journal.md")
 
-    def test_full_allows_everything(self):
+    def test_direct_allows_everything(self):
         perms = SessionPermissions()
         assert perms.can_read("anything")
         assert perms.can_write("anything")
@@ -140,7 +126,7 @@ class TestSessionPermissionsWithTrust:
 class TestSessionTrustLevel:
     def test_get_trust_level_default(self):
         session = _make_session()
-        assert session.get_trust_level() == TrustLevel.FULL
+        assert session.get_trust_level() == TrustLevel.DIRECT
 
     def test_get_trust_level_from_field(self):
         session = Session(
@@ -160,7 +146,7 @@ class TestSessionTrustLevel:
             last_accessed=datetime.utcnow(),
             trust_level="invalid_value",
         )
-        assert session.get_trust_level() == TrustLevel.FULL
+        assert session.get_trust_level() == TrustLevel.DIRECT
 
 
 # ---------------------------------------------------------------------------
@@ -436,40 +422,37 @@ class TestPermissionHandlerTrustLevels:
         return str(vault_path)
 
     @pytest.mark.asyncio
-    async def test_full_trust_allows_bash(self, vault_str):
+    async def test_direct_trust_allows_bash(self, vault_str):
         from parachute.core.permission_handler import PermissionHandler
 
-        session = _make_session(trust_level="full")
+        session = _make_session(trust_level="direct")
         handler = PermissionHandler(session=session, vault_path=vault_str)
         decision = await handler.check_permission("Bash", {"command": "ls -la"})
         assert decision.behavior == "allow"
 
     @pytest.mark.asyncio
-    async def test_vault_allows_whitelisted_bash(self, vault_str):
+    async def test_sandboxed_denies_bash(self, vault_str):
         from parachute.core.permission_handler import PermissionHandler
 
-        session = _make_session(trust_level="vault", trust_mode=False)
+        session = _make_session(trust_level="sandboxed")
         handler = PermissionHandler(session=session, vault_path=vault_str)
-        # Whitelisted commands should be allowed
         decision = await handler.check_permission("Bash", {"command": "ls -la"})
-        assert decision.behavior == "allow"
-
-    @pytest.mark.asyncio
-    async def test_vault_denies_non_whitelisted_bash(self, vault_str):
-        from parachute.core.permission_handler import PermissionHandler
-
-        session = _make_session(trust_level="vault", trust_mode=False)
-        handler = PermissionHandler(session=session, vault_path=vault_str)
-        handler.timeout_seconds = 1  # Short timeout for test
-        # Non-whitelisted commands go to approval flow, timeout = deny
-        decision = await handler.check_permission("Bash", {"command": "git status"})
         assert decision.behavior == "deny"
+
+    @pytest.mark.asyncio
+    async def test_direct_allows_non_whitelisted_bash(self, vault_str):
+        from parachute.core.permission_handler import PermissionHandler
+
+        session = _make_session(trust_level="direct")
+        handler = PermissionHandler(session=session, vault_path=vault_str)
+        decision = await handler.check_permission("Bash", {"command": "git status"})
+        assert decision.behavior == "allow"
 
     @pytest.mark.asyncio
     async def test_sandboxed_denies_host_tools(self, vault_str):
         from parachute.core.permission_handler import PermissionHandler
 
-        session = _make_session(trust_level="sandboxed", trust_mode=False)
+        session = _make_session(trust_level="sandboxed")
         handler = PermissionHandler(session=session, vault_path=vault_str)
 
         for tool in ["Bash", "Read", "Write", "Edit", "Glob", "Grep"]:
@@ -480,7 +463,7 @@ class TestPermissionHandlerTrustLevels:
     async def test_sandboxed_allows_mcp_tools(self, vault_str):
         from parachute.core.permission_handler import PermissionHandler
 
-        session = _make_session(trust_level="sandboxed", trust_mode=False)
+        session = _make_session(trust_level="sandboxed")
         handler = PermissionHandler(session=session, vault_path=vault_str)
         decision = await handler.check_permission("mcp__vault__list", {})
         assert decision.behavior == "allow"
@@ -489,16 +472,16 @@ class TestPermissionHandlerTrustLevels:
     async def test_sandboxed_allows_web_tools(self, vault_str):
         from parachute.core.permission_handler import PermissionHandler
 
-        session = _make_session(trust_level="sandboxed", trust_mode=False)
+        session = _make_session(trust_level="sandboxed")
         handler = PermissionHandler(session=session, vault_path=vault_str)
         decision = await handler.check_permission("WebSearch", {"query": "test"})
         assert decision.behavior == "allow"
 
     @pytest.mark.asyncio
-    async def test_full_trust_allows_write(self, vault_str):
+    async def test_direct_trust_allows_write(self, vault_str):
         from parachute.core.permission_handler import PermissionHandler
 
-        session = _make_session(trust_level="full")
+        session = _make_session(trust_level="direct")
         handler = PermissionHandler(session=session, vault_path=vault_str)
         decision = await handler.check_permission("Write", {"file_path": "/tmp/test.md"})
         assert decision.behavior == "allow"

@@ -7,7 +7,7 @@ from parachute.core.capability_filter import (
     filter_by_trust_level,
     filter_capabilities,
 )
-from parachute.models.workspace import PluginConfig, WorkspaceCapabilities
+from parachute.models.workspace import WorkspaceCapabilities
 
 
 class TestFilterCapabilities:
@@ -69,12 +69,11 @@ class TestFilterCapabilities:
         assert result.plugin_dirs == []
 
     def test_plugin_exclude_user(self):
-        """When include_user is False, ~/.claude/plugins/ is excluded."""
+        """When plugins is a named list, only matching slugs are included."""
         user_plugins = Path.home() / ".claude" / "plugins"
         other_dir = Path("/opt/custom-plugins")
-        caps = WorkspaceCapabilities(
-            plugins=PluginConfig(include_user=False),
-        )
+        # Allow only "custom-plugins" by slug, excluding "plugins" (user dir)
+        caps = WorkspaceCapabilities(plugins=["custom-plugins"])
 
         result = filter_capabilities(
             caps,
@@ -129,15 +128,16 @@ class TestFilterByTrustLevel:
         result = filter_by_trust_level(mcps, "full")
         assert set(result.keys()) == {"parachute", "context7", "custom"}
 
-    def test_vault_trust_excludes_full_only(self):
-        """Vault trust sees sandboxed and vault MCPs, not full-only."""
+    def test_sandboxed_trust_excludes_direct_only(self):
+        """Sandboxed sessions only see MCPs annotated as sandboxed."""
         mcps = {
             "parachute": {"command": "x", "trust_level": "sandboxed"},
-            "context7": {"url": "y", "trust_level": "vault"},
-            "custom": {"command": "z"},  # No annotation → full only
+            "context7": {"url": "y", "trust_level": "direct"},
+            "custom": {"command": "z"},  # No annotation → direct only
         }
-        result = filter_by_trust_level(mcps, "vault")
-        assert set(result.keys()) == {"parachute", "context7"}
+        result = filter_by_trust_level(mcps, "sandboxed")
+        assert set(result.keys()) == {"parachute"}
+        assert "context7" not in result
         assert "custom" not in result
 
     def test_sandboxed_trust_only_sees_sandboxed(self):
@@ -163,24 +163,23 @@ class TestFilterByTrustLevel:
             result = filter_by_trust_level(mcps, trust)
             assert "parachute" in result
 
-    def test_no_annotation_defaults_to_full(self):
-        """MCPs without trust_level annotation default to full (most restrictive access)."""
+    def test_no_annotation_defaults_to_direct(self):
+        """MCPs without trust_level annotation default to direct (most privileged access)."""
         mcps = {"custom": {"command": "my-tool"}}
 
-        assert "custom" in filter_by_trust_level(mcps, "full")
-        assert "custom" not in filter_by_trust_level(mcps, "vault")
+        assert "custom" in filter_by_trust_level(mcps, "direct")
         assert "custom" not in filter_by_trust_level(mcps, "sandboxed")
 
     def test_empty_dict_returns_empty(self):
         result = filter_by_trust_level({}, "full")
         assert result == {}
 
-    def test_unknown_trust_level_treated_as_full(self):
-        """Unknown trust levels in MCP configs are treated as full (most restrictive)."""
+    def test_unknown_trust_level_treated_as_direct(self):
+        """Unknown trust levels in MCP configs are treated as direct (most restrictive access)."""
         mcps = {"weird": {"command": "x", "trust_level": "unknown"}}
-        # Unknown MCP trust_level gets order 0 (same as full)
-        assert "weird" in filter_by_trust_level(mcps, "full")
-        assert "weird" not in filter_by_trust_level(mcps, "vault")
+        # Unknown MCP trust_level falls back to "direct" (order 0)
+        assert "weird" in filter_by_trust_level(mcps, "direct")
+        assert "weird" not in filter_by_trust_level(mcps, "sandboxed")
 
     def test_trust_filter_preserves_config(self):
         """Filtered MCPs retain their full config dicts."""

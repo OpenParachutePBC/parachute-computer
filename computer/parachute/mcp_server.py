@@ -856,8 +856,7 @@ async def create_session(
                 "error": f"Rate limit: can only create 1 session per second. Wait {1 - time_since_last.total_seconds():.1f}s."
             }
 
-    # Create SDK session
-    from parachute.core.session_manager import SessionManager
+    # Create session
     from parachute.models.session import SessionCreate, SessionSource
 
     session_id = f"sess_{uuid.uuid4().hex[:16]}"
@@ -878,36 +877,19 @@ async def create_session(
     # Create session in database
     await db.create_session(session_create)
 
-    # Initialize SDK session with initial message
-    sm = SessionManager(Path(_vault_path), db)
-    try:
-        # Start the session with initial message
-        await sm.init_session(
-            session_id=session_id,
-            workspace_id=workspace_id,
-            trust_level=trust_level,
-        )
+    logger.info(f"Created child session {session_id} (parent: {parent_session_id}, workspace: {workspace_id})")
 
-        # The initial message will be sent via the orchestrator
-        # For now, we just create the session
-        logger.info(f"Created child session {session_id} (parent: {parent_session_id}, workspace: {workspace_id})")
-
-        return {
-            "success": True,
-            "session_id": session_id,
-            "title": title,
-            "agent_type": agent_type,
-            "workspace_id": workspace_id,
-            "trust_level": trust_level,
-            "parent_session_id": parent_session_id,
-            "initial_message_queued": True,
-            "note": "Session created. Use send_message to deliver the initial message.",
-        }
-    except Exception as e:
-        # Rollback: delete the session if SDK init fails
-        await db.delete_session(session_id)
-        logger.error(f"Failed to initialize child session {session_id}: {e}")
-        return {"error": f"Failed to initialize session: {str(e)}"}
+    return {
+        "success": True,
+        "session_id": session_id,
+        "title": title,
+        "agent_type": agent_type,
+        "workspace_id": workspace_id,
+        "trust_level": trust_level,
+        "parent_session_id": parent_session_id,
+        "initial_message_queued": True,
+        "note": "Session created. Use send_message to deliver the initial message.",
+    }
 
 
 async def send_message(

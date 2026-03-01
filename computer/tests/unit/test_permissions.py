@@ -9,7 +9,7 @@ import pytest
 
 from parachute.lib.ignore_patterns import IgnorePatterns, BUILTIN_DENY_PATTERNS
 from parachute.lib.permissions import PermissionChecker
-from parachute.models.session import Session, SessionPermissions, SessionSource
+from parachute.models.session import Session, SessionPermissions, SessionSource, TrustLevel
 
 
 @pytest.fixture
@@ -20,9 +20,8 @@ def vault_path(tmp_path):
 
 @pytest.fixture
 def basic_session():
-    """Create a basic session with restricted permissions (trust_mode=False)."""
-    # Explicitly set trust_mode=False to test restricted mode
-    permissions = SessionPermissions(trust_mode=False)
+    """Create a basic session with sandboxed (restricted) trust level."""
+    permissions = SessionPermissions(trustLevel=TrustLevel.SANDBOXED)
     return Session(
         id="test-session-123",
         title="Test Session",
@@ -36,11 +35,11 @@ def basic_session():
 
 @pytest.fixture
 def session_with_read_permission():
-    """Create a session with read permission for Blogs/ in restricted mode."""
+    """Create a sandboxed session with read permission for Blogs/."""
     permissions = SessionPermissions(
+        trustLevel=TrustLevel.SANDBOXED,
         read=["Blogs/**/*"],
         write=["Chat/artifacts/*"],
-        trust_mode=False,  # Restricted mode
     )
     return Session(
         id="test-session-123",
@@ -55,8 +54,8 @@ def session_with_read_permission():
 
 @pytest.fixture
 def trust_mode_session():
-    """Create a session with trust mode enabled (this is now the default)."""
-    permissions = SessionPermissions(trust_mode=True)
+    """Create a session with direct trust level (allows all)."""
+    permissions = SessionPermissions(trustLevel=TrustLevel.DIRECT)
     return Session(
         id="test-session-123",
         title="Test Session",
@@ -77,44 +76,42 @@ class TestSessionPermissions:
         assert perms.read == []
         assert perms.write == ["Chat/artifacts/*"]
         assert perms.bash == ["ls", "pwd", "tree"]
-        # Trust mode is now True by default for backwards compatibility
-        assert perms.trust_mode is True
+        # Default trust level is DIRECT (bare metal)
+        assert perms.trust_level == TrustLevel.DIRECT
 
-    def test_trust_mode_allows_all(self):
-        """Test that trust mode (default) bypasses permission checks."""
-        perms = SessionPermissions()  # trust_mode=True by default
+    def test_direct_trust_allows_all(self):
+        """Test that direct trust bypasses permission checks."""
+        perms = SessionPermissions()  # DIRECT by default
         assert perms.can_read("any/path.txt")
         assert perms.can_write("any/path.txt")
         assert perms.can_bash("rm -rf everything")
 
-    def test_restricted_mode_read_denied(self):
-        """Test that reading is denied in restricted mode (trust_mode=False)."""
-        perms = SessionPermissions(trust_mode=False)
+    def test_sandboxed_read_denied(self):
+        """Test that reading is denied in sandboxed mode (no allowed paths)."""
+        perms = SessionPermissions(trustLevel=TrustLevel.SANDBOXED)
         assert not perms.can_read("Blogs/post.md")
         assert not perms.can_read("Daily/journals/2024-01-01.md")
 
     def test_can_read_with_pattern(self):
-        """Test reading with granted pattern in restricted mode."""
-        perms = SessionPermissions(read=["Blogs/**/*"], trust_mode=False)
+        """Test reading with granted read pattern in sandboxed mode."""
+        perms = SessionPermissions(trustLevel=TrustLevel.SANDBOXED, read=["Blogs/**/*"])
         assert perms.can_read("Blogs/post.md")
         assert perms.can_read("Blogs/drafts/new-post.md")
         assert not perms.can_read("Daily/journals/2024-01-01.md")
 
-    def test_restricted_mode_write_artifacts(self):
-        """Test that Chat/artifacts is writable by default in restricted mode."""
-        perms = SessionPermissions(trust_mode=False)
+    def test_sandboxed_write_artifacts(self):
+        """Test that Chat/artifacts is writable by default in sandboxed mode."""
+        perms = SessionPermissions(trustLevel=TrustLevel.SANDBOXED)
         assert perms.can_write("Chat/artifacts/output.txt")
         assert not perms.can_write("Blogs/post.md")
 
-    def test_restricted_mode_bash_commands(self):
-        """Test default allowed bash commands in restricted mode."""
-        perms = SessionPermissions(trust_mode=False)
-        assert perms.can_bash("ls")
-        assert perms.can_bash("pwd")
-        assert perms.can_bash("tree")
-        assert perms.can_bash("ls -la /some/path")
+    def test_sandboxed_denies_all_bash(self):
+        """Test that sandboxed mode denies all bash (Docker runs, no host bash)."""
+        perms = SessionPermissions(trustLevel=TrustLevel.SANDBOXED)
+        assert not perms.can_bash("ls")
+        assert not perms.can_bash("pwd")
+        assert not perms.can_bash("tree")
         assert not perms.can_bash("rm file.txt")
-        assert not perms.can_bash("git status")
 
 
 class TestIgnorePatterns:

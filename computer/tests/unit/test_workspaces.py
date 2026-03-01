@@ -59,12 +59,12 @@ class TestWorkspaceCRUD:
     """Tests for workspace CRUD operations."""
 
     def test_create_workspace(self, vault_path):
-        create = WorkspaceCreate(name="Coding", trust_level="full")
+        create = WorkspaceCreate(name="Coding", default_trust_level="direct")
         workspace = create_workspace(vault_path, create)
 
         assert workspace.name == "Coding"
         assert workspace.slug == "coding"
-        assert workspace.trust_level == "full"
+        assert workspace.default_trust_level == "direct"
 
         # Verify file was created
         config_file = vault_path / ".parachute/workspaces/coding/config.yaml"
@@ -106,11 +106,11 @@ class TestWorkspaceCRUD:
         create_workspace(vault_path, WorkspaceCreate(name="Test"))
         updated = update_workspace(
             vault_path, "test",
-            WorkspaceUpdate(description="Updated", trust_level="vault"),
+            WorkspaceUpdate(description="Updated", default_trust_level="sandboxed"),
         )
         assert updated is not None
         assert updated.description == "Updated"
-        assert updated.trust_level == "vault"
+        assert updated.default_trust_level == "sandboxed"
         assert updated.name == "Test"  # unchanged
         assert updated.slug == "test"  # cannot change
 
@@ -150,11 +150,11 @@ class TestWorkspaceCRUD:
         assert loaded.model == "opus"
 
     def test_workspace_to_api_dict(self, vault_path):
-        create = WorkspaceCreate(name="Test", trust_level="vault")
+        create = WorkspaceCreate(name="Test", default_trust_level="sandboxed")
         workspace = create_workspace(vault_path, create)
         api_dict = workspace.to_api_dict()
 
         assert api_dict["name"] == "Test"
         assert api_dict["slug"] == "test"
-        assert api_dict["trust_level"] == "vault"
+        assert api_dict["default_trust_level"] == "sandboxed"
         assert "capabilities" in api_dict
