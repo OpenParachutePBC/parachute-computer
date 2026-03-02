@@ -214,5 +214,35 @@ class DailyApiService {
     }
   }
 
+  /// Get markdown import status: how many .md files exist and how many are imported.
+  Future<Map<String, dynamic>?> getImportStatus() async {
+    final uri = Uri.parse('$baseUrl/api/daily/import/status');
+    try {
+      final response = await _client
+          .get(uri, headers: _headers)
+          .timeout(_timeout);
+      if (response.statusCode < 200 || response.statusCode >= 300) return null;
+      return jsonDecode(response.body) as Map<String, dynamic>;
+    } catch (e) {
+      debugPrint('[DailyApiService] getImportStatus error: $e');
+      return null;
+    }
+  }
+
+  /// Trigger markdown-to-graph import. Returns result summary or null on error.
+  Future<Map<String, dynamic>?> triggerImport() async {
+    final uri = Uri.parse('$baseUrl/api/daily/import');
+    try {
+      final response = await _client
+          .post(uri, headers: _headers)
+          .timeout(const Duration(minutes: 2));
+      if (response.statusCode < 200 || response.statusCode >= 300) return null;
+      return jsonDecode(response.body) as Map<String, dynamic>;
+    } catch (e) {
+      debugPrint('[DailyApiService] triggerImport error: $e');
+      return null;
+    }
+  }
+
   void dispose() => _client.close();
 }

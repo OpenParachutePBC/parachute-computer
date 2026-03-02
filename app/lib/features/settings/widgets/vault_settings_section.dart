@@ -8,6 +8,12 @@ import 'package:parachute/core/providers/file_system_provider.dart';
 import 'package:parachute/features/daily/journal/providers/journal_providers.dart';
 import 'package:parachute/features/chat/providers/chat_providers.dart';
 
+/// Provider for markdown import status. Invalidated after a successful import.
+final _importStatusProvider = FutureProvider.autoDispose<Map<String, dynamic>?>((ref) async {
+  final api = ref.watch(dailyApiServiceProvider);
+  return api.getImportStatus();
+});
+
 /// Vault path and folder settings section
 class VaultSettingsSection extends ConsumerStatefulWidget {
   final String vaultPath;
@@ -266,6 +272,215 @@ class _VaultSettingsSectionState extends ConsumerState<VaultSettingsSection> {
             ),
           ],
         ),
+        SizedBox(height: Spacing.xl),
+        const _JournalImportSection(),
+      ],
+    );
+  }
+}
+
+/// Journal markdown import section — shows status and lets user trigger import.
+class _JournalImportSection extends ConsumerStatefulWidget {
+  const _JournalImportSection();
+
+  @override
+  ConsumerState<_JournalImportSection> createState() => _JournalImportSectionState();
+}
+
+class _JournalImportSectionState extends ConsumerState<_JournalImportSection> {
+  bool _importing = false;
+
+  Future<void> _triggerImport() async {
+    setState(() => _importing = true);
+    try {
+      final api = ref.read(dailyApiServiceProvider);
+      final result = await api.triggerImport();
+      if (mounted) {
+        final msg = result?['message'] as String? ?? 'Import complete';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(msg)),
+        );
+        ref.invalidate(_importStatusProvider);
+        ref.invalidate(todayJournalProvider);
+        ref.invalidate(selectedJournalProvider);
+      }
+    } finally {
+      if (mounted) setState(() => _importing = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final statusAsync = ref.watch(_importStatusProvider);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(Icons.download_for_offline,
+                color: isDark ? BrandColors.nightForest : BrandColors.forest),
+            SizedBox(width: Spacing.sm),
+            Text(
+              'Journal Import',
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: TypographyTokens.bodyLarge,
+                color: isDark ? BrandColors.nightText : BrandColors.charcoal,
+              ),
+            ),
+          ],
+        ),
+        SizedBox(height: Spacing.sm),
+        Text(
+          'Import existing journal entries from markdown files in your vault.',
+          style: TextStyle(
+            fontSize: TypographyTokens.bodySmall,
+            color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+          ),
+        ),
+        SizedBox(height: Spacing.md),
+        statusAsync.when(
+          loading: () => const LinearProgressIndicator(),
+          error: (_, __) => Text(
+            'Server unavailable — start Parachute server to import.',
+            style: TextStyle(
+              fontSize: TypographyTokens.bodySmall,
+              color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+            ),
+          ),
+          data: (status) {
+            if (status == null) {
+              return Text(
+                'Server unavailable — start Parachute server to import.',
+                style: TextStyle(
+                  fontSize: TypographyTokens.bodySmall,
+                  color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+                ),
+              );
+            }
+            final total = status['total_md_files'] as int? ?? 0;
+            final imported = status['imported'] as int? ?? 0;
+            final pending = status['pending'] as int? ?? 0;
+            if (total == 0) {
+              return Text(
+                'No markdown journal files found in vault.',
+                style: TextStyle(
+                  fontSize: TypographyTokens.bodySmall,
+                  color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+                ),
+              );
+            }
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  padding: EdgeInsets.all(Spacing.sm),
+                  decoration: BoxDecoration(
+                    color: (isDark ? BrandColors.nightSurface : BrandColors.cream)
+                        .withValues(alpha: 0.5),
+                    borderRadius: BorderRadius.circular(Radii.sm),
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: _ImportStat(
+                            label: 'Total', value: '$total', isDark: isDark),
+                      ),
+                      Expanded(
+                        child: _ImportStat(
+                            label: 'Imported', value: '$imported', isDark: isDark),
+                      ),
+                      Expanded(
+                        child: _ImportStat(
+                            label: 'Pending',
+                            value: '$pending',
+                            isDark: isDark,
+                            highlight: pending > 0),
+                      ),
+                    ],
+                  ),
+                ),
+                if (pending > 0) ...[
+                  SizedBox(height: Spacing.md),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      onPressed: _importing ? null : _triggerImport,
+                      icon: _importing
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 2, color: Colors.white),
+                            )
+                          : const Icon(Icons.download, size: 18),
+                      label: Text(_importing
+                          ? 'Importing...'
+                          : 'Import $pending entries'),
+                      style: FilledButton.styleFrom(
+                        backgroundColor:
+                            isDark ? BrandColors.nightForest : BrandColors.forest,
+                      ),
+                    ),
+                  ),
+                ] else ...[
+                  SizedBox(height: Spacing.sm),
+                  Row(
+                    children: [
+                      Icon(Icons.check_circle,
+                          size: 16,
+                          color: isDark ? BrandColors.nightForest : BrandColors.forest),
+                      SizedBox(width: Spacing.xs),
+                      Text(
+                        'All entries imported',
+                        style: TextStyle(
+                          fontSize: TypographyTokens.bodySmall,
+                          color: isDark ? BrandColors.nightForest : BrandColors.forest,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ],
+            );
+          },
+        ),
+      ],
+    );
+  }
+}
+
+class _ImportStat extends StatelessWidget {
+  final String label;
+  final String value;
+  final bool isDark;
+  final bool highlight;
+
+  const _ImportStat({
+    required this.label,
+    required this.value,
+    required this.isDark,
+    this.highlight = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final color = highlight
+        ? (isDark ? BrandColors.nightTurquoise : BrandColors.turquoise)
+        : (isDark ? BrandColors.nightText : BrandColors.charcoal);
+    return Column(
+      children: [
+        Text(value,
+            style: TextStyle(
+                fontWeight: FontWeight.bold, fontSize: 18, color: color)),
+        Text(label,
+            style: TextStyle(
+                fontSize: TypographyTokens.labelSmall,
+                color: isDark
+                    ? BrandColors.nightTextSecondary
+                    : BrandColors.driftwood)),
       ],
     );
   }

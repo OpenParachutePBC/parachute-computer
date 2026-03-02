@@ -16,7 +16,7 @@ Storage layout:
 import json
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import date as _date, datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -109,6 +109,30 @@ class DailyModule:
                 )
                 logger.info(f"Daily: added column Journal_Entry.{col}")
 
+    def _find_legacy_md_files(self) -> list:
+        """
+        Find all legacy markdown journal files across known locations.
+
+        Checks both:
+          - vault/Daily/journals/*.md  (the original Obsidian-style location)
+          - vault/Daily/entries/*.md   (the new entries dir, for any frontmatter-style files)
+
+        Only includes files whose stem looks like a date or timestamped entry ID
+        so agent/config .md files aren't accidentally imported.
+        """
+        import re
+        date_pattern = re.compile(r'^\d{4}-\d{2}-\d{2}')
+        candidates = []
+        for search_dir in [
+            self.vault_path / "Daily" / "journals",
+            self.entries_dir,
+        ]:
+            if search_dir.exists():
+                for f in search_dir.glob("*.md"):
+                    if date_pattern.match(f.stem):
+                        candidates.append(f)
+        return candidates
+
     async def _migrate_from_markdown(self, graph) -> None:
         """
         One-time migration: import existing .md files into graph. Idempotent.
@@ -116,8 +140,12 @@ class DailyModule:
         Checks which .md files don't yet have a corresponding graph node and
         MERGEs them in. Safe to call on every startup — skips already-imported entries.
         After migration the .md files remain on disk as read-only archives.
+
+        Handles two formats:
+          - Plain markdown (no frontmatter): vault/Daily/journals/YYYY-MM-DD.md
+          - Frontmatter markdown: vault/Daily/entries/YYYY-MM-DD-HH-MM-SS-ffffff.md
         """
-        md_files = list(self.entries_dir.glob("*.md"))
+        md_files = self._find_legacy_md_files()
         if not md_files:
             return
 
@@ -134,30 +162,42 @@ class DailyModule:
             )
             return
 
-        try:
-            import frontmatter as fm
-        except ImportError:
-            logger.warning("Daily: python-frontmatter not installed — markdown migration skipped")
-            return
-
         logger.info(f"Daily: migrating {len(to_import)} .md file(s) to graph...")
         imported = 0
+        errors = 0
         for md_file in sorted(to_import):
             try:
-                post = fm.load(str(md_file))
-                meta = dict(post.metadata)
+                raw = md_file.read_text(encoding="utf-8", errors="replace")
+                # Detect frontmatter (entries/ files have ---\n at top)
+                if raw.startswith("---\n"):
+                    try:
+                        import frontmatter as fm
+                        post = fm.loads(raw)
+                        meta = dict(post.metadata)
+                        content = post.content or ""
+                    except ImportError:
+                        # No frontmatter lib — treat entire file as content
+                        meta = {}
+                        content = raw
+                else:
+                    meta = {}
+                    content = raw
+
                 entry_id = meta.get("entry_id", md_file.stem)
-                content = post.content or ""
                 date = entry_id[:10]
-                created_at = meta.get("created_at", "")
+                created_at = meta.get("created_at", f"{date}T00:00:00+00:00")
                 title = meta.get("title", "")
                 entry_type = meta.get("type", "text")
                 audio_path = meta.get("audio_path", "") or ""
                 brain_links = meta.get("brain_links", [])
-
-                # Remaining fields go into the metadata blob
                 known = {"entry_id", "created_at", "title", "type", "audio_path", "brain_links"}
-                extra_meta = {k: v for k, v in meta.items() if k not in known}
+                # Sanitize values: frontmatter parses dates as datetime.date objects
+                # which are not JSON-serializable — convert them to ISO strings.
+                def _sanitize(v: Any) -> Any:
+                    if isinstance(v, (_date, datetime)):
+                        return v.isoformat()
+                    return v
+                extra_meta = {k: _sanitize(v) for k, v in meta.items() if k not in known}
 
                 await self._write_to_graph(
                     graph,
@@ -174,8 +214,9 @@ class DailyModule:
                 imported += 1
             except Exception as e:
                 logger.error(f"Daily: migration failed for {md_file.name}: {e}")
+                errors += 1
 
-        logger.info(f"Daily: migrated {imported}/{len(to_import)} entries to graph")
+        logger.info(f"Daily: migrated {imported}/{len(to_import)} entries to graph ({errors} errors)")
 
     # ── Graph helpers ─────────────────────────────────────────────────────────
 
@@ -612,5 +653,70 @@ class DailyModule:
             if not ok:
                 return JSONResponse(status_code=500, content={"error": "Delete failed"})
             return Response(status_code=204)
+
+        # ── Import ────────────────────────────────────────────────────────────
+
+        @router.get("/import/status")
+        async def import_status():
+            """Return markdown import status: how many .md files exist and how many are in graph."""
+            graph = self._get_graph()
+            md_files = self._find_legacy_md_files()
+            total_md = len(md_files)
+            if graph is None or total_md == 0:
+                return {
+                    "total_md_files": total_md,
+                    "imported": 0,
+                    "pending": 0,
+                    "search_dirs": [
+                        str(self.vault_path / "Daily" / "journals"),
+                        str(self.entries_dir),
+                    ],
+                }
+            rows = await graph.execute_cypher(
+                "MATCH (e:Journal_Entry) RETURN e.entry_id AS entry_id"
+            )
+            existing_ids = {r["entry_id"] for r in rows}
+            md_stems = {f.stem for f in md_files}
+            imported = len(md_stems & existing_ids)
+            pending = len(md_stems - existing_ids)
+            return {
+                "total_md_files": total_md,
+                "imported": imported,
+                "pending": pending,
+                "search_dirs": [
+                    str(self.vault_path / "Daily" / "journals"),
+                    str(self.entries_dir),
+                ],
+            }
+
+        @router.post("/import")
+        async def trigger_import():
+            """Manually trigger markdown-to-graph migration. Safe to call multiple times."""
+            graph = self._get_graph()
+            if graph is None:
+                return JSONResponse(
+                    status_code=503,
+                    content={"error": "GraphDB not available"},
+                )
+            md_files = self._find_legacy_md_files()
+            if not md_files:
+                return {"imported": 0, "pending": 0, "message": "No markdown files found"}
+            rows = await graph.execute_cypher(
+                "MATCH (e:Journal_Entry) RETURN e.entry_id AS entry_id"
+            )
+            existing_ids = {r["entry_id"] for r in rows}
+            pending_before = len([f for f in md_files if f.stem not in existing_ids])
+            await self._migrate_from_markdown(graph)
+            rows_after = await graph.execute_cypher(
+                "MATCH (e:Journal_Entry) RETURN e.entry_id AS entry_id"
+            )
+            existing_after = {r["entry_id"] for r in rows_after}
+            newly_imported = len(existing_after) - len(existing_ids)
+            still_pending = len([f for f in md_files if f.stem not in existing_after])
+            return {
+                "imported": newly_imported,
+                "pending": still_pending,
+                "message": f"Imported {newly_imported} entries ({still_pending} remaining)",
+            }
 
         return router
