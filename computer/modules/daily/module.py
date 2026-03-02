@@ -816,6 +816,36 @@ class DailyModule:
                 "search_dirs": search_dirs,
             }
 
+        @router.delete("/import/all", status_code=200)
+        async def clear_all_entries():
+            """Delete ALL Journal_Entry and Day nodes from the graph.
+
+            Safe to call before a fresh re-import. Does NOT touch any markdown files.
+            """
+            graph = self._get_graph()
+            if graph is None:
+                return JSONResponse(
+                    status_code=503,
+                    content={"error": "GraphDB not available"},
+                )
+            rows = await graph.execute_cypher(
+                "MATCH (e:Journal_Entry) RETURN count(e) AS n"
+            )
+            entry_count = rows[0]["n"] if rows else 0
+            rows = await graph.execute_cypher(
+                "MATCH (d:Day) RETURN count(d) AS n"
+            )
+            day_count = rows[0]["n"] if rows else 0
+            async with graph.write_lock:
+                await graph.execute_cypher("MATCH (e:Journal_Entry) DETACH DELETE e")
+                await graph.execute_cypher("MATCH (d:Day) DETACH DELETE d")
+            logger.info(f"Daily: cleared {entry_count} entries and {day_count} day nodes")
+            return {
+                "deleted_entries": entry_count,
+                "deleted_days": day_count,
+                "message": f"Cleared {entry_count} entries and {day_count} day nodes. Markdown files are untouched.",
+            }
+
         @router.post("/import")
         async def trigger_import():
             """Manually trigger markdown-to-graph migration. Safe to call multiple times."""
@@ -837,7 +867,8 @@ class DailyModule:
                 "MATCH (e:Journal_Entry) RETURN e.entry_id AS entry_id"
             )
             existing_after = {r["entry_id"] for r in rows_after}
-            _, still_pending = _section_counts(md_files, existing_after)
+            total_sections, imported_sections = _section_counts(md_files, existing_after)
+            still_pending = total_sections - imported_sections
             newly_imported = len(existing_after) - len(existing_ids_before)
             return {
                 "imported": newly_imported,
