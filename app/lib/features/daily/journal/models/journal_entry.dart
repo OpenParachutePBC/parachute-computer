@@ -59,6 +59,9 @@ class JournalEntry {
   /// Set explicitly when creating entry with pending transcription status.
   final bool _isPendingTranscription;
 
+  /// Whether this entry is queued for upload (written offline, not yet on server)
+  final bool isPending;
+
   const JournalEntry({
     required this.id,
     required this.title,
@@ -71,6 +74,7 @@ class JournalEntry {
     this.durationSeconds,
     this.isPlainMarkdown = false,
     bool isPendingTranscription = false,
+    this.isPending = false,
   }) : _isPendingTranscription = isPendingTranscription;
 
   /// Whether this entry has an associated audio file
@@ -184,6 +188,73 @@ class JournalEntry {
     );
   }
 
+  /// Create from server API JSON response
+  ///
+  /// The server returns entries with `id`, `created_at`, `content`, and `metadata`.
+  /// The `metadata` dict carries type-specific fields stored in frontmatter.
+  factory JournalEntry.fromServerJson(Map<String, dynamic> json) {
+    final meta = (json['metadata'] as Map<String, dynamic>?) ?? {};
+    final typeStr = meta['type'] as String? ?? 'text';
+    return JournalEntry(
+      id: json['id'] as String,
+      title: meta['title'] as String? ?? '',
+      content: json['content'] as String? ?? '',
+      type: parseType(typeStr),
+      createdAt: parseDateTime(json['created_at'] as String?),
+      audioPath: meta['audio_path'] as String?,
+      imagePath: meta['image_path'] as String?,
+      durationSeconds: switch (meta['duration_seconds']) {
+        final int v => v,
+        final double v => v.toInt(),
+        final String v => int.tryParse(v),
+        _ => null,
+      },
+    );
+  }
+
+  static JournalEntryType parseType(String typeStr) {
+    switch (typeStr) {
+      case 'voice': return JournalEntryType.voice;
+      case 'photo': return JournalEntryType.photo;
+      case 'handwriting': return JournalEntryType.handwriting;
+      case 'linked': return JournalEntryType.linked;
+      default: return JournalEntryType.text;
+    }
+  }
+
+  static DateTime parseDateTime(String? iso) {
+    if (iso == null || iso.isEmpty) return DateTime.now();
+    try {
+      return DateTime.parse(iso).toLocal();
+    } catch (_) {
+      return DateTime.now();
+    }
+  }
+
+  /// Create a pending entry (written offline, not yet on server)
+  factory JournalEntry.pending({
+    required String localId,
+    required String content,
+    JournalEntryType type = JournalEntryType.text,
+    String? title,
+    String? audioPath,
+    String? imagePath,
+    int? durationSeconds,
+    DateTime? createdAt,
+  }) {
+    return JournalEntry(
+      id: localId,
+      title: title ?? '',
+      content: content,
+      type: type,
+      createdAt: createdAt ?? DateTime.now(),
+      audioPath: audioPath,
+      imagePath: imagePath,
+      durationSeconds: durationSeconds,
+      isPending: true,
+    );
+  }
+
   /// Create a copy with updated fields
   JournalEntry copyWith({
     String? id,
@@ -197,6 +268,7 @@ class JournalEntry {
     int? durationSeconds,
     bool? isPlainMarkdown,
     bool? isPendingTranscription,
+    bool? isPending,
   }) {
     return JournalEntry(
       id: id ?? this.id,
@@ -210,6 +282,7 @@ class JournalEntry {
       durationSeconds: durationSeconds ?? this.durationSeconds,
       isPlainMarkdown: isPlainMarkdown ?? this.isPlainMarkdown,
       isPendingTranscription: isPendingTranscription ?? _isPendingTranscription,
+      isPending: isPending ?? this.isPending,
     );
   }
 

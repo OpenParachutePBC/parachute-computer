@@ -136,15 +136,42 @@ class JournalEntryCard extends ConsumerWidget {
                 _buildImageThumbnail(context, ref, isDark),
               ],
 
-              // Transcribe button for pending entries
+              // Transcribe button for pending transcription entries
               if (entry.isPendingTranscription) ...[
                 const SizedBox(height: 12),
                 _buildTranscribeButton(context, isDark, canTranscribe),
+              ],
+
+              // Pending upload indicator
+              if (entry.isPending) ...[
+                const SizedBox(height: 8),
+                _buildPendingChip(isDark),
               ],
             ],
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildPendingChip(bool isDark) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(
+          Icons.cloud_upload_outlined,
+          size: 14,
+          color: BrandColors.driftwood,
+        ),
+        const SizedBox(width: 4),
+        Text(
+          'Not uploaded yet',
+          style: TextStyle(
+            fontSize: 12,
+            color: BrandColors.driftwood,
+          ),
+        ),
+      ],
     );
   }
 

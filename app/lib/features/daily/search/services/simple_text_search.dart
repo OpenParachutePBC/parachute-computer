@@ -1,5 +1,5 @@
 import 'package:flutter/foundation.dart';
-import '../../journal/services/journal_service.dart';
+import '../../journal/services/daily_api_service.dart';
 
 /// Simple text search result
 class SimpleSearchResult {
@@ -50,30 +50,17 @@ class SimpleSearchResult {
   }
 }
 
-/// Simple text search service using keyword matching
+/// Simple text search service using keyword matching.
 ///
-/// Provides instant search across journals without requiring
-/// any model downloads or index building. Uses simple substring matching
-/// with basic relevance scoring based on match count.
-///
-/// **Features:**
-/// - No setup required - works immediately
-/// - Searches journal entries
-/// - Returns snippets with context around matches
-/// - Basic relevance sorting by match count
-///
-/// **Limitations:**
-/// - Only finds exact keyword matches (no semantic understanding)
-/// - Performance scales linearly with vault size
-/// - No fuzzy matching or stemming
+/// Delegates search to the server API (`GET /api/daily/entries/search`)
+/// and maps the results to [SimpleSearchResult] for display.
 class SimpleTextSearchService {
-  final JournalService _journalService;
+  final DailyApiService _apiService;
 
-  SimpleTextSearchService({
-    required JournalService journalService,
-  }) : _journalService = journalService;
+  SimpleTextSearchService({required DailyApiService apiService})
+      : _apiService = apiService;
 
-  /// Search across all journal entries using keyword matching
+  /// Search across all journal entries using keyword matching.
   ///
   /// Returns results sorted by relevance (match count).
   Future<List<SimpleSearchResult>> search(
@@ -82,141 +69,48 @@ class SimpleTextSearchService {
   }) async {
     if (query.trim().isEmpty) return [];
 
-    final queryLower = query.toLowerCase();
-    final queryTerms = queryLower
-        .split(RegExp(r'\s+'))
-        .where((t) => t.length > 1)
-        .toList();
-
-    if (queryTerms.isEmpty) return [];
-
-    debugPrint('[SimpleSearch] Searching for: "$query" (${queryTerms.length} terms)');
+    debugPrint('[SimpleSearch] Searching for: "$query"');
     final stopwatch = Stopwatch()..start();
 
-    final results = await _searchJournals(queryLower, queryTerms);
-
-    // Sort by match count (descending), then by date (newest first)
-    results.sort((a, b) {
-      final countCompare = b.matchCount.compareTo(a.matchCount);
-      if (countCompare != 0) return countCompare;
-      return b.date.compareTo(a.date);
-    });
-
-    stopwatch.stop();
-    debugPrint(
-      '[SimpleSearch] Found ${results.length} results in ${stopwatch.elapsedMilliseconds}ms',
-    );
-
-    return results.take(limit).toList();
-  }
-
-  /// Search journal entries (parallel loading for speed)
-  Future<List<SimpleSearchResult>> _searchJournals(
-    String queryLower,
-    List<String> queryTerms,
-  ) async {
-    final results = <SimpleSearchResult>[];
-
     try {
-      final dates = await _journalService.listJournalDates();
+      final apiResults = await _apiService.searchEntries(query, limit: limit);
 
-      // Load journals in parallel batches for speed
-      const batchSize = 10;
-      for (int i = 0; i < dates.length; i += batchSize) {
-        final batch = dates.skip(i).take(batchSize).toList();
-        final journals = await Future.wait(
-          batch.map((date) => _journalService.loadDay(date)),
+      final results = apiResults.map((r) {
+        final meta = r.metadata;
+        final title = meta['title'] as String? ?? '';
+        final typeStr = meta['type'] as String? ?? 'text';
+        final createdAt = _parseDate(r.createdAt);
+
+        return SimpleSearchResult(
+          id: r.id,
+          type: 'journal',
+          title: title.isNotEmpty ? title : 'Entry',
+          snippet: r.snippet,
+          fullContent: r.content,
+          date: createdAt,
+          matchCount: r.matchCount,
+          entryType: typeStr,
         );
+      }).toList();
 
-        for (int j = 0; j < journals.length; j++) {
-          final date = batch[j];
-          final journal = journals[j];
+      stopwatch.stop();
+      debugPrint(
+        '[SimpleSearch] Found ${results.length} results in ${stopwatch.elapsedMilliseconds}ms',
+      );
 
-          for (final entry in journal.entries) {
-            if (entry.id == 'preamble' || entry.content.isEmpty) continue;
-
-            final contentLower = entry.content.toLowerCase();
-            final matchCount = _countMatches(contentLower, queryTerms);
-
-            if (matchCount > 0) {
-              final snippet = _extractSnippet(entry.content, queryLower, queryTerms);
-              final dateStr = _formatDate(date);
-
-              results.add(SimpleSearchResult(
-                id: 'journal:$dateStr:${entry.id}',
-                type: 'journal',
-                title: entry.title.isNotEmpty ? entry.title : 'Entry',
-                snippet: snippet,
-                fullContent: entry.content,
-                date: date,
-                matchCount: matchCount,
-                entryType: entry.type.name,
-              ));
-            }
-          }
-        }
-      }
+      return results;
     } catch (e) {
-      debugPrint('[SimpleSearch] Error searching journals: $e');
+      debugPrint('[SimpleSearch] Error: $e');
+      return [];
     }
-
-    return results;
   }
 
-  /// Count how many query terms appear in the content
-  int _countMatches(String contentLower, List<String> queryTerms) {
-    int count = 0;
-    for (final term in queryTerms) {
-      // Count occurrences of this term
-      int index = 0;
-      while ((index = contentLower.indexOf(term, index)) != -1) {
-        count++;
-        index += term.length;
-      }
+  DateTime _parseDate(String iso) {
+    if (iso.isEmpty) return DateTime.now();
+    try {
+      return DateTime.parse(iso).toLocal();
+    } catch (_) {
+      return DateTime.now();
     }
-    return count;
-  }
-
-  /// Extract a snippet around the first match with context
-  String _extractSnippet(
-    String content,
-    String queryLower,
-    List<String> queryTerms,
-  ) {
-    final contentLower = content.toLowerCase();
-
-    // Find first match position
-    int firstMatchPos = content.length;
-    for (final term in queryTerms) {
-      final pos = contentLower.indexOf(term);
-      if (pos != -1 && pos < firstMatchPos) {
-        firstMatchPos = pos;
-      }
-    }
-
-    if (firstMatchPos >= content.length) {
-      // No match found (shouldn't happen), return beginning
-      return content.substring(0, content.length.clamp(0, 200));
-    }
-
-    // Extract context around the match
-    const contextChars = 80;
-    final start = (firstMatchPos - contextChars).clamp(0, content.length);
-    final end = (firstMatchPos + contextChars + 50).clamp(0, content.length);
-
-    var snippet = content.substring(start, end);
-
-    // Clean up the snippet
-    snippet = snippet.replaceAll('\n', ' ').replaceAll(RegExp(r'\s+'), ' ').trim();
-
-    // Add ellipsis if truncated
-    if (start > 0) snippet = '...$snippet';
-    if (end < content.length) snippet = '$snippet...';
-
-    return snippet;
-  }
-
-  String _formatDate(DateTime date) {
-    return '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
   }
 }

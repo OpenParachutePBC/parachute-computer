@@ -4,7 +4,7 @@ import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:opus_dart/opus_dart.dart';
 import 'package:parachute/features/daily/journal/models/journal_entry.dart';
-import 'package:parachute/features/daily/journal/services/journal_service.dart';
+import 'package:parachute/features/daily/journal/services/daily_api_service.dart';
 import 'package:parachute/features/daily/recorder/services/omi/models.dart';
 import 'package:parachute/features/daily/recorder/services/omi/omi_bluetooth_service.dart';
 import 'package:parachute/features/daily/recorder/services/omi/omi_connection.dart';
@@ -21,7 +21,7 @@ import 'package:parachute/core/services/file_system_service.dart';
 /// Automatically detects which mode the device supports.
 class OmiCaptureService {
   final OmiBluetoothService bluetoothService;
-  final Future<JournalService> Function() getJournalService;
+  final DailyApiService Function() getApiService;
   final TranscriptionServiceAdapter transcriptionService;
 
   StreamSubscription? _buttonSubscription;
@@ -55,7 +55,7 @@ class OmiCaptureService {
 
   OmiCaptureService({
     required this.bluetoothService,
-    required this.getJournalService,
+    required this.getApiService,
     required this.transcriptionService,
   });
 
@@ -284,31 +284,44 @@ class OmiCaptureService {
 
       _cleanupStreaming();
 
-      // Save to journal with empty transcript (will be transcribed async)
-      final journalService = await getJournalService();
-      final result = await journalService.addVoiceEntry(
-        transcript: '', // Will be transcribed async
-        audioPath: wavFilePath,
-        durationSeconds: duration.inSeconds,
-        title: 'Omi Recording',
-      );
-
-      onStatusMessage?.call('Recording saved!');
-      onRecordingSaved?.call(result.entry);
-
-      // Transcribe using the vault path (not the temp path)
-      if (result.entry.audioPath != null) {
-        final fileSystem = FileSystemService.daily();
-        final vaultAudioPath = await fileSystem.resolveAssetPath(result.entry.audioPath!);
-        _transcribeAndUpdateEntry(result.entry, vaultAudioPath).catchError((e) {
-          debugPrint('[OmiCaptureService] Transcribe error: $e');
-        });
-      }
+      // Copy WAV from temp to vault
+      final now = DateTime.now();
+      final vaultPath = await fileSystem.getNewAssetPath(now, 'voice', 'wav');
+      await File(wavFilePath).copy(vaultPath);
+      // Use the filename from the path that was actually written — not a recomputed one
+      final filename = vaultPath.split('/').last;
+      final relPath = fileSystem.getAssetRelativePath(now, filename);
 
       // Clean up the temp file since it's now copied to vault
       try {
         await File(wavFilePath).delete();
       } catch (_) {}
+
+      // Create entry via API with empty transcript (will be transcribed async)
+      final api = getApiService();
+      final entry = await api.createEntry(
+        content: '',
+        metadata: {
+          'type': 'voice',
+          'audio_path': relPath,
+          'duration_seconds': duration.inSeconds,
+          'title': 'Omi Recording',
+        },
+      );
+
+      if (entry == null) {
+        onStatusMessage?.call('Error saving recording (offline)');
+        return;
+      }
+
+      onStatusMessage?.call('Recording saved!');
+      onRecordingSaved?.call(entry);
+
+      // Transcribe using the vault absolute path
+      final vaultAudioPath = await fileSystem.resolveAssetPath(relPath);
+      _transcribeAndUpdateEntry(entry, vaultAudioPath).catchError((e) {
+        debugPrint('[OmiCaptureService] Transcribe error: $e');
+      });
     } catch (e) {
       debugPrint('[OmiCaptureService] Error saving recording: $e');
       onStatusMessage?.call('Error saving recording');
@@ -445,30 +458,44 @@ class OmiCaptureService {
       final samples = pcmBytes ~/ 2; // 2 bytes per sample
       final durationSeconds = samples ~/ 16000;
 
-      // Save to journal with empty transcript (will be transcribed async)
-      final journalService = await getJournalService();
-      final result = await journalService.addVoiceEntry(
-        transcript: '', // Will be transcribed async
-        audioPath: wavPath,
-        durationSeconds: durationSeconds,
-        title: 'Omi Recording',
-      );
-
-      onStatusMessage?.call('Recording saved!');
-      onRecordingSaved?.call(result.entry);
-
-      // Transcribe using the vault path (not the temp path)
-      if (result.entry.audioPath != null) {
-        final vaultAudioPath = await fileSystem.resolveAssetPath(result.entry.audioPath!);
-        _transcribeAndUpdateEntry(result.entry, vaultAudioPath).catchError((e) {
-          debugPrint('[OmiCaptureService] Transcribe error: $e');
-        });
-      }
+      // Copy WAV from temp to vault
+      final now = DateTime.now();
+      final vaultPath = await fileSystem.getNewAssetPath(now, 'voice', 'wav');
+      await File(wavPath).copy(vaultPath);
+      // Use the filename from the path that was actually written — not a recomputed one
+      final filename = vaultPath.split('/').last;
+      final relPath = fileSystem.getAssetRelativePath(now, filename);
 
       // Clean up the temp file
       try {
         await File(wavPath).delete();
       } catch (_) {}
+
+      // Create entry via API with empty transcript (will be transcribed async)
+      final api = getApiService();
+      final entry = await api.createEntry(
+        content: '',
+        metadata: {
+          'type': 'voice',
+          'audio_path': relPath,
+          'duration_seconds': durationSeconds,
+          'title': 'Omi Recording',
+        },
+      );
+
+      if (entry == null) {
+        onStatusMessage?.call('Error saving recording (offline)');
+        return;
+      }
+
+      onStatusMessage?.call('Recording saved!');
+      onRecordingSaved?.call(entry);
+
+      // Transcribe using the vault absolute path
+      final vaultAudioPath = await fileSystem.resolveAssetPath(relPath);
+      _transcribeAndUpdateEntry(entry, vaultAudioPath).catchError((e) {
+        debugPrint('[OmiCaptureService] Transcribe error: $e');
+      });
     } catch (e) {
       debugPrint('[OmiCaptureService] Error processing: $e');
       onStatusMessage?.call('Error processing recording');
@@ -588,13 +615,13 @@ class OmiCaptureService {
       onStatusMessage?.call('Transcription complete!');
 
       // Update the journal entry with the transcript
-      final journalService = await getJournalService();
+      final api = getApiService();
+      await api.updateEntry(entry.id, content: transcriptResult.text);
+
       final updatedEntry = entry.copyWith(
         content: transcriptResult.text,
         isPendingTranscription: false,
       );
-      await journalService.updateEntry(DateTime.now(), updatedEntry);
-
       onRecordingSaved?.call(updatedEntry);
     } catch (e) {
       debugPrint('[OmiCaptureService] Transcription failed: $e');

@@ -105,10 +105,8 @@ class _VaultSettingsSectionState extends ConsumerState<VaultSettingsSection> {
 
         if (dailySuccess && chatSuccess) {
           // Invalidate all providers that depend on file paths so they refresh
-          ref.invalidate(journalServiceFutureProvider);
           ref.invalidate(todayJournalProvider);
           ref.invalidate(selectedJournalProvider);
-          ref.invalidate(journalDatesProvider);
           ref.invalidate(chatLogServiceFutureProvider);
           ref.invalidate(selectedChatLogProvider);
           ref.invalidate(reflectionServiceFutureProvider);
