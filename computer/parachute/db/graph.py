@@ -65,11 +65,30 @@ class GraphService:
             raise RuntimeError("GraphService not connected. Call connect() first.")
 
     async def connect(self) -> None:
-        """Open the database. Idempotent."""
+        """Open the database. Idempotent.
+
+        If the WAL file is corrupted (common on external drives after unclean
+        shutdown), backs it up and retries without it.
+        """
         if self._connected:
             return
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._db = lb.Database(str(self.db_path))
+        try:
+            self._db = lb.Database(str(self.db_path))
+        except RuntimeError as e:
+            if "wal" in str(e).lower():
+                wal_path = self.db_path.parent / f"{self.db_path.name}.wal"
+                if wal_path.exists():
+                    bak = wal_path.with_suffix(".wal.corrupt")
+                    wal_path.rename(bak)
+                    logger.warning(
+                        f"GraphService: corrupt WAL detected, backed up to {bak.name} and retrying"
+                    )
+                    self._db = lb.Database(str(self.db_path))
+                else:
+                    raise
+            else:
+                raise
         self._conn = lb.AsyncConnection(self._db)
         self._connected = True
         logger.info(f"GraphService connected: {self.db_path}")
