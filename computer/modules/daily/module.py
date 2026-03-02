@@ -211,6 +211,7 @@ class DailyModule:
                     created_time = time_str or "00:00"
 
                 entry_id = para_id
+                title = created_time  # e.g. "10:13" — shown in UI header
             else:
                 # No para header: generate IDs from stem
                 entry_id = file_stem if i == 0 else f"{file_stem}-{i}"
@@ -219,6 +220,7 @@ class DailyModule:
                 audio_path = ""
                 duration = None
                 created_time = "00:00"
+                title = ""
 
             t = created_time.strip()
             if len(t) == 5:   # HH:MM
@@ -237,7 +239,7 @@ class DailyModule:
                 "date": date,
                 "content": section_content,
                 "created_at": created_at,
-                "title": "",
+                "title": title,
                 "entry_type": entry_type,
                 "audio_path": audio_path,
                 "brain_links": [],
@@ -300,16 +302,29 @@ class DailyModule:
                     )
 
             for entry in entries:
-                if entry["entry_id"] in existing_ids:
+                eid = entry["entry_id"]
+                if eid in existing_ids:
+                    # Backfill title if we now have one but graph entry may not
+                    if entry.get("title"):
+                        try:
+                            async with graph.write_lock:
+                                await graph.execute_cypher(
+                                    "MATCH (e:Journal_Entry {entry_id: $id}) "
+                                    "WHERE e.title IS NULL OR e.title = '' "
+                                    "SET e.title = $title",
+                                    {"id": eid, "title": entry["title"]},
+                                )
+                        except Exception:
+                            pass
                     continue
                 try:
                     await self._write_to_graph(graph, **entry)
-                    existing_ids.add(entry["entry_id"])
+                    existing_ids.add(eid)
                     imported += 1
                 except Exception as e:
                     logger.error(
                         f"Daily: write failed for {md_file.name} "
-                        f"entry {entry['entry_id']!r}: {e}",
+                        f"entry {eid!r}: {e}",
                         exc_info=True,
                     )
                     errors += 1

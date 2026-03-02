@@ -261,9 +261,21 @@ class _JournalEntryRowState extends ConsumerState<JournalEntryRow> {
     );
   }
 
+  /// Returns the display title for the header.
+  /// For entries with no title, falls back to the time portion of createdAt
+  /// (checked in UTC to avoid local-timezone shift on "00:00 UTC" placeholders).
+  String get _displayTitle {
+    if (widget.entry.title.isNotEmpty) return widget.entry.title;
+    final utc = widget.entry.createdAt.toUtc();
+    if (utc.hour != 0 || utc.minute != 0) {
+      return '${utc.hour.toString().padLeft(2, '0')}:${utc.minute.toString().padLeft(2, '0')}';
+    }
+    return '';
+  }
+
   Widget _buildHeader(BuildContext context, ThemeData theme, bool isDark) {
     final entry = widget.entry;
-    final title = entry.title.isNotEmpty ? entry.title : 'Untitled';
+    final displayTitle = _displayTitle;
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 4),
@@ -297,13 +309,15 @@ class _JournalEntryRowState extends ConsumerState<JournalEntryRow> {
                     ),
                     onChanged: widget.onTitleChanged,
                   )
-                : Text(
-                    title,
-                    style: theme.textTheme.titleSmall?.copyWith(
-                      color: isDark ? BrandColors.softWhite : BrandColors.ink,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
+                : displayTitle.isNotEmpty
+                    ? Text(
+                        displayTitle,
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          color: isDark ? BrandColors.softWhite : BrandColors.ink,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      )
+                    : const SizedBox.shrink(),
           ),
 
           // Duration badge for voice entries
