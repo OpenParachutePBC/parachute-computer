@@ -1,6 +1,4 @@
-import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import '../models/journal_entry.dart';
@@ -40,7 +38,7 @@ class DailyApiService {
           .get(uri, headers: _headers)
           .timeout(_timeout);
 
-      if (response.statusCode != 200) {
+      if (response.statusCode < 200 || response.statusCode >= 300) {
         debugPrint('[DailyApiService] GET entries ${response.statusCode}');
         return [];
       }
@@ -50,17 +48,8 @@ class DailyApiService {
       return data
           .map((json) => JournalEntry.fromServerJson(json as Map<String, dynamic>))
           .toList();
-    } on SocketException catch (e) {
-      debugPrint('[DailyApiService] Offline: $e');
-      return [];
-    } on TimeoutException catch (e) {
-      debugPrint('[DailyApiService] Timeout: $e');
-      return [];
-    } on http.ClientException catch (e) {
-      debugPrint('[DailyApiService] HTTP error: $e');
-      return [];
     } catch (e) {
-      debugPrint('[DailyApiService] Error fetching entries: $e');
+      debugPrint('[DailyApiService] getEntries error: $e');
       return [];
     }
   }
@@ -83,34 +72,27 @@ class DailyApiService {
           .post(uri, headers: _headers, body: body)
           .timeout(_timeout);
 
-      if (response.statusCode != 200) {
+      if (response.statusCode < 200 || response.statusCode >= 300) {
         debugPrint('[DailyApiService] POST entries ${response.statusCode}');
         return null;
       }
 
       final decoded = jsonDecode(response.body) as Map<String, dynamic>;
-      // Server returns {id, path, created_at, brain_suggestions}
-      // Reconstruct entry from response + what we sent using fromServerJson
-      final syntheticJson = {
-        'id': decoded['id'],
-        'created_at': decoded['created_at'],
-        'content': content,
-        'metadata': {
-          if (metadata != null) ...metadata,
-        },
-      };
-      return JournalEntry.fromServerJson(syntheticJson);
-    } on SocketException catch (e) {
-      debugPrint('[DailyApiService] Offline (create): $e');
-      return null;
-    } on TimeoutException catch (e) {
-      debugPrint('[DailyApiService] Timeout (create): $e');
-      return null;
-    } on http.ClientException catch (e) {
-      debugPrint('[DailyApiService] HTTP error (create): $e');
-      return null;
+      // Server returns {id, path, created_at, brain_suggestions}.
+      // Build the entry directly rather than routing through fromServerJson
+      // on synthetic data — the server doesn't echo the full entry shape.
+      return JournalEntry(
+        id: decoded['id'] as String,
+        title: metadata?['title'] as String? ?? '',
+        content: content,
+        type: JournalEntry.parseType(metadata?['type'] as String? ?? 'text'),
+        createdAt: JournalEntry.parseDateTime(decoded['created_at'] as String?),
+        audioPath: metadata?['audio_path'] as String?,
+        imagePath: metadata?['image_path'] as String?,
+        durationSeconds: metadata?['duration_seconds'] as int?,
+      );
     } catch (e) {
-      debugPrint('[DailyApiService] Error creating entry: $e');
+      debugPrint('[DailyApiService] createEntry error: $e');
       return null;
     }
   }

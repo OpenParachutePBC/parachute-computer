@@ -113,7 +113,7 @@ class DailyModule:
     async def create_entry(self, content: str, metadata: dict[str, Any] | None = None) -> dict:
         """Create a new daily entry."""
         now = datetime.now(timezone.utc)
-        entry_id = now.strftime("%Y-%m-%d-%H-%M")
+        entry_id = now.strftime("%Y-%m-%d-%H-%M-%S")
         filename = f"{entry_id}.md"
         filepath = self.entries_dir / filename
 
@@ -154,7 +154,7 @@ class DailyModule:
             logger.debug("Daily: GraphDB not in registry, skipping graph write")
             return
 
-        date = entry_id[:10]  # "YYYY-MM-DD" prefix of "YYYY-MM-DD-HH-MM"
+        date = entry_id[:10]  # "YYYY-MM-DD" prefix of "YYYY-MM-DD-HH-MM-SS"
         created_at = now.isoformat()
         snippet = content[:200]
 
@@ -193,12 +193,11 @@ class DailyModule:
         """List daily entries with pagination, optionally filtered by date (YYYY-MM-DD)."""
         entries = []
 
-        # Get all .md files sorted by name (newest first due to date naming)
-        files = sorted(self.entries_dir.glob("*.md"), reverse=True)
-
-        # Filter by date prefix if provided (entry_id format: YYYY-MM-DD-HH-MM)
+        # Glob only the relevant files — O(entries_for_date) when date is given
         if date:
-            files = [f for f in files if f.stem.startswith(date)]
+            files = sorted(self.entries_dir.glob(f"{date}-*.md"), reverse=True)
+        else:
+            files = sorted(self.entries_dir.glob("*.md"), reverse=True)
 
         for md_file in files[offset:offset + limit]:
             try:

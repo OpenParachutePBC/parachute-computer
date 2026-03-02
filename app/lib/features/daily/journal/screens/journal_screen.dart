@@ -417,7 +417,7 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
       // Offline — queue for later upload and show as pending
       final queue = await ref.read(pendingQueueProvider.future);
       final localId = 'pending-${DateTime.now().millisecondsSinceEpoch}';
-      final pending = queue.enqueue(
+      final pending = await queue.enqueue(
         localId: localId,
         content: content,
         type: _entryTypeString(type),

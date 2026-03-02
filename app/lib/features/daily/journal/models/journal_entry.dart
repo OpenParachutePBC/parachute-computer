@@ -203,7 +203,12 @@ class JournalEntry {
       createdAt: parseDateTime(json['created_at'] as String?),
       audioPath: meta['audio_path'] as String?,
       imagePath: meta['image_path'] as String?,
-      durationSeconds: meta['duration_seconds'] as int?,
+      durationSeconds: switch (meta['duration_seconds']) {
+        final int v => v,
+        final double v => v.toInt(),
+        final String v => int.tryParse(v),
+        _ => null,
+      },
     );
   }
 

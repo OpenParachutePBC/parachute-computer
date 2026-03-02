@@ -42,7 +42,7 @@ class PendingEntryQueue extends ChangeNotifier {
   int get length => _items.length;
 
   /// Add an entry to the queue and return it as a JournalEntry for immediate display.
-  JournalEntry enqueue({
+  Future<JournalEntry> enqueue({
     required String localId,
     required String content,
     String type = 'text',
@@ -50,7 +50,7 @@ class PendingEntryQueue extends ChangeNotifier {
     String? audioPath,
     String? imagePath,
     int? durationSeconds,
-  }) {
+  }) async {
     final item = _PendingItem(
       localId: localId,
       content: content,
@@ -62,7 +62,7 @@ class PendingEntryQueue extends ChangeNotifier {
       queuedAt: DateTime.now(),
     );
     _items.add(item);
-    _save();
+    await _save();
     notifyListeners();
 
     return JournalEntry.pending(
@@ -77,12 +77,24 @@ class PendingEntryQueue extends ChangeNotifier {
     );
   }
 
+  bool _isFlushing = false;
+
   /// Attempt to upload all queued entries in order.
   ///
   /// Successfully uploaded entries are removed from the queue.
   /// Failed entries remain in the queue for the next flush.
+  /// Re-entrant calls are no-ops — safe to call from concurrent providers.
   Future<void> flush(DailyApiService api) async {
-    if (_items.isEmpty) return;
+    if (_isFlushing || _items.isEmpty) return;
+    _isFlushing = true;
+    try {
+      await _flush(api);
+    } finally {
+      _isFlushing = false;
+    }
+  }
+
+  Future<void> _flush(DailyApiService api) async {
 
     final remaining = <_PendingItem>[];
     for (final item in List<_PendingItem>.from(_items)) {
@@ -110,7 +122,7 @@ class PendingEntryQueue extends ChangeNotifier {
     }
 
     _items = remaining;
-    _save();
+    await _save();
     notifyListeners();
   }
 
@@ -128,8 +140,8 @@ class PendingEntryQueue extends ChangeNotifier {
     }
   }
 
-  void _save() {
-    _prefs.setString(_prefsKey, jsonEncode(_items.map((i) => i.toJson()).toList()));
+  Future<void> _save() async {
+    await _prefs.setString(_prefsKey, jsonEncode(_items.map((i) => i.toJson()).toList()));
   }
 }
 
