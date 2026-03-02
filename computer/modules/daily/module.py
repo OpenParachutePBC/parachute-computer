@@ -5,7 +5,7 @@ Provides CRUD operations for daily journal entries stored as nodes in the
 shared Kuzu graph database. Audio and image files remain on the filesystem;
 only metadata and content are stored in the graph.
 
-Entry IDs are timestamp strings: "YYYY-MM-DD-HH-MM-SS"
+Entry IDs are timestamp strings: "YYYY-MM-DD-HH-MM-SS-ffffff" (with microseconds)
 
 Storage layout:
   ~/Parachute/.parachute/graph/  ← Kuzu database (primary store, all modules share)
@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import APIRouter, Query
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -48,7 +48,6 @@ class DailyModule:
         # entries_dir kept for audio file storage and one-time markdown migration
         self.entries_dir = vault_path / "Daily" / "entries"
         self.entries_dir.mkdir(parents=True, exist_ok=True)
-        self._brain = None
 
     async def on_load(self) -> None:
         """Register Daily schema in shared graph and migrate any existing .md files."""
@@ -100,12 +99,14 @@ class DailyModule:
             "metadata_json": "STRING",
             "brain_links_json": "STRING",
         }
-        for col, typ in new_cols.items():
-            if col not in existing:
-                async with graph.write_lock:
-                    await graph.execute_cypher(
-                        f"ALTER TABLE Journal_Entry ADD {col} {typ} DEFAULT NULL"
-                    )
+        missing = {col: typ for col, typ in new_cols.items() if col not in existing}
+        if not missing:
+            return
+        async with graph.write_lock:
+            for col, typ in missing.items():
+                await graph.execute_cypher(
+                    f"ALTER TABLE Journal_Entry ADD {col} {typ} DEFAULT NULL"
+                )
                 logger.info(f"Daily: added column Journal_Entry.{col}")
 
     async def _migrate_from_markdown(self, graph) -> None:
@@ -184,16 +185,11 @@ class DailyModule:
         return get_registry().get("GraphDB")
 
     def _get_brain(self):
-        """Lazily get BrainInterface from registry."""
-        if self._brain is None:
-            try:
-                from parachute.core.interfaces import get_registry
-                self._brain = get_registry().get("BrainInterface")
-            except Exception:
-                pass
-        return self._brain
+        """Return BrainInterface from registry, or None if unavailable."""
+        from parachute.core.interfaces import get_registry
+        return get_registry().get("BrainInterface")
 
-    def _find_brain_suggestions(self, content: str) -> list[dict]:
+    async def _find_brain_suggestions(self, content: str) -> list[dict]:
         """Search Brain for entities mentioned in the content."""
         brain = self._get_brain()
         if not brain:
@@ -209,7 +205,7 @@ class DailyModule:
 
         for word in words:
             try:
-                results = brain.search(word)
+                results = await brain.search(word)
                 for result in results:
                     para_id = result.get("para_id", "")
                     if para_id and para_id not in seen_ids:
@@ -235,8 +231,8 @@ class DailyModule:
         title: str = "",
         entry_type: str = "text",
         audio_path: str = "",
-        brain_links: list = None,
-        extra_meta: dict = None,
+        brain_links: list | None = None,
+        extra_meta: dict | None = None,
     ) -> None:
         """Write (MERGE) a Journal_Entry node + Day node + HAS_ENTRY edge."""
         snippet = content[:200]
@@ -290,20 +286,16 @@ class DailyModule:
         meta: dict[str, Any] = {
             "entry_id": entry_id,
             "created_at": row.get("created_at", ""),
+            "title": title,
+            "type": entry_type,
+            "audio_path": audio_path,
         }
-        if title:
-            meta["title"] = title
-        if entry_type:
-            meta["type"] = entry_type
-        if audio_path:
-            meta["audio_path"] = audio_path
 
         # Merge extra fields from JSON blob (image_path, duration_seconds, etc.)
         metadata_json = row.get("metadata_json") or ""
         if metadata_json:
             try:
-                extra = json.loads(metadata_json)
-                meta.update(extra)
+                meta.update(json.loads(metadata_json))
             except (json.JSONDecodeError, TypeError):
                 pass
 
@@ -348,7 +340,7 @@ class DailyModule:
         extra_meta = {k: v for k, v in meta.items() if k not in known}
 
         # Brain suggestions
-        brain_suggestions = self._find_brain_suggestions(content)
+        brain_suggestions = await self._find_brain_suggestions(content)
         brain_links = [s["para_id"] for s in brain_suggestions]
 
         await self._write_to_graph(
@@ -500,7 +492,7 @@ class DailyModule:
         return self._row_to_entry(rows[0])
 
     async def search_entries(self, query: str, limit: int = 30) -> list[dict]:
-        """Keyword search across all entries. Returns results with snippet and match_count."""
+        """Keyword search across content and title of all entries. Returns results with snippet and match_count."""
         if not query.strip():
             return []
 
@@ -520,8 +512,13 @@ class DailyModule:
         results = []
         for row in all_rows:
             content = row.get("content") or ""
+            title = row.get("title") or ""
             content_lower = content.lower()
-            match_count = sum(content_lower.count(term) for term in query_terms)
+            title_lower = title.lower()
+            match_count = sum(
+                content_lower.count(term) + title_lower.count(term)
+                for term in query_terms
+            )
             if match_count == 0:
                 continue
             snippet = self._extract_snippet(content, content_lower, query_terms)
@@ -559,9 +556,9 @@ class DailyModule:
 
     def get_router(self) -> APIRouter:
         """Return API routes for the daily module."""
-        router = APIRouter()
+        router = APIRouter(tags=["daily"])
 
-        @router.post("/entries")
+        @router.post("/entries", status_code=201)
         async def create_entry(body: CreateEntryRequest):
             """Create a new daily journal entry."""
             result = await self.create_entry(body.content, body.metadata)
@@ -582,7 +579,7 @@ class DailyModule:
             q: str = Query(..., description="Keyword search query"),
             limit: int = Query(30, ge=1, le=100),
         ):
-            """Search entries by keyword across all dates."""
+            """Search entries by keyword across content and title."""
             results = await self.search_entries(q, limit=limit)
             return {"results": results, "query": q, "count": len(results)}
 
@@ -608,12 +605,12 @@ class DailyModule:
                 )
             return entry
 
-        @router.delete("/entries/{entry_id}")
+        @router.delete("/entries/{entry_id}", status_code=204)
         async def delete_entry(entry_id: str):
             """Delete an entry and its graph edges."""
             ok = await self.delete_entry(entry_id)
             if not ok:
                 return JSONResponse(status_code=500, content={"error": "Delete failed"})
-            return JSONResponse(status_code=204, content=None)
+            return Response(status_code=204)
 
         return router

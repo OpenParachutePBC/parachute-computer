@@ -122,7 +122,9 @@ Future<JournalDay> _loadJournal(
 
   // Cache open is fast (SQLite, usually < 5 ms). Awaiting guarantees Phase 1
   // always has access to cached data, even on the very first call.
-  final cache = await ref.read(journalLocalCacheProvider.future);
+  // ref.watch establishes a dependency so the notifier rebuilds if the cache
+  // provider is ever invalidated (e.g., in tests or after vault change).
+  final cache = await ref.watch(journalLocalCacheProvider.future);
 
   // Phase 1 — serve from cache immediately.
   final cached = cache.getEntries(dateStr);

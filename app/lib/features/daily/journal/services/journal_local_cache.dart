@@ -37,20 +37,19 @@ class JournalLocalCache {
   void _ensureSchema() {
     _db.execute('''
       CREATE TABLE IF NOT EXISTS journal_entries (
-        entry_id      TEXT PRIMARY KEY,
-        date          TEXT NOT NULL,
-        content       TEXT NOT NULL DEFAULT '',
-        title         TEXT,
-        entry_type    TEXT DEFAULT 'text',
-        audio_path    TEXT,
-        image_path    TEXT,
-        duration_secs INTEGER,
-        created_at    TEXT NOT NULL
+        entry_id         TEXT PRIMARY KEY,
+        date             TEXT NOT NULL,
+        content          TEXT NOT NULL DEFAULT '',
+        title            TEXT,
+        entry_type       TEXT DEFAULT 'text',
+        audio_path       TEXT,
+        image_path       TEXT,
+        linked_file_path TEXT,
+        duration_secs    INTEGER,
+        created_at       TEXT NOT NULL
       )
     ''');
-    _db.execute(
-      'CREATE INDEX IF NOT EXISTS idx_jc_date ON journal_entries(date)',
-    );
+    // Composite index covers all date-filtered queries; subsumes a single-column date index.
     _db.execute(
       'CREATE INDEX IF NOT EXISTS idx_jc_created ON journal_entries(date, created_at)',
     );
@@ -72,18 +71,6 @@ class JournalLocalCache {
     }
   }
 
-  bool hasEntries(String date) {
-    try {
-      final rows = _db.select(
-        'SELECT 1 FROM journal_entries WHERE date = ? LIMIT 1',
-        [date],
-      );
-      return rows.isNotEmpty;
-    } catch (_) {
-      return false;
-    }
-  }
-
   // ── Write ──────────────────────────────────────────────────────────────────
 
   /// Batch-upsert [entries] into the cache. Replaces existing rows by entry_id.
@@ -92,8 +79,8 @@ class JournalLocalCache {
     try {
       final stmt = _db.prepare(
         'INSERT OR REPLACE INTO journal_entries '
-        '(entry_id, date, content, title, entry_type, audio_path, image_path, duration_secs, created_at) '
-        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        '(entry_id, date, content, title, entry_type, audio_path, image_path, linked_file_path, duration_secs, created_at) '
+        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       );
       for (final e in entries) {
         stmt.execute([
@@ -104,6 +91,7 @@ class JournalLocalCache {
           e.type.name,
           e.audioPath,
           e.imagePath,
+          e.linkedFilePath,
           e.durationSeconds,
           e.createdAt.toUtc().toIso8601String(),
         ]);
@@ -161,6 +149,7 @@ class JournalLocalCache {
       createdAt: JournalEntry.parseDateTime(row['created_at'] as String?),
       audioPath: row['audio_path'] as String?,
       imagePath: row['image_path'] as String?,
+      linkedFilePath: row['linked_file_path'] as String?,
       durationSeconds: switch (durationSecs) {
         final int v => v,
         final double v => v.toInt(),
