@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/providers/file_system_provider.dart';
 import 'package:parachute/core/providers/sync_provider.dart';
 import 'package:parachute/core/providers/computer_provider.dart';
+import 'package:parachute/core/providers/app_state_provider.dart';
 import 'package:parachute/core/services/computer_service.dart';
 import '../models/chat_log.dart';
 import '../models/journal_day.dart';
@@ -12,9 +13,32 @@ import '../models/agent_output.dart';
 import '../services/chat_log_service.dart';
 import '../services/para_id_service.dart';
 import '../services/journal_service.dart';
+import '../services/daily_api_service.dart';
+import '../services/pending_entry_queue.dart';
 import '../services/reflection_service.dart';
 import '../services/agent_output_service.dart';
 import '../services/local_agent_config_service.dart';
+
+// ============================================================================
+// Daily API Service Providers (server-backed)
+// ============================================================================
+
+/// Provider for DailyApiService — mirrors chatServiceProvider pattern
+final dailyApiServiceProvider = Provider<DailyApiService>((ref) {
+  final urlAsync = ref.watch(aiServerUrlProvider);
+  final baseUrl = urlAsync.valueOrNull ?? 'http://localhost:3333';
+  final apiKeyAsync = ref.watch(apiKeyProvider);
+  final apiKey = apiKeyAsync.valueOrNull;
+
+  final service = DailyApiService(baseUrl: baseUrl, apiKey: apiKey);
+  ref.onDispose(service.dispose);
+  return service;
+});
+
+/// Provider for PendingEntryQueue — SharedPreferences-backed offline queue
+final pendingQueueProvider = FutureProvider<PendingEntryQueue>((ref) async {
+  return PendingEntryQueue.create();
+});
 
 /// Async provider that properly initializes the journal service
 ///
@@ -50,27 +74,55 @@ final selectedJournalDateProvider = StateProvider<DateTime>((ref) {
 /// Provider for triggering journal refresh
 final journalRefreshTriggerProvider = StateProvider<int>((ref) => 0);
 
-/// Provider for today's journal
+/// Formats a DateTime as YYYY-MM-DD for API calls.
+String _formatDateForApi(DateTime date) {
+  final y = date.year.toString();
+  final m = date.month.toString().padLeft(2, '0');
+  final d = date.day.toString().padLeft(2, '0');
+  return '$y-$m-$d';
+}
+
+/// Provider for today's journal (server-backed).
 ///
-/// Automatically refreshes when the refresh trigger changes.
+/// Fetches entries from the server API and merges with the pending queue.
 final todayJournalProvider = FutureProvider.autoDispose<JournalDay>((ref) async {
-  // Watch the refresh trigger to enable manual refreshes
   ref.watch(journalRefreshTriggerProvider);
 
-  final journalService = await ref.watch(journalServiceFutureProvider.future);
-  return journalService.loadToday();
+  final today = DateTime.now();
+  return _loadJournalFromApi(ref, today);
 });
 
-/// Provider for a specific date's journal
-///
-/// Uses the selected date from selectedJournalDateProvider.
+/// Provider for a specific date's journal (server-backed).
 final selectedJournalProvider = FutureProvider.autoDispose<JournalDay>((ref) async {
   final date = ref.watch(selectedJournalDateProvider);
   ref.watch(journalRefreshTriggerProvider);
 
-  final journalService = await ref.watch(journalServiceFutureProvider.future);
-  return journalService.loadDay(date);
+  return _loadJournalFromApi(ref, date);
 });
+
+/// Load a journal day from the server API + pending queue.
+Future<JournalDay> _loadJournalFromApi(Ref ref, DateTime date) async {
+  final api = ref.read(dailyApiServiceProvider);
+  final pendingQueue = await ref.read(pendingQueueProvider.future);
+
+  final dateStr = _formatDateForApi(date);
+
+  // Flush any queued entries before loading (best-effort)
+  await pendingQueue.flush(api);
+
+  // Fetch from server
+  final serverEntries = await api.getEntries(date: dateStr);
+
+  // Merge: server entries + still-pending entries for this date
+  final pendingForDate = pendingQueue.entries
+      .where((e) => _formatDateForApi(e.createdAt) == dateStr)
+      .toList();
+
+  // Pending entries appear at the bottom (they were written most recently)
+  final allEntries = [...serverEntries, ...pendingForDate];
+
+  return JournalDay.fromEntries(date, allEntries);
+}
 
 /// Provider for the list of available journal dates
 final journalDatesProvider = FutureProvider.autoDispose<List<DateTime>>((ref) async {
@@ -559,16 +611,6 @@ class JournalNotifier extends StateNotifier<AsyncValue<JournalDay>> {
 
   void _triggerRefresh() {
     _ref.read(journalRefreshTriggerProvider.notifier).state++;
-    // Push the modified journal file to server
-    final dateStr = '${_currentDate.year}-${_currentDate.month.toString().padLeft(2, '0')}-${_currentDate.day.toString().padLeft(2, '0')}';
-    final journalPath = 'journals/$dateStr.md';
-    debugPrint('[JournalNotifier] Pushing $journalPath after local changes...');
-    try {
-      _ref.read(syncProvider.notifier).schedulePush(journalPath);
-      debugPrint('[JournalNotifier] Push scheduled successfully');
-    } catch (e) {
-      debugPrint('[JournalNotifier] Failed to schedule push: $e');
-    }
   }
 }
 

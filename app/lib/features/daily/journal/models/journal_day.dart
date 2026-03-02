@@ -41,12 +41,21 @@ class JournalDay {
 
   /// Create an empty journal for a date
   factory JournalDay.empty(DateTime date) {
-    final dateStr = _formatDate(date);
     return JournalDay(
       date: DateTime(date.year, date.month, date.day),
       entries: const [],
       entryMetadata: const {},
-      filePath: 'Daily/$dateStr.md',
+      filePath: '',
+    );
+  }
+
+  /// Create from a list of server entries (API-backed)
+  factory JournalDay.fromEntries(DateTime date, List<JournalEntry> entries) {
+    return JournalDay(
+      date: DateTime(date.year, date.month, date.day),
+      entries: entries,
+      entryMetadata: const {},
+      filePath: '',
     );
   }
 
