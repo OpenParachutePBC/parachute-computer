@@ -180,8 +180,10 @@ class DailyModule:
         # entries: map from frontmatter — keyed by para_id
         entries_fm: dict = meta.get("entries") or {}
 
-        # Split on bare --- lines (section separators used in these journals)
-        sections = [s.strip() for s in re.split(r'\n---\n', content_block) if s.strip()]
+        # Split on bare --- lines (section separators used in these journals).
+        # python-frontmatter strips the trailing newline, so the last separator
+        # may be "\n---" with no following newline — use (?:\n|$) to handle both.
+        sections = [s.strip() for s in re.split(r'\n---(?:\n|$)', content_block) if s.strip()]
         if not sections:
             return []
 
