@@ -290,9 +290,8 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
     ref.invalidate(agentOutputsForDateProvider(selectedDate));
     ref.read(journalRefreshTriggerProvider.notifier).state++;
 
-    // Pull changes from server for this specific date (user-triggered refresh)
-    debugPrint('[JournalScreen] Refreshing - pulling changes for $selectedDate...');
-    ref.read(syncProvider.notifier).pullDate(selectedDate);
+    // Providers will re-fetch from server on next read (API-backed)
+    debugPrint('[JournalScreen] Refreshing - providers invalidated, will re-fetch from API');
   }
 
   void _scrollToBottom() {
@@ -398,121 +397,119 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
 
   // ========== Entry CRUD Operations ==========
 
-  Future<void> _addTextEntry(String text) async {
-    debugPrint('[JournalScreen] Adding text entry...');
-
-    try {
-      final service = await ref.read(journalServiceFutureProvider.future);
-      final result = await service.addTextEntry(content: text);
-
-      debugPrint('[JournalScreen] Entry added, updating cache...');
+  /// Adds an entry to the local cache for immediate display.
+  ///
+  /// If [entry] is null the write failed — fall back to adding a pending entry.
+  Future<void> _appendEntryToCache(JournalEntry? entry, {
+    required String content,
+    JournalEntryType type = JournalEntryType.text,
+    String? audioPath,
+    String? imagePath,
+    int? durationSeconds,
+  }) async {
+    if (entry != null) {
       setState(() {
-        _cachedJournal = result.journal;
+        final date = ref.read(selectedJournalDateProvider);
+        _cachedJournal = (_cachedJournal ?? JournalDay.empty(date)).addEntry(entry);
         _shouldScrollToBottom = true;
       });
+    } else {
+      // Offline — queue for later upload and show as pending
+      final queue = await ref.read(pendingQueueProvider.future);
+      final localId = 'pending-${DateTime.now().millisecondsSinceEpoch}';
+      final pending = await queue.enqueue(
+        localId: localId,
+        content: content,
+        type: _entryTypeString(type),
+        audioPath: audioPath,
+        imagePath: imagePath,
+        durationSeconds: durationSeconds,
+      );
+      setState(() {
+        final date = ref.read(selectedJournalDateProvider);
+        _cachedJournal = (_cachedJournal ?? JournalDay.empty(date)).addEntry(pending);
+        _shouldScrollToBottom = true;
+      });
+    }
+    ref.invalidate(selectedJournalProvider);
+    ref.read(journalRefreshTriggerProvider.notifier).state++;
+  }
 
-      ref.invalidate(selectedJournalProvider);
-      ref.read(journalRefreshTriggerProvider.notifier).state++;
+  static String _entryTypeString(JournalEntryType type) {
+    switch (type) {
+      case JournalEntryType.voice: return 'voice';
+      case JournalEntryType.photo: return 'photo';
+      case JournalEntryType.handwriting: return 'handwriting';
+      case JournalEntryType.linked: return 'linked';
+      default: return 'text';
+    }
+  }
 
-      final selectedDate = ref.read(selectedJournalDateProvider);
-      final journalPath = JournalHelpers.journalPathForDate(selectedDate);
-      debugPrint('[JournalScreen] Scheduling push for $journalPath after text entry...');
-      ref.read(syncProvider.notifier).schedulePush(journalPath);
-    } catch (e, st) {
-      debugPrint('[JournalScreen] Error adding text entry: $e\n$st');
-      _showErrorSnackbar('Failed to add entry');
+  Future<void> _addTextEntry(String text) async {
+    debugPrint('[JournalScreen] Adding text entry via API...');
+    final api = ref.read(dailyApiServiceProvider);
+    final entry = await api.createEntry(content: text);
+    await _appendEntryToCache(entry, content: text);
+    if (entry == null) {
+      debugPrint('[JournalScreen] Offline — text entry queued');
     }
   }
 
   Future<void> _addVoiceEntry(String transcript, String audioPath, int duration) async {
-    debugPrint('[JournalScreen] Adding voice entry...');
-
-    try {
-      final service = await ref.read(journalServiceFutureProvider.future);
-      final result = await service.addVoiceEntry(
-        transcript: transcript,
-        audioPath: audioPath,
-        durationSeconds: duration,
-      );
-
-      // Track if this entry needs transcription update (empty transcript)
-      if (transcript.isEmpty) {
-        ref.read(journalScreenStateProvider.notifier).setPendingTranscription(result.entry.id);
-        debugPrint('[JournalScreen] Entry ${result.entry.id} pending transcription');
-      }
-
-      debugPrint('[JournalScreen] Voice entry added, updating cache...');
-      setState(() {
-        _cachedJournal = result.journal;
-        _shouldScrollToBottom = true;
-      });
-
-      ref.invalidate(selectedJournalProvider);
-      ref.read(journalRefreshTriggerProvider.notifier).state++;
-
-      final selectedDate = ref.read(selectedJournalDateProvider);
-      final journalPath = JournalHelpers.journalPathForDate(selectedDate);
-      debugPrint('[JournalScreen] Scheduling push for $journalPath after voice entry...');
-      ref.read(syncProvider.notifier).schedulePush(journalPath);
-    } catch (e, st) {
-      debugPrint('[JournalScreen] Error adding voice entry: $e\n$st');
-      _showErrorSnackbar('Failed to add voice entry');
+    debugPrint('[JournalScreen] Adding voice entry via API...');
+    final api = ref.read(dailyApiServiceProvider);
+    final entry = await api.createEntry(
+      content: transcript,
+      metadata: {
+        'type': 'voice',
+        'audio_path': audioPath,
+        'duration_seconds': duration,
+      },
+    );
+    await _appendEntryToCache(
+      entry,
+      content: transcript,
+      type: JournalEntryType.voice,
+      audioPath: audioPath,
+      durationSeconds: duration,
+    );
+    if (entry == null) {
+      debugPrint('[JournalScreen] Offline — voice entry queued');
     }
   }
 
   Future<void> _addPhotoEntry(String imagePath) async {
-    debugPrint('[JournalScreen] Adding photo entry: $imagePath');
-
-    try {
-      final service = await ref.read(journalServiceFutureProvider.future);
-      final result = await service.addPhotoEntry(imagePath: imagePath);
-
-      debugPrint('[JournalScreen] Photo entry added, updating cache...');
-      setState(() {
-        _cachedJournal = result.journal;
-        _shouldScrollToBottom = true;
-      });
-
-      ref.invalidate(selectedJournalProvider);
-      ref.read(journalRefreshTriggerProvider.notifier).state++;
-
-      final selectedDate = ref.read(selectedJournalDateProvider);
-      final journalPath = JournalHelpers.journalPathForDate(selectedDate);
-      debugPrint('[JournalScreen] Scheduling push for $journalPath after photo entry...');
-      ref.read(syncProvider.notifier).schedulePush(journalPath);
-    } catch (e, st) {
-      debugPrint('[JournalScreen] Error adding photo entry: $e\n$st');
-      _showErrorSnackbar('Failed to add photo');
-    }
+    debugPrint('[JournalScreen] Adding photo entry via API...');
+    final api = ref.read(dailyApiServiceProvider);
+    final entry = await api.createEntry(
+      content: '',
+      metadata: {'type': 'photo', 'image_path': imagePath},
+    );
+    await _appendEntryToCache(
+      entry,
+      content: '',
+      type: JournalEntryType.photo,
+      imagePath: imagePath,
+    );
   }
 
   Future<void> _addHandwritingEntry(String imagePath, bool linedBackground) async {
-    debugPrint('[JournalScreen] Adding handwriting entry: $imagePath (lined: $linedBackground)');
-
-    try {
-      final service = await ref.read(journalServiceFutureProvider.future);
-      final result = await service.addHandwritingEntry(
-        imagePath: imagePath,
-        linedBackground: linedBackground,
-      );
-
-      debugPrint('[JournalScreen] Handwriting entry added, updating cache...');
-      setState(() {
-        _cachedJournal = result.journal;
-        _shouldScrollToBottom = true;
-      });
-
-      ref.invalidate(selectedJournalProvider);
-      ref.read(journalRefreshTriggerProvider.notifier).state++;
-
-      final selectedDate = ref.read(selectedJournalDateProvider);
-      final journalPath = JournalHelpers.journalPathForDate(selectedDate);
-      debugPrint('[JournalScreen] Scheduling push for $journalPath after handwriting entry...');
-      ref.read(syncProvider.notifier).schedulePush(journalPath);
-    } catch (e, st) {
-      debugPrint('[JournalScreen] Error adding handwriting entry: $e\n$st');
-      _showErrorSnackbar('Failed to add handwriting');
-    }
+    debugPrint('[JournalScreen] Adding handwriting entry via API...');
+    final api = ref.read(dailyApiServiceProvider);
+    final entry = await api.createEntry(
+      content: '',
+      metadata: {
+        'type': 'handwriting',
+        'image_path': imagePath,
+        if (linedBackground) 'lined_background': true,
+      },
+    );
+    await _appendEntryToCache(
+      entry,
+      content: '',
+      type: JournalEntryType.handwriting,
+      imagePath: imagePath,
+    );
   }
 
   Future<void> _updatePendingTranscription(String transcript) async {
@@ -1147,10 +1144,6 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
 
         ref.invalidate(selectedJournalProvider);
         ref.read(journalRefreshTriggerProvider.notifier).state++;
-
-        final journalPath = JournalHelpers.journalPathForDate(journal.date);
-        debugPrint('[JournalScreen] Scheduling push for $journalPath after delete...');
-        ref.read(syncProvider.notifier).schedulePush(journalPath);
       } catch (e, st) {
         debugPrint('[JournalScreen] Error deleting entry: $e\n$st');
         _showErrorSnackbar('Failed to delete entry');

@@ -113,7 +113,7 @@ class DailyModule:
     async def create_entry(self, content: str, metadata: dict[str, Any] | None = None) -> dict:
         """Create a new daily entry."""
         now = datetime.now(timezone.utc)
-        entry_id = now.strftime("%Y-%m-%d-%H-%M")
+        entry_id = now.strftime("%Y-%m-%d-%H-%M-%S")
         filename = f"{entry_id}.md"
         filepath = self.entries_dir / filename
 
@@ -154,7 +154,7 @@ class DailyModule:
             logger.debug("Daily: GraphDB not in registry, skipping graph write")
             return
 
-        date = entry_id[:10]  # "YYYY-MM-DD" prefix of "YYYY-MM-DD-HH-MM"
+        date = entry_id[:10]  # "YYYY-MM-DD" prefix of "YYYY-MM-DD-HH-MM-SS"
         created_at = now.isoformat()
         snippet = content[:200]
 
@@ -189,20 +189,26 @@ class DailyModule:
         except Exception as e:
             logger.warning(f"Daily: graph write failed for {entry_id}: {e}")
 
-    def list_entries(self, limit: int = 20, offset: int = 0) -> list[dict]:
-        """List daily entries with pagination."""
+    def list_entries(self, limit: int = 20, offset: int = 0, date: str | None = None) -> list[dict]:
+        """List daily entries with pagination, optionally filtered by date (YYYY-MM-DD)."""
         entries = []
 
-        # Get all .md files sorted by name (newest first due to date naming)
-        files = sorted(self.entries_dir.glob("*.md"), reverse=True)
+        # Glob only the relevant files — O(entries_for_date) when date is given
+        if date:
+            files = sorted(self.entries_dir.glob(f"{date}-*.md"), reverse=True)
+        else:
+            files = sorted(self.entries_dir.glob("*.md"), reverse=True)
 
         for md_file in files[offset:offset + limit]:
             try:
                 post = frontmatter.load(str(md_file))
+                meta = dict(post.metadata)
                 entries.append({
                     "id": post.metadata.get("entry_id", md_file.stem),
                     "created_at": post.metadata.get("created_at", ""),
+                    "content": post.content or "",
                     "snippet": post.content[:200] if post.content else "",
+                    "metadata": meta,
                     "brain_links": post.metadata.get("brain_links", []),
                 })
             except Exception as e:
@@ -243,9 +249,10 @@ class DailyModule:
         async def list_entries(
             limit: int = Query(20, ge=1, le=100),
             offset: int = Query(0, ge=0),
+            date: str | None = Query(None, description="Filter by date (YYYY-MM-DD)"),
         ):
-            """List daily journal entries."""
-            entries = self.list_entries(limit=limit, offset=offset)
+            """List daily journal entries, optionally filtered by date."""
+            entries = self.list_entries(limit=limit, offset=offset, date=date)
             return {"entries": entries, "count": len(entries), "offset": offset}
 
         @router.get("/entries/{entry_id}")

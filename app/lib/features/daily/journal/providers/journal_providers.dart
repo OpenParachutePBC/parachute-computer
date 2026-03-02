@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/providers/file_system_provider.dart';
 import 'package:parachute/core/providers/sync_provider.dart';
 import 'package:parachute/core/providers/computer_provider.dart';
+import 'package:parachute/core/providers/feature_flags_provider.dart' show aiServerUrlProvider;
+import 'package:parachute/core/providers/app_state_provider.dart' show apiKeyProvider;
 import 'package:parachute/core/services/computer_service.dart';
 import '../models/chat_log.dart';
 import '../models/journal_day.dart';
@@ -12,9 +14,34 @@ import '../models/agent_output.dart';
 import '../services/chat_log_service.dart';
 import '../services/para_id_service.dart';
 import '../services/journal_service.dart';
+import '../services/daily_api_service.dart';
+import '../services/pending_entry_queue.dart';
 import '../services/reflection_service.dart';
 import '../services/agent_output_service.dart';
 import '../services/local_agent_config_service.dart';
+
+// ============================================================================
+// Daily API Service Providers (server-backed)
+// ============================================================================
+
+/// Provider for DailyApiService — mirrors chatServiceProvider pattern
+final dailyApiServiceProvider = Provider<DailyApiService>((ref) {
+  final urlAsync = ref.watch(aiServerUrlProvider);
+  final baseUrl = urlAsync.valueOrNull ?? 'http://localhost:3333';
+  final apiKeyAsync = ref.watch(apiKeyProvider);
+  final apiKey = apiKeyAsync.valueOrNull;
+
+  final service = DailyApiService(baseUrl: baseUrl, apiKey: apiKey);
+  ref.onDispose(service.dispose);
+  return service;
+});
+
+/// Provider for PendingEntryQueue — SharedPreferences-backed offline queue
+final pendingQueueProvider = FutureProvider<PendingEntryQueue>((ref) async {
+  final queue = await PendingEntryQueue.create();
+  ref.onDispose(queue.dispose);
+  return queue;
+});
 
 /// Async provider that properly initializes the journal service
 ///
@@ -50,27 +77,55 @@ final selectedJournalDateProvider = StateProvider<DateTime>((ref) {
 /// Provider for triggering journal refresh
 final journalRefreshTriggerProvider = StateProvider<int>((ref) => 0);
 
-/// Provider for today's journal
+/// Formats a DateTime as YYYY-MM-DD for API calls.
+String _formatDateForApi(DateTime date) {
+  final y = date.year.toString();
+  final m = date.month.toString().padLeft(2, '0');
+  final d = date.day.toString().padLeft(2, '0');
+  return '$y-$m-$d';
+}
+
+/// Provider for today's journal (server-backed).
 ///
-/// Automatically refreshes when the refresh trigger changes.
+/// Fetches entries from the server API and merges with the pending queue.
 final todayJournalProvider = FutureProvider.autoDispose<JournalDay>((ref) async {
-  // Watch the refresh trigger to enable manual refreshes
   ref.watch(journalRefreshTriggerProvider);
 
-  final journalService = await ref.watch(journalServiceFutureProvider.future);
-  return journalService.loadToday();
+  final today = DateTime.now();
+  return _loadJournalFromApi(ref, today);
 });
 
-/// Provider for a specific date's journal
-///
-/// Uses the selected date from selectedJournalDateProvider.
+/// Provider for a specific date's journal (server-backed).
 final selectedJournalProvider = FutureProvider.autoDispose<JournalDay>((ref) async {
   final date = ref.watch(selectedJournalDateProvider);
   ref.watch(journalRefreshTriggerProvider);
 
-  final journalService = await ref.watch(journalServiceFutureProvider.future);
-  return journalService.loadDay(date);
+  return _loadJournalFromApi(ref, date);
 });
+
+/// Load a journal day from the server API + pending queue.
+Future<JournalDay> _loadJournalFromApi(Ref ref, DateTime date) async {
+  final api = ref.read(dailyApiServiceProvider);
+  final pendingQueue = await ref.read(pendingQueueProvider.future);
+
+  final dateStr = _formatDateForApi(date);
+
+  // Flush any queued entries before loading (best-effort)
+  await pendingQueue.flush(api);
+
+  // Fetch from server
+  final serverEntries = await api.getEntries(date: dateStr);
+
+  // Merge: server entries + still-pending entries for this date
+  final pendingForDate = pendingQueue.entries
+      .where((e) => _formatDateForApi(e.createdAt) == dateStr)
+      .toList();
+
+  // Pending entries appear at the bottom (they were written most recently)
+  final allEntries = [...serverEntries, ...pendingForDate];
+
+  return JournalDay.fromEntries(date, allEntries);
+}
 
 /// Provider for the list of available journal dates
 final journalDatesProvider = FutureProvider.autoDispose<List<DateTime>>((ref) async {
@@ -384,210 +439,3 @@ class AgentTriggerNotifier extends StateNotifier<AsyncValue<AgentRunResult?>> {
   }
 }
 
-/// State notifier for managing journal entry operations
-class JournalNotifier extends StateNotifier<AsyncValue<JournalDay>> {
-  final JournalService _journalService;
-  final Ref _ref;
-  DateTime _currentDate;
-  // ignore: unused_field
-  String? _journalFilePath;
-
-  JournalNotifier(this._journalService, this._ref, this._currentDate)
-      : super(const AsyncValue.loading()) {
-    _loadJournal();
-  }
-
-  // TODO: Add local RAG indexing when sqlite search is implemented
-  // ignore: unused_element
-  void _indexEntry(JournalEntry entry) {
-    // Future: index in local SQLite RAG database
-  }
-
-  // ignore: unused_element
-  void _removeEntryFromIndex(String entryId) {
-    // Future: remove from local SQLite RAG database
-  }
-
-  DateTime get currentDate => _currentDate;
-
-  Future<void> _loadJournal() async {
-    state = const AsyncValue.loading();
-    try {
-      final journal = await _journalService.loadDay(_currentDate);
-      _journalFilePath = journal.filePath;
-      state = AsyncValue.data(journal);
-    } catch (e, st) {
-      state = AsyncValue.error(e, st);
-    }
-  }
-
-  /// Change to a different date
-  Future<void> changeDate(DateTime date) async {
-    _currentDate = DateTime(date.year, date.month, date.day);
-    await _loadJournal();
-  }
-
-  /// Go to today
-  Future<void> goToToday() async {
-    await changeDate(DateTime.now());
-  }
-
-  /// Refresh the current journal
-  Future<void> refresh() async {
-    await _loadJournal();
-  }
-
-  /// Add a text entry with optimistic UI update
-  /// Updates the UI immediately, saves in background
-  Future<JournalEntry?> addTextEntry({
-    required String content,
-    String? title,
-  }) async {
-    try {
-      final result = await _journalService.addTextEntry(
-        content: content,
-        title: title,
-      );
-
-      // Update state immediately with the returned journal (no reload needed!)
-      _journalFilePath = result.journal.filePath;
-      state = AsyncValue.data(result.journal);
-      _triggerRefresh();
-
-      // Index the new entry (fire-and-forget)
-      _indexEntry(result.entry);
-
-      return result.entry;
-    } catch (e, st) {
-      debugPrint('[JournalNotifier] Error adding text entry: $e');
-      debugPrint('$st');
-      return null;
-    }
-  }
-
-  /// Add a voice entry with optimistic UI update
-  Future<JournalEntry?> addVoiceEntry({
-    required String transcript,
-    required String audioPath,
-    required int durationSeconds,
-    String? title,
-  }) async {
-    try {
-      final result = await _journalService.addVoiceEntry(
-        transcript: transcript,
-        audioPath: audioPath,
-        durationSeconds: durationSeconds,
-        title: title,
-      );
-
-      // Update state immediately with the returned journal
-      _journalFilePath = result.journal.filePath;
-      state = AsyncValue.data(result.journal);
-      _triggerRefresh();
-
-      // Index the new entry (fire-and-forget)
-      _indexEntry(result.entry);
-
-      return result.entry;
-    } catch (e, st) {
-      debugPrint('[JournalNotifier] Error adding voice entry: $e');
-      debugPrint('$st');
-      return null;
-    }
-  }
-
-  /// Add a linked entry (for long recordings) with optimistic UI update
-  Future<JournalEntry?> addLinkedEntry({
-    required String linkedFilePath,
-    String? audioPath,
-    int? durationSeconds,
-    String? title,
-  }) async {
-    try {
-      final result = await _journalService.addLinkedEntry(
-        linkedFilePath: linkedFilePath,
-        audioPath: audioPath,
-        durationSeconds: durationSeconds,
-        title: title,
-      );
-
-      // Update state immediately with the returned journal
-      _journalFilePath = result.journal.filePath;
-      state = AsyncValue.data(result.journal);
-      _triggerRefresh();
-
-      // Index the new entry (fire-and-forget)
-      _indexEntry(result.entry);
-
-      return result.entry;
-    } catch (e, st) {
-      debugPrint('[JournalNotifier] Error adding linked entry: $e');
-      debugPrint('$st');
-      return null;
-    }
-  }
-
-  /// Update an entry
-  Future<void> updateEntry(JournalEntry entry) async {
-    try {
-      await _journalService.updateEntry(_currentDate, entry);
-      await _loadJournal();
-      _triggerRefresh();
-
-      // Re-index the updated entry (fire-and-forget)
-      _indexEntry(entry);
-    } catch (e, st) {
-      debugPrint('[JournalNotifier] Error updating entry: $e');
-      debugPrint('$st');
-    }
-  }
-
-  /// Delete an entry
-  Future<void> deleteEntry(String entryId) async {
-    try {
-      await _journalService.deleteEntry(_currentDate, entryId);
-      await _loadJournal();
-      _triggerRefresh();
-
-      // Remove from search index (fire-and-forget)
-      _removeEntryFromIndex(entryId);
-    } catch (e, st) {
-      debugPrint('[JournalNotifier] Error deleting entry: $e');
-      debugPrint('$st');
-    }
-  }
-
-  void _triggerRefresh() {
-    _ref.read(journalRefreshTriggerProvider.notifier).state++;
-    // Push the modified journal file to server
-    final dateStr = '${_currentDate.year}-${_currentDate.month.toString().padLeft(2, '0')}-${_currentDate.day.toString().padLeft(2, '0')}';
-    final journalPath = 'journals/$dateStr.md';
-    debugPrint('[JournalNotifier] Pushing $journalPath after local changes...');
-    try {
-      _ref.read(syncProvider.notifier).schedulePush(journalPath);
-      debugPrint('[JournalNotifier] Push scheduled successfully');
-    } catch (e) {
-      debugPrint('[JournalNotifier] Failed to schedule push: $e');
-    }
-  }
-}
-
-/// Provider for journal operations on the current date
-///
-/// This is the main provider to use for journal interactions.
-final journalNotifierProvider =
-    StateNotifierProvider<JournalNotifier, AsyncValue<JournalDay>>((ref) {
-  // This will throw if the service isn't ready yet
-  // In practice, ensure the service is initialized before using this
-  throw UnimplementedError(
-    'journalNotifierProvider must be overridden with proper initialization',
-  );
-});
-
-/// Family provider for journal notifier that properly initializes
-final journalNotifierFamilyProvider = FutureProvider.autoDispose.family<JournalNotifier, DateTime>(
-  (ref, date) async {
-    final journalService = await ref.watch(journalServiceFutureProvider.future);
-    return JournalNotifier(journalService, ref, date);
-  },
-);
