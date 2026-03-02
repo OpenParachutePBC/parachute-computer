@@ -1,19 +1,25 @@
 """
-Daily module - Journal entries and agent framework.
+Daily module — Journal entries with Kuzu graph as primary storage.
 
-Provides CRUD operations for daily journal entries stored as markdown
-files with YAML frontmatter in vault/Daily/entries/.
+Provides CRUD operations for daily journal entries stored as nodes in the
+shared Kuzu graph database. Audio and image files remain on the filesystem;
+only metadata and content are stored in the graph.
 
-Optionally integrates with BrainInterface for entity cross-referencing.
+Entry IDs are timestamp strings: "YYYY-MM-DD-HH-MM-SS"
+
+Storage layout:
+  ~/Parachute/.parachute/graph/  ← Kuzu database (primary store, all modules share)
+  ~/Parachute/Daily/assets/      ← Audio/image files (filesystem)
+  ~/Parachute/Daily/entries/     ← Legacy .md files (migrated on first load, then unused)
 """
 
+import json
 import logging
 import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-import frontmatter
 from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -28,28 +34,31 @@ class CreateEntryRequest(BaseModel):
 
 class UpdateEntryRequest(BaseModel):
     content: Optional[str] = None
-    metadata: Optional[dict] = None  # merged (not replaced) into existing frontmatter
+    metadata: Optional[dict] = None  # merged (not replaced) into existing metadata
 
 
 class DailyModule:
-    """Daily module for journal entry management."""
+    """Daily module for journal entry management. Kuzu graph is primary storage."""
 
     name = "daily"
     provides = []
 
     def __init__(self, vault_path: Path, **kwargs):
         self.vault_path = vault_path
+        # entries_dir kept for audio file storage and one-time markdown migration
         self.entries_dir = vault_path / "Daily" / "entries"
         self.entries_dir.mkdir(parents=True, exist_ok=True)
         self._brain = None
 
     async def on_load(self) -> None:
-        """Register Daily schema tables in the shared graph."""
+        """Register Daily schema in shared graph and migrate any existing .md files."""
         from parachute.core.interfaces import get_registry
         graph = get_registry().get("GraphDB")
         if graph is None:
-            logger.warning("Daily: GraphDB not in registry, schema registration skipped")
+            logger.warning("Daily: GraphDB not in registry — module will not function")
             return
+
+        # Ensure schema tables exist
         await graph.ensure_node_table(
             "Journal_Entry",
             {
@@ -58,6 +67,11 @@ class DailyModule:
                 "content": "STRING",
                 "snippet": "STRING",
                 "created_at": "STRING",
+                "title": "STRING",
+                "entry_type": "STRING",
+                "audio_path": "STRING",
+                "metadata_json": "STRING",
+                "brain_links_json": "STRING",
             },
             primary_key="entry_id",
         )
@@ -67,7 +81,107 @@ class DailyModule:
             primary_key="date",
         )
         await graph.ensure_rel_table("HAS_ENTRY", "Day", "Journal_Entry")
-        logger.info("Daily: graph schema registered (Journal_Entry, Day, HAS_ENTRY)")
+
+        # Add new columns to existing databases (idempotent migration)
+        await self._ensure_new_columns(graph)
+
+        # One-time import of any existing .md files into graph
+        await self._migrate_from_markdown(graph)
+
+        logger.info("Daily: graph schema ready (Kuzu primary storage)")
+
+    async def _ensure_new_columns(self, graph) -> None:
+        """Add columns introduced in the Kuzu-primary migration to existing databases."""
+        existing = await graph.get_table_columns("Journal_Entry")
+        new_cols = {
+            "title": "STRING",
+            "entry_type": "STRING",
+            "audio_path": "STRING",
+            "metadata_json": "STRING",
+            "brain_links_json": "STRING",
+        }
+        for col, typ in new_cols.items():
+            if col not in existing:
+                async with graph.write_lock:
+                    await graph.execute_cypher(
+                        f"ALTER TABLE Journal_Entry ADD {col} {typ} DEFAULT NULL"
+                    )
+                logger.info(f"Daily: added column Journal_Entry.{col}")
+
+    async def _migrate_from_markdown(self, graph) -> None:
+        """
+        One-time migration: import existing .md files into graph. Idempotent.
+
+        Checks which .md files don't yet have a corresponding graph node and
+        MERGEs them in. Safe to call on every startup — skips already-imported entries.
+        After migration the .md files remain on disk as read-only archives.
+        """
+        md_files = list(self.entries_dir.glob("*.md"))
+        if not md_files:
+            return
+
+        # Which entries are already in the graph?
+        rows = await graph.execute_cypher(
+            "MATCH (e:Journal_Entry) RETURN e.entry_id AS entry_id"
+        )
+        existing_ids = {r["entry_id"] for r in rows}
+
+        to_import = [f for f in md_files if f.stem not in existing_ids]
+        if not to_import:
+            logger.debug(
+                f"Daily: {len(md_files)} .md file(s) already in graph — no migration needed"
+            )
+            return
+
+        try:
+            import frontmatter as fm
+        except ImportError:
+            logger.warning("Daily: python-frontmatter not installed — markdown migration skipped")
+            return
+
+        logger.info(f"Daily: migrating {len(to_import)} .md file(s) to graph...")
+        imported = 0
+        for md_file in sorted(to_import):
+            try:
+                post = fm.load(str(md_file))
+                meta = dict(post.metadata)
+                entry_id = meta.get("entry_id", md_file.stem)
+                content = post.content or ""
+                date = entry_id[:10]
+                created_at = meta.get("created_at", "")
+                title = meta.get("title", "")
+                entry_type = meta.get("type", "text")
+                audio_path = meta.get("audio_path", "") or ""
+                brain_links = meta.get("brain_links", [])
+
+                # Remaining fields go into the metadata blob
+                known = {"entry_id", "created_at", "title", "type", "audio_path", "brain_links"}
+                extra_meta = {k: v for k, v in meta.items() if k not in known}
+
+                await self._write_to_graph(
+                    graph,
+                    entry_id=entry_id,
+                    date=date,
+                    content=content,
+                    created_at=created_at,
+                    title=title,
+                    entry_type=entry_type,
+                    audio_path=audio_path,
+                    brain_links=brain_links,
+                    extra_meta=extra_meta,
+                )
+                imported += 1
+            except Exception as e:
+                logger.error(f"Daily: migration failed for {md_file.name}: {e}")
+
+        logger.info(f"Daily: migrated {imported}/{len(to_import)} entries to graph")
+
+    # ── Graph helpers ─────────────────────────────────────────────────────────
+
+    def _get_graph(self):
+        """Return GraphDB from registry, or None if unavailable."""
+        from parachute.core.interfaces import get_registry
+        return get_registry().get("GraphDB")
 
     def _get_brain(self):
         """Lazily get BrainInterface from registry."""
@@ -87,14 +201,9 @@ class DailyModule:
 
         suggestions = []
         seen_ids = set()
-
-        # Extract potential entity names - words starting with uppercase,
-        # multi-word names, etc.
         words = set()
-        # Find capitalized words (potential proper nouns)
         for match in re.finditer(r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b', content):
             words.add(match.group())
-        # Also try individual capitalized words
         for match in re.finditer(r'\b[A-Z][a-z]{2,}\b', content):
             words.add(match.group())
 
@@ -115,170 +224,282 @@ class DailyModule:
 
         return suggestions
 
-    async def create_entry(self, content: str, metadata: dict[str, Any] | None = None) -> dict:
-        """Create a new daily entry."""
-        now = datetime.now(timezone.utc)
-        entry_id = now.strftime("%Y-%m-%d-%H-%M-%S")
-        filename = f"{entry_id}.md"
-        filepath = self.entries_dir / filename
+    async def _write_to_graph(
+        self,
+        graph,
+        *,
+        entry_id: str,
+        date: str,
+        content: str,
+        created_at: str,
+        title: str = "",
+        entry_type: str = "text",
+        audio_path: str = "",
+        brain_links: list = None,
+        extra_meta: dict = None,
+    ) -> None:
+        """Write (MERGE) a Journal_Entry node + Day node + HAS_ENTRY edge."""
+        snippet = content[:200]
+        brain_links_json = json.dumps(brain_links or [])
+        metadata_json = json.dumps(extra_meta or {})
 
-        # Build frontmatter metadata
-        meta = {
+        async with graph.write_lock:
+            # 1. Lazy-upsert Day node
+            await graph.execute_cypher(
+                "MERGE (d:Day {date: $date}) ON CREATE SET d.created_at = $created_at",
+                {"date": date, "created_at": created_at},
+            )
+            # 2. MERGE Journal_Entry — ON CREATE SET protects original timestamp
+            await graph.execute_cypher(
+                "MERGE (e:Journal_Entry {entry_id: $entry_id}) "
+                "ON CREATE SET e.created_at = $created_at "
+                "SET e.date = $date, e.content = $content, e.snippet = $snippet, "
+                "    e.title = $title, e.entry_type = $entry_type, "
+                "    e.audio_path = $audio_path, "
+                "    e.metadata_json = $metadata_json, "
+                "    e.brain_links_json = $brain_links_json",
+                {
+                    "entry_id": entry_id,
+                    "date": date,
+                    "content": content,
+                    "snippet": snippet,
+                    "created_at": created_at,
+                    "title": title,
+                    "entry_type": entry_type,
+                    "audio_path": audio_path,
+                    "metadata_json": metadata_json,
+                    "brain_links_json": brain_links_json,
+                },
+            )
+            # 3. HAS_ENTRY relationship
+            await graph.execute_cypher(
+                "MATCH (d:Day {date: $date}), (e:Journal_Entry {entry_id: $entry_id}) "
+                "MERGE (d)-[:HAS_ENTRY]->(e)",
+                {"date": date, "entry_id": entry_id},
+            )
+
+    def _row_to_entry(self, row: dict) -> dict:
+        """Convert a Kuzu Journal_Entry node dict to the API response shape."""
+        entry_id = row.get("entry_id", "")
+        content = row.get("content", "")
+        title = row.get("title") or ""
+        entry_type = row.get("entry_type") or "text"
+        audio_path = row.get("audio_path") or ""
+
+        # Reconstruct metadata dict — Flutter reads: type, title, audio_path, image_path, duration_seconds
+        meta: dict[str, Any] = {
             "entry_id": entry_id,
-            "created_at": now.isoformat(),
+            "created_at": row.get("created_at", ""),
         }
-        if metadata:
-            meta.update(metadata)
+        if title:
+            meta["title"] = title
+        if entry_type:
+            meta["type"] = entry_type
+        if audio_path:
+            meta["audio_path"] = audio_path
 
-        # Find brain suggestions
-        brain_suggestions = self._find_brain_suggestions(content)
-        if brain_suggestions:
-            meta["brain_links"] = [s["para_id"] for s in brain_suggestions]
+        # Merge extra fields from JSON blob (image_path, duration_seconds, etc.)
+        metadata_json = row.get("metadata_json") or ""
+        if metadata_json:
+            try:
+                extra = json.loads(metadata_json)
+                meta.update(extra)
+            except (json.JSONDecodeError, TypeError):
+                pass
 
-        # Write the file
-        post = frontmatter.Post(content, **meta)
-        filepath.write_text(frontmatter.dumps(post), encoding="utf-8")
-
-        logger.info(f"Created daily entry: {filename}")
-
-        # Write to graph (silently skips if GraphDB not available)
-        await self._write_entry_to_graph(entry_id, content, now)
+        # Brain links
+        brain_links_json = row.get("brain_links_json") or ""
+        brain_links: list = []
+        if brain_links_json:
+            try:
+                brain_links = json.loads(brain_links_json)
+            except (json.JSONDecodeError, TypeError):
+                pass
 
         return {
             "id": entry_id,
-            "path": str(filepath),
-            "created_at": now.isoformat(),
-            "brain_suggestions": brain_suggestions,
+            "created_at": row.get("created_at", ""),
+            "content": content,
+            "snippet": row.get("snippet") or content[:200],
+            "metadata": meta,
+            "brain_links": brain_links,
         }
 
-    async def _write_entry_to_graph(self, entry_id: str, content: str, now: datetime) -> None:
-        """Write a new journal entry to the graph index. Silent no-op if unavailable."""
-        from parachute.core.interfaces import get_registry
-        graph = get_registry().get("GraphDB")
+    # ── CRUD ──────────────────────────────────────────────────────────────────
+
+    async def create_entry(self, content: str, metadata: dict[str, Any] | None = None) -> dict:
+        """Create a new daily entry in the graph. Returns {id, created_at, brain_suggestions}."""
+        graph = self._get_graph()
         if graph is None:
-            logger.debug("Daily: GraphDB not in registry, skipping graph write")
-            return
+            raise RuntimeError("GraphDB unavailable — cannot create entry")
 
-        date = entry_id[:10]  # "YYYY-MM-DD" prefix of "YYYY-MM-DD-HH-MM-SS"
+        now = datetime.now(timezone.utc)
+        entry_id = now.strftime("%Y-%m-%d-%H-%M-%S-%f")
+        date = entry_id[:10]
         created_at = now.isoformat()
-        snippet = content[:200]
 
-        try:
-            async with graph.write_lock:
-                # Hold lock for all 3 writes — Day + Entry + edge are one atomic unit.
-                # 1. Lazy-upsert Day node
-                await graph.execute_cypher(
-                    "MERGE (d:Day {date: $date}) ON CREATE SET d.created_at = $created_at",
-                    {"date": date, "created_at": created_at},
-                )
-                # 2. Upsert Journal_Entry node (ON CREATE SET protects original timestamp)
-                await graph.execute_cypher(
-                    "MERGE (e:Journal_Entry {entry_id: $entry_id}) "
-                    "ON CREATE SET e.created_at = $created_at "
-                    "SET e.date = $date, e.content = $content, e.snippet = $snippet",
-                    {
-                        "entry_id": entry_id,
-                        "date": date,
-                        "content": content,
-                        "snippet": snippet,
-                        "created_at": created_at,
-                    },
-                )
-                # 3. HAS_ENTRY relationship
-                await graph.execute_cypher(
-                    "MATCH (d:Day {date: $date}), (e:Journal_Entry {entry_id: $entry_id}) "
-                    "MERGE (d)-[:HAS_ENTRY]->(e)",
-                    {"date": date, "entry_id": entry_id},
-                )
-            logger.debug(f"Daily: wrote entry {entry_id} to graph")
-        except Exception as e:
-            logger.warning(f"Daily: graph write failed for {entry_id}: {e}")
+        meta = metadata or {}
+        title = meta.get("title", "")
+        entry_type = meta.get("type", "text")
+        audio_path = meta.get("audio_path", "") or ""
+
+        # Extra metadata (image_path, duration_seconds, etc.)
+        known = {"title", "type", "audio_path"}
+        extra_meta = {k: v for k, v in meta.items() if k not in known}
+
+        # Brain suggestions
+        brain_suggestions = self._find_brain_suggestions(content)
+        brain_links = [s["para_id"] for s in brain_suggestions]
+
+        await self._write_to_graph(
+            graph,
+            entry_id=entry_id,
+            date=date,
+            content=content,
+            created_at=created_at,
+            title=title,
+            entry_type=entry_type,
+            audio_path=audio_path,
+            brain_links=brain_links,
+            extra_meta=extra_meta,
+        )
+
+        logger.info(f"Daily: created entry {entry_id}")
+        return {
+            "id": entry_id,
+            "created_at": created_at,
+            "brain_suggestions": brain_suggestions,
+        }
 
     async def update_entry(
         self, entry_id: str, content: str | None = None, metadata: dict | None = None
     ) -> Optional[dict]:
-        """Update content and/or metadata of an existing entry.
+        """
+        Update content and/or metadata of an existing entry.
 
         Returns the updated entry dict, or None if the entry does not exist.
-        Raises on I/O or parse errors so the route can return 500 (not 404).
+        Raises on graph errors so the route can return 500 (not 404).
         """
-        filepath = self.entries_dir / f"{entry_id}.md"
-        if not filepath.exists():
-            return None
-
-        post = frontmatter.load(str(filepath))
-
-        if content is not None:
-            post.content = content
-        if metadata:
-            post.metadata.update(metadata)
-
-        filepath.write_text(frontmatter.dumps(post), encoding="utf-8")
-        logger.info(f"Updated daily entry: {entry_id}")
-
-        # Update graph (silent no-op if unavailable)
-        await self._update_entry_in_graph(entry_id, post.content)
-
-        return {
-            "id": post.metadata.get("entry_id", entry_id),
-            "created_at": post.metadata.get("created_at", ""),
-            "content": post.content,
-            "metadata": dict(post.metadata),
-            "brain_links": post.metadata.get("brain_links", []),
-        }
-
-    async def _update_entry_in_graph(self, entry_id: str, content: str) -> None:
-        """Update content/snippet on the graph node. Silent no-op if unavailable."""
-        from parachute.core.interfaces import get_registry
-        graph = get_registry().get("GraphDB")
+        graph = self._get_graph()
         if graph is None:
-            return
-        try:
-            async with graph.write_lock:
-                await graph.execute_cypher(
-                    "MATCH (e:Journal_Entry {entry_id: $entry_id}) "
-                    "SET e.content = $content, e.snippet = $snippet",
-                    {"entry_id": entry_id, "content": content, "snippet": content[:200]},
-                )
-        except Exception as e:
-            logger.warning(f"Daily: graph update failed for {entry_id}: {e}")
+            raise RuntimeError("GraphDB unavailable — cannot update entry")
+
+        # Check existence
+        rows = await graph.execute_cypher(
+            "MATCH (e:Journal_Entry {entry_id: $entry_id}) RETURN e",
+            {"entry_id": entry_id},
+        )
+        if not rows:
+            return None  # 404
+
+        row = rows[0]
+
+        # Merge updates
+        new_content = content if content is not None else (row.get("content") or "")
+        new_snippet = new_content[:200]
+
+        # Merge metadata fields
+        if metadata:
+            if "title" in metadata:
+                row["title"] = metadata["title"]
+            if "type" in metadata:
+                row["entry_type"] = metadata["type"]
+            if "audio_path" in metadata:
+                row["audio_path"] = metadata["audio_path"]
+
+            # Merge remaining fields into metadata_json blob
+            known = {"title", "type", "audio_path"}
+            extra_updates = {k: v for k, v in metadata.items() if k not in known}
+            if extra_updates:
+                existing_blob = row.get("metadata_json") or ""
+                try:
+                    existing_extra = json.loads(existing_blob) if existing_blob else {}
+                except (json.JSONDecodeError, TypeError):
+                    existing_extra = {}
+                existing_extra.update(extra_updates)
+                row["metadata_json"] = json.dumps(existing_extra)
+
+        async with graph.write_lock:
+            await graph.execute_cypher(
+                "MATCH (e:Journal_Entry {entry_id: $entry_id}) "
+                "SET e.content = $content, e.snippet = $snippet, "
+                "    e.title = $title, e.entry_type = $entry_type, "
+                "    e.audio_path = $audio_path, e.metadata_json = $metadata_json",
+                {
+                    "entry_id": entry_id,
+                    "content": new_content,
+                    "snippet": new_snippet,
+                    "title": row.get("title") or "",
+                    "entry_type": row.get("entry_type") or "text",
+                    "audio_path": row.get("audio_path") or "",
+                    "metadata_json": row.get("metadata_json") or "{}",
+                },
+            )
+
+        logger.info(f"Daily: updated entry {entry_id}")
+        row["content"] = new_content
+        row["snippet"] = new_snippet
+        return self._row_to_entry(row)
 
     async def delete_entry(self, entry_id: str) -> bool:
-        """Delete an entry file and its graph node. Returns True on success (including 404)."""
-        filepath = self.entries_dir / f"{entry_id}.md"
-        if not filepath.exists():
+        """Delete an entry node and all its edges. Returns True on success (including 404)."""
+        graph = self._get_graph()
+        if graph is None:
+            raise RuntimeError("GraphDB unavailable — cannot delete entry")
+
+        rows = await graph.execute_cypher(
+            "MATCH (e:Journal_Entry {entry_id: $entry_id}) RETURN e.entry_id AS entry_id",
+            {"entry_id": entry_id},
+        )
+        if not rows:
             return True  # already gone — idempotent
 
         try:
-            filepath.unlink()
-            logger.info(f"Deleted daily entry: {entry_id}")
-            await self._delete_entry_from_graph(entry_id)
+            async with graph.write_lock:
+                await graph.execute_cypher(
+                    "MATCH (e:Journal_Entry {entry_id: $entry_id}) DETACH DELETE e",
+                    {"entry_id": entry_id},
+                )
+            logger.info(f"Daily: deleted entry {entry_id}")
             return True
         except Exception as e:
-            logger.error(f"Failed to delete entry {entry_id}: {e}")
+            logger.error(f"Daily: delete failed for {entry_id}: {e}")
             return False
 
-    async def _delete_entry_from_graph(self, entry_id: str) -> None:
-        """Remove Journal_Entry node and HAS_ENTRY edge. Silent no-op if unavailable."""
-        from parachute.core.interfaces import get_registry
-        graph = get_registry().get("GraphDB")
+    async def list_entries(self, limit: int = 20, offset: int = 0, date: str | None = None) -> list[dict]:
+        """List entries, optionally filtered by date (YYYY-MM-DD). Newest first."""
+        graph = self._get_graph()
         if graph is None:
-            return
-        try:
-            async with graph.write_lock:
-                # Delete the edge first, then the node
-                await graph.execute_cypher(
-                    "MATCH (:Day)-[r:HAS_ENTRY]->(e:Journal_Entry {entry_id: $entry_id}) DELETE r",
-                    {"entry_id": entry_id},
-                )
-                await graph.execute_cypher(
-                    "MATCH (e:Journal_Entry {entry_id: $entry_id}) DELETE e",
-                    {"entry_id": entry_id},
-                )
-        except Exception as e:
-            logger.warning(f"Daily: graph delete failed for {entry_id}: {e}")
+            return []
 
-    def search_entries(self, query: str, limit: int = 30) -> list[dict]:
+        if date:
+            rows = await graph.execute_cypher(
+                "MATCH (e:Journal_Entry) WHERE e.date = $date "
+                "RETURN e ORDER BY e.created_at DESC",
+                {"date": date},
+            )
+        else:
+            rows = await graph.execute_cypher(
+                "MATCH (e:Journal_Entry) RETURN e ORDER BY e.created_at DESC"
+            )
+
+        return [self._row_to_entry(r) for r in rows[offset: offset + limit]]
+
+    async def get_entry(self, entry_id: str) -> Optional[dict]:
+        """Get a specific entry by ID."""
+        graph = self._get_graph()
+        if graph is None:
+            return None
+
+        rows = await graph.execute_cypher(
+            "MATCH (e:Journal_Entry {entry_id: $entry_id}) RETURN e",
+            {"entry_id": entry_id},
+        )
+        if not rows:
+            return None
+        return self._row_to_entry(rows[0])
+
+    async def search_entries(self, query: str, limit: int = 30) -> list[dict]:
         """Keyword search across all entries. Returns results with snippet and match_count."""
         if not query.strip():
             return []
@@ -288,32 +509,27 @@ class DailyModule:
         if not query_terms:
             return []
 
+        graph = self._get_graph()
+        if graph is None:
+            return []
+
+        all_rows = await graph.execute_cypher(
+            "MATCH (e:Journal_Entry) RETURN e ORDER BY e.created_at DESC"
+        )
+
         results = []
-        # Newest-first
-        for md_file in sorted(self.entries_dir.glob("*.md"), reverse=True):
-            try:
-                post = frontmatter.load(str(md_file))
-                content = post.content or ""
-                content_lower = content.lower()
+        for row in all_rows:
+            content = row.get("content") or ""
+            content_lower = content.lower()
+            match_count = sum(content_lower.count(term) for term in query_terms)
+            if match_count == 0:
+                continue
+            snippet = self._extract_snippet(content, content_lower, query_terms)
+            entry = self._row_to_entry(row)
+            entry["snippet"] = snippet
+            entry["match_count"] = match_count
+            results.append(entry)
 
-                match_count = sum(content_lower.count(term) for term in query_terms)
-                if match_count == 0:
-                    continue
-
-                snippet = self._extract_snippet(content, content_lower, query_terms)
-                meta = dict(post.metadata)
-                results.append({
-                    "id": meta.get("entry_id", md_file.stem),
-                    "created_at": meta.get("created_at", ""),
-                    "content": content,
-                    "snippet": snippet,
-                    "match_count": match_count,
-                    "metadata": meta,
-                })
-            except Exception as e:
-                logger.error(f"Search: failed to read {md_file}: {e}")
-
-        # Sort by match count descending, then newest first (created_at is ISO string — lexicographic ok)
         results.sort(key=lambda r: (r["match_count"], r.get("created_at", "")), reverse=True)
         return results[:limit]
 
@@ -339,51 +555,7 @@ class DailyModule:
             snippet = f"{snippet}..."
         return snippet
 
-    def list_entries(self, limit: int = 20, offset: int = 0, date: str | None = None) -> list[dict]:
-        """List daily entries with pagination, optionally filtered by date (YYYY-MM-DD)."""
-        entries = []
-
-        # Glob only the relevant files — O(entries_for_date) when date is given
-        if date:
-            files = sorted(self.entries_dir.glob(f"{date}-*.md"), reverse=True)
-        else:
-            files = sorted(self.entries_dir.glob("*.md"), reverse=True)
-
-        for md_file in files[offset:offset + limit]:
-            try:
-                post = frontmatter.load(str(md_file))
-                meta = dict(post.metadata)
-                entries.append({
-                    "id": post.metadata.get("entry_id", md_file.stem),
-                    "created_at": post.metadata.get("created_at", ""),
-                    "content": post.content or "",
-                    "snippet": post.content[:200] if post.content else "",
-                    "metadata": meta,
-                    "brain_links": post.metadata.get("brain_links", []),
-                })
-            except Exception as e:
-                logger.error(f"Failed to parse entry {md_file}: {e}")
-
-        return entries
-
-    def get_entry(self, entry_id: str) -> Optional[dict]:
-        """Get a specific entry by ID."""
-        filepath = self.entries_dir / f"{entry_id}.md"
-        if not filepath.exists():
-            return None
-
-        try:
-            post = frontmatter.load(str(filepath))
-            return {
-                "id": post.metadata.get("entry_id", entry_id),
-                "created_at": post.metadata.get("created_at", ""),
-                "content": post.content,
-                "metadata": dict(post.metadata),
-                "brain_links": post.metadata.get("brain_links", []),
-            }
-        except Exception as e:
-            logger.error(f"Failed to read entry {entry_id}: {e}")
-            return None
+    # ── Routes ────────────────────────────────────────────────────────────────
 
     def get_router(self) -> APIRouter:
         """Return API routes for the daily module."""
@@ -402,7 +574,7 @@ class DailyModule:
             date: str | None = Query(None, description="Filter by date (YYYY-MM-DD)"),
         ):
             """List daily journal entries, optionally filtered by date."""
-            entries = self.list_entries(limit=limit, offset=offset, date=date)
+            entries = await self.list_entries(limit=limit, offset=offset, date=date)
             return {"entries": entries, "count": len(entries), "offset": offset}
 
         @router.get("/entries/search")
@@ -411,13 +583,13 @@ class DailyModule:
             limit: int = Query(30, ge=1, le=100),
         ):
             """Search entries by keyword across all dates."""
-            results = self.search_entries(q, limit=limit)
+            results = await self.search_entries(q, limit=limit)
             return {"results": results, "query": q, "count": len(results)}
 
         @router.get("/entries/{entry_id}")
         async def get_entry(entry_id: str):
             """Get a specific daily entry."""
-            entry = self.get_entry(entry_id)
+            entry = await self.get_entry(entry_id)
             if not entry:
                 return JSONResponse(
                     status_code=404,
@@ -438,7 +610,7 @@ class DailyModule:
 
         @router.delete("/entries/{entry_id}")
         async def delete_entry(entry_id: str):
-            """Delete an entry and its graph node."""
+            """Delete an entry and its graph edges."""
             ok = await self.delete_entry(entry_id)
             if not ok:
                 return JSONResponse(status_code=500, content={"error": "Delete failed"})
