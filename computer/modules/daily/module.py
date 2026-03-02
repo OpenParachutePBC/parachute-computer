@@ -133,90 +133,189 @@ class DailyModule:
                         candidates.append(f)
         return candidates
 
+    @staticmethod
+    def _sanitize_fm_value(v: Any) -> Any:
+        """Convert PyYAML-parsed date/datetime objects to ISO strings."""
+        if isinstance(v, (_date, datetime)):
+            return v.isoformat()
+        return v
+
+    def _parse_md_file(self, md_file: Path) -> list[dict]:
+        """
+        Parse a journal markdown file into a list of entry dicts.
+
+        Handles three formats that evolved over time:
+          1. Plain markdown (pre-Dec 2025): no frontmatter, single block
+             → one entry, entry_id = file stem
+          2. Frontmatter + plain sections (Dec 15 2025 style): ``assets:`` key,
+             sections separated by ``\\n---\\n`` but no ``# para:`` headers
+             → one entry per section, first gets stem as ID, rest get stem-N
+          3. Frontmatter + entries map + para headers (Dec 20 2025+):
+             ``entries:`` map keyed by para_id, sections start with
+             ``# para:{id} {time}``
+             → one entry per section, entry_id = para_id, audio_path from map
+
+        Each returned dict has keys matching _write_to_graph kwargs:
+        entry_id, date, content, created_at, title, entry_type, audio_path,
+        brain_links, extra_meta.
+        """
+        raw = md_file.read_text(encoding="utf-8", errors="replace")
+        file_stem = md_file.stem
+        file_date = file_stem[:10]
+
+        meta: dict = {}
+        content_block = raw
+        if raw.startswith("---\n"):
+            try:
+                import frontmatter as fm
+                post = fm.loads(raw)
+                meta = {k: self._sanitize_fm_value(v) for k, v in post.metadata.items()}
+                content_block = post.content or ""
+            except ImportError:
+                pass
+
+        date_raw = meta.get("date", "")
+        date = str(date_raw)[:10] if date_raw else file_date
+
+        # entries: map from frontmatter — keyed by para_id
+        entries_fm: dict = meta.get("entries") or {}
+
+        # Split on bare --- lines (section separators used in these journals)
+        sections = [s.strip() for s in re.split(r'\n---\n', content_block) if s.strip()]
+        if not sections:
+            return []
+
+        # Detect # para:{id} {time} section headers
+        para_re = re.compile(r'^#\s+para:([^\s]+)(?:\s+(\d{1,2}:\d{2}))?')
+
+        result = []
+        for i, section in enumerate(sections):
+            m = para_re.match(section)
+            if m:
+                para_id = m.group(1)
+                time_str = m.group(2)
+                section_content = section[m.end():].strip()
+
+                fm_entry: dict = entries_fm.get(para_id) or {}
+                entry_type = fm_entry.get("type", "text") or "text"
+                audio_path = fm_entry.get("audio", "") or ""
+                duration = fm_entry.get("duration")
+
+                # "created" in YAML can be parsed as sexagesimal int by PyYAML
+                created_raw = fm_entry.get("created", time_str or "")
+                if isinstance(created_raw, int):
+                    created_time = f"{created_raw // 60:02d}:{created_raw % 60:02d}"
+                elif created_raw:
+                    created_time = str(created_raw).strip()
+                else:
+                    created_time = time_str or "00:00"
+
+                entry_id = para_id
+            else:
+                # No para header: generate IDs from stem
+                entry_id = file_stem if i == 0 else f"{file_stem}-{i}"
+                section_content = section
+                entry_type = "text"
+                audio_path = ""
+                duration = None
+                created_time = "00:00"
+
+            t = created_time.strip()
+            if len(t) == 5:   # HH:MM
+                created_at = f"{date}T{t}:00+00:00"
+            elif t:
+                created_at = f"{date}T{t}+00:00"
+            else:
+                created_at = f"{date}T00:00:00+00:00"
+
+            extra_meta: dict = {}
+            if duration is not None:
+                extra_meta["duration_seconds"] = int(duration)
+
+            result.append({
+                "entry_id": entry_id,
+                "date": date,
+                "content": section_content,
+                "created_at": created_at,
+                "title": "",
+                "entry_type": entry_type,
+                "audio_path": audio_path,
+                "brain_links": [],
+                "extra_meta": extra_meta,
+            })
+
+        return result
+
     async def _migrate_from_markdown(self, graph) -> None:
         """
-        One-time migration: import existing .md files into graph. Idempotent.
+        Migrate existing .md files into graph. Idempotent — safe to call on every
+        startup and from the /import endpoint.
 
-        Checks which .md files don't yet have a corresponding graph node and
-        MERGEs them in. Safe to call on every startup — skips already-imported entries.
-        After migration the .md files remain on disk as read-only archives.
-
-        Handles two formats:
-          - Plain markdown (no frontmatter): vault/Daily/journals/YYYY-MM-DD.md
-          - Frontmatter markdown: vault/Daily/entries/YYYY-MM-DD-HH-MM-SS-ffffff.md
+        For multi-section files that were previously imported as a single blob
+        (entry_id == file stem), the blob is deleted and replaced with proper
+        per-section entries so each para_id becomes its own Journal_Entry node.
         """
         md_files = self._find_legacy_md_files()
         if not md_files:
             return
 
-        # Which entries are already in the graph?
         rows = await graph.execute_cypher(
             "MATCH (e:Journal_Entry) RETURN e.entry_id AS entry_id"
         )
         existing_ids = {r["entry_id"] for r in rows}
 
-        to_import = [f for f in md_files if f.stem not in existing_ids]
-        if not to_import:
-            logger.debug(
-                f"Daily: {len(md_files)} .md file(s) already in graph — no migration needed"
-            )
-            return
-
-        logger.info(f"Daily: migrating {len(to_import)} .md file(s) to graph...")
         imported = 0
         errors = 0
-        for md_file in sorted(to_import):
+
+        for md_file in sorted(md_files):
             try:
-                raw = md_file.read_text(encoding="utf-8", errors="replace")
-                # Detect frontmatter (entries/ files have ---\n at top)
-                if raw.startswith("---\n"):
-                    try:
-                        import frontmatter as fm
-                        post = fm.loads(raw)
-                        meta = dict(post.metadata)
-                        content = post.content or ""
-                    except ImportError:
-                        # No frontmatter lib — treat entire file as content
-                        meta = {}
-                        content = raw
-                else:
-                    meta = {}
-                    content = raw
-
-                entry_id = meta.get("entry_id", md_file.stem)
-                date = entry_id[:10]
-                created_at = meta.get("created_at", f"{date}T00:00:00+00:00")
-                title = meta.get("title", "")
-                entry_type = meta.get("type", "text")
-                audio_path = meta.get("audio_path", "") or ""
-                brain_links = meta.get("brain_links", [])
-                known = {"entry_id", "created_at", "title", "type", "audio_path", "brain_links"}
-                # Sanitize values: frontmatter parses dates as datetime.date objects
-                # which are not JSON-serializable — convert them to ISO strings.
-                def _sanitize(v: Any) -> Any:
-                    if isinstance(v, (_date, datetime)):
-                        return v.isoformat()
-                    return v
-                extra_meta = {k: _sanitize(v) for k, v in meta.items() if k not in known}
-
-                await self._write_to_graph(
-                    graph,
-                    entry_id=entry_id,
-                    date=date,
-                    content=content,
-                    created_at=created_at,
-                    title=title,
-                    entry_type=entry_type,
-                    audio_path=audio_path,
-                    brain_links=brain_links,
-                    extra_meta=extra_meta,
-                )
-                imported += 1
+                entries = self._parse_md_file(md_file)
             except Exception as e:
-                logger.error(f"Daily: migration failed for {md_file.name}: {e}")
+                logger.error(f"Daily: parse failed for {md_file.name}: {e}", exc_info=True)
                 errors += 1
+                continue
 
-        logger.info(f"Daily: migrated {imported}/{len(to_import)} entries to graph ({errors} errors)")
+            if not entries:
+                continue
+
+            # If this file produces multiple entries AND the only graph entry
+            # for this file is a single stem-keyed blob, that blob is a wrong
+            # import — delete it so we can replace it with proper sections.
+            stem = md_file.stem
+            if len(entries) > 1 and stem in existing_ids:
+                any_section_in_graph = any(
+                    e["entry_id"] in existing_ids and e["entry_id"] != stem
+                    for e in entries
+                )
+                if not any_section_in_graph:
+                    async with graph.write_lock:
+                        await graph.execute_cypher(
+                            "MATCH (e:Journal_Entry {entry_id: $id}) DETACH DELETE e",
+                            {"id": stem},
+                        )
+                    existing_ids.discard(stem)
+                    logger.info(
+                        f"Daily: removed single-blob import of {stem!r} — "
+                        f"re-importing as {len(entries)} section(s)"
+                    )
+
+            for entry in entries:
+                if entry["entry_id"] in existing_ids:
+                    continue
+                try:
+                    await self._write_to_graph(graph, **entry)
+                    existing_ids.add(entry["entry_id"])
+                    imported += 1
+                except Exception as e:
+                    logger.error(
+                        f"Daily: write failed for {md_file.name} "
+                        f"entry {entry['entry_id']!r}: {e}",
+                        exc_info=True,
+                    )
+                    errors += 1
+
+        if imported > 0 or errors > 0:
+            logger.info(f"Daily: migrated {imported} entries ({errors} errors)")
 
     # ── Graph helpers ─────────────────────────────────────────────────────────
 
@@ -656,37 +755,48 @@ class DailyModule:
 
         # ── Import ────────────────────────────────────────────────────────────
 
+        def _section_counts(md_files: list, existing_ids: set) -> tuple[int, int]:
+            """Return (total_sections, imported_sections) across all md files."""
+            total = 0
+            done = 0
+            for f in md_files:
+                try:
+                    entries = self._parse_md_file(f)
+                except Exception:
+                    entries = []
+                total += len(entries)
+                done += sum(1 for e in entries if e["entry_id"] in existing_ids)
+            return total, done
+
         @router.get("/import/status")
         async def import_status():
-            """Return markdown import status: how many .md files exist and how many are in graph."""
+            """Return markdown import status: section-level counts across all .md files."""
             graph = self._get_graph()
             md_files = self._find_legacy_md_files()
             total_md = len(md_files)
+            search_dirs = [
+                str(self.vault_path / "Daily" / "journals"),
+                str(self.entries_dir),
+            ]
             if graph is None or total_md == 0:
                 return {
                     "total_md_files": total_md,
+                    "total_sections": 0,
                     "imported": 0,
                     "pending": 0,
-                    "search_dirs": [
-                        str(self.vault_path / "Daily" / "journals"),
-                        str(self.entries_dir),
-                    ],
+                    "search_dirs": search_dirs,
                 }
             rows = await graph.execute_cypher(
                 "MATCH (e:Journal_Entry) RETURN e.entry_id AS entry_id"
             )
             existing_ids = {r["entry_id"] for r in rows}
-            md_stems = {f.stem for f in md_files}
-            imported = len(md_stems & existing_ids)
-            pending = len(md_stems - existing_ids)
+            total_sections, imported_sections = _section_counts(md_files, existing_ids)
             return {
                 "total_md_files": total_md,
-                "imported": imported,
-                "pending": pending,
-                "search_dirs": [
-                    str(self.vault_path / "Daily" / "journals"),
-                    str(self.entries_dir),
-                ],
+                "total_sections": total_sections,
+                "imported": imported_sections,
+                "pending": total_sections - imported_sections,
+                "search_dirs": search_dirs,
             }
 
         @router.post("/import")
@@ -704,15 +814,14 @@ class DailyModule:
             rows = await graph.execute_cypher(
                 "MATCH (e:Journal_Entry) RETURN e.entry_id AS entry_id"
             )
-            existing_ids = {r["entry_id"] for r in rows}
-            pending_before = len([f for f in md_files if f.stem not in existing_ids])
+            existing_ids_before = {r["entry_id"] for r in rows}
             await self._migrate_from_markdown(graph)
             rows_after = await graph.execute_cypher(
                 "MATCH (e:Journal_Entry) RETURN e.entry_id AS entry_id"
             )
             existing_after = {r["entry_id"] for r in rows_after}
-            newly_imported = len(existing_after) - len(existing_ids)
-            still_pending = len([f for f in md_files if f.stem not in existing_after])
+            _, still_pending = _section_counts(md_files, existing_after)
+            newly_imported = len(existing_after) - len(existing_ids_before)
             return {
                 "imported": newly_imported,
                 "pending": still_pending,

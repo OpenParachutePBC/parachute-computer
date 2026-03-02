@@ -360,10 +360,11 @@ class _JournalImportSectionState extends ConsumerState<_JournalImportSection> {
                 ),
               );
             }
-            final total = status['total_md_files'] as int? ?? 0;
+            final totalFiles = status['total_md_files'] as int? ?? 0;
+            final totalSections = status['total_sections'] as int? ?? totalFiles;
             final imported = status['imported'] as int? ?? 0;
             final pending = status['pending'] as int? ?? 0;
-            if (total == 0) {
+            if (totalFiles == 0) {
               return Text(
                 'No markdown journal files found in vault.',
                 style: TextStyle(
@@ -386,7 +387,7 @@ class _JournalImportSectionState extends ConsumerState<_JournalImportSection> {
                     children: [
                       Expanded(
                         child: _ImportStat(
-                            label: 'Total', value: '$total', isDark: isDark),
+                            label: 'Total', value: '$totalSections', isDark: isDark),
                       ),
                       Expanded(
                         child: _ImportStat(
