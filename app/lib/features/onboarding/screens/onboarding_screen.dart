@@ -8,7 +8,6 @@ import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/core/providers/app_state_provider.dart';
 import 'package:parachute/core/providers/file_system_provider.dart';
 import 'package:parachute/core/providers/server_providers.dart';
-import 'package:parachute/features/daily/journal/providers/journal_providers.dart';
 import 'package:parachute/features/settings/widgets/computer_setup_wizard.dart';
 import '../widgets/server_connection_step.dart';
 
@@ -178,7 +177,6 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> with Widget
       debugPrint('[Onboarding] Vault path set to: $displayPath');
 
       // Invalidate providers so they use the new path
-      ref.invalidate(journalServiceFutureProvider);
       ref.invalidate(dailyRootPathProvider);
 
       setState(() {
@@ -211,7 +209,6 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> with Widget
       final displayPath = await service.getVaultPathDisplay();
 
       // Invalidate providers so they use the new path
-      ref.invalidate(journalServiceFutureProvider);
       ref.invalidate(dailyRootPathProvider);
 
       setState(() {

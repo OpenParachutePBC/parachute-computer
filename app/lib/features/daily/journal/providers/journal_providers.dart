@@ -8,12 +8,9 @@ import 'package:parachute/core/providers/app_state_provider.dart' show apiKeyPro
 import 'package:parachute/core/services/computer_service.dart';
 import '../models/chat_log.dart';
 import '../models/journal_day.dart';
-import '../models/journal_entry.dart';
 import '../models/reflection.dart';
 import '../models/agent_output.dart';
 import '../services/chat_log_service.dart';
-import '../services/para_id_service.dart';
-import '../services/journal_service.dart';
 import '../services/daily_api_service.dart';
 import '../services/pending_entry_queue.dart';
 import '../services/reflection_service.dart';
@@ -41,32 +38,6 @@ final pendingQueueProvider = FutureProvider<PendingEntryQueue>((ref) async {
   final queue = await PendingEntryQueue.create();
   ref.onDispose(queue.dispose);
   return queue;
-});
-
-/// Async provider that properly initializes the journal service
-///
-/// Use this when you need the fully initialized service.
-/// Uses FileSystemService to get the configured journal folder name.
-final journalServiceFutureProvider = FutureProvider.autoDispose<JournalService>((ref) async {
-  final fileSystemService = ref.watch(fileSystemServiceProvider);
-  await fileSystemService.initialize();
-  final journalPath = await fileSystemService.getJournalPath();
-
-  final paraIdService = ParaIdService(modulePath: journalPath, module: 'daily');
-  await paraIdService.initialize();
-
-  final journalService = await JournalService.create(
-    fileSystemService: fileSystemService,
-    paraIdService: paraIdService,
-  );
-
-  await journalService.ensureDirectoryExists();
-
-  // Note: Sync is triggered by JournalNotifier._triggerRefresh() and JournalScreen
-  // after each operation, using date-scoped sync for efficiency.
-  // We don't wire up onDataChanged here to avoid duplicate syncs.
-
-  return journalService;
 });
 
 /// Provider for tracking the currently selected date
@@ -126,14 +97,6 @@ Future<JournalDay> _loadJournalFromApi(Ref ref, DateTime date) async {
 
   return JournalDay.fromEntries(date, allEntries);
 }
-
-/// Provider for the list of available journal dates
-final journalDatesProvider = FutureProvider.autoDispose<List<DateTime>>((ref) async {
-  ref.watch(journalRefreshTriggerProvider);
-
-  final journalService = await ref.watch(journalServiceFutureProvider.future);
-  return journalService.listJournalDates();
-});
 
 // ============================================================================
 // Chat Log Providers

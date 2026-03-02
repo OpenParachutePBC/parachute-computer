@@ -3,10 +3,9 @@ import '../services/simple_text_search.dart';
 import '../../journal/providers/journal_providers.dart';
 
 /// Provider for the simple text search service
-/// Uses AsyncValue since JournalService requires async initialization
-final simpleTextSearchProvider = FutureProvider<SimpleTextSearchService>((ref) async {
-  final journalService = await ref.watch(journalServiceFutureProvider.future);
-  return SimpleTextSearchService(journalService: journalService);
+final simpleTextSearchProvider = Provider<SimpleTextSearchService>((ref) {
+  final apiService = ref.watch(dailyApiServiceProvider);
+  return SimpleTextSearchService(apiService: apiService);
 });
 
 /// State for search results
@@ -58,12 +57,7 @@ class SearchNotifier extends StateNotifier<SearchState> {
     state = state.copyWith(query: query, isLoading: true, error: null);
 
     try {
-      final keywordService = _ref.read(simpleTextSearchProvider).valueOrNull;
-      if (keywordService == null) {
-        state = state.copyWith(isLoading: false, error: 'Search service not ready');
-        return;
-      }
-
+      final keywordService = _ref.read(simpleTextSearchProvider);
       final results = await keywordService.search(query);
       state = state.copyWith(results: results, isLoading: false, isInitialized: true);
     } catch (e) {

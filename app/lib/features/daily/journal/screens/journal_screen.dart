@@ -525,26 +525,17 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
     debugPrint('[JournalScreen] Updating entry $entryId with transcript...');
 
     try {
-      final service = await ref.read(journalServiceFutureProvider.future);
-      final selectedDate = ref.read(selectedJournalDateProvider);
-
+      final api = ref.read(dailyApiServiceProvider);
       final existingEntry = _cachedJournal?.getEntry(entryId);
-      final entry = JournalEntry(
-        id: entryId,
-        title: existingEntry?.title ?? JournalHelpers.formatTime(DateTime.now()),
-        content: transcript,
-        type: JournalEntryType.voice,
-        createdAt: existingEntry?.createdAt ?? DateTime.now(),
-        audioPath: existingEntry?.audioPath,
-        durationSeconds: existingEntry?.durationSeconds,
-      );
 
-      await service.updateEntry(selectedDate, entry);
+      await api.updateEntry(entryId, content: transcript);
       debugPrint('[JournalScreen] Transcription update complete');
 
-      if (_cachedJournal != null) {
+      JournalEntry? updatedEntry;
+      if (existingEntry != null && _cachedJournal != null) {
+        updatedEntry = existingEntry.copyWith(content: transcript);
         setState(() {
-          _cachedJournal = _cachedJournal!.updateEntry(entry);
+          _cachedJournal = _cachedJournal!.updateEntry(updatedEntry!);
         });
       }
 
@@ -556,8 +547,8 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
         if (autoEnhance) {
           debugPrint('[JournalScreen] Auto-enhancing transcription...');
           await Future.delayed(const Duration(milliseconds: 100));
-          if (mounted) {
-            _handleEnhance(entry);
+          if (mounted && updatedEntry != null) {
+            _handleEnhance(updatedEntry);
           }
         }
       }
@@ -650,24 +641,22 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
     }
 
     try {
-      final service = await ref.read(journalServiceFutureProvider.future);
-      final selectedDate = ref.read(selectedJournalDateProvider);
-
-      final journal = await service.loadDay(selectedDate);
-      final entry = journal.entries.firstWhere(
-        (e) => e.id == entryId,
-        orElse: () => throw Exception('Entry not found'),
+      final api = ref.read(dailyApiServiceProvider);
+      final updated = await api.updateEntry(
+        entryId,
+        content: newContent,
+        metadata: newTitle != null ? {'title': newTitle} : null,
       );
-
-      final updatedEntry = entry.copyWith(
-        content: newContent ?? entry.content,
-        title: newTitle ?? entry.title,
-      );
-
-      await service.updateEntry(selectedDate, updatedEntry);
+      if (updated == null) throw Exception('Server unreachable');
       debugPrint('[JournalScreen] Saved edit for entry $entryId');
 
       await _clearDraft(entryId);
+
+      if (mounted && _cachedJournal != null) {
+        setState(() {
+          _cachedJournal = _cachedJournal!.updateEntry(updated);
+        });
+      }
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -776,10 +765,9 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
           );
         }
       } else {
-        final service = await ref.read(journalServiceFutureProvider.future);
-        final selectedDate = ref.read(selectedJournalDateProvider);
+        final api = ref.read(dailyApiServiceProvider);
         final updatedEntry = entry.copyWith(content: transcript);
-        await service.updateEntry(selectedDate, updatedEntry);
+        await api.updateEntry(entry.id, content: transcript);
 
         if (mounted && _cachedJournal != null) {
           setState(() {
@@ -959,9 +947,12 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
         canEdit: canEdit,
         audioPlayer: entry.hasAudio ? _buildAudioPlayer(context, entry, isDark) : null,
         onSave: (updatedEntry) async {
-          final service = await ref.read(journalServiceFutureProvider.future);
-          final selectedDate = ref.read(selectedJournalDateProvider);
-          await service.updateEntry(selectedDate, updatedEntry);
+          final api = ref.read(dailyApiServiceProvider);
+          await api.updateEntry(
+            updatedEntry.id,
+            content: updatedEntry.content,
+            metadata: {'title': updatedEntry.title},
+          );
           ref.invalidate(selectedJournalProvider);
         },
       ),
@@ -1138,8 +1129,9 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
       debugPrint('[JournalScreen] Deleting entry...');
 
       try {
-        final service = await ref.read(journalServiceFutureProvider.future);
-        await service.deleteEntry(journal.date, entry.id);
+        final api = ref.read(dailyApiServiceProvider);
+        final ok = await api.deleteEntry(entry.id);
+        if (!ok) throw Exception('Delete failed');
         debugPrint('[JournalScreen] Entry deleted successfully');
 
         ref.invalidate(selectedJournalProvider);

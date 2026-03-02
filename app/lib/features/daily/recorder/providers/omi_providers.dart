@@ -113,7 +113,7 @@ final connectedOmiDeviceProvider = StreamProvider<OmiDevice?>((ref) {
 /// Provider for OmiCaptureService
 ///
 /// This service handles audio recording from the Omi device.
-/// It depends on OmiBluetoothService, JournalService, and TranscriptionServiceAdapter.
+/// It depends on OmiBluetoothService, DailyApiService, and TranscriptionServiceAdapter.
 ///
 /// This provider automatically sets up a callback to trigger journal refresh
 /// when new recordings are saved from the Omi device.
@@ -123,7 +123,7 @@ final omiCaptureServiceProvider = Provider<OmiCaptureService>((ref) {
 
   final service = OmiCaptureService(
     bluetoothService: bluetoothService,
-    getJournalService: () => ref.read(journalServiceFutureProvider.future),
+    getApiService: () => ref.read(dailyApiServiceProvider),
     transcriptionService: transcriptionService,
   );
 
