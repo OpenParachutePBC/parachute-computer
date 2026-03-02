@@ -288,7 +288,8 @@ class OmiCaptureService {
       final now = DateTime.now();
       final vaultPath = await fileSystem.getNewAssetPath(now, 'voice', 'wav');
       await File(wavFilePath).copy(vaultPath);
-      final filename = fileSystem.generateAssetFilename(now, 'voice', 'wav');
+      // Use the filename from the path that was actually written — not a recomputed one
+      final filename = vaultPath.split('/').last;
       final relPath = fileSystem.getAssetRelativePath(now, filename);
 
       // Clean up the temp file since it's now copied to vault
@@ -461,7 +462,8 @@ class OmiCaptureService {
       final now = DateTime.now();
       final vaultPath = await fileSystem.getNewAssetPath(now, 'voice', 'wav');
       await File(wavPath).copy(vaultPath);
-      final filename = fileSystem.generateAssetFilename(now, 'voice', 'wav');
+      // Use the filename from the path that was actually written — not a recomputed one
+      final filename = vaultPath.split('/').last;
       final relPath = fileSystem.getAssetRelativePath(now, filename);
 
       // Clean up the temp file

@@ -197,35 +197,35 @@ class DailyModule:
     async def update_entry(
         self, entry_id: str, content: str | None = None, metadata: dict | None = None
     ) -> Optional[dict]:
-        """Update content and/or metadata of an existing entry. Returns updated entry or None."""
+        """Update content and/or metadata of an existing entry.
+
+        Returns the updated entry dict, or None if the entry does not exist.
+        Raises on I/O or parse errors so the route can return 500 (not 404).
+        """
         filepath = self.entries_dir / f"{entry_id}.md"
         if not filepath.exists():
             return None
 
-        try:
-            post = frontmatter.load(str(filepath))
+        post = frontmatter.load(str(filepath))
 
-            if content is not None:
-                post.content = content
-            if metadata:
-                post.metadata.update(metadata)
+        if content is not None:
+            post.content = content
+        if metadata:
+            post.metadata.update(metadata)
 
-            filepath.write_text(frontmatter.dumps(post), encoding="utf-8")
-            logger.info(f"Updated daily entry: {entry_id}")
+        filepath.write_text(frontmatter.dumps(post), encoding="utf-8")
+        logger.info(f"Updated daily entry: {entry_id}")
 
-            # Update graph
-            await self._update_entry_in_graph(entry_id, post.content)
+        # Update graph (silent no-op if unavailable)
+        await self._update_entry_in_graph(entry_id, post.content)
 
-            return {
-                "id": post.metadata.get("entry_id", entry_id),
-                "created_at": post.metadata.get("created_at", ""),
-                "content": post.content,
-                "metadata": dict(post.metadata),
-                "brain_links": post.metadata.get("brain_links", []),
-            }
-        except Exception as e:
-            logger.error(f"Failed to update entry {entry_id}: {e}")
-            return None
+        return {
+            "id": post.metadata.get("entry_id", entry_id),
+            "created_at": post.metadata.get("created_at", ""),
+            "content": post.content,
+            "metadata": dict(post.metadata),
+            "brain_links": post.metadata.get("brain_links", []),
+        }
 
     async def _update_entry_in_graph(self, entry_id: str, content: str) -> None:
         """Update content/snippet on the graph node. Silent no-op if unavailable."""
@@ -314,7 +314,7 @@ class DailyModule:
                 logger.error(f"Search: failed to read {md_file}: {e}")
 
         # Sort by match count descending, then newest first (created_at is ISO string — lexicographic ok)
-        results.sort(key=lambda r: (-r["match_count"], r.get("created_at", "")), reverse=False)
+        results.sort(key=lambda r: (r["match_count"], r.get("created_at", "")), reverse=True)
         return results[:limit]
 
     def _extract_snippet(self, content: str, content_lower: str, query_terms: list[str]) -> str:
@@ -332,8 +332,7 @@ class DailyModule:
         start = max(0, first_pos - context)
         end = min(len(content), first_pos + context + 50)
         snippet = content[start:end].replace("\n", " ")
-        import re as _re
-        snippet = _re.sub(r"\s+", " ", snippet).strip()
+        snippet = re.sub(r"\s+", " ", snippet).strip()
         if start > 0:
             snippet = f"...{snippet}"
         if end < len(content):

@@ -528,7 +528,8 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
       final api = ref.read(dailyApiServiceProvider);
       final existingEntry = _cachedJournal?.getEntry(entryId);
 
-      await api.updateEntry(entryId, content: transcript);
+      final serverUpdated = await api.updateEntry(entryId, content: transcript);
+      if (serverUpdated == null) throw Exception('Server unreachable');
       debugPrint('[JournalScreen] Transcription update complete');
 
       JournalEntry? updatedEntry;
@@ -767,7 +768,8 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
       } else {
         final api = ref.read(dailyApiServiceProvider);
         final updatedEntry = entry.copyWith(content: transcript);
-        await api.updateEntry(entry.id, content: transcript);
+        final serverUpdated = await api.updateEntry(entry.id, content: transcript);
+        if (serverUpdated == null) throw Exception('Server unreachable — transcript not saved');
 
         if (mounted && _cachedJournal != null) {
           setState(() {
