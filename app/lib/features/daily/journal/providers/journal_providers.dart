@@ -7,11 +7,13 @@ import 'package:parachute/core/providers/feature_flags_provider.dart' show aiSer
 import 'package:parachute/core/providers/app_state_provider.dart' show apiKeyProvider;
 import 'package:parachute/core/services/computer_service.dart';
 import '../models/chat_log.dart';
+import '../models/journal_entry.dart';
 import '../models/journal_day.dart';
 import '../models/reflection.dart';
 import '../models/agent_output.dart';
 import '../services/chat_log_service.dart';
 import '../services/daily_api_service.dart';
+import '../services/journal_local_cache.dart';
 import '../services/pending_entry_queue.dart';
 import '../services/reflection_service.dart';
 import '../services/agent_output_service.dart';
@@ -31,6 +33,16 @@ final dailyApiServiceProvider = Provider<DailyApiService>((ref) {
   final service = DailyApiService(baseUrl: baseUrl, apiKey: apiKey);
   ref.onDispose(service.dispose);
   return service;
+});
+
+/// Provider for the local SQLite cache — offline fallback for journal entries.
+///
+/// Opens once per app session; disposed when no longer referenced.
+/// Falls back to in-memory database if documents directory is unavailable.
+final journalLocalCacheProvider = FutureProvider<JournalLocalCache>((ref) async {
+  final cache = await JournalLocalCache.open();
+  ref.onDispose(cache.dispose);
+  return cache;
 });
 
 /// Provider for PendingEntryQueue — SharedPreferences-backed offline queue
@@ -56,47 +68,88 @@ String _formatDateForApi(DateTime date) {
   return '$y-$m-$d';
 }
 
-/// Provider for today's journal (server-backed).
+/// Provider for today's journal — cache-first, then server.
 ///
-/// Fetches entries from the server API and merges with the pending queue.
-final todayJournalProvider = FutureProvider.autoDispose<JournalDay>((ref) async {
-  ref.watch(journalRefreshTriggerProvider);
+/// Phase 1: emits cached entries immediately (instant display, works offline).
+/// Phase 2: fetches from server, updates cache, emits fresh data.
+final todayJournalProvider =
+    AsyncNotifierProvider.autoDispose<_TodayJournalNotifier, JournalDay>(
+  _TodayJournalNotifier.new,
+);
 
-  final today = DateTime.now();
-  return _loadJournalFromApi(ref, today);
-});
+class _TodayJournalNotifier extends AutoDisposeAsyncNotifier<JournalDay> {
+  @override
+  Future<JournalDay> build() async {
+    ref.watch(journalRefreshTriggerProvider);
+    return _loadJournal(ref, DateTime.now(), (day) => state = AsyncData(day));
+  }
+}
 
-/// Provider for a specific date's journal (server-backed).
-final selectedJournalProvider = FutureProvider.autoDispose<JournalDay>((ref) async {
-  final date = ref.watch(selectedJournalDateProvider);
-  ref.watch(journalRefreshTriggerProvider);
+/// Provider for a specific date's journal — cache-first, then server.
+final selectedJournalProvider =
+    AsyncNotifierProvider.autoDispose<_SelectedJournalNotifier, JournalDay>(
+  _SelectedJournalNotifier.new,
+);
 
-  return _loadJournalFromApi(ref, date);
-});
+class _SelectedJournalNotifier extends AutoDisposeAsyncNotifier<JournalDay> {
+  @override
+  Future<JournalDay> build() async {
+    final date = ref.watch(selectedJournalDateProvider);
+    ref.watch(journalRefreshTriggerProvider);
+    return _loadJournal(ref, date, (day) => state = AsyncData(day));
+  }
+}
 
-/// Load a journal day from the server API + pending queue.
-Future<JournalDay> _loadJournalFromApi(Ref ref, DateTime date) async {
+/// Two-phase journal load: cache first, then server.
+///
+/// [onCacheHit] is called synchronously when cached entries are available so
+/// the notifier can update its state before the server fetch completes — giving
+/// instant display even while the network request is in flight.
+///
+/// Cache strategy:
+/// - Phase 1: read SQLite cache → call [onCacheHit] if entries found.
+/// - Phase 2: flush pending queue → fetch server → update cache.
+/// - If server returns empty (offline/error): Phase 1 data stays visible.
+/// - Server is always authoritative when reachable.
+Future<JournalDay> _loadJournal(
+  Ref ref,
+  DateTime date,
+  void Function(JournalDay) onCacheHit,
+) async {
+  final dateStr = _formatDateForApi(date);
   final api = ref.read(dailyApiServiceProvider);
   final pendingQueue = await ref.read(pendingQueueProvider.future);
 
-  final dateStr = _formatDateForApi(date);
+  // Cache open is fast (SQLite, usually < 5 ms). Awaiting guarantees Phase 1
+  // always has access to cached data, even on the very first call.
+  // ref.watch establishes a dependency so the notifier rebuilds if the cache
+  // provider is ever invalidated (e.g., in tests or after vault change).
+  final cache = await ref.watch(journalLocalCacheProvider.future);
 
-  // Flush any queued entries before loading (best-effort)
+  // Phase 1 — serve from cache immediately.
+  final cached = cache.getEntries(dateStr);
+  if (cached.isNotEmpty) {
+    final pendingForDate = _pendingForDate(pendingQueue, dateStr);
+    onCacheHit(JournalDay.fromEntries(date, [...cached, ...pendingForDate]));
+  }
+
+  // Phase 2 — flush pending creates, then fetch from server.
   await pendingQueue.flush(api);
-
-  // Fetch from server
   final serverEntries = await api.getEntries(date: dateStr);
 
-  // Merge: server entries + still-pending entries for this date
-  final pendingForDate = pendingQueue.entries
-      .where((e) => _formatDateForApi(e.createdAt) == dateStr)
-      .toList();
+  if (serverEntries.isNotEmpty) {
+    cache.putEntries(dateStr, serverEntries);
+  }
 
-  // Pending entries appear at the bottom (they were written most recently)
-  final allEntries = [...serverEntries, ...pendingForDate];
-
-  return JournalDay.fromEntries(date, allEntries);
+  final sourceEntries = serverEntries.isNotEmpty ? serverEntries : cached;
+  final pendingForDate = _pendingForDate(pendingQueue, dateStr);
+  return JournalDay.fromEntries(date, [...sourceEntries, ...pendingForDate]);
 }
+
+List<JournalEntry> _pendingForDate(PendingEntryQueue queue, String dateStr) =>
+    queue.entries
+        .where((e) => _formatDateForApi(e.createdAt) == dateStr)
+        .toList();
 
 // ============================================================================
 // Chat Log Providers
