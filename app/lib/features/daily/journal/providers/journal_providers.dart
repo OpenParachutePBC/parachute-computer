@@ -68,61 +68,86 @@ String _formatDateForApi(DateTime date) {
   return '$y-$m-$d';
 }
 
-/// Provider for today's journal (server-backed).
+/// Provider for today's journal — cache-first, then server.
 ///
-/// Fetches entries from the server API and merges with the pending queue.
-final todayJournalProvider = FutureProvider.autoDispose<JournalDay>((ref) async {
-  ref.watch(journalRefreshTriggerProvider);
+/// Phase 1: emits cached entries immediately (instant display, works offline).
+/// Phase 2: fetches from server, updates cache, emits fresh data.
+final todayJournalProvider =
+    AsyncNotifierProvider.autoDispose<_TodayJournalNotifier, JournalDay>(
+  _TodayJournalNotifier.new,
+);
 
-  final today = DateTime.now();
-  return _loadJournalFromApi(ref, today);
-});
+class _TodayJournalNotifier extends AutoDisposeAsyncNotifier<JournalDay> {
+  @override
+  Future<JournalDay> build() async {
+    ref.watch(journalRefreshTriggerProvider);
+    return _loadJournal(ref, DateTime.now(), (day) => state = AsyncData(day));
+  }
+}
 
-/// Provider for a specific date's journal (server-backed).
-final selectedJournalProvider = FutureProvider.autoDispose<JournalDay>((ref) async {
-  final date = ref.watch(selectedJournalDateProvider);
-  ref.watch(journalRefreshTriggerProvider);
+/// Provider for a specific date's journal — cache-first, then server.
+final selectedJournalProvider =
+    AsyncNotifierProvider.autoDispose<_SelectedJournalNotifier, JournalDay>(
+  _SelectedJournalNotifier.new,
+);
 
-  return _loadJournalFromApi(ref, date);
-});
+class _SelectedJournalNotifier extends AutoDisposeAsyncNotifier<JournalDay> {
+  @override
+  Future<JournalDay> build() async {
+    final date = ref.watch(selectedJournalDateProvider);
+    ref.watch(journalRefreshTriggerProvider);
+    return _loadJournal(ref, date, (day) => state = AsyncData(day));
+  }
+}
 
-/// Load a journal day from the server API + pending queue.
+/// Two-phase journal load: cache first, then server.
+///
+/// [onCacheHit] is called synchronously when cached entries are available so
+/// the notifier can update its state before the server fetch completes — giving
+/// instant display even while the network request is in flight.
 ///
 /// Cache strategy:
-/// - On successful server fetch: populate cache for this date.
-/// - When server returns empty (offline/error): fall back to cache.
-/// - Cache is never the only source when server is reachable — server is authoritative.
-Future<JournalDay> _loadJournalFromApi(Ref ref, DateTime date) async {
+/// - Phase 1: read SQLite cache → call [onCacheHit] if entries found.
+/// - Phase 2: flush pending queue → fetch server → update cache.
+/// - If server returns empty (offline/error): Phase 1 data stays visible.
+/// - Server is always authoritative when reachable.
+Future<JournalDay> _loadJournal(
+  Ref ref,
+  DateTime date,
+  void Function(JournalDay) onCacheHit,
+) async {
+  final dateStr = _formatDateForApi(date);
   final api = ref.read(dailyApiServiceProvider);
   final pendingQueue = await ref.read(pendingQueueProvider.future);
-  final cache = ref.read(journalLocalCacheProvider).valueOrNull;
 
-  final dateStr = _formatDateForApi(date);
+  // Cache open is fast (SQLite, usually < 5 ms). Awaiting guarantees Phase 1
+  // always has access to cached data, even on the very first call.
+  final cache = await ref.read(journalLocalCacheProvider.future);
 
-  // Flush any queued entries before loading (best-effort)
-  await pendingQueue.flush(api);
-
-  // Fetch from server
-  final serverEntries = await api.getEntries(date: dateStr);
-
-  List<JournalEntry> sourceEntries;
-  if (serverEntries.isNotEmpty) {
-    // Server responded — update cache and use server data
-    cache?.putEntries(dateStr, serverEntries);
-    sourceEntries = serverEntries;
-  } else {
-    // Server returned empty (offline or error) — try cache as fallback
-    final cached = cache?.getEntries(dateStr) ?? [];
-    sourceEntries = cached;
+  // Phase 1 — serve from cache immediately.
+  final cached = cache.getEntries(dateStr);
+  if (cached.isNotEmpty) {
+    final pendingForDate = _pendingForDate(pendingQueue, dateStr);
+    onCacheHit(JournalDay.fromEntries(date, [...cached, ...pendingForDate]));
   }
 
-  // Merge: source entries + still-pending entries for this date
-  final pendingForDate = pendingQueue.entries
-      .where((e) => _formatDateForApi(e.createdAt) == dateStr)
-      .toList();
+  // Phase 2 — flush pending creates, then fetch from server.
+  await pendingQueue.flush(api);
+  final serverEntries = await api.getEntries(date: dateStr);
 
+  if (serverEntries.isNotEmpty) {
+    cache.putEntries(dateStr, serverEntries);
+  }
+
+  final sourceEntries = serverEntries.isNotEmpty ? serverEntries : cached;
+  final pendingForDate = _pendingForDate(pendingQueue, dateStr);
   return JournalDay.fromEntries(date, [...sourceEntries, ...pendingForDate]);
 }
+
+List<JournalEntry> _pendingForDate(PendingEntryQueue queue, String dateStr) =>
+    queue.entries
+        .where((e) => _formatDateForApi(e.createdAt) == dateStr)
+        .toList();
 
 // ============================================================================
 // Chat Log Providers
