@@ -26,6 +26,11 @@ class CreateEntryRequest(BaseModel):
     metadata: Optional[dict] = None
 
 
+class UpdateEntryRequest(BaseModel):
+    content: Optional[str] = None
+    metadata: Optional[dict] = None  # merged (not replaced) into existing frontmatter
+
+
 class DailyModule:
     """Daily module for journal entry management."""
 
@@ -189,6 +194,152 @@ class DailyModule:
         except Exception as e:
             logger.warning(f"Daily: graph write failed for {entry_id}: {e}")
 
+    async def update_entry(
+        self, entry_id: str, content: str | None = None, metadata: dict | None = None
+    ) -> Optional[dict]:
+        """Update content and/or metadata of an existing entry. Returns updated entry or None."""
+        filepath = self.entries_dir / f"{entry_id}.md"
+        if not filepath.exists():
+            return None
+
+        try:
+            post = frontmatter.load(str(filepath))
+
+            if content is not None:
+                post.content = content
+            if metadata:
+                post.metadata.update(metadata)
+
+            filepath.write_text(frontmatter.dumps(post), encoding="utf-8")
+            logger.info(f"Updated daily entry: {entry_id}")
+
+            # Update graph
+            await self._update_entry_in_graph(entry_id, post.content)
+
+            return {
+                "id": post.metadata.get("entry_id", entry_id),
+                "created_at": post.metadata.get("created_at", ""),
+                "content": post.content,
+                "metadata": dict(post.metadata),
+                "brain_links": post.metadata.get("brain_links", []),
+            }
+        except Exception as e:
+            logger.error(f"Failed to update entry {entry_id}: {e}")
+            return None
+
+    async def _update_entry_in_graph(self, entry_id: str, content: str) -> None:
+        """Update content/snippet on the graph node. Silent no-op if unavailable."""
+        from parachute.core.interfaces import get_registry
+        graph = get_registry().get("GraphDB")
+        if graph is None:
+            return
+        try:
+            async with graph.write_lock:
+                await graph.execute_cypher(
+                    "MATCH (e:Journal_Entry {entry_id: $entry_id}) "
+                    "SET e.content = $content, e.snippet = $snippet",
+                    {"entry_id": entry_id, "content": content, "snippet": content[:200]},
+                )
+        except Exception as e:
+            logger.warning(f"Daily: graph update failed for {entry_id}: {e}")
+
+    async def delete_entry(self, entry_id: str) -> bool:
+        """Delete an entry file and its graph node. Returns True on success (including 404)."""
+        filepath = self.entries_dir / f"{entry_id}.md"
+        if not filepath.exists():
+            return True  # already gone — idempotent
+
+        try:
+            filepath.unlink()
+            logger.info(f"Deleted daily entry: {entry_id}")
+            await self._delete_entry_from_graph(entry_id)
+            return True
+        except Exception as e:
+            logger.error(f"Failed to delete entry {entry_id}: {e}")
+            return False
+
+    async def _delete_entry_from_graph(self, entry_id: str) -> None:
+        """Remove Journal_Entry node and HAS_ENTRY edge. Silent no-op if unavailable."""
+        from parachute.core.interfaces import get_registry
+        graph = get_registry().get("GraphDB")
+        if graph is None:
+            return
+        try:
+            async with graph.write_lock:
+                # Delete the edge first, then the node
+                await graph.execute_cypher(
+                    "MATCH (:Day)-[r:HAS_ENTRY]->(e:Journal_Entry {entry_id: $entry_id}) DELETE r",
+                    {"entry_id": entry_id},
+                )
+                await graph.execute_cypher(
+                    "MATCH (e:Journal_Entry {entry_id: $entry_id}) DELETE e",
+                    {"entry_id": entry_id},
+                )
+        except Exception as e:
+            logger.warning(f"Daily: graph delete failed for {entry_id}: {e}")
+
+    def search_entries(self, query: str, limit: int = 30) -> list[dict]:
+        """Keyword search across all entries. Returns results with snippet and match_count."""
+        if not query.strip():
+            return []
+
+        query_lower = query.lower()
+        query_terms = [t for t in query_lower.split() if len(t) > 1]
+        if not query_terms:
+            return []
+
+        results = []
+        # Newest-first
+        for md_file in sorted(self.entries_dir.glob("*.md"), reverse=True):
+            try:
+                post = frontmatter.load(str(md_file))
+                content = post.content or ""
+                content_lower = content.lower()
+
+                match_count = sum(content_lower.count(term) for term in query_terms)
+                if match_count == 0:
+                    continue
+
+                snippet = self._extract_snippet(content, content_lower, query_terms)
+                meta = dict(post.metadata)
+                results.append({
+                    "id": meta.get("entry_id", md_file.stem),
+                    "created_at": meta.get("created_at", ""),
+                    "content": content,
+                    "snippet": snippet,
+                    "match_count": match_count,
+                    "metadata": meta,
+                })
+            except Exception as e:
+                logger.error(f"Search: failed to read {md_file}: {e}")
+
+        # Sort by match count descending, then newest first (created_at is ISO string — lexicographic ok)
+        results.sort(key=lambda r: (-r["match_count"], r.get("created_at", "")), reverse=False)
+        return results[:limit]
+
+    def _extract_snippet(self, content: str, content_lower: str, query_terms: list[str]) -> str:
+        """Extract a ~210-char context window around the first match."""
+        first_pos = len(content)
+        for term in query_terms:
+            pos = content_lower.find(term)
+            if pos != -1 and pos < first_pos:
+                first_pos = pos
+
+        if first_pos >= len(content):
+            return content[:200]
+
+        context = 80
+        start = max(0, first_pos - context)
+        end = min(len(content), first_pos + context + 50)
+        snippet = content[start:end].replace("\n", " ")
+        import re as _re
+        snippet = _re.sub(r"\s+", " ", snippet).strip()
+        if start > 0:
+            snippet = f"...{snippet}"
+        if end < len(content):
+            snippet = f"{snippet}..."
+        return snippet
+
     def list_entries(self, limit: int = 20, offset: int = 0, date: str | None = None) -> list[dict]:
         """List daily entries with pagination, optionally filtered by date (YYYY-MM-DD)."""
         entries = []
@@ -255,6 +406,15 @@ class DailyModule:
             entries = self.list_entries(limit=limit, offset=offset, date=date)
             return {"entries": entries, "count": len(entries), "offset": offset}
 
+        @router.get("/entries/search")
+        async def search_entries(
+            q: str = Query(..., description="Keyword search query"),
+            limit: int = Query(30, ge=1, le=100),
+        ):
+            """Search entries by keyword across all dates."""
+            results = self.search_entries(q, limit=limit)
+            return {"results": results, "query": q, "count": len(results)}
+
         @router.get("/entries/{entry_id}")
         async def get_entry(entry_id: str):
             """Get a specific daily entry."""
@@ -265,5 +425,24 @@ class DailyModule:
                     content={"error": "Entry not found", "id": entry_id},
                 )
             return entry
+
+        @router.patch("/entries/{entry_id}")
+        async def update_entry(entry_id: str, body: UpdateEntryRequest):
+            """Update content and/or metadata of an existing entry."""
+            entry = await self.update_entry(entry_id, content=body.content, metadata=body.metadata)
+            if entry is None:
+                return JSONResponse(
+                    status_code=404,
+                    content={"error": "Entry not found", "id": entry_id},
+                )
+            return entry
+
+        @router.delete("/entries/{entry_id}")
+        async def delete_entry(entry_id: str):
+            """Delete an entry and its graph node."""
+            ok = await self.delete_entry(entry_id)
+            if not ok:
+                return JSONResponse(status_code=500, content={"error": "Delete failed"})
+            return JSONResponse(status_code=204, content=None)
 
         return router
