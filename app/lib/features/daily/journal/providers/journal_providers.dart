@@ -7,11 +7,13 @@ import 'package:parachute/core/providers/feature_flags_provider.dart' show aiSer
 import 'package:parachute/core/providers/app_state_provider.dart' show apiKeyProvider;
 import 'package:parachute/core/services/computer_service.dart';
 import '../models/chat_log.dart';
+import '../models/journal_entry.dart';
 import '../models/journal_day.dart';
 import '../models/reflection.dart';
 import '../models/agent_output.dart';
 import '../services/chat_log_service.dart';
 import '../services/daily_api_service.dart';
+import '../services/journal_local_cache.dart';
 import '../services/pending_entry_queue.dart';
 import '../services/reflection_service.dart';
 import '../services/agent_output_service.dart';
@@ -31,6 +33,16 @@ final dailyApiServiceProvider = Provider<DailyApiService>((ref) {
   final service = DailyApiService(baseUrl: baseUrl, apiKey: apiKey);
   ref.onDispose(service.dispose);
   return service;
+});
+
+/// Provider for the local SQLite cache — offline fallback for journal entries.
+///
+/// Opens once per app session; disposed when no longer referenced.
+/// Falls back to in-memory database if documents directory is unavailable.
+final journalLocalCacheProvider = FutureProvider<JournalLocalCache>((ref) async {
+  final cache = await JournalLocalCache.open();
+  ref.onDispose(cache.dispose);
+  return cache;
 });
 
 /// Provider for PendingEntryQueue — SharedPreferences-backed offline queue
@@ -75,9 +87,15 @@ final selectedJournalProvider = FutureProvider.autoDispose<JournalDay>((ref) asy
 });
 
 /// Load a journal day from the server API + pending queue.
+///
+/// Cache strategy:
+/// - On successful server fetch: populate cache for this date.
+/// - When server returns empty (offline/error): fall back to cache.
+/// - Cache is never the only source when server is reachable — server is authoritative.
 Future<JournalDay> _loadJournalFromApi(Ref ref, DateTime date) async {
   final api = ref.read(dailyApiServiceProvider);
   final pendingQueue = await ref.read(pendingQueueProvider.future);
+  final cache = ref.read(journalLocalCacheProvider).valueOrNull;
 
   final dateStr = _formatDateForApi(date);
 
@@ -87,15 +105,23 @@ Future<JournalDay> _loadJournalFromApi(Ref ref, DateTime date) async {
   // Fetch from server
   final serverEntries = await api.getEntries(date: dateStr);
 
-  // Merge: server entries + still-pending entries for this date
+  List<JournalEntry> sourceEntries;
+  if (serverEntries.isNotEmpty) {
+    // Server responded — update cache and use server data
+    cache?.putEntries(dateStr, serverEntries);
+    sourceEntries = serverEntries;
+  } else {
+    // Server returned empty (offline or error) — try cache as fallback
+    final cached = cache?.getEntries(dateStr) ?? [];
+    sourceEntries = cached;
+  }
+
+  // Merge: source entries + still-pending entries for this date
   final pendingForDate = pendingQueue.entries
       .where((e) => _formatDateForApi(e.createdAt) == dateStr)
       .toList();
 
-  // Pending entries appear at the bottom (they were written most recently)
-  final allEntries = [...serverEntries, ...pendingForDate];
-
-  return JournalDay.fromEntries(date, allEntries);
+  return JournalDay.fromEntries(date, [...sourceEntries, ...pendingForDate]);
 }
 
 // ============================================================================

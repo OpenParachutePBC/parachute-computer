@@ -104,6 +104,9 @@ class _VaultSettingsSectionState extends ConsumerState<VaultSettingsSection> {
         final chatSuccess = await chatService.setVaultPath(selectedDirectory, migrateFiles: false);
 
         if (dailySuccess && chatSuccess) {
+          // Clear local cache so stale entries from the old vault don't appear
+          ref.read(journalLocalCacheProvider).valueOrNull?.clearAll();
+
           // Invalidate all providers that depend on file paths so they refresh
           ref.invalidate(todayJournalProvider);
           ref.invalidate(selectedJournalProvider);
