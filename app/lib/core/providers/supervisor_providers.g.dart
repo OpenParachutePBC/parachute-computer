@@ -240,6 +240,30 @@ class _AvailableModelsProviderElement
   bool get showAll => (origin as AvailableModelsProvider).showAll;
 }
 
+String _$supervisorConfigHash() => r'1c0a12b2c31abaa5f254bc98e00f82678cba9bbd';
+
+/// Cached supervisor server config (reads default_model etc).
+///
+/// Wraps GET /supervisor/config. Exposes [setModel] to persist
+/// a new default_model via PUT /supervisor/config.
+///
+/// Copied from [SupervisorConfig].
+@ProviderFor(SupervisorConfig)
+final supervisorConfigProvider =
+    AutoDisposeAsyncNotifierProvider<
+      SupervisorConfig,
+      Map<String, dynamic>
+    >.internal(
+      SupervisorConfig.new,
+      name: r'supervisorConfigProvider',
+      debugGetCreateSourceHash: const bool.fromEnvironment('dart.vm.product')
+          ? null
+          : _$supervisorConfigHash,
+      dependencies: null,
+      allTransitiveDependencies: null,
+    );
+
+typedef _$SupervisorConfig = AutoDisposeAsyncNotifier<Map<String, dynamic>>;
 String _$serverControlHash() => r'3453c7ccbdfb30616a2cf071e269b853929901b9';
 
 /// Server control actions
