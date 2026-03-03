@@ -8,9 +8,10 @@ only metadata and content are stored in the graph.
 Entry IDs are timestamp strings: "YYYY-MM-DD-HH-MM-SS-ffffff" (with microseconds)
 
 Storage layout:
-  ~/Parachute/.parachute/graph/  ← Kuzu database (primary store, all modules share)
-  ~/Parachute/Daily/assets/      ← Audio/image files (filesystem)
-  ~/Parachute/Daily/entries/     ← Legacy .md files (migrated on first load, then unused)
+  ~/.parachute/graph/            ← Kuzu database (primary store, all modules share)
+  ~/Daily/assets/                ← Audio/image files (filesystem)
+  ~/Daily/entries/               ← Legacy .md files (migrated on first load, then unused)
+  ~/Parachute/Daily/journals/    ← Pre-restructure markdown files (also migrated on first load)
 """
 
 import json
@@ -113,9 +114,10 @@ class DailyModule:
         """
         Find all legacy markdown journal files across known locations.
 
-        Checks both:
-          - vault/Daily/journals/*.md  (the original Obsidian-style location)
-          - vault/Daily/entries/*.md   (the new entries dir, for any frontmatter-style files)
+        Checks:
+          - vault/Daily/journals/*.md         (current location — vault_path = ~/))
+          - vault/Parachute/Daily/journals/   (legacy location before storage restructure)
+          - vault/Daily/entries/*.md          (new entries dir, for frontmatter-style files)
 
         Only includes files whose stem looks like a date or timestamped entry ID
         so agent/config .md files aren't accidentally imported.
@@ -125,6 +127,7 @@ class DailyModule:
         candidates = []
         for search_dir in [
             self.vault_path / "Daily" / "journals",
+            self.vault_path / "Parachute" / "Daily" / "journals",  # pre-restructure legacy path
             self.entries_dir,
         ]:
             if search_dir.exists():
@@ -793,6 +796,7 @@ class DailyModule:
             total_md = len(md_files)
             search_dirs = [
                 str(self.vault_path / "Daily" / "journals"),
+                str(self.vault_path / "Parachute" / "Daily" / "journals"),
                 str(self.entries_dir),
             ]
             if graph is None or total_md == 0:
