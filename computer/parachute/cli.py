@@ -975,6 +975,86 @@ def cmd_status(args: argparse.Namespace) -> None:
     print()
 
 
+# --- Tools command ---
+
+
+def cmd_tools(args: argparse.Namespace) -> None:
+    """Manage the parachute-tools shared volume (packages visible in all containers)."""
+    from parachute.core.sandbox import SANDBOX_IMAGE, TOOLS_VOLUME_NAME
+
+    action = args.action
+
+    # Verify Docker is available
+    check = subprocess.run(
+        ["docker", "info"],
+        capture_output=True,
+        check=False,
+    )
+    if check.returncode != 0:
+        print("Error: Docker is not available")
+        sys.exit(1)
+
+    # Ensure the tools volume exists (idempotent)
+    subprocess.run(
+        ["docker", "volume", "create", TOOLS_VOLUME_NAME],
+        capture_output=True,
+        check=False,
+    )
+
+    if action == "install":
+        packages = args.packages
+        if not packages:
+            print("Usage: parachute tools install <package> [<package>...]")
+            sys.exit(1)
+
+        print(f"Installing {', '.join(packages)} into {TOOLS_VOLUME_NAME}...")
+        mount_arg = f"source={TOOLS_VOLUME_NAME},target=/opt/parachute-tools"
+
+        # Ensure directory structure exists (safe: no user input in this call)
+        subprocess.run(
+            [
+                "docker", "run", "--rm",
+                "--mount", mount_arg,
+                SANDBOX_IMAGE,
+                "sh", "-c", "mkdir -p /opt/parachute-tools/bin /opt/parachute-tools/python",
+            ],
+            check=False,
+        )
+
+        # Install packages as proper argv (no shell, no injection possible)
+        result = subprocess.run(
+            [
+                "docker", "run", "--rm",
+                "--mount", mount_arg,
+                SANDBOX_IMAGE,
+                "pip", "install", "--target", "/opt/parachute-tools/python",
+                *packages,
+            ],
+            check=False,
+        )
+        if result.returncode == 0:
+            print(f"\nInstalled. Packages are immediately available in all running containers.")
+        else:
+            print(f"\nInstall failed (exit {result.returncode}).")
+            sys.exit(result.returncode)
+
+    elif action == "list":
+        result = subprocess.run(
+            [
+                "docker", "run", "--rm",
+                "--mount", f"source={TOOLS_VOLUME_NAME},target=/opt/parachute-tools,readonly",
+                SANDBOX_IMAGE,
+                "pip", "list", "--path", "/opt/parachute-tools/python",
+            ],
+            check=False,
+        )
+        if result.returncode != 0:
+            sys.exit(result.returncode)
+
+    else:
+        print("Usage: parachute tools <install|list>")
+
+
 # --- Sandbox command ---
 
 
@@ -2111,6 +2191,13 @@ def main() -> None:
     sandbox_sub.add_parser("clean-cache", help="Remove shared package cache volumes")
     sandbox_sub.add_parser("inspect", help="Inspect sandbox configuration and containers")
 
+    # tools subcommand
+    tools_parser = subparsers.add_parser("tools", help="Manage shared tools volume")
+    tools_sub = tools_parser.add_subparsers(dest="action")
+    tools_install = tools_sub.add_parser("install", help="Install pip packages into shared tools volume")
+    tools_install.add_argument("packages", nargs="+", help="Package(s) to install")
+    tools_sub.add_parser("list", help="List packages installed in shared tools volume")
+
     # help (alias for --help)
     subparsers.add_parser("help", help="Show this help message")
 
@@ -2148,5 +2235,7 @@ def main() -> None:
         cmd_supervisor(args)
     elif args.command == "sandbox":
         cmd_sandbox(args)
+    elif args.command == "tools":
+        cmd_tools(args)
     else:
         parser.print_help()
