@@ -177,10 +177,10 @@ async def run():
     _tools_python = "/opt/parachute-tools/python"
     _path = os.environ.get("PATH", "")
     if _tools_bin not in _path:
-        os.environ["PATH"] = f"{_tools_bin}:{_path}" if _path else _tools_bin
+        os.environ["PATH"] = f"{_tools_bin}:{_path}"
     _pythonpath = os.environ.get("PYTHONPATH", "")
     if _tools_python not in _pythonpath:
-        os.environ["PYTHONPATH"] = f"{_tools_python}:{_pythonpath}" if _pythonpath else _tools_python
+        os.environ["PYTHONPATH"] = f"{_tools_python}:{_pythonpath}"
 
     # Token: prefer stdin payload (persistent mode), fall back to env var (ephemeral mode)
     oauth_token = request.get("claude_token") or os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")

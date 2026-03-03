@@ -887,7 +887,9 @@ class DockerSandbox:
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL,
         )
-        await proc.wait()  # Ignore errors — volume may not exist
+        await proc.wait()
+        if proc.returncode != 0:
+            logger.debug(f"docker volume rm {vol} exited {proc.returncode} — may not exist or already removed")
 
     async def reconcile(self, active_slugs: set[str] | None = None) -> None:
         """Reconcile parachute containers on server startup.
@@ -983,26 +985,24 @@ class DockerSandbox:
         if proc.returncode != 0:
             return
 
-        orphans = []
+        orphan_slugs = []
         for line in stdout.decode().strip().split("\n"):
             vol = line.strip()
             if not vol.startswith(f"{SCRATCH_VOLUME_PREFIX}-"):
                 continue
             slug = vol[len(f"{SCRATCH_VOLUME_PREFIX}-"):]
             if slug not in active_slugs:
-                orphans.append(vol)
+                orphan_slugs.append(slug)
 
-        if orphans:
+        if orphan_slugs:
             results = await asyncio.gather(*[
-                asyncio.create_subprocess_exec(
-                    "docker", "volume", "rm", vol,
-                    stdout=asyncio.subprocess.DEVNULL,
-                    stderr=asyncio.subprocess.DEVNULL,
-                )
-                for vol in orphans
+                self._remove_scratch_volume(slug)
+                for slug in orphan_slugs
             ], return_exceptions=True)
-            # Wait for all removals
-            for result in results:
-                if isinstance(result, asyncio.subprocess.Process):
-                    await result.wait()
-            logger.info(f"Removed {len(orphans)} orphaned scratch volume(s): {', '.join(orphans)}")
+            orphan_vols = [f"{SCRATCH_VOLUME_PREFIX}-{s}" for s in orphan_slugs]
+            for vol, result in zip(orphan_vols, results):
+                if isinstance(result, Exception):
+                    logger.warning(f"Failed to remove orphaned scratch volume {vol}: {result}")
+            removed = sum(1 for r in results if not isinstance(r, Exception))
+            if removed:
+                logger.info(f"Removed {removed}/{len(orphan_slugs)} orphaned scratch volume(s): {', '.join(orphan_vols)}")

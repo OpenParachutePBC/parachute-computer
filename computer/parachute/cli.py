@@ -982,7 +982,7 @@ def cmd_tools(args: argparse.Namespace) -> None:
     """Manage the parachute-tools shared volume (packages visible in all containers)."""
     from parachute.core.sandbox import SANDBOX_IMAGE, TOOLS_VOLUME_NAME
 
-    action = getattr(args, "action", None)
+    action = args.action
 
     # Verify Docker is available
     check = subprocess.run(
@@ -1008,14 +1008,27 @@ def cmd_tools(args: argparse.Namespace) -> None:
             sys.exit(1)
 
         print(f"Installing {', '.join(packages)} into {TOOLS_VOLUME_NAME}...")
+        mount_arg = f"source={TOOLS_VOLUME_NAME},target=/opt/parachute-tools"
+
+        # Ensure directory structure exists (safe: no user input in this call)
+        subprocess.run(
+            [
+                "docker", "run", "--rm",
+                "--mount", mount_arg,
+                SANDBOX_IMAGE,
+                "sh", "-c", "mkdir -p /opt/parachute-tools/bin /opt/parachute-tools/python",
+            ],
+            check=False,
+        )
+
+        # Install packages as proper argv (no shell, no injection possible)
         result = subprocess.run(
             [
                 "docker", "run", "--rm",
-                "--mount", f"source={TOOLS_VOLUME_NAME},target=/opt/parachute-tools",
+                "--mount", mount_arg,
                 SANDBOX_IMAGE,
-                "sh", "-c",
-                "mkdir -p /opt/parachute-tools/bin /opt/parachute-tools/python && "
-                f"pip install --target /opt/parachute-tools/python {' '.join(packages)}",
+                "pip", "install", "--target", "/opt/parachute-tools/python",
+                *packages,
             ],
             check=False,
         )
