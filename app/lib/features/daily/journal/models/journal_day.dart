@@ -186,14 +186,5 @@ class JournalDay {
   }
 
   @override
-  bool operator ==(Object other) {
-    if (identical(this, other)) return true;
-    return other is JournalDay && other.dateString == dateString;
-  }
-
-  @override
-  int get hashCode => dateString.hashCode;
-
-  @override
   String toString() => 'JournalDay($dateString, ${entries.length} entries)';
 }

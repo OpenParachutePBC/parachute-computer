@@ -637,6 +637,22 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
     final newContent = _editingEntryContent;
     final newTitle = _editingEntryTitle;
 
+    // Optimistically update provider state BEFORE clearing editing mode.
+    // When setState triggers build(), journalAsync.whenData will see the new
+    // content (not old), preventing it from overwriting our update. And
+    // journalAsync.when(data:...) will render the updated content immediately.
+    if ((newContent != null || newTitle != null) && _cachedJournal != null) {
+      final existingEntry = _cachedJournal!.getEntry(entryId);
+      if (existingEntry != null) {
+        final optimisticEntry = existingEntry.copyWith(
+          content: newContent ?? existingEntry.content,
+          title: newTitle ?? existingEntry.title,
+        );
+        ref.read(selectedJournalProvider.notifier).state =
+            AsyncData(_cachedJournal!.updateEntry(optimisticEntry));
+      }
+    }
+
     setState(() {
       _editingEntryId = null;
       _editingEntryContent = null;
