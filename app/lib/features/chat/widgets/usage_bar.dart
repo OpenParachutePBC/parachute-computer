@@ -134,7 +134,7 @@ class _ModelChip extends ConsumerWidget {
   String _label(String modelId) {
     final withoutPrefix = modelId.replaceFirst('claude-', '');
     final parts = withoutPrefix.split('-');
-    if (parts.isEmpty) return modelId;
+    if (parts.isEmpty || parts[0].isEmpty) return modelId;
     final family = parts[0][0].toUpperCase() + parts[0].substring(1);
     // Version: skip the date part (parts that are purely numeric and long)
     final versionParts = parts.skip(1).where((p) => p.length <= 3).toList();
