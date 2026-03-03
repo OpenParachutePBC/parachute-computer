@@ -4,6 +4,7 @@ Unit tests for session manager.
 
 import pytest
 from datetime import datetime
+from pathlib import Path
 
 from parachute.models.session import SessionCreate, SessionSource
 
@@ -193,28 +194,22 @@ async def test_session_with_metadata(session_manager, test_database):
 
 
 def test_resolve_working_directory_none(session_manager, test_vault):
-    """None or empty returns vault root."""
-    assert session_manager.resolve_working_directory(None) == test_vault
-    assert session_manager.resolve_working_directory("") == test_vault
+    """None or empty returns home dir."""
+    home = Path.home()
+    assert session_manager.resolve_working_directory(None) == home
+    assert session_manager.resolve_working_directory("") == home
 
 
 def test_resolve_working_directory_relative(session_manager, test_vault):
-    """Relative path is resolved under vault."""
-    # Create the target directory so resolve() works
-    projects = test_vault / "Projects" / "my-repo"
-    projects.mkdir(parents=True)
-
+    """Relative path is resolved under home dir."""
     result = session_manager.resolve_working_directory("Projects/my-repo")
-    assert result == test_vault / "Projects" / "my-repo"
+    assert result == Path.home() / "Projects" / "my-repo"
 
 
 def test_resolve_working_directory_vault_prefix(session_manager, test_vault):
-    """/vault/... paths are translated to real vault path."""
-    projects = test_vault / "Projects" / "my-repo"
-    projects.mkdir(parents=True)
-
+    """/vault/... paths are translated to home dir."""
     result = session_manager.resolve_working_directory("/vault/Projects/my-repo")
-    assert result == test_vault / "Projects" / "my-repo"
+    assert result == Path.home() / "Projects" / "my-repo"
 
 
 def test_resolve_working_directory_absolute(session_manager, test_vault):
@@ -224,6 +219,6 @@ def test_resolve_working_directory_absolute(session_manager, test_vault):
 
 
 def test_resolve_working_directory_escapes_vault(session_manager, test_vault):
-    """Paths that escape the vault fall back to vault root."""
+    """Relative paths that escape home resolve relative to home (no clamp in new design)."""
     result = session_manager.resolve_working_directory("../../etc/passwd")
-    assert result == test_vault
+    assert result == Path.home() / "../../etc/passwd"

@@ -7,11 +7,10 @@ Returns SDK hooks configured in .claude/settings.json. The HookRunner
 
 import json
 import logging
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter
-
-from parachute.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -29,10 +28,8 @@ def init_hooks_api(hook_runner: Any) -> None:
 
 def _load_sdk_hooks() -> list[dict[str, Any]]:
     """Load SDK hook configurations from .claude/settings.json."""
-    settings = get_settings()
-
-    # SDK hooks live in the vault's .claude/settings.json
-    settings_path = settings.vault_path / ".claude" / "settings.json"
+    # SDK hooks live in ~/.claude/settings.json
+    settings_path = Path.home() / ".claude" / "settings.json"
     if not settings_path.exists():
         return []
 

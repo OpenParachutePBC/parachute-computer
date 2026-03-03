@@ -15,7 +15,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query, Request, UploadFile, File
 from pydantic import BaseModel, Field
 
-from parachute.config import get_settings
+
 
 router = APIRouter(prefix="/sync", tags=["sync"])
 logger = logging.getLogger(__name__)
@@ -92,8 +92,8 @@ class PullResponse(BaseModel):
 
 
 def get_vault_path() -> Path:
-    """Get vault path from settings."""
-    return get_settings().vault_path
+    """Get user home directory (vault root for file syncing)."""
+    return Path.home()
 
 
 def validate_sync_path(vault_path: Path, root: str, subpath: str = "") -> Path:

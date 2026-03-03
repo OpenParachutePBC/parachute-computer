@@ -9,7 +9,7 @@ class WorkingDirectory {
   /// Just the directory name (e.g., "parachute")
   final String name;
 
-  /// Type of directory: 'vault' for home vault, 'recent' for recently used
+  /// Type of directory: 'home' for home directory, 'recent' for recently used
   final String type;
 
   /// Human-readable description
@@ -22,8 +22,8 @@ class WorkingDirectory {
     required this.description,
   });
 
-  /// Whether this is the home vault directory
-  bool get isVault => type == 'vault';
+  /// Whether this is the home directory
+  bool get isHome => type == 'home' || type == 'vault'; // 'vault' kept for backwards compat
 
   /// Whether this was recently used
   bool get isRecent => type == 'recent';
@@ -60,29 +60,30 @@ class WorkingDirectory {
 
 /// Response from the /api/directories endpoint
 class DirectoriesInfo {
-  /// Path to the home vault
-  final String homeVault;
+  /// Path to the home directory
+  final String homeDir;
 
-  /// All available directories (vault + recent)
+  /// All available directories (home + recent)
   final List<WorkingDirectory> directories;
 
   const DirectoriesInfo({
-    required this.homeVault,
+    required this.homeDir,
     required this.directories,
   });
 
-  /// Get just the vault directory
-  WorkingDirectory? get vault =>
-      directories.where((d) => d.isVault).firstOrNull;
+  /// Get the home directory entry
+  WorkingDirectory? get home =>
+      directories.where((d) => d.isHome).firstOrNull;
 
-  /// Get recently used directories (excluding vault)
+  /// Get recently used directories (excluding home)
   List<WorkingDirectory> get recent =>
       directories.where((d) => d.isRecent).toList();
 
   factory DirectoriesInfo.fromJson(Map<String, dynamic> json) {
     final dirList = json['directories'] as List<dynamic>? ?? [];
     return DirectoriesInfo(
-      homeVault: json['homeVault'] as String,
+      // Accept both new 'homeDir' and legacy 'homeVault' keys
+      homeDir: (json['homeDir'] ?? json['homeVault'] ?? '') as String,
       directories: dirList
           .map((d) => WorkingDirectory.fromJson(d as Map<String, dynamic>))
           .toList(),
@@ -90,7 +91,7 @@ class DirectoriesInfo {
   }
 
   Map<String, dynamic> toJson() => {
-        'homeVault': homeVault,
+        'homeDir': homeDir,
         'directories': directories.map((d) => d.toJson()).toList(),
       };
 }

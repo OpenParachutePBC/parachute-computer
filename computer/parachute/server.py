@@ -31,7 +31,7 @@ from parachute.config import get_settings, Settings
 from parachute.core.module_loader import ModuleLoader
 from parachute.core.orchestrator import Orchestrator
 from parachute.core.scheduler import init_scheduler, stop_scheduler
-from parachute.db.database import Database, init_database, close_database
+from parachute.db.graph_sessions import GraphSessionStore
 from parachute.db.graph import GraphService
 from parachute.lib.logger import setup_logging, get_logger
 from parachute.lib.server_config import (
@@ -52,52 +52,62 @@ async def lifespan(app: FastAPI):
     setup_logging(level=settings.log_level)
 
     logger.info(f"Starting Parachute Computer server...")
-    logger.info(f"Vault path: {settings.vault_path}")
+    logger.info(f"Parachute dir: {settings.parachute_dir}")
 
-    # Ensure vault directories exist
-    settings.vault_path.mkdir(parents=True, exist_ok=True)
-    (settings.vault_path / ".parachute").mkdir(exist_ok=True)
+    # Ensure system directories exist
+    settings.parachute_dir.mkdir(parents=True, exist_ok=True)
+    settings.sessions_dir.mkdir(exist_ok=True)
+    settings.modules_dir.mkdir(exist_ok=True)
+    (settings.parachute_dir / "graph").mkdir(exist_ok=True)
+    settings.log_dir.mkdir(exist_ok=True)
 
     # Initialize server config (API keys, auth settings)
-    server_config = init_server_config(settings.vault_path)
+    server_config = init_server_config(settings.parachute_dir)
     app.state.server_config = server_config
     logger.info(f"Auth mode: {server_config.security.require_auth.value}")
     logger.info(f"API keys configured: {len(server_config.security.api_keys)}")
     logger.info(f"Claude token: {'configured' if settings.claude_code_oauth_token else 'not set (run `claude setup-token`)'}")
 
-    # Initialize database
-    db = await init_database(settings.database_path)
-    logger.info(f"Database initialized: {settings.database_path}")
+    # Initialize shared graph database (must come before orchestrator — sessions live here)
+    from parachute.core.migration import migrate_if_needed, migrate_sqlite_to_graph
+    await migrate_if_needed(settings.parachute_dir)
+
+    graph = GraphService(db_path=settings.graph_db_path)
+    await graph.connect()
+
+    # Initialize graph-backed session store and register schema
+    session_store = GraphSessionStore(graph)
+    await session_store.ensure_schema()
+    app.state.graph = graph
+    app.state.session_store = session_store
+    from parachute.core.interfaces import get_registry
+    get_registry().publish("GraphDB", graph)
+    get_registry().publish("SessionStore", session_store)
+    logger.info(f"GraphDB initialized: {settings.graph_db_path}")
+
+    # Run SQLite migration if needed (one-time)
+    old_db = Path.home() / "Parachute" / "Chat" / "sessions.db"
+    await migrate_sqlite_to_graph(old_db, session_store)
 
     # Initialize orchestrator and store in app.state
     orchestrator = Orchestrator(
-        vault_path=settings.vault_path,
-        database=db,
+        parachute_dir=settings.parachute_dir,
+        session_store=session_store,
         settings=settings,
     )
     app.state.orchestrator = orchestrator
     app.state.sandbox = orchestrator.sandbox  # Shared DockerSandbox for health checks
-    app.state.database = db
 
     # Discover existing persistent container env containers
     await orchestrator.reconcile_containers()
 
     # Initialize scheduler for automated tasks
-    scheduler = await init_scheduler(settings.vault_path)
+    scheduler = await init_scheduler(settings.parachute_dir)
     app.state.scheduler = scheduler
     logger.info("Scheduler initialized")
 
-    # Initialize shared graph database (before modules — they register schemas on load)
-    graph_db_path = settings.vault_path / ".brain" / "brain.lbug"
-    graph = GraphService(db_path=graph_db_path)
-    await graph.connect()
-    app.state.graph = graph
-    from parachute.core.interfaces import get_registry
-    get_registry().publish("GraphDB", graph)
-    logger.info(f"GraphDB initialized: {graph_db_path}")
-
-    # Load modules from vault/.modules/
-    module_loader = ModuleLoader(settings.vault_path)
+    # Load modules from ~/.parachute/modules/
+    module_loader = ModuleLoader(settings.parachute_dir)
     modules = await module_loader.discover_and_load()
     app.state.module_loader = module_loader
     app.state.modules = modules
@@ -121,7 +131,7 @@ async def lifespan(app: FastAPI):
     from parachute.core.hooks.runner import HookRunner
     from parachute.api.hooks import init_hooks_api
     try:
-        hook_runner = HookRunner(settings.vault_path)
+        hook_runner = HookRunner(settings.parachute_dir)
         await hook_runner.discover()
         init_hooks_api(hook_runner)
         app.state.hook_runner = hook_runner
@@ -140,7 +150,7 @@ async def lifespan(app: FastAPI):
         Connectors call: orchestrate(session_id, message, source)
         Orchestrator expects: run_streaming(message, session_id, ..., trust_level)
         """
-        session = await db.get_session(session_id)
+        session = await session_store.get_session(session_id)
         trust_level = getattr(session, 'trust_level', None) if session else None
 
         async for event in orchestrator.run_streaming(
@@ -151,12 +161,12 @@ async def lifespan(app: FastAPI):
             yield event
 
     server_ref = SimpleNamespace(
-        database=db,
+        session_store=session_store,
         orchestrator=orchestrator,
         orchestrate=orchestrate,
         hook_runner=app.state.hook_runner,
     )
-    init_bots_api(vault_path=settings.vault_path, server_ref=server_ref)
+    init_bots_api(parachute_dir=settings.parachute_dir, server_ref=server_ref)
 
     # Auto-start enabled bot connectors (errors logged, never crash server)
     await auto_start_connectors()
@@ -196,13 +206,12 @@ async def lifespan(app: FastAPI):
         app.state.orchestrator.pending_permissions.clear()
 
     await stop_scheduler()
-    await close_database()
     if hasattr(app.state, "graph") and app.state.graph:
         await app.state.graph.close()
         app.state.graph = None
     app.state.orchestrator = None
     app.state.sandbox = None
-    app.state.database = None
+    app.state.session_store = None
     app.state.module_loader = None
     app.state.modules = None
     app.state.module_has_router = None
@@ -348,7 +357,7 @@ def main():
           Parachute Computer (Modular Architecture)
 ===============================================================
   Server:  http://{settings.host}:{port}
-  Vault:   {str(settings.vault_path)[:45]}
+  Data:    {str(settings.parachute_dir)[:45]}
 ---------------------------------------------------------------
   API Endpoints:
     GET  /health               - Health check

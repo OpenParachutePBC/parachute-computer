@@ -60,27 +60,9 @@ from parachute.core.module_loader import ModuleLoader, compute_module_hash
 # --- Helpers ---
 
 
-def _get_vault_path() -> Path:
-    """Resolve vault path from env, config.yaml, or default."""
-    path = os.environ.get("VAULT_PATH", "")
-    if path:
-        return Path(path).expanduser().resolve()
-
-    # Check .env for backward compat
-    env = _load_env_file()
-    if "VAULT_PATH" in env:
-        return Path(env["VAULT_PATH"]).expanduser().resolve()
-
-    # Check config.yaml in common locations (~/Parachute or via symlink)
-    home_vault = Path.home() / "Parachute"
-    if (home_vault / ".parachute" / "config.yaml").exists():
-        # Read vault_path from config.yaml to get the canonical path
-        config = _load_yaml_config(home_vault)
-        if "vault_path" in config:
-            return Path(config["vault_path"]).expanduser().resolve()
-        return home_vault.resolve()
-
-    return Path("./vault").resolve()
+def _get_parachute_dir() -> Path:
+    """Return the Parachute system directory (~/.parachute)."""
+    return Path.home() / ".parachute"
 
 
 def _get_server_url() -> str:
@@ -201,7 +183,7 @@ def _process_alive(pid: int) -> bool:
 # --- Migration ---
 
 
-def _migrate_env_to_yaml(vault_path: Path) -> bool:
+def _migrate_env_to_yaml(parachute_dir: Path) -> bool:
     """Migrate .env file to config.yaml. Returns True if migration happened."""
     env_file = _get_env_file()
     if not env_file.exists():
@@ -211,12 +193,11 @@ def _migrate_env_to_yaml(vault_path: Path) -> bool:
     if not env:
         return False
 
-    config_file = get_config_path(vault_path)
-    existing = _load_yaml_config(vault_path)
+    config_file = get_config_path(parachute_dir)
+    existing = _load_yaml_config(parachute_dir)
 
-    # Map env vars to config keys
+    # Map env vars to config keys (vault_path excluded — no longer valid)
     env_to_config = {
-        "VAULT_PATH": "vault_path",
         "PORT": "port",
         "HOST": "host",
         "DEFAULT_MODEL": "default_model",
@@ -242,12 +223,12 @@ def _migrate_env_to_yaml(vault_path: Path) -> bool:
     # Handle token separately
     token = env.get("CLAUDE_CODE_OAUTH_TOKEN")
     if token:
-        save_token(vault_path, token)
-        print(f"  Migrated token to {vault_path / '.parachute' / '.token'}")
+        save_token(parachute_dir, token)
+        print(f"  Migrated token to {parachute_dir / '.token'}")
 
     if migrated:
         config_data = {**existing, **migrated}
-        save_yaml_config(vault_path, config_data)
+        save_yaml_config(parachute_dir, config_data)
         print(f"  Migrated {len(migrated)} settings to {config_file}")
 
     # Rename .env to .env.migrated
@@ -258,9 +239,10 @@ def _migrate_env_to_yaml(vault_path: Path) -> bool:
     return True
 
 
-def _migrate_server_yaml(vault_path: Path) -> bool:
+def _migrate_server_yaml(parachute_dir: Path) -> bool:
     """Migrate server.yaml fields into config.yaml. Returns True if migration happened."""
-    server_yaml = vault_path / ".parachute" / "server.yaml"
+    # Check legacy location first
+    server_yaml = Path.home() / "Parachute" / ".parachute" / "server.yaml"
     if not server_yaml.exists():
         return False
 
@@ -270,7 +252,7 @@ def _migrate_server_yaml(vault_path: Path) -> bool:
     except Exception:
         return False
 
-    existing = _load_yaml_config(vault_path)
+    existing = _load_yaml_config(parachute_dir)
     migrated = {}
 
     # Migrate security.require_auth -> auth_mode
@@ -287,7 +269,7 @@ def _migrate_server_yaml(vault_path: Path) -> bool:
 
     if migrated:
         config_data = {**existing, **migrated}
-        save_yaml_config(vault_path, config_data)
+        save_yaml_config(parachute_dir, config_data)
         print(f"  Merged {len(migrated)} fields from server.yaml into config.yaml")
         return True
 
@@ -302,37 +284,21 @@ def cmd_install(args: argparse.Namespace) -> None:
     print("Parachute Install")
     print("=" * 40)
 
-    # 1. Vault path
-    current_vault = os.environ.get("VAULT_PATH", "")
-    default_vault = str(Path.home() / "Parachute")
-
-    if not current_vault:
-        # Check if we have one from .env migration
-        env = _load_env_file()
-        current_vault = env.get("VAULT_PATH", "")
-
-    prompt_default = current_vault or default_vault
-    print(f"\nVault path [{prompt_default}]: ", end="")
-    vault_input = input().strip()
-    vault_str = vault_input or prompt_default
-    vault_path = Path(vault_str).expanduser().resolve()
-
-    # Ensure vault and config dir exist
-    vault_path.mkdir(parents=True, exist_ok=True)
-    (vault_path / ".parachute").mkdir(exist_ok=True)
-    (vault_path / ".parachute" / "logs").mkdir(exist_ok=True)
-    print(f"  Vault: {vault_path}")
+    # 1. Set up ~/.parachute/
+    parachute_dir = _get_parachute_dir()
+    parachute_dir.mkdir(parents=True, exist_ok=True)
+    (parachute_dir / "logs").mkdir(exist_ok=True)
+    print(f"  Config dir: {parachute_dir}")
 
     # 2. Migrate existing configs
     print("\nChecking for existing configuration...")
-    migrated_env = _migrate_env_to_yaml(vault_path)
-    migrated_server = _migrate_server_yaml(vault_path)
+    migrated_env = _migrate_env_to_yaml(parachute_dir)
+    migrated_server = _migrate_server_yaml(parachute_dir)
     if not migrated_env and not migrated_server:
         print("  No existing config to migrate.")
 
     # 3. Load current config (may have just been migrated)
-    config = _load_yaml_config(vault_path)
-    config["vault_path"] = str(vault_path)
+    config = _load_yaml_config(parachute_dir)
 
     # 4. Port
     current_port = config.get("port", 3333)
@@ -349,7 +315,7 @@ def cmd_install(args: argparse.Namespace) -> None:
     # 5. Claude token
     from parachute.config import _load_token
 
-    existing_token = _load_token(vault_path) or os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
+    existing_token = _load_token(parachute_dir) or os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
     has_token = bool(existing_token)
 
     print(f"\nClaude token: {'configured' if has_token else 'not set'}")
@@ -368,7 +334,7 @@ def cmd_install(args: argparse.Namespace) -> None:
         print("\nCLAUDE_CODE_OAUTH_TOKEN: ", end="")
         token = input().strip()
         if token:
-            save_token(vault_path, token)
+            save_token(parachute_dir, token)
             print("  Token saved.")
         else:
             print("  Skipped (you can set this later).")
@@ -415,7 +381,7 @@ def cmd_install(args: argparse.Namespace) -> None:
             print("  Then log out and back in for group changes to take effect.")
 
     # 7. Save config
-    config_file = save_yaml_config(vault_path, config)
+    config_file = save_yaml_config(parachute_dir, config)
     print(f"\nConfig written to {config_file}")
 
     # 8. Install and start main server daemon
@@ -423,7 +389,7 @@ def cmd_install(args: argparse.Namespace) -> None:
     try:
         from parachute.daemon import get_daemon_manager
 
-        daemon = get_daemon_manager(vault_path, config)
+        daemon = get_daemon_manager(parachute_dir, config)
         daemon.install()
         print("  Main server daemon installed.")
 
@@ -439,7 +405,7 @@ def cmd_install(args: argparse.Namespace) -> None:
     try:
         from parachute.daemon import get_supervisor_daemon_manager
 
-        supervisor_daemon = get_supervisor_daemon_manager(vault_path, config)
+        supervisor_daemon = get_supervisor_daemon_manager(parachute_dir, config)
         supervisor_daemon.install()
         print("  Supervisor daemon installed.")
 
@@ -579,13 +545,13 @@ def cmd_update(args: argparse.Namespace) -> None:
     print("  Dependencies updated.")
 
     # 3. Restart main server daemon if running (deps already installed above)
-    vault_path = _get_vault_path()
-    config = _load_yaml_config(vault_path)
+    parachute_dir = _get_parachute_dir()
+    config = _load_yaml_config(parachute_dir)
 
     try:
         from parachute.daemon import get_daemon_manager
 
-        daemon = get_daemon_manager(vault_path, config)
+        daemon = get_daemon_manager(parachute_dir, config)
         status = daemon.status()
 
         if status.get("running"):
@@ -606,7 +572,7 @@ def cmd_update(args: argparse.Namespace) -> None:
     try:
         from parachute.daemon import get_supervisor_daemon_manager
 
-        supervisor_daemon = get_supervisor_daemon_manager(vault_path, config)
+        supervisor_daemon = get_supervisor_daemon_manager(parachute_dir, config)
         supervisor_status = supervisor_daemon.status()
 
         if supervisor_code_changed and supervisor_status.get("running"):
@@ -684,8 +650,8 @@ def _server_foreground() -> None:
         if key not in os.environ:
             os.environ[key] = value
 
-    vault_path = _get_vault_path()
-    yaml_config = _load_yaml_config(vault_path)
+    parachute_dir = _get_parachute_dir()
+    yaml_config = _load_yaml_config(parachute_dir)
 
     port = int(os.environ.get("PORT", yaml_config.get("port", 3333)))
     host = os.environ.get("HOST", yaml_config.get("host", "0.0.0.0"))
@@ -694,19 +660,16 @@ def _server_foreground() -> None:
     if not os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"):
         from parachute.config import _load_token
 
-        token = _load_token(vault_path)
+        token = _load_token(parachute_dir)
         if token:
             os.environ["CLAUDE_CODE_OAUTH_TOKEN"] = token
-
-    if not os.environ.get("VAULT_PATH"):
-        os.environ["VAULT_PATH"] = str(vault_path)
 
     token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
     if not token:
         print("Warning: CLAUDE_CODE_OAUTH_TOKEN not set. Chat will not work.")
         print("Run 'parachute install' to configure.\n")
 
-    print(f"Starting Parachute on {host}:{port} (vault: {vault_path})")
+    print(f"Starting Parachute on {host}:{port}")
 
     try:
         import uvicorn
@@ -722,13 +685,13 @@ def _server_foreground() -> None:
 
 def _server_start() -> None:
     """Start the server as a background daemon."""
-    vault_path = _get_vault_path()
-    config = _load_yaml_config(vault_path)
+    parachute_dir = _get_parachute_dir()
+    config = _load_yaml_config(parachute_dir)
 
     try:
         from parachute.daemon import get_daemon_manager
 
-        daemon = get_daemon_manager(vault_path, config)
+        daemon = get_daemon_manager(parachute_dir, config)
 
         if not daemon.is_installed():
             print("Daemon not installed. Falling back to foreground mode.")
@@ -763,14 +726,14 @@ def _server_start() -> None:
 
 def _server_stop() -> None:
     """Stop the daemon and any rogue process on the port."""
-    vault_path = _get_vault_path()
-    config = _load_yaml_config(vault_path)
+    parachute_dir = _get_parachute_dir()
+    config = _load_yaml_config(parachute_dir)
     port = config.get("port", 3333)
 
     try:
         from parachute.daemon import get_daemon_manager
 
-        daemon = get_daemon_manager(vault_path, config)
+        daemon = get_daemon_manager(parachute_dir, config)
         daemon.stop()
     except Exception as e:
         print(f"Failed to stop daemon: {e}")
@@ -787,8 +750,8 @@ def _server_stop() -> None:
 
 def _server_restart() -> None:
     """Restart the daemon, reinstalling deps first to ensure everything is current."""
-    vault_path = _get_vault_path()
-    config = _load_yaml_config(vault_path)
+    parachute_dir = _get_parachute_dir()
+    config = _load_yaml_config(parachute_dir)
     port = config.get("port", 3333)
 
     # Reinstall dependencies to pick up any changes (new deps, updates, etc.)
@@ -811,7 +774,7 @@ def _server_restart() -> None:
     try:
         from parachute.daemon import get_daemon_manager
 
-        daemon = get_daemon_manager(vault_path, config)
+        daemon = get_daemon_manager(parachute_dir, config)
         daemon.stop()
         time.sleep(1)
 
@@ -854,14 +817,14 @@ def _server_restart() -> None:
 
 def _server_status() -> None:
     """Show daemon status with HTTP health correlation."""
-    vault_path = _get_vault_path()
-    config = _load_yaml_config(vault_path)
+    parachute_dir = _get_parachute_dir()
+    config = _load_yaml_config(parachute_dir)
     port = config.get("port", 3333)
 
     try:
         from parachute.daemon import get_daemon_manager
 
-        daemon = get_daemon_manager(vault_path, config)
+        daemon = get_daemon_manager(parachute_dir, config)
         status = daemon.status()
 
         # Check actual HTTP health
@@ -907,18 +870,18 @@ def _server_status() -> None:
 
 def cmd_status(args: argparse.Namespace) -> None:
     """Show system status: vault, token, server, modules."""
-    vault_path = _get_vault_path()
+    parachute_dir = _get_parachute_dir()
     server_url = _get_server_url()
 
     print("Parachute Status")
     print("=" * 40)
 
-    # Vault
-    vault_exists = vault_path.exists()
-    print(f"\nVault: {vault_path}")
-    print(f"  exists: {'yes' if vault_exists else 'NO'}")
-    if vault_exists:
-        modules_dir = vault_path / ".modules"
+    # System dir
+    parachute_dir_exists = parachute_dir.exists()
+    print(f"\nConfig dir: {parachute_dir}")
+    print(f"  exists: {'yes' if parachute_dir_exists else 'NO'}")
+    if parachute_dir_exists:
+        modules_dir = parachute_dir / "modules"
         if modules_dir.exists():
             module_count = sum(1 for d in modules_dir.iterdir() if d.is_dir())
             print(f"  modules: {module_count}")
@@ -928,7 +891,7 @@ def cmd_status(args: argparse.Namespace) -> None:
 
     token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
     if not token:
-        token = _load_token(vault_path) or ""
+        token = _load_token(parachute_dir) or ""
     if not token:
         env = _load_env_file()
         token = env.get("CLAUDE_CODE_OAUTH_TOKEN", "")
@@ -1173,13 +1136,13 @@ def cmd_sandbox(args: argparse.Namespace) -> None:
 def cmd_supervisor(args: argparse.Namespace) -> None:
     """Manage the supervisor daemon."""
     action = getattr(args, "action", None)
-    vault_path = _get_vault_path()
-    config = _load_yaml_config(vault_path)
+    parachute_dir = _get_parachute_dir()
+    config = _load_yaml_config(parachute_dir)
 
     try:
         from parachute.daemon import get_supervisor_daemon_manager
 
-        daemon = get_supervisor_daemon_manager(vault_path, config)
+        daemon = get_supervisor_daemon_manager(parachute_dir, config)
 
         if action == "install":
             daemon.install()
@@ -1228,7 +1191,7 @@ def cmd_supervisor(args: argparse.Namespace) -> None:
 
 def cmd_logs(args: argparse.Namespace) -> None:
     """Tail daemon log output."""
-    vault_path = _get_vault_path()
+    parachute_dir = _get_parachute_dir()
     lines = getattr(args, "lines", 50)
     follow = getattr(args, "follow", True)
 
@@ -1277,8 +1240,8 @@ def cmd_logs(args: argparse.Namespace) -> None:
 
 def cmd_doctor(args: argparse.Namespace) -> None:
     """Run diagnostics and report pass/warn/fail for each check."""
-    vault_path = _get_vault_path()
-    config = _load_yaml_config(vault_path)
+    parachute_dir = _get_parachute_dir()
+    config = _load_yaml_config(parachute_dir)
     port = config.get("port", 3333)
     results = []
 
@@ -1310,19 +1273,19 @@ def cmd_doctor(args: argparse.Namespace) -> None:
 
     check("Package installed", check_package)
 
-    # 3. Vault path
-    def check_vault():
-        if not vault_path.exists():
-            return False, f"{vault_path} does not exist"
-        if not os.access(vault_path, os.W_OK):
-            return False, f"{vault_path} not writable"
-        return True, str(vault_path)
+    # 3. Config dir
+    def check_config_dir():
+        if not parachute_dir.exists():
+            return False, f"{parachute_dir} does not exist (run: parachute install)"
+        if not os.access(parachute_dir, os.W_OK):
+            return False, f"{parachute_dir} not writable"
+        return True, str(parachute_dir)
 
-    check("Vault path", check_vault)
+    check("Config dir", check_config_dir)
 
     # 4. Config file
     def check_config():
-        config_file = get_config_path(vault_path)
+        config_file = get_config_path(parachute_dir)
         if not config_file.exists():
             return False, "config.yaml not found (run: parachute install)"
         try:
@@ -1338,7 +1301,7 @@ def cmd_doctor(args: argparse.Namespace) -> None:
     def check_token():
         from parachute.config import _load_token
 
-        token = _load_token(vault_path) or os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
+        token = _load_token(parachute_dir) or os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
         if token:
             return True, f"{token[:12]}..."
         return False, "no token found (run: parachute install)"
@@ -1404,13 +1367,12 @@ def cmd_doctor(args: argparse.Namespace) -> None:
 
     # 9. Disk space
     def check_disk():
-        if vault_path.exists():
-            stat = os.statvfs(vault_path)
-            free_gb = (stat.f_bavail * stat.f_frsize) / (1024 ** 3)
-            if free_gb < 1.0:
-                return False, f"{free_gb:.1f} GB free (< 1 GB)"
-            return True, f"{free_gb:.1f} GB free"
-        return False, "vault path does not exist"
+        check_path = parachute_dir if parachute_dir.exists() else Path.home()
+        stat = os.statvfs(check_path)
+        free_gb = (stat.f_bavail * stat.f_frsize) / (1024 ** 3)
+        if free_gb < 1.0:
+            return False, f"{free_gb:.1f} GB free (< 1 GB)"
+        return True, f"{free_gb:.1f} GB free"
 
     check("Disk space", check_disk)
 
@@ -1450,10 +1412,10 @@ def cmd_config(args: argparse.Namespace) -> None:
 
 def _config_show() -> None:
     """Show current config with effective values."""
-    vault_path = _get_vault_path()
-    config = _load_yaml_config(vault_path)
+    parachute_dir = _get_parachute_dir()
+    config = _load_yaml_config(parachute_dir)
 
-    print(f"\nConfig: {get_config_path(vault_path)}")
+    print(f"\nConfig: {get_config_path(parachute_dir)}")
     print("-" * 40)
 
     if not config:
@@ -1475,8 +1437,8 @@ def _config_show() -> None:
     # Show token status
     from parachute.config import _load_token
 
-    token = _load_token(vault_path)
-    print(f"\n  token: {'configured' if token else 'not set'} ({vault_path / '.parachute' / '.token'})")
+    token = _load_token(parachute_dir)
+    print(f"\n  token: {'configured' if token else 'not set'} ({parachute_dir / '.token'})")
 
 
 def _config_set(key: str, value: str) -> None:
@@ -1490,8 +1452,8 @@ def _config_set(key: str, value: str) -> None:
         print(f"Valid keys: {', '.join(sorted(CONFIG_KEYS))}")
         sys.exit(1)
 
-    vault_path = _get_vault_path()
-    config = _load_yaml_config(vault_path)
+    parachute_dir = _get_parachute_dir()
+    config = _load_yaml_config(parachute_dir)
 
     # Type conversion
     if key == "port":
@@ -1504,15 +1466,15 @@ def _config_set(key: str, value: str) -> None:
         value = value.lower() in ("true", "1", "yes")
 
     config[key] = value
-    save_yaml_config(vault_path, config)
+    save_yaml_config(parachute_dir, config)
     print(f"Set {key} = {value}")
     print("Note: Restart the server for changes to take effect.")
 
 
 def _config_get(key: str) -> None:
     """Get a single config value."""
-    vault_path = _get_vault_path()
-    config = _load_yaml_config(vault_path)
+    parachute_dir = _get_parachute_dir()
+    config = _load_yaml_config(parachute_dir)
 
     # Check env override first
     env_val = os.environ.get(key.upper()) or os.environ.get(key)
@@ -1532,15 +1494,15 @@ def _config_get(key: str) -> None:
 
 def cmd_module_list(args: argparse.Namespace) -> None:
     """List modules from vault (offline — no server needed)."""
-    vault_path = _get_vault_path()
-    loader = ModuleLoader(vault_path)
+    parachute_dir = _get_parachute_dir()
+    loader = ModuleLoader(parachute_dir)
     modules = loader.scan_offline_status()
 
     if not modules:
         print("No modules found.")
         return
 
-    modules_dir = vault_path / ".modules"
+    modules_dir = parachute_dir / "modules"
     print(f"\nModules in {modules_dir}/:\n")
 
     name_width = max(len(m["name"]) for m in modules)
@@ -1573,8 +1535,8 @@ def cmd_module_list(args: argparse.Namespace) -> None:
 
 def cmd_module_approve(args: argparse.Namespace) -> None:
     """Approve a module by recording its hash (offline)."""
-    vault_path = _get_vault_path()
-    modules_dir = vault_path / ".modules"
+    parachute_dir = _get_parachute_dir()
+    modules_dir = parachute_dir / "modules"
 
     module_dir = modules_dir / args.name
     if not module_dir.exists():
@@ -1584,7 +1546,7 @@ def cmd_module_approve(args: argparse.Namespace) -> None:
     current_hash = compute_module_hash(module_dir)
 
     # Use ModuleLoader to load/save hashes consistently
-    loader = ModuleLoader(vault_path)
+    loader = ModuleLoader(parachute_dir)
     known_hashes = loader._load_known_hashes()
     known_hashes[args.name] = current_hash
     loader._save_known_hashes(known_hashes)
@@ -1791,8 +1753,8 @@ def _bot_status() -> None:
 
     except (URLError, OSError):
         # Offline fallback — read bots.yaml directly
-        vault_path = _get_vault_path()
-        config_path = vault_path / ".parachute" / "bots.yaml"
+        parachute_dir = _get_parachute_dir()
+        config_path = parachute_dir / "bots.yaml"
 
         if not config_path.exists():
             print("No bot configuration found.")
@@ -1866,8 +1828,8 @@ def _bot_config_show() -> None:
         data = _api_get(f"{server_url}/api/bots/config")
     except (URLError, OSError):
         # Offline fallback
-        vault_path = _get_vault_path()
-        config_path = vault_path / ".parachute" / "bots.yaml"
+        parachute_dir = _get_parachute_dir()
+        config_path = parachute_dir / "bots.yaml"
         if not config_path.exists():
             print("No bot configuration found.")
             return
@@ -1966,8 +1928,8 @@ def _bot_config_set(key: str, value: str) -> None:
         print(f"Set {key} = {value}")
     except URLError:
         # Offline: write directly to bots.yaml
-        vault_path = _get_vault_path()
-        config_path = vault_path / ".parachute" / "bots.yaml"
+        parachute_dir = _get_parachute_dir()
+        config_path = parachute_dir / "bots.yaml"
         config_path.parent.mkdir(parents=True, exist_ok=True)
 
         existing = {}
@@ -2063,8 +2025,8 @@ def _bot_users() -> None:
         data = _api_get(f"{server_url}/api/bots/config")
     except (URLError, OSError):
         # Offline fallback
-        vault_path = _get_vault_path()
-        config_path = vault_path / ".parachute" / "bots.yaml"
+        parachute_dir = _get_parachute_dir()
+        config_path = parachute_dir / "bots.yaml"
         if not config_path.exists():
             print("No bot configuration found.")
             return

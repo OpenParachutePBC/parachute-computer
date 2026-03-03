@@ -8,13 +8,13 @@ Provides endpoints for:
 """
 
 import logging
+from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
-from parachute.config import get_settings
-from parachute.core.context_folders import ContextFolderService, get_context_folder_service
+from parachute.core.context_folders import get_context_folder_service
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -76,9 +76,7 @@ async def list_context_folders(request: Request):
 
     These are the folders that can be selected as context for a session.
     """
-    settings = get_settings()
-    service = get_context_folder_service(settings.vault_path)
-
+    service = get_context_folder_service(Path.home())
     try:
         folders = service.discover_folders()
 
@@ -111,9 +109,7 @@ async def get_context_chain(
 
     This includes parent folders' AGENTS.md files up to the vault root.
     """
-    settings = get_settings()
-    service = get_context_folder_service(settings.vault_path)
-
+    service = get_context_folder_service(Path.home())
     try:
         folder_list = [f.strip() for f in folders.split(",") if f.strip()]
         chain = service.build_chain(folder_list, max_tokens=max_tokens)
@@ -146,7 +142,7 @@ async def get_session_contexts(
     """
     Get the context folders configured for a session.
     """
-    db = request.app.state.database
+    db = request.app.state.session_store
 
     try:
         folder_paths = await db.get_session_contexts(session_id)
@@ -157,8 +153,7 @@ async def get_session_contexts(
         )
 
         if include_chain and folder_paths:
-            settings = get_settings()
-            service = get_context_folder_service(settings.vault_path)
+            service = get_context_folder_service(Path.home())
             chain = service.build_chain(folder_paths)
 
             result.chain = ContextChainResponse(
@@ -191,7 +186,7 @@ async def set_session_contexts(
     """
     Set the context folders for a session (replaces existing).
     """
-    db = request.app.state.database
+    db = request.app.state.session_store
 
     try:
         await db.set_session_contexts(session_id, body.folder_paths)
@@ -214,7 +209,7 @@ async def add_session_context(
     """
     Add a context folder to a session.
     """
-    db = request.app.state.database
+    db = request.app.state.session_store
 
     try:
         await db.add_session_context(session_id, folder_path)
@@ -238,7 +233,7 @@ async def remove_session_context(
     """
     Remove a context folder from a session.
     """
-    db = request.app.state.database
+    db = request.app.state.session_store
 
     try:
         await db.remove_session_context(session_id, folder_path)

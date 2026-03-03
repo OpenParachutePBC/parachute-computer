@@ -42,11 +42,11 @@ def verify_module(module_dir: Path, known_hash: str) -> bool:
 
 
 class ModuleLoader:
-    def __init__(self, vault_path: Path):
-        self.vault_path = vault_path
+    def __init__(self, parachute_dir: Path):
+        self.parachute_dir = parachute_dir
         self.builtin_dir = Path(__file__).parent.parent.parent / "modules"
-        self.modules_dir = vault_path / ".modules"
-        self._hash_file = vault_path / ".parachute" / "module_hashes.json"
+        self.modules_dir = parachute_dir / "modules"
+        self._hash_file = parachute_dir / "module_hashes.json"
         self._known_hashes: dict[str, str] = {}
         self._pending_approval: dict[str, dict] = {}  # name -> {hash, path}
         self._builtin_names: set[str] = set()  # names loaded from builtin_dir
@@ -239,7 +239,8 @@ class ModuleLoader:
         for attr_name in dir(py_module):
             attr = getattr(py_module, attr_name)
             if isinstance(attr, type) and hasattr(attr, 'name') and attr.name == name:
-                instance = attr(vault_path=self.vault_path)
+                # Pass home dir as vault_path (user data root) and parachute_dir for system data
+                instance = attr(vault_path=Path.home(), parachute_dir=self.parachute_dir)
                 instance.manifest = manifest
                 if hasattr(instance, 'on_load') and asyncio.iscoroutinefunction(instance.on_load):
                     await instance.on_load()

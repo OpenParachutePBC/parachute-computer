@@ -95,7 +95,7 @@ async def get_module_prompt(mod: str) -> dict[str, Any]:
     settings = get_settings()
 
     module_name = _validate_module_name(mod)
-    prompt_path = settings.vault_path / module_name / "CLAUDE.md"
+    prompt_path = Path.home() / module_name / "CLAUDE.md"
 
     content = None
     exists = False
@@ -119,7 +119,7 @@ async def update_module_prompt(mod: str, body: ModulePromptUpdate) -> dict[str, 
     settings = get_settings()
 
     module_name = _validate_module_name(mod)
-    prompt_path = settings.vault_path / module_name / "CLAUDE.md"
+    prompt_path = Path.home() / module_name / "CLAUDE.md"
 
     if body.reset:
         if prompt_path.exists():
@@ -140,7 +140,7 @@ async def get_module_stats(mod: str) -> dict[str, Any]:
     settings = get_settings()
 
     module_name = _validate_module_name(mod)
-    module_path = settings.vault_path / module_name
+    module_path = Path.home() / module_name
 
     if not module_path.exists():
         raise HTTPException(status_code=404, detail=f"Module '{mod}' not found")

@@ -41,12 +41,9 @@ def main():
     try:
         from parachute.config import get_settings
         settings = get_settings()
-        vault_path = settings.vault_path
+        profile_path = settings.parachute_dir / "profile.md"
     except Exception:
-        # Fallback: standard vault location
-        vault_path = Path.home() / "Parachute"
-
-    profile_path = vault_path / ".parachute" / "profile.md"
+        profile_path = Path.home() / ".parachute" / "profile.md"
 
     if not profile_path.exists():
         return

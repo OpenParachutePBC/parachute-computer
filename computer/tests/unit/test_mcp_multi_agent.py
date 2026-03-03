@@ -7,14 +7,13 @@ spawn limits, and content validation.
 
 import asyncio
 import os
-import tempfile
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from parachute.db.database import Database, init_database
+from parachute.db.graph_sessions import GraphSessionStore
 from parachute.models.session import Session, SessionCreate, SessionSource, TrustLevel
 from parachute.mcp_server import (
     SessionContext,
@@ -29,18 +28,15 @@ from parachute.mcp_server import (
 
 
 @pytest.fixture
-async def db():
-    """Create a temporary test database."""
-    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
-        db_path = Path(f.name)
+async def db(tmp_path):
+    """Create a temporary test graph session store."""
+    from parachute.db.graph import GraphService
 
-    try:
-        database = await init_database(db_path)
-        yield database
-    finally:
-        await database.close()
-        if db_path.exists():
-            db_path.unlink()
+    graph = GraphService(db_path=tmp_path / "test.kz")
+    await graph.connect()
+    store = GraphSessionStore(graph)
+    await store.ensure_schema()
+    yield store
 
 
 @pytest.fixture
@@ -53,7 +49,7 @@ def vault_path(tmp_path):
 
 
 @pytest.fixture
-async def parent_session(db: Database):
+async def parent_session(db: GraphSessionStore):
     """Create a parent session in the test database."""
     session_create = SessionCreate(
         id="parent_sess_abc123",
@@ -126,10 +122,9 @@ class TestSessionContext:
 
 class TestCreateSession:
     @pytest.mark.asyncio
-    async def test_create_session_success(self, db, parent_session, session_context_direct, vault_path):
+    async def test_create_session_success(self, db, parent_session, session_context_direct):
         """Test successful child session creation."""
         with patch("parachute.mcp_server._session_context", session_context_direct), \
-             patch("parachute.mcp_server._vault_path", vault_path), \
              patch("parachute.mcp_server.get_db", return_value=db):
 
             result = await create_session(
@@ -225,14 +220,13 @@ class TestCreateSession:
             assert "control characters" in result["error"]
 
     @pytest.mark.asyncio
-    async def test_create_session_spawn_limit(self, db, parent_session, session_context_direct, vault_path):
+    async def test_create_session_spawn_limit(self, db, parent_session, session_context_direct):
         """Test create_session enforces spawn limit (max 10 children)."""
         # Mock get_last_child_created to return an old timestamp so rate limiter doesn't trigger
         old_timestamp = datetime.now(timezone.utc) - timedelta(seconds=5)
         db.get_last_child_created = AsyncMock(return_value=old_timestamp)
 
         with patch("parachute.mcp_server._session_context", session_context_direct), \
-             patch("parachute.mcp_server._vault_path", vault_path), \
              patch("parachute.mcp_server.get_db", return_value=db):
 
             # Create 10 child sessions
@@ -255,10 +249,9 @@ class TestCreateSession:
             assert "Spawn limit reached" in result["error"]
 
     @pytest.mark.asyncio
-    async def test_create_session_rate_limiting(self, db, parent_session, session_context_direct, vault_path):
+    async def test_create_session_rate_limiting(self, db, parent_session, session_context_direct):
         """Test create_session enforces rate limiting (1/second)."""
         with patch("parachute.mcp_server._session_context", session_context_direct), \
-             patch("parachute.mcp_server._vault_path", vault_path), \
              patch("parachute.mcp_server.get_db", return_value=db):
 
             # First session succeeds

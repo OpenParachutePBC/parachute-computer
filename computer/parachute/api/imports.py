@@ -23,9 +23,8 @@ def get_import_service(request: Request) -> ImportService:
     orchestrator = request.app.state.orchestrator
     if not orchestrator:
         raise HTTPException(status_code=503, detail="Server not ready")
-    vault_path = str(orchestrator.vault_path)
-    database = request.app.state.database
-    return ImportService(vault_path, database)
+    session_store = request.app.state.session_store
+    return ImportService(str(Path.home()), session_store)
 
 
 class ImportResponse(BaseModel):
@@ -181,11 +180,9 @@ async def sync_sdk_sessions(
     if not orchestrator:
         raise HTTPException(status_code=503, detail="Server not ready")
 
-    database = request.app.state.database
-    vault_path = str(orchestrator.vault_path)
-
-    # Compute the SDK projects directory for this vault's Chat module
-    working_directory = str(Path(vault_path) / "Chat")
+    database = request.app.state.session_store
+    # Compute the SDK projects directory for the Chat module
+    working_directory = str(Path.home() / "Chat")
     encoded_dir = working_directory.replace("/", "-")
     sdk_dir = Path.home() / ".claude" / "projects" / encoded_dir
 
@@ -270,20 +267,12 @@ async def sync_sdk_sessions(
 
             if already_exists and force:
                 # Update existing session with correct timestamps
-                await database.connection.execute(
-                    """
-                    UPDATE sessions
-                    SET created_at = ?, last_accessed = ?, message_count = ?
-                    WHERE id = ?
-                    """,
-                    (
-                        (created_at or now).isoformat(),
-                        (last_accessed or now).isoformat(),
-                        message_count,
-                        session_id,
-                    ),
+                await database.patch_session_timestamps(
+                    session_id,
+                    created_at=(created_at or now).isoformat(),
+                    last_accessed=(last_accessed or now).isoformat(),
+                    message_count=message_count,
                 )
-                await database.connection.commit()
                 logger.info(f"[Sync] Updated timestamps for session: {session_id}")
                 updated += 1
             else:
@@ -341,10 +330,8 @@ async def list_context_files(request: Request) -> ContextFilesResponse:
     if not orchestrator:
         raise HTTPException(status_code=503, detail="Server not ready")
 
-    vault_path = Path(orchestrator.vault_path)
-
     from ..core.context_parser import ContextParser
-    parser = ContextParser(vault_path)
+    parser = ContextParser(Path.home())
 
     files = parser.list_context_files()
 

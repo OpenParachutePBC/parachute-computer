@@ -219,10 +219,9 @@ async def append_activity_log(
     from parachute.config import get_settings
 
     settings = get_settings()
-    vault_path = settings.vault_path
 
     today = datetime.utcnow().strftime("%Y-%m-%d")
-    log_dir = vault_path / "Daily" / ".activity"
+    log_dir = Path.home() / "Daily" / ".activity"
     log_dir.mkdir(parents=True, exist_ok=True)
     log_file = log_dir / f"{today}.jsonl"
 

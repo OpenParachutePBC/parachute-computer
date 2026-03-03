@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from parachute.db.database import Database
+from parachute.db.graph_sessions import GraphSessionStore
 from parachute.models.session import (
     ResumeInfo,
     Session,
@@ -28,96 +28,85 @@ logger = logging.getLogger(__name__)
 
 class SessionManager:
     """
-    Manages chat sessions using SQLite for metadata.
+    Manages chat sessions using Kuzu graph database for metadata.
 
     Key design decisions:
     - SDK session ID is the ONLY identifier (no separate Parachute session ID)
     - Messages are stored in SDK JSONL files, not our database
     - We store metadata for indexing and quick listing
-    - working_directory is stored as /vault/... in the DB (normalized for portability)
-    - SDK CWD uses the real vault host path (resolve_working_directory)
-    - Empty/null working_directory means vault root
+    - working_directory is stored as real absolute path
+    - SDK CWD uses the real host path (resolve_working_directory)
+    - Empty/null working_directory means user's home directory
     """
 
-    def __init__(self, vault_path: Path, database: Database):
+    def __init__(self, parachute_dir: Path, session_store: GraphSessionStore):
         """Initialize session manager."""
-        self.vault_path = vault_path
-        self.db = database
+        self.parachute_dir = parachute_dir
+        self.session_store = session_store
+        self.db = session_store  # Backward-compat alias
 
     def resolve_working_directory(self, working_directory: Optional[str]) -> Path:
         """
         Resolve a working_directory to an absolute path.
 
         Args:
-            working_directory: Path in /vault/... format, legacy relative path,
-                              or legacy absolute path. None or empty means vault root.
+            working_directory: Real absolute path, /vault/... legacy path,
+                              or relative path. None or empty means user home dir.
 
         Returns:
             Absolute Path for use with SDK (which requires absolute paths).
-            Falls back to vault root if the resolved path escapes the vault.
+            Falls back to home dir if the path doesn't exist.
         """
+        home = Path.home()
         if not working_directory:
-            return self.vault_path
+            return home
 
         wd_path = Path(working_directory)
         if wd_path.is_absolute():
             if str(wd_path).startswith("/vault/"):
-                # /vault/... paths from Docker convention — translate to real vault path
+                # Legacy /vault/... paths — translate to home dir
                 relative = str(wd_path)[len("/vault/"):]
-                resolved = self.vault_path / relative
+                resolved = home / relative
             else:
-                # Legacy absolute paths (e.g., /Volumes/...) — use as-is
+                # Real absolute path — use as-is
                 resolved = wd_path
         else:
-            # Relative path (e.g., "Projects/foo") — prepend vault path
-            resolved = self.vault_path / wd_path
-
-        # Validate resolved path doesn't escape vault (e.g., via ../../../)
-        try:
-            resolved_real = resolved.resolve()
-            vault_real = self.vault_path.resolve()
-            if not str(resolved_real).startswith(str(vault_real)):
-                logger.warning(f"Working directory escapes vault: {working_directory}")
-                return self.vault_path
-        except Exception:
-            pass  # If resolution fails, use the original path
+            # Relative path — prepend home dir
+            resolved = home / wd_path
 
         return resolved
 
     def normalize_working_directory(self, working_directory: Optional[str]) -> Optional[str]:
         """
-        Convert a working_directory to /vault/... format for storage.
+        Normalize a working_directory for storage.
 
-        Args:
-            working_directory: Absolute host path, relative path, or /vault/... path.
+        After the vault→home migration, working directories are stored as real
+        absolute paths. Legacy /vault/... paths are converted to home-relative paths.
 
         Returns:
-            /vault/... path string, or None if it's the vault root.
+            Real absolute path string, or None if it's the home root.
         """
         if not working_directory:
             return None
 
+        home = Path.home()
         wd_path = Path(working_directory)
 
         if not wd_path.is_absolute():
-            # Relative path (e.g., "Projects/foo") → /vault/Projects/foo
-            result = str(Path("/vault") / wd_path)
-            return result if result != "/vault" else None
+            # Relative path — make absolute relative to home
+            abs_path = home / wd_path
+            return str(abs_path) if str(abs_path) != str(home) else None
 
-        # Already /vault/... — keep as-is
-        if working_directory.startswith("/vault"):
-            return working_directory if working_directory != "/vault" else None
+        # Legacy /vault/... path — convert to home-relative absolute path
+        if working_directory.startswith("/vault/"):
+            relative = working_directory[len("/vault/"):]
+            abs_path = home / relative
+            return str(abs_path)
+        if working_directory == "/vault":
+            return None
 
-        # Absolute host path (e.g., /Users/user/Parachute/Projects/foo) → /vault/...
-        try:
-            rel_path = wd_path.relative_to(self.vault_path)
-            if str(rel_path) == ".":
-                return None
-            return str(Path("/vault") / rel_path)
-        except ValueError:
-            # Path is not under vault_path — keep as-is (external project)
-            logger.warning(f"working_directory {working_directory} is not under vault_path {self.vault_path}")
-            return working_directory
+        # Already a real absolute path
+        return working_directory if working_directory != str(home) else None
 
     async def get_or_create_session(
         self,
@@ -448,15 +437,6 @@ class SessionManager:
                         return "home"
 
         # Check vault/.claude (legacy location from HOME override era)
-        vault_projects = self.vault_path / ".claude" / "projects"
-        if vault_projects.exists():
-            for project_dir in vault_projects.iterdir():
-                if project_dir.is_dir():
-                    candidate = project_dir / filename
-                    if candidate.exists():
-                        logger.debug(f"Found transcript in legacy vault location: {candidate}")
-                        return "vault"
-
         return None
 
     def get_sdk_transcript_path(
@@ -466,11 +446,14 @@ class SessionManager:
         # Determine effective cwd
         if working_directory:
             if os.path.isabs(working_directory):
-                effective_cwd = working_directory
+                if working_directory.startswith("/vault/"):
+                    effective_cwd = str(Path.home() / working_directory[len("/vault/"):])
+                else:
+                    effective_cwd = working_directory
             else:
-                effective_cwd = str(self.vault_path / working_directory)
+                effective_cwd = str(Path.home() / working_directory)
         else:
-            effective_cwd = str(self.vault_path)
+            effective_cwd = str(Path.home())
 
         # Resolve symlinks (e.g., /tmp -> /private/tmp on macOS)
         # The SDK uses the resolved path for storage
@@ -533,17 +516,6 @@ class SessionManager:
                     if candidate.exists():
                         decoded_cwd = decode_project_path(project_dir.name)
                         return (candidate, decoded_cwd, "home")
-
-        # Fallback: search in vault/.claude (legacy from HOME override era)
-        vault_projects = self.vault_path / ".claude" / "projects"
-        if vault_projects.exists():
-            for project_dir in vault_projects.iterdir():
-                if project_dir.is_dir():
-                    candidate = project_dir / filename
-                    if candidate.exists():
-                        decoded_cwd = decode_project_path(project_dir.name)
-                        logger.debug(f"Found transcript in legacy vault location: {candidate}, cwd={decoded_cwd}")
-                        return (candidate, decoded_cwd, "vault")
 
         return None
 
@@ -965,7 +937,7 @@ class SessionManager:
         import re
 
         # Find the markdown file in Chat/sessions/imported/
-        imported_dir = self.vault_path / "Chat" / "sessions" / "imported"
+        imported_dir = Path.home() / "Chat" / "sessions" / "imported"
         if not imported_dir.exists():
             return []
 

@@ -19,10 +19,20 @@ from parachute.config import _load_yaml_config, _load_token, save_yaml_config, s
 
 @pytest.fixture
 def vault(tmp_path):
-    vault_path = tmp_path / "vault"
-    vault_path.mkdir()
-    (vault_path / ".parachute").mkdir()
-    return vault_path
+    """Return the parachute_dir (~/.parachute equivalent)."""
+    pdir = tmp_path / ".parachute"
+    pdir.mkdir()
+    return pdir
+
+
+@pytest.fixture
+def legacy_home(tmp_path):
+    """Return a fake HOME dir with legacy vault for migration tests."""
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    legacy = fake_home / "Parachute" / ".parachute"
+    legacy.mkdir(parents=True)
+    return fake_home
 
 
 class TestMigrateEnvToYaml:
@@ -32,13 +42,18 @@ class TestMigrateEnvToYaml:
             "VAULT_PATH=/my/vault\nPORT=4444\nCLAUDE_CODE_OAUTH_TOKEN=sk-test-123\n"
         )
 
-        with patch("parachute.cli._get_env_file", return_value=env_file):
+        fake_home = tmp_path / "fake_home"
+        fake_home.mkdir()
+        with patch("parachute.cli._get_env_file", return_value=env_file), \
+             patch("parachute.config.Path") as mock_config_path:
+            mock_config_path.home.return_value = fake_home
+            mock_config_path.side_effect = lambda *a, **kw: Path(*a, **kw)
             result = _migrate_env_to_yaml(vault)
 
         assert result is True
         config = _load_yaml_config(vault)
         assert config["port"] == 4444
-        assert config["vault_path"] == "/my/vault"
+        assert "vault_path" not in config  # vault_path no longer migrated
 
         # Token should be in .token file
         token = _load_token(vault)
@@ -96,30 +111,44 @@ class TestMigrateEnvToYaml:
 
 
 class TestMigrateServerYaml:
-    def test_migrates_auth_mode(self, vault):
-        server_yaml = vault / ".parachute" / "server.yaml"
+    def test_migrates_auth_mode(self, vault, legacy_home, tmp_path):
+        server_yaml = legacy_home / "Parachute" / ".parachute" / "server.yaml"
         server_yaml.write_text(
             yaml.dump({"security": {"require_auth": "always"}, "server": {"port": 5555}})
         )
 
-        result = _migrate_server_yaml(vault)
+        fake_home = tmp_path / "fake_home"
+        fake_home.mkdir()
+        with patch("parachute.cli.Path") as mock_cli_path, \
+             patch("parachute.config.Path") as mock_config_path:
+            mock_cli_path.home.return_value = legacy_home
+            mock_cli_path.side_effect = lambda *a, **kw: Path(*a, **kw)
+            mock_config_path.home.return_value = fake_home
+            mock_config_path.side_effect = lambda *a, **kw: Path(*a, **kw)
+            result = _migrate_server_yaml(vault)
         assert result is True
 
         config = _load_yaml_config(vault)
         assert config["auth_mode"] == "always"
         assert config["port"] == 5555
 
-    def test_no_server_yaml_returns_false(self, vault):
-        result = _migrate_server_yaml(vault)
+    def test_no_server_yaml_returns_false(self, vault, legacy_home):
+        with patch("parachute.cli.Path") as mock_path:
+            mock_path.home.return_value = legacy_home
+            mock_path.side_effect = lambda *a, **kw: Path(*a, **kw)
+            result = _migrate_server_yaml(vault)
         assert result is False
 
-    def test_doesnt_overwrite_existing_values(self, vault):
+    def test_doesnt_overwrite_existing_values(self, vault, legacy_home):
         save_yaml_config(vault, {"auth_mode": "disabled"})
 
-        server_yaml = vault / ".parachute" / "server.yaml"
+        server_yaml = legacy_home / "Parachute" / ".parachute" / "server.yaml"
         server_yaml.write_text(yaml.dump({"security": {"require_auth": "always"}}))
 
-        _migrate_server_yaml(vault)
+        with patch("parachute.cli.Path") as mock_path:
+            mock_path.home.return_value = legacy_home
+            mock_path.side_effect = lambda *a, **kw: Path(*a, **kw)
+            _migrate_server_yaml(vault)
 
         config = _load_yaml_config(vault)
         assert config["auth_mode"] == "disabled"  # Not overwritten
@@ -127,7 +156,7 @@ class TestMigrateServerYaml:
 
 class TestConfigSetGet:
     def test_set_and_get_port(self, vault, capsys):
-        with patch("parachute.cli._get_vault_path", return_value=vault):
+        with patch("parachute.cli._get_parachute_dir", return_value=vault):
             with patch.dict(os.environ, {}, clear=False):
                 # Remove PORT from env if present
                 os.environ.pop("PORT", None)
@@ -138,48 +167,48 @@ class TestConfigSetGet:
         assert "7777" in out
 
     def test_set_rejects_unknown_key(self, vault):
-        with patch("parachute.cli._get_vault_path", return_value=vault):
+        with patch("parachute.cli._get_parachute_dir", return_value=vault):
             with pytest.raises(SystemExit):
                 _config_set("unknown_key", "value")
 
     def test_set_rejects_token(self, vault):
-        with patch("parachute.cli._get_vault_path", return_value=vault):
+        with patch("parachute.cli._get_parachute_dir", return_value=vault):
             with pytest.raises(SystemExit):
                 _config_set("token", "sk-secret")
 
     def test_set_converts_port_to_int(self, vault):
-        with patch("parachute.cli._get_vault_path", return_value=vault):
+        with patch("parachute.cli._get_parachute_dir", return_value=vault):
             _config_set("port", "8888")
         config = _load_yaml_config(vault)
         assert isinstance(config["port"], int)
 
     def test_set_rejects_non_numeric_port(self, vault):
-        with patch("parachute.cli._get_vault_path", return_value=vault):
+        with patch("parachute.cli._get_parachute_dir", return_value=vault):
             with pytest.raises(SystemExit):
                 _config_set("port", "not-a-number")
 
     def test_get_env_override(self, vault, capsys):
         save_yaml_config(vault, {"port": 3333})
-        with patch("parachute.cli._get_vault_path", return_value=vault):
+        with patch("parachute.cli._get_parachute_dir", return_value=vault):
             with patch.dict(os.environ, {"PORT": "9999"}):
                 _config_get("port")
         out = capsys.readouterr().out
         assert "9999" in out
 
     def test_get_nonexistent_key(self, vault):
-        with patch("parachute.cli._get_vault_path", return_value=vault):
+        with patch("parachute.cli._get_parachute_dir", return_value=vault):
             with pytest.raises(SystemExit):
                 _config_get("nonexistent")
 
     def test_show_empty_config(self, vault, capsys):
-        with patch("parachute.cli._get_vault_path", return_value=vault):
+        with patch("parachute.cli._get_parachute_dir", return_value=vault):
             _config_show()
         out = capsys.readouterr().out
         assert "empty" in out
 
     def test_show_with_values(self, vault, capsys):
         save_yaml_config(vault, {"port": 3333, "host": "0.0.0.0"})
-        with patch("parachute.cli._get_vault_path", return_value=vault):
+        with patch("parachute.cli._get_parachute_dir", return_value=vault):
             _config_show()
         out = capsys.readouterr().out
         assert "3333" in out

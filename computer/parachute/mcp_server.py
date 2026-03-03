@@ -49,10 +49,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger("ParachuteMCP")
 
-# Global database connection
+# Global session_store connection
 _db = None
-_vault_path = None
 _brain_base_url: str = ""
+_PARACHUTE_DIR = Path.home() / ".parachute"
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,14 +100,16 @@ _session_context: SessionContext | None = None
 
 
 async def get_db():
-    """Get or create database connection."""
-    global _db, _vault_path
+    """Get or create GraphSessionStore connection."""
+    global _db
     if _db is None:
-        from parachute.db.database import Database
-        db_path = Path(_vault_path) / "Chat" / "sessions.db"
-        _db = Database(db_path)
-        await _db.connect()
-        logger.info(f"Connected to database: {db_path}")
+        from parachute.db.graph import GraphService
+        from parachute.db.graph_sessions import GraphSessionStore
+        graph = GraphService(db_path=str(_PARACHUTE_DIR / "graph" / "parachute.kz"))
+        await graph.connect()
+        _db = GraphSessionStore(graph)
+        await _db.ensure_schema()
+        logger.info(f"Connected to graph DB: {_PARACHUTE_DIR / 'graph' / 'parachute.kz'}")
     return _db
 
 
@@ -730,7 +732,7 @@ async def get_session(
     if include_messages:
         # Load messages from SDK JSONL file
         from parachute.core.session_manager import SessionManager
-        sm = SessionManager(Path(_vault_path), db)
+        sm = SessionManager(_PARACHUTE_DIR, db)
         session_with_messages = await sm.get_session_with_messages(session_id)
         if session_with_messages:
             result["messages"] = session_with_messages.messages
@@ -942,7 +944,7 @@ async def send_message(
 
 def get_journals_path() -> Path:
     """Get the path to the Daily journals folder."""
-    return Path(_vault_path) / "Daily" / "journals"
+    return Path.home() / "Daily" / "journals"
 
 
 def _is_legacy_journal(content: str) -> bool:
@@ -1324,14 +1326,13 @@ async def handle_tool_call(name: str, arguments: dict[str, Any]) -> str:
         return json.dumps({"error": str(e)})
 
 
-async def run_server(vault_path: str):
+async def run_server():
     """Run the MCP server."""
-    global _vault_path, _brain_base_url
-    _vault_path = vault_path
+    global _brain_base_url
     port = os.environ.get("PARACHUTE_SERVER_PORT", "3333")
     _brain_base_url = f"http://localhost:{port}/api/brain"
 
-    logger.info(f"Starting Parachute MCP server with vault: {vault_path}")
+    logger.info(f"Starting Parachute MCP server (parachute_dir: {_PARACHUTE_DIR})")
 
     # Create MCP server
     server = Server("parachute")
@@ -1352,24 +1353,7 @@ async def run_server(vault_path: str):
 
 def main():
     parser = argparse.ArgumentParser(description="Parachute MCP Server")
-    parser.add_argument(
-        "vault_path",
-        nargs="?",
-        default=None,
-        help="Path to Parachute vault",
-    )
-    args = parser.parse_args()
-
-    # Get vault path from args or environment
-    vault_path = args.vault_path or os.environ.get("PARACHUTE_VAULT_PATH")
-
-    if not vault_path:
-        print("Error: Vault path required (argument or PARACHUTE_VAULT_PATH env)", file=sys.stderr)
-        sys.exit(1)
-
-    if not Path(vault_path).exists():
-        print(f"Error: Vault path does not exist: {vault_path}", file=sys.stderr)
-        sys.exit(1)
+    args = parser.parse_args()  # noqa: F841 — no args currently required
 
     # Initialize session context from env vars
     global _session_context
@@ -1383,7 +1367,7 @@ def main():
     else:
         logger.warning("MCP server started without session context (legacy mode)")
 
-    asyncio.run(run_server(vault_path))
+    asyncio.run(run_server())
 
 
 if __name__ == "__main__":

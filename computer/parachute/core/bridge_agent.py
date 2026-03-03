@@ -403,7 +403,7 @@ async def observe(
     exchange_number: int,
     session_title: Optional[str],
     title_source: Optional[str],
-    database: object,
+    session_store: object,
     vault_path: Path,
     claude_token: Optional[str],
 ) -> None:
@@ -419,7 +419,7 @@ async def observe(
     Never raises.
     """
     try:
-        session = await database.get_session(session_id)
+        session = await session_store.get_session(session_id)
         if session is None:
             logger.debug(f"Bridge observe: session {session_id[:8]} not found, skipping")
             return
@@ -516,10 +516,10 @@ async def observe(
                 needs_update = True
 
             if needs_update:
-                await database.update_session(session_id, session_update)
+                await session_store.update_session(session_id, session_update)
 
         # 3. Persist bridge_session_id and bridge_last_run metadata
-        refreshed = await database.get_session(session_id)
+        refreshed = await session_store.get_session(session_id)
         if refreshed:
             fresh_meta = dict(refreshed.metadata or {})
             fresh_meta["bridge_last_run"] = {
@@ -532,7 +532,7 @@ async def observe(
             if new_session_id:
                 meta_update.bridge_session_id = new_session_id
 
-            await database.update_session(session_id, meta_update)
+            await session_store.update_session(session_id, meta_update)
 
         logger.info(
             f"Bridge observe ran for {session_id[:8]}: "

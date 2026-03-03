@@ -64,7 +64,7 @@ async def health_check(
 
     # Detailed health check
     vault_status = "ok"
-    if not settings.vault_path.exists():
+    if not settings.parachute_dir.exists():
         vault_status = "inaccessible"
 
     # Module status
@@ -77,7 +77,7 @@ async def health_check(
     sandbox = getattr(request.app.state, 'sandbox', None)
     if sandbox is None:
         # Fallback: create without token (health check doesn't need it)
-        sandbox = DockerSandbox(vault_path=settings.vault_path)
+        sandbox = DockerSandbox(parachute_dir=settings.parachute_dir)
     docker_available = await sandbox.is_available()
     docker_info = {
         "available": docker_available,
@@ -99,7 +99,7 @@ async def health_check(
     return {
         **basic,
         "vault": {
-            "path": str(settings.vault_path),
+            "path": str(settings.parachute_dir),
             "status": vault_status,
         },
         "modules": modules_status,

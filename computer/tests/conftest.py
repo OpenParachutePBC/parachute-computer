@@ -4,7 +4,6 @@ Pytest configuration and fixtures.
 
 import asyncio
 import os
-import tempfile
 from pathlib import Path
 from typing import AsyncGenerator, Generator
 
@@ -14,7 +13,6 @@ from fastapi.testclient import TestClient
 from httpx import AsyncClient
 
 # Set test environment
-os.environ["VAULT_PATH"] = tempfile.mkdtemp(prefix="parachute-test-")
 os.environ["LOG_LEVEL"] = "WARNING"
 
 
@@ -66,34 +64,36 @@ def test_vault_path(test_vault: Path) -> str:
 
 
 @pytest_asyncio.fixture
-async def test_database(test_vault: Path):
-    """Create a test database."""
-    from parachute.db.database import Database
+async def test_database(tmp_path: Path):
+    """Create a test graph session store."""
+    from parachute.db.graph import GraphService
+    from parachute.db.graph_sessions import GraphSessionStore
 
-    db_path = test_vault / "Chat" / "sessions.db"
-    db = Database(db_path)
-    await db.connect()
+    db_path = tmp_path / "test-graph" / "parachute.kz"
+    graph = GraphService(db_path=db_path)
+    await graph.connect()
+    store = GraphSessionStore(graph)
+    await store.ensure_schema()
 
-    yield db
-
-    await db.close()
+    yield store
 
 
 @pytest_asyncio.fixture
-async def session_manager(test_vault: Path, test_database):
+async def session_manager(tmp_path: Path, test_database):
     """Create a session manager for testing."""
     from parachute.core.session_manager import SessionManager
 
-    return SessionManager(test_vault, test_database)
+    parachute_dir = tmp_path / ".parachute"
+    parachute_dir.mkdir(exist_ok=True)
+    return SessionManager(parachute_dir, test_database)
 
 
 @pytest.fixture
-def test_settings(test_vault: Path):
+def test_settings(tmp_path: Path):
     """Create test settings."""
     from parachute.config import Settings
 
     return Settings(
-        vault_path=test_vault,
         port=3334,  # Different port for testing
         host="127.0.0.1",
         log_level="WARNING",
@@ -103,9 +103,6 @@ def test_settings(test_vault: Path):
 @pytest.fixture
 def test_client(test_settings) -> TestClient:
     """Create a FastAPI test client."""
-    # Import app after setting environment
-    os.environ["VAULT_PATH"] = str(test_settings.vault_path)
-
     from parachute.server import app
 
     with TestClient(app) as client:
@@ -115,8 +112,6 @@ def test_client(test_settings) -> TestClient:
 @pytest_asyncio.fixture
 async def async_client(test_settings) -> AsyncGenerator[AsyncClient, None]:
     """Create an async HTTP client for testing."""
-    os.environ["VAULT_PATH"] = str(test_settings.vault_path)
-
     from parachute.server import app
 
     async with AsyncClient(app=app, base_url="http://test") as client:

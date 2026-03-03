@@ -92,7 +92,7 @@ def _manifest_to_dict(manifest: dict[str, Any]) -> dict[str, Any]:
 async def list_plugins(request: Request) -> dict[str, Any]:
     """List all installed plugins."""
     settings = get_settings()
-    plugins = discover_plugins(settings.vault_path)
+    plugins = discover_plugins(Path.home())
     return {"plugins": [_plugin_to_dict(p) for p in plugins]}
 
 
@@ -100,7 +100,7 @@ async def list_plugins(request: Request) -> dict[str, Any]:
 async def get_plugin(request: Request, slug: str) -> dict[str, Any]:
     """Get details for a specific plugin."""
     settings = get_settings()
-    plugins = discover_plugins(settings.vault_path)
+    plugins = discover_plugins(Path.home())
 
     for plugin in plugins:
         if plugin.slug == slug:
@@ -119,7 +119,7 @@ async def install_plugin(request: Request, body: InstallPluginInput) -> dict[str
 
     try:
         manifest = await install_plugin_from_url(
-            vault_path=settings.vault_path,
+            vault_path=Path.home(),
             url=body.url,
             slug=body.slug,
         )
@@ -138,7 +138,7 @@ async def delete_plugin(request: Request, slug: str) -> dict[str, Any]:
     settings = get_settings()
 
     # Check if it's a user plugin (not deletable from API)
-    plugins = discover_plugins(settings.vault_path)
+    plugins = discover_plugins(Path.home())
     for plugin in plugins:
         if plugin.slug == slug and plugin.source == "user":
             raise HTTPException(
@@ -146,7 +146,7 @@ async def delete_plugin(request: Request, slug: str) -> dict[str, Any]:
                 detail=f"Cannot delete user plugin '{slug}'. Remove it from ~/.claude/plugins/ manually.",
             )
 
-    removed = await uninstall_plugin(settings.vault_path, slug)
+    removed = await uninstall_plugin(Path.home(), slug)
     if not removed:
         raise HTTPException(status_code=404, detail=f"Plugin '{slug}' not found")
 
@@ -159,7 +159,7 @@ async def update_plugin_endpoint(request: Request, slug: str) -> dict[str, Any]:
     settings = get_settings()
 
     try:
-        manifest = await update_plugin(settings.vault_path, slug)
+        manifest = await update_plugin(Path.home(), slug)
         return {"success": True, "plugin": _manifest_to_dict(manifest)}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -174,7 +174,7 @@ async def check_plugin_update_endpoint(
     """Check if a newer version is available for a plugin."""
     settings = get_settings()
 
-    result = await check_plugin_update(settings.vault_path, slug)
+    result = await check_plugin_update(Path.home(), slug)
     if result is None:
         return {"upToDate": True, "slug": slug}
 
@@ -184,7 +184,7 @@ async def check_plugin_update_endpoint(
 def _find_plugin_path(slug: str) -> tuple[Path, Any]:
     """Find a plugin by slug and return (plugin_path, plugin_info)."""
     settings = get_settings()
-    plugins = discover_plugins(settings.vault_path)
+    plugins = discover_plugins(Path.home())
     for plugin in plugins:
         if plugin.slug == slug:
             return Path(plugin.path), plugin

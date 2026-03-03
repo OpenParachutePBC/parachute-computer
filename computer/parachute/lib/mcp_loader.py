@@ -55,7 +55,6 @@ def _get_builtin_mcp_servers(vault_path: Path) -> dict[str, dict[str, Any]]:
             "command": python_path,
             "args": ["-m", "parachute.mcp_server"],
             "env": {
-                "PARACHUTE_VAULT_PATH": str(vault_path),
                 "PARACHUTE_SERVER_PORT": os.environ.get("PARACHUTE_SERVER_PORT", "3333"),
                 "PYTHONPATH": str(base_dir),
             },

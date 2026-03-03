@@ -29,7 +29,7 @@ class CreateSkillInput(BaseModel):
 def get_skills_dir() -> Path:
     """Get the skills directory."""
     settings = get_settings()
-    return settings.vault_path / ".skills"
+    return Path.home() / ".skills"
 
 
 def parse_skill_file(skill_path: Path) -> Optional[dict[str, Any]]:

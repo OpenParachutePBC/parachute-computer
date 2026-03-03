@@ -201,7 +201,7 @@ class DiscordConnector(BotConnector):
         message_text = message.content
 
         # Session-aware response mode gating
-        db = getattr(self.server, "database", None)
+        db = getattr(self.server, "session_store", None)
         session = await db.get_session_by_bot_link("discord", chat_id) if db else None
 
         default_mode = "all_messages" if chat_type == "dm" else self.group_mention_mode

@@ -95,7 +95,7 @@ class TestIsLegacyJournal:
 class TestGetJournal:
     @pytest.mark.asyncio
     async def test_legacy_file_returns_single_entry(self, journals_dir):
-        with patch("parachute.mcp_server._vault_path", str(journals_dir.parent.parent)):
+        with patch("parachute.mcp_server.get_journals_path", return_value=journals_dir):
             result = await get_journal("2025-08-01")
 
         assert result is not None
@@ -112,7 +112,7 @@ class TestGetJournal:
 
     @pytest.mark.asyncio
     async def test_new_format_returns_structured_entries(self, journals_dir):
-        with patch("parachute.mcp_server._vault_path", str(journals_dir.parent.parent)):
+        with patch("parachute.mcp_server.get_journals_path", return_value=journals_dir):
             result = await get_journal("2026-01-15")
 
         assert result is not None
@@ -127,7 +127,7 @@ class TestGetJournal:
 
     @pytest.mark.asyncio
     async def test_missing_file_returns_none(self, journals_dir):
-        with patch("parachute.mcp_server._vault_path", str(journals_dir.parent.parent)):
+        with patch("parachute.mcp_server.get_journals_path", return_value=journals_dir):
             result = await get_journal("2025-01-01")
 
         assert result is None
@@ -141,7 +141,7 @@ class TestGetJournal:
 class TestListRecentJournals:
     @pytest.mark.asyncio
     async def test_lists_both_formats(self, journals_dir):
-        with patch("parachute.mcp_server._vault_path", str(journals_dir.parent.parent)):
+        with patch("parachute.mcp_server.get_journals_path", return_value=journals_dir):
             results = await list_recent_journals(limit=20)
 
         assert len(results) == 2
@@ -151,7 +151,7 @@ class TestListRecentJournals:
 
     @pytest.mark.asyncio
     async def test_legacy_file_has_count_one_and_type(self, journals_dir):
-        with patch("parachute.mcp_server._vault_path", str(journals_dir.parent.parent)):
+        with patch("parachute.mcp_server.get_journals_path", return_value=journals_dir):
             results = await list_recent_journals(limit=20)
 
         legacy = next(r for r in results if r["date"] == "2025-08-01")
@@ -160,7 +160,7 @@ class TestListRecentJournals:
 
     @pytest.mark.asyncio
     async def test_new_format_has_correct_count_no_type(self, journals_dir):
-        with patch("parachute.mcp_server._vault_path", str(journals_dir.parent.parent)):
+        with patch("parachute.mcp_server.get_journals_path", return_value=journals_dir):
             results = await list_recent_journals(limit=20)
 
         new_fmt = next(r for r in results if r["date"] == "2026-01-15")
@@ -169,7 +169,7 @@ class TestListRecentJournals:
 
     @pytest.mark.asyncio
     async def test_limit_respected(self, journals_dir):
-        with patch("parachute.mcp_server._vault_path", str(journals_dir.parent.parent)):
+        with patch("parachute.mcp_server.get_journals_path", return_value=journals_dir):
             results = await list_recent_journals(limit=1)
 
         # Should only return most recent (2026-01-15)
@@ -180,7 +180,7 @@ class TestListRecentJournals:
     async def test_empty_directory(self, tmp_path):
         empty_dir = tmp_path / "Daily" / "journals"
         empty_dir.mkdir(parents=True)
-        with patch("parachute.mcp_server._vault_path", str(tmp_path)):
+        with patch("parachute.mcp_server.get_journals_path", return_value=empty_dir):
             results = await list_recent_journals()
 
         assert results == []
@@ -194,7 +194,7 @@ class TestListRecentJournals:
 class TestSearchJournals:
     @pytest.mark.asyncio
     async def test_finds_match_in_legacy_file(self, journals_dir):
-        with patch("parachute.mcp_server._vault_path", str(journals_dir.parent.parent)):
+        with patch("parachute.mcp_server.get_journals_path", return_value=journals_dir):
             results = await search_journals("Woven Web")
 
         assert len(results) >= 1
@@ -206,7 +206,7 @@ class TestSearchJournals:
 
     @pytest.mark.asyncio
     async def test_finds_match_in_new_format_file(self, journals_dir):
-        with patch("parachute.mcp_server._vault_path", str(journals_dir.parent.parent)):
+        with patch("parachute.mcp_server.get_journals_path", return_value=journals_dir):
             results = await search_journals("orchestrator")
 
         assert len(results) >= 1
@@ -217,14 +217,14 @@ class TestSearchJournals:
 
     @pytest.mark.asyncio
     async def test_no_match_returns_empty(self, journals_dir):
-        with patch("parachute.mcp_server._vault_path", str(journals_dir.parent.parent)):
+        with patch("parachute.mcp_server.get_journals_path", return_value=journals_dir):
             results = await search_journals("xyzzy_no_match_here")
 
         assert results == []
 
     @pytest.mark.asyncio
     async def test_case_insensitive_search(self, journals_dir):
-        with patch("parachute.mcp_server._vault_path", str(journals_dir.parent.parent)):
+        with patch("parachute.mcp_server.get_journals_path", return_value=journals_dir):
             results = await search_journals("woven web")
 
         legacy_hit = next((r for r in results if r["date"] == "2025-08-01"), None)
@@ -232,7 +232,7 @@ class TestSearchJournals:
 
     @pytest.mark.asyncio
     async def test_snippet_has_ellipsis_when_truncated(self, journals_dir):
-        with patch("parachute.mcp_server._vault_path", str(journals_dir.parent.parent)):
+        with patch("parachute.mcp_server.get_journals_path", return_value=journals_dir):
             results = await search_journals("grant")
 
         assert len(results) >= 1

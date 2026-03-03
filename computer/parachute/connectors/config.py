@@ -81,9 +81,9 @@ class BotsConfig(BaseModel):
     matrix: MatrixConfig = Field(default_factory=MatrixConfig)
 
 
-def load_bots_config(vault_path: Path) -> BotsConfig:
-    """Load bot configuration from vault/.parachute/bots.yaml."""
-    config_path = vault_path / ".parachute" / "bots.yaml"
+def load_bots_config(parachute_dir: Path) -> BotsConfig:
+    """Load bot configuration from ~/.parachute/bots.yaml."""
+    config_path = parachute_dir / "bots.yaml"
 
     if not config_path.exists():
         logger.info("No bots.yaml found, bot connectors disabled")

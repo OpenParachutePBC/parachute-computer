@@ -24,7 +24,7 @@ from parachute.core.plugins import discover_plugins, get_plugin_dirs
 from parachute.core.sandbox import DockerSandbox, AgentSandboxConfig
 from parachute.core.skills import generate_runtime_plugin, cleanup_runtime_plugin, discover_skills
 from parachute.core.session_manager import SessionManager
-from parachute.db.database import Database
+from parachute.db.graph_sessions import GraphSessionStore
 from parachute.lib.context_loader import format_context_for_prompt, load_agent_context
 from parachute.lib.credentials import load_credentials
 from parachute.core.context_folders import ContextFolderService
@@ -193,18 +193,18 @@ class Orchestrator:
     Manages the lifecycle of agent interactions with streaming support.
     """
 
-    def __init__(self, vault_path: Path, database: Database, settings: Settings):
+    def __init__(self, parachute_dir: Path, session_store: GraphSessionStore, settings: Settings):
         """Initialize orchestrator."""
-        self.vault_path = vault_path
-        self.database = database
+        self.parachute_dir = parachute_dir
+        self.session_store = session_store
         self.settings = settings
 
         # Session manager
-        self.session_manager = SessionManager(vault_path, database)
+        self.session_manager = SessionManager(parachute_dir, session_store)
 
         # Shared Docker sandbox instance (TTL-cached availability checks)
         self._sandbox = DockerSandbox(
-            vault_path=vault_path,
+            parachute_dir=parachute_dir,
             claude_token=settings.claude_code_oauth_token,
         )
 
@@ -231,17 +231,17 @@ class Orchestrator:
         # Remove container_env DB records for envs where every session is empty
         # (message_count == 0) and the env is older than 5 minutes. These are
         # abandoned or failed sessions that never sent a message.
-        orphan_slugs = await self.database.list_orphan_container_env_slugs(min_age_minutes=5)
+        orphan_slugs = await self.session_store.list_orphan_container_env_slugs(min_age_minutes=5)
         if orphan_slugs:
             logger.info(f"Pruning {len(orphan_slugs)} orphan container_env record(s): {orphan_slugs}")
             for slug in orphan_slugs:
                 try:
-                    await self.database.delete_container_env(slug)
+                    await self.session_store.delete_container_env(slug)
                 except Exception as e:
                     logger.warning(f"Failed to delete orphan container_env {slug}: {e}")
 
         # Use remaining container_env slugs for Docker orphan detection
-        active_envs = await self.database.list_container_envs()
+        active_envs = await self.session_store.list_container_envs()
         active_slugs = {env.slug for env in active_envs}
         await self._sandbox.reconcile(active_slugs=active_slugs)
 
@@ -340,16 +340,16 @@ class Orchestrator:
                 else:
                     logger.warning(
                         f"Working directory does not exist: {effective_cwd}, "
-                        f"falling back to vault path: {self.vault_path}"
+                        f"falling back to home directory"
                     )
-                    effective_cwd = self.vault_path
+                    effective_cwd = Path.home()
                     effective_working_dir = None
             else:
                 logger.warning(
                     f"Working directory does not exist: {effective_cwd}, "
-                    f"falling back to vault path: {self.vault_path}"
+                    f"falling back to home directory"
                 )
-                effective_cwd = self.vault_path
+                effective_cwd = Path.home()
                 effective_working_dir = None
 
         # Apply system prompt override from config_overrides (only if no explicit prompt given)
@@ -360,7 +360,7 @@ class Orchestrator:
         # Only surface credential discoverability for non-bot sessions — bot sessions
         # receive empty credentials, so advertising pre-authenticated tools would mislead the agent.
         prompt_cred_keys = (
-            set(load_credentials(self.vault_path).keys())
+            set(load_credentials(Path.home()).keys())
             if session.source not in BOT_SOURCES
             else set()
         )
@@ -415,7 +415,7 @@ class Orchestrator:
                     # Save to Chat/assets/YYYY-MM-DD/ (date-based organization)
                     now = datetime.now()
                     date_folder = now.strftime("%Y-%m-%d")
-                    asset_dir = self.vault_path / "Chat" / "assets" / date_folder
+                    asset_dir = Path.home() / "Chat" / "assets" / date_folder
                     asset_dir.mkdir(parents=True, exist_ok=True)
 
                     # Generate unique filename (time-based, no date prefix since folder has date)
@@ -513,7 +513,7 @@ class Orchestrator:
             mcp_warnings: list[str] = []
             mcp_load_warning: WarningEvent | None = None
             try:
-                global_mcps = await load_mcp_servers(self.vault_path)
+                global_mcps = await load_mcp_servers(Path.home())
                 resolved_mcps = resolve_mcp_servers(agent.mcp_servers, global_mcps)
 
                 # Validate and filter out problematic MCP servers
@@ -541,9 +541,9 @@ class Orchestrator:
 
             # Discover skills and generate runtime plugin
             plugin_dirs: list[Path] = []
-            discovered_skills = discover_skills(self.vault_path)
+            discovered_skills = discover_skills(Path.home())
             skill_names = [s.name for s in discovered_skills]
-            skills_plugin_dir = generate_runtime_plugin(self.vault_path, skills=discovered_skills)
+            skills_plugin_dir = generate_runtime_plugin(Path.home(), skills=discovered_skills)
             if skills_plugin_dir:
                 plugin_dirs.append(skills_plugin_dir)
                 logger.info(f"Generated skills plugin at {skills_plugin_dir}")
@@ -553,7 +553,7 @@ class Orchestrator:
             # Legacy/CLI plugins still need plugin_dirs for SDK discovery.
             settings = get_settings()
             installed_plugins = discover_plugins(
-                self.vault_path,
+                Path.home(),
                 include_user=settings.include_user_plugins,
             )
             legacy_plugin_dirs = get_plugin_dirs(installed_plugins)
@@ -682,7 +682,7 @@ class Orchestrator:
 
             permission_handler = PermissionHandler(
                 session=session,
-                vault_path=str(self.vault_path),
+                vault_path=str(Path.home()),
                 on_denial=on_permission_denial,
                 on_user_question=on_user_question,
             )
@@ -750,8 +750,8 @@ class Orchestrator:
                             sandbox_wd = wd
                         elif wd.startswith("/vault/"):
                             sandbox_wd = f"/home/sandbox/Parachute/{wd[len('/vault/'):]}"
-                        elif wd.startswith(str(self.vault_path)):
-                            relative = wd[len(str(self.vault_path)):].lstrip("/")
+                        elif wd.startswith(str(Path.home())):
+                            relative = wd[len(str(Path.home())):].lstrip("/")
                             sandbox_wd = f"/home/sandbox/Parachute/{relative}"
                         else:
                             # Relative path or unknown — treat as relative to vault
@@ -827,11 +827,11 @@ class Orchestrator:
                     # Auto-create one on the first turn if none was assigned.
                     if not session.container_env_id:
                         auto_slug = str(uuid.uuid4()).replace("-", "")[:12]
-                        await self.database.create_container_env(
+                        await self.session_store.create_container_env(
                             slug=auto_slug,
                             display_name=f"Session {sandbox_sid[:8]}",
                         )
-                        await self.database.update_session(
+                        await self.session_store.update_session(
                             session.id,
                             SessionUpdate(container_env_id=auto_slug),
                         )
@@ -1013,7 +1013,7 @@ class Orchestrator:
                         session_summary=session.summary,
                         brain=_bridge_brain,
                         claude_token=self.settings.claude_code_oauth_token,
-                        vault_path=self.vault_path,
+                        vault_path=Path.home(),
                     )
                     if _bridge_ctx:
                         actual_message = f"<brain_context>\n{_bridge_ctx}\n</brain_context>\n\n{actual_message}"
@@ -1276,8 +1276,8 @@ class Orchestrator:
                         exchange_number=exchange_number,
                         session_title=session.title,
                         title_source=session_metadata.get("title_source"),
-                        database=self.database,
-                        vault_path=self.vault_path,
+                        session_store=self.session_store,
+                        vault_path=Path.home(),
                         claude_token=self.settings.claude_code_oauth_token,
                     )
                 )
@@ -1484,7 +1484,7 @@ class Orchestrator:
 
         # For vault-agent: SDK handles project-level CLAUDE.md via setting_sources=["project"].
         # We only load vault-level CLAUDE.md here (outside the project root).
-        vault_claude = self.vault_path / "CLAUDE.md"
+        vault_claude = Path.home() / "CLAUDE.md"
         if vault_claude.exists():
             try:
                 content = vault_claude.read_text().strip()
@@ -1500,11 +1500,11 @@ class Orchestrator:
         if working_directory:
             wd_path = Path(working_directory)
             if not wd_path.is_absolute():
-                wd_path = self.vault_path / working_directory
+                wd_path = Path.home() / working_directory
             try:
-                display_path = str(wd_path.relative_to(self.vault_path))
+                display_path = str(wd_path.relative_to(Path.home()))
             except ValueError:
-                # Outside vault — use leaf name only, never expose absolute paths
+                # Outside home — use leaf name only, never expose absolute paths
                 display_path = wd_path.name
 
             append_parts.append(
@@ -1517,7 +1517,7 @@ class Orchestrator:
         # Handle explicitly selected context files (beyond automatic hierarchy)
         # These are files the user explicitly selected in the UI
         if contexts:
-            context_folder_service = ContextFolderService(self.vault_path)
+            context_folder_service = ContextFolderService(Path.home())
 
             # Separate folder paths from file paths
             folder_paths: list[str] = []
@@ -1548,7 +1548,7 @@ class Orchestrator:
                 try:
                     context_result = await load_agent_context(
                         {"include": file_paths, "max_tokens": 10000},
-                        self.vault_path,
+                        Path.home(),
                     )
                     if context_result.get("content"):
                         append_parts.append(format_context_for_prompt(context_result))
@@ -1562,16 +1562,16 @@ class Orchestrator:
         if working_directory:
             working_dir_path = Path(working_directory)
             if not working_dir_path.is_absolute():
-                working_dir_path = self.vault_path / working_directory
+                working_dir_path = Path.home() / working_directory
 
             for md_name in ["AGENTS.md", "CLAUDE.md"]:
                 md_path = working_dir_path / md_name
                 if md_path.exists():
                     try:
-                        relative_path = md_path.relative_to(self.vault_path)
+                        relative_path = md_path.relative_to(Path.home())
                         metadata["working_directory_claude_md"] = str(relative_path)
                     except ValueError:
-                        # Outside vault — use leaf name only, never expose absolute paths
+                        # Outside home — use leaf name only, never expose absolute paths
                         metadata["working_directory_claude_md"] = md_path.name
                     break
 
@@ -1657,7 +1657,7 @@ The user is now continuing this conversation with you. Respond naturally as if y
             # Atomic check-and-delete prevents double-remove when two sessions
             # sharing the same env are deleted concurrently.
             try:
-                deleted = await self.database.delete_container_env_if_unreferenced(container_env_id)
+                deleted = await self.session_store.delete_container_env_if_unreferenced(container_env_id)
                 if deleted:
                     await self._sandbox.delete_container(container_env_id)
                     logger.info(f"Removed container env {container_env_id} with session {session_id[:8]}")
@@ -1729,11 +1729,11 @@ The user is now continuing this conversation with you. Respond naturally as if y
                         session_file = candidate
                         break
 
-        # Fallback: search in vault/.claude (legacy from HOME override era)
+        # Fallback: search in ~/Parachute/.claude (legacy vault HOME override era)
         if not session_file:
-            vault_projects_dir = self.vault_path / ".claude" / "projects"
-            if vault_projects_dir.exists():
-                for project_dir in vault_projects_dir.iterdir():
+            legacy_projects_dir = Path.home() / "Parachute" / ".claude" / "projects"
+            if legacy_projects_dir.exists():
+                for project_dir in legacy_projects_dir.iterdir():
                     if project_dir.is_dir():
                         candidate = project_dir / f"{session_id}.jsonl"
                         if candidate.exists():

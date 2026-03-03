@@ -6,6 +6,7 @@ for the workspace capability editor UI.
 """
 
 import logging
+from pathlib import Path
 from typing import Any
 
 import yaml
@@ -29,7 +30,7 @@ async def get_capabilities(request: Request) -> dict[str, Any]:
     just enough info for the workspace capability selector UI.
     """
     settings = get_settings()
-    vault_path = settings.vault_path
+    vault_path = Path.home()
 
     # Agents
     agent_items: list[dict[str, Any]] = []

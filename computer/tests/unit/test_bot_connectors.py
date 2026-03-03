@@ -263,7 +263,7 @@ class TestBotsConfig:
             "  dm_trust_level: vault\n"
             "  group_trust_level: sandboxed\n"
         )
-        config = load_bots_config(tmp_path)
+        config = load_bots_config(parachute_dir)
         assert config.telegram.enabled
         assert config.telegram.bot_token == "test-token-123"
         assert 12345 in config.telegram.allowed_users
@@ -272,7 +272,7 @@ class TestBotsConfig:
         parachute_dir = tmp_path / ".parachute"
         parachute_dir.mkdir()
         (parachute_dir / "bots.yaml").write_text("{{invalid yaml")
-        config = load_bots_config(tmp_path)
+        config = load_bots_config(parachute_dir)
         # Should return defaults on error
         assert not config.telegram.enabled
 
@@ -684,7 +684,7 @@ class TestMatrixConfig:
             "  allowed_rooms:\n"
             "    - '!abc:example.org'\n"
         )
-        config = load_bots_config(tmp_path)
+        config = load_bots_config(parachute_dir)
         assert config.matrix.enabled
         assert config.matrix.homeserver_url == "https://matrix.example.org"
         assert config.matrix.device_id == "BOT01"
@@ -862,7 +862,7 @@ def _make_matrix_connector(**kwargs):
         user_id="@parachute:localhost",
         access_token="test-token",
         device_id="TEST01",
-        server=SimpleNamespace(database=None),
+        server=SimpleNamespace(session_store=None),
         allowed_users=[],
         allowed_rooms=[],
     )
@@ -1005,7 +1005,7 @@ class TestHandleBridgedRoom:
         mock_db.get_pairing_request_for_user = AsyncMock(return_value=None)
         mock_db.create_pairing_request = AsyncMock()
         mock_db.create_session = AsyncMock()
-        connector.server = SimpleNamespace(database=mock_db)
+        connector.server = SimpleNamespace(session_store=mock_db)
         connector._client = AsyncMock()
 
         bridge_info = {
@@ -1039,7 +1039,7 @@ class TestHandleBridgedRoom:
         mock_db = AsyncMock()
         mock_db.get_pairing_request_for_user = AsyncMock(return_value=existing_pr)
         mock_db.create_pairing_request = AsyncMock()
-        connector.server = SimpleNamespace(database=mock_db)
+        connector.server = SimpleNamespace(session_store=mock_db)
 
         bridge_info = {
             "bridge_type": "meta",
@@ -1079,8 +1079,8 @@ class TestAllowlistRoomApproval:
             )
         )
         import parachute.api.bots as bots_module
-        old_vault = bots_module._vault_path
-        bots_module._vault_path = tmp_path
+        old_vault = bots_module._parachute_dir
+        bots_module._parachute_dir = tmp_path
         _write_bots_config(initial_config)
 
         try:
@@ -1091,7 +1091,7 @@ class TestAllowlistRoomApproval:
             assert "!existing:localhost" in updated_config.matrix.allowed_rooms
             assert "!new_room:localhost" in updated_config.matrix.allowed_rooms
         finally:
-            bots_module._vault_path = old_vault
+            bots_module._parachute_dir = old_vault
 
     @pytest.mark.asyncio
     async def test_add_room_idempotent(self, tmp_path):
@@ -1112,8 +1112,8 @@ class TestAllowlistRoomApproval:
             )
         )
         import parachute.api.bots as bots_module
-        old_vault = bots_module._vault_path
-        bots_module._vault_path = tmp_path
+        old_vault = bots_module._parachute_dir
+        bots_module._parachute_dir = tmp_path
         _write_bots_config(initial_config)
 
         try:
@@ -1122,7 +1122,7 @@ class TestAllowlistRoomApproval:
             updated_config = load_bots_config(tmp_path)
             assert updated_config.matrix.allowed_rooms.count("!room:localhost") == 1
         finally:
-            bots_module._vault_path = old_vault
+            bots_module._parachute_dir = old_vault
 
     @pytest.mark.asyncio
     async def test_add_user_still_works(self, tmp_path):
@@ -1141,8 +1141,8 @@ class TestAllowlistRoomApproval:
             )
         )
         import parachute.api.bots as bots_module
-        old_vault = bots_module._vault_path
-        bots_module._vault_path = tmp_path
+        old_vault = bots_module._parachute_dir
+        bots_module._parachute_dir = tmp_path
         _write_bots_config(initial_config)
 
         try:
@@ -1152,7 +1152,7 @@ class TestAllowlistRoomApproval:
             assert "user1" in updated_config.discord.allowed_users
             assert "user2" in updated_config.discord.allowed_users
         finally:
-            bots_module._vault_path = old_vault
+            bots_module._parachute_dir = old_vault
 
 
 # ---------------------------------------------------------------------------
@@ -1313,7 +1313,7 @@ class TestPairingTTL:
         )
         mock_db.get_expired_pairing_requests = AsyncMock(return_value=[stale_req])
         mock_db.expire_pairing_request = AsyncMock()
-        c.server = SimpleNamespace(database=mock_db)
+        c.server = SimpleNamespace(session_store=mock_db)
 
         count = await c.expire_stale_pairing_requests(ttl_days=7)
 
@@ -1335,7 +1335,7 @@ class TestPairingTTL:
         )
         mock_db.get_expired_pairing_requests = AsyncMock(return_value=[stale_req])
         mock_db.expire_pairing_request = AsyncMock()
-        c.server = SimpleNamespace(database=mock_db)
+        c.server = SimpleNamespace(session_store=mock_db)
 
         await c.expire_stale_pairing_requests()
         assert "chat_111" not in c._init_nudge_sent
@@ -1366,15 +1366,13 @@ class TestPairingTTL:
         # Insert a stale pending request (simulate 8 days old)
         stale_id = str(uuid.uuid4())
         stale_time = (datetime.now(timezone.utc) - timedelta(days=8)).isoformat()
-        await test_database.connection.execute(
-            """
-            INSERT INTO pairing_requests
-            (id, platform, platform_user_id, platform_chat_id, status, created_at)
-            VALUES (?, 'telegram', '222', 'chat2', 'pending', ?)
-            """,
-            (stale_id, stale_time),
+        await test_database.create_pairing_request(
+            id=stale_id,
+            platform="telegram",
+            platform_user_id="222",
+            platform_chat_id="chat2",
+            created_at=stale_time,
         )
-        await test_database.connection.commit()
 
         expired = await test_database.get_expired_pairing_requests(ttl_days=7)
         expired_ids = [r.id for r in expired]
@@ -1440,9 +1438,9 @@ class TestRevokeUser:
             )
         )
         import parachute.api.bots as bots_module
-        old_vault = bots_module._vault_path
+        old_vault = bots_module._parachute_dir
         old_connectors = bots_module._connectors
-        bots_module._vault_path = tmp_path
+        bots_module._parachute_dir = tmp_path
         _write_bots_config(initial_config)
 
         # Set up mock connector with in-memory state
@@ -1464,7 +1462,7 @@ class TestRevokeUser:
             assert "user1" not in [str(u) for u in mock_connector.allowed_users]
             assert "user1" not in mock_connector._trust_overrides
         finally:
-            bots_module._vault_path = old_vault
+            bots_module._parachute_dir = old_vault
             bots_module._connectors = old_connectors
 
     @pytest.mark.asyncio
@@ -1480,8 +1478,8 @@ class TestRevokeUser:
             discord=DiscordConfig(enabled=True, bot_token="test-token", allowed_users=["user1"])
         )
         import parachute.api.bots as bots_module
-        old_vault = bots_module._vault_path
-        bots_module._vault_path = tmp_path
+        old_vault = bots_module._parachute_dir
+        bots_module._parachute_dir = tmp_path
         _write_bots_config(initial_config)
 
         try:
@@ -1489,7 +1487,7 @@ class TestRevokeUser:
                 await revoke_user("discord", "nonexistent")
             assert exc_info.value.status_code == 404
         finally:
-            bots_module._vault_path = old_vault
+            bots_module._parachute_dir = old_vault
 
 
 # ---------------------------------------------------------------------------
@@ -1507,7 +1505,7 @@ class TestSessionArchivedGuard:
         archived_session = SimpleNamespace(id="sess-abc", archived=True)
         mock_db = AsyncMock()
         mock_db.get_session_by_bot_link = AsyncMock(return_value=archived_session)
-        c.server = SimpleNamespace(database=mock_db)
+        c.server = SimpleNamespace(session_store=mock_db)
 
         result = await c.get_or_create_session("telegram", "chat1", "dm", "Alice")
 
@@ -1524,7 +1522,7 @@ class TestSessionArchivedGuard:
         active_session = SimpleNamespace(id="sess-xyz", archived=False)
         mock_db = AsyncMock()
         mock_db.get_session_by_bot_link = AsyncMock(return_value=active_session)
-        c.server = SimpleNamespace(database=mock_db)
+        c.server = SimpleNamespace(session_store=mock_db)
 
         result = await c.get_or_create_session("telegram", "chat2", "dm", "Bob")
         assert result is active_session
@@ -1538,7 +1536,7 @@ class TestSessionArchivedGuard:
         mock_db = AsyncMock()
         mock_db.get_session_by_bot_link = AsyncMock(return_value=None)
         mock_db.create_session = AsyncMock(return_value=new_session)
-        c.server = SimpleNamespace(database=mock_db)
+        c.server = SimpleNamespace(session_store=mock_db)
 
         result = await c.get_or_create_session("telegram", "chat3", "dm", "Charlie")
         assert result is new_session
@@ -1556,7 +1554,7 @@ def _make_discord_connector(**kwargs):
 
     defaults = dict(
         bot_token="test-token",
-        server=SimpleNamespace(database=None),
+        server=SimpleNamespace(session_store=None),
         allowed_users=["user1"],
     )
     defaults.update(kwargs)
@@ -1735,7 +1733,7 @@ class TestDiscordVoiceMessage:
         """Missing transcribe_audio sends user-friendly error."""
         connector = _make_discord_connector(allowed_users=["user1"])
         msg = self._make_audio_message()
-        connector.server = SimpleNamespace(database=None)  # No transcribe_audio
+        connector.server = SimpleNamespace(session_store=None)  # No transcribe_audio
 
         await connector.on_voice_message(msg, None)
         msg.reply.assert_called_once()
@@ -1787,7 +1785,7 @@ class TestMatrixAckRemove:
         mock_db = AsyncMock()
         mock_db.get_session_by_bot_link = AsyncMock(return_value=session)
         connector.server = SimpleNamespace(
-            database=mock_db,
+            session_store=mock_db,
             orchestrate=lambda **kw: _async_events(
                 [{"type": "text", "content": "hi back"}]
             ),
@@ -1973,7 +1971,7 @@ class TestDiscordRingBuffer:
             allowed_users=["user1"],
             group_mention_mode="mention_only",
         )
-        connector.server = SimpleNamespace(database=None)
+        connector.server = SimpleNamespace(session_store=None)
         # Mock the Discord client so the mention gate can evaluate
         connector._client = MagicMock()
         connector._client.user = MagicMock()
@@ -2127,7 +2125,7 @@ class TestCommandRegistry:
         mock_db.get_session_by_bot_link = AsyncMock(return_value=mock_session)
         mock_db.archive_session = AsyncMock()
 
-        connector = _make_test_connector(server=SimpleNamespace(database=mock_db))
+        connector = _make_test_connector(server=SimpleNamespace(session_store=mock_db))
         response = await connector.dispatch_command("new", "chat1", "user1", [])
 
         mock_db.archive_session.assert_called_once_with("session-abc-123")
@@ -2140,7 +2138,7 @@ class TestCommandRegistry:
         mock_db.get_session_by_bot_link = AsyncMock(return_value=None)
         mock_db.archive_session = AsyncMock()
 
-        connector = _make_test_connector(server=SimpleNamespace(database=mock_db))
+        connector = _make_test_connector(server=SimpleNamespace(session_store=mock_db))
         response = await connector.dispatch_command("new", "chat1", "user1", [])
 
         mock_db.archive_session.assert_not_called()
@@ -2234,7 +2232,7 @@ class TestCommandRegistry:
         connector = _make_matrix_connector()
         mock_db = MagicMock()
         mock_db.get_session_by_bot_link = AsyncMock(return_value=None)
-        connector.server = SimpleNamespace(database=mock_db)
+        connector.server = SimpleNamespace(session_store=mock_db)
 
         # Patch _send_room_message to capture output
         connector._send_room_message = AsyncMock()

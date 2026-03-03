@@ -64,16 +64,16 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/bots", tags=["bots"])
 
 # Module-level state (set during server startup)
-_vault_path: Path | None = None
+_parachute_dir: Path | None = None
 _connectors: dict[str, Any] = {}
-_server_ref: Any = None  # Server-like object with .database for connector sessions
+_server_ref: Any = None  # Server-like object with .session_store for connector sessions
 _config_lock = asyncio.Lock()  # Serialize writes to bots.yaml
 
 
-def init_bots_api(vault_path: Path, connectors: dict[str, Any] | None = None, server_ref: Any = None) -> None:
-    """Initialize bots API with vault path and active connectors."""
-    global _vault_path, _connectors, _server_ref
-    _vault_path = vault_path
+def init_bots_api(parachute_dir: Path, connectors: dict[str, Any] | None = None, server_ref: Any = None) -> None:
+    """Initialize bots API with parachute dir and active connectors."""
+    global _parachute_dir, _connectors, _server_ref
+    _parachute_dir = parachute_dir
     _connectors = connectors or {}
     _server_ref = server_ref
 
@@ -94,10 +94,10 @@ _EMPTY_CONNECTOR_STATUS = {
 @router.get("/status")
 async def bots_status():
     """Get status of all bot connectors."""
-    if not _vault_path:
+    if not _parachute_dir:
         return {"configured": False, "connectors": {}}
 
-    config = load_bots_config(_vault_path)
+    config = load_bots_config(_parachute_dir)
 
     connectors = {}
     for platform in ("telegram", "discord", "matrix"):
@@ -120,10 +120,10 @@ async def bots_status():
 @router.get("/config")
 async def bots_config():
     """Get bot configuration (tokens masked)."""
-    if not _vault_path:
+    if not _parachute_dir:
         return {"telegram": {}, "discord": {}, "matrix": {}}
 
-    config = load_bots_config(_vault_path)
+    config = load_bots_config(_parachute_dir)
 
     return {
         "telegram": {
@@ -155,11 +155,11 @@ async def bots_config():
 @router.put("/config")
 async def update_bots_config(body: BotsConfigUpdate):
     """Update bot configuration. Preserves existing tokens if not provided."""
-    if not _vault_path:
+    if not _parachute_dir:
         raise HTTPException(status_code=400, detail="Server not configured")
 
     async with _config_lock:
-        existing = load_bots_config(_vault_path)
+        existing = load_bots_config(_parachute_dir)
 
         # Merge telegram config
         tg = body.telegram.model_dump(exclude_none=True) if body.telegram else {}
@@ -206,7 +206,7 @@ async def update_bots_config(body: BotsConfigUpdate):
 def _write_bots_config(config: BotsConfig) -> None:
     """Write bots config to YAML with restrictive permissions."""
     import os
-    config_path = _vault_path / ".parachute" / "bots.yaml"
+    config_path = _parachute_dir / "bots.yaml"
     config_path.parent.mkdir(parents=True, exist_ok=True)
     with open(config_path, "w") as f:
         yaml.safe_dump(config.model_dump(), f, default_flow_style=False)
@@ -233,7 +233,7 @@ async def _start_platform(platform: str) -> None:
             logger.warning(f"{platform} connector already active (status: {existing._status})")
             return
 
-        config = load_bots_config(_vault_path)
+        config = load_bots_config(_parachute_dir)
         platform_config = getattr(config, platform)
 
         if platform == "telegram":
@@ -301,10 +301,10 @@ async def _start_platform(platform: str) -> None:
 
 async def auto_start_connectors() -> None:
     """Start enabled connectors with valid tokens. Errors are logged, not raised."""
-    if not _vault_path:
+    if not _parachute_dir:
         return
 
-    config = load_bots_config(_vault_path)
+    config = load_bots_config(_parachute_dir)
     for platform in ("telegram", "discord", "matrix"):
         cfg = getattr(config, platform)
         has_credentials = cfg.bot_token if hasattr(cfg, "bot_token") else cfg.access_token
@@ -321,13 +321,13 @@ async def start_connector(platform: str):
     """Start a bot connector."""
     if platform not in ("telegram", "discord", "matrix"):
         raise HTTPException(status_code=400, detail=f"Unknown platform: {platform}")
-    if not _vault_path:
+    if not _parachute_dir:
         raise HTTPException(status_code=400, detail="Server not configured")
     existing = _connectors.get(platform)
     if existing and existing._status in (ConnectorState.RUNNING, ConnectorState.RECONNECTING):
         raise HTTPException(status_code=409, detail=f"{platform} connector already running")
 
-    config = load_bots_config(_vault_path)
+    config = load_bots_config(_parachute_dir)
     platform_config = getattr(config, platform)
 
     credentials = platform_config.bot_token if hasattr(platform_config, "bot_token") else platform_config.access_token
@@ -364,10 +364,10 @@ async def test_connector(platform: str):
     """Test a bot connector's connection."""
     if platform not in ("telegram", "discord", "matrix"):
         raise HTTPException(status_code=400, detail=f"Unknown platform: {platform}")
-    if not _vault_path:
+    if not _parachute_dir:
         raise HTTPException(status_code=400, detail="Server not configured")
 
-    config = load_bots_config(_vault_path)
+    config = load_bots_config(_parachute_dir)
     platform_config = getattr(config, platform)
 
     if platform == "matrix":
@@ -429,10 +429,10 @@ async def test_connector(platform: str):
 @router.get("/pairing")
 async def list_pairing_requests():
     """List pending pairing requests."""
-    if not _server_ref or not hasattr(_server_ref, "database"):
+    if not _server_ref or not hasattr(_server_ref, "session_store"):
         raise HTTPException(status_code=500, detail="Database not available")
 
-    db = _server_ref.database
+    db = _server_ref.session_store
     requests = await db.get_pending_pairing_requests()
     return {"requests": [r.model_dump(by_alias=True) for r in requests]}
 
@@ -440,10 +440,10 @@ async def list_pairing_requests():
 @router.get("/pairing/count")
 async def get_pending_pairing_count():
     """Get count of pending pairing requests. Lightweight endpoint for polling."""
-    if not _server_ref or not hasattr(_server_ref, "database"):
+    if not _server_ref or not hasattr(_server_ref, "session_store"):
         raise HTTPException(status_code=500, detail="Database not available")
 
-    db = _server_ref.database
+    db = _server_ref.session_store
     count = await db.get_pending_pairing_count()
     return {"pending": count}
 
@@ -451,10 +451,10 @@ async def get_pending_pairing_count():
 @router.post("/pairing/{request_id}/approve")
 async def approve_pairing(request_id: str, body: PairingApproval):
     """Approve a pairing request. Adds user to platform allowlist."""
-    if not _server_ref or not hasattr(_server_ref, "database"):
+    if not _server_ref or not hasattr(_server_ref, "session_store"):
         raise HTTPException(status_code=500, detail="Database not available")
 
-    db = _server_ref.database
+    db = _server_ref.session_store
     pr = await db.get_pairing_request(request_id)
     if not pr:
         raise HTTPException(status_code=404, detail="Pairing request not found")
@@ -529,10 +529,10 @@ async def approve_pairing(request_id: str, body: PairingApproval):
 @router.post("/pairing/{request_id}/deny")
 async def deny_pairing(request_id: str):
     """Deny a pairing request."""
-    if not _server_ref or not hasattr(_server_ref, "database"):
+    if not _server_ref or not hasattr(_server_ref, "session_store"):
         raise HTTPException(status_code=500, detail="Database not available")
 
-    db = _server_ref.database
+    db = _server_ref.session_store
     pr = await db.get_pairing_request(request_id)
     if not pr:
         raise HTTPException(status_code=404, detail="Pairing request not found")
@@ -563,11 +563,11 @@ async def revoke_user(platform: str, user_id: str):
     """Revoke a previously approved user, removing them from the platform allowlist."""
     if platform not in ("telegram", "discord", "matrix"):
         raise HTTPException(status_code=400, detail=f"Unknown platform: {platform}")
-    if not _vault_path:
+    if not _parachute_dir:
         raise HTTPException(status_code=400, detail="Server not configured")
 
     async with _config_lock:
-        config = load_bots_config(_vault_path)
+        config = load_bots_config(_parachute_dir)
         platform_config = getattr(config, platform, None)
         if not platform_config:
             raise HTTPException(status_code=400, detail=f"Platform {platform} not configured")
@@ -608,11 +608,11 @@ async def _add_to_allowlist(
     Also updates the connector's in-memory list under the same lock to keep
     YAML and in-memory state in sync atomically.
     """
-    if not _vault_path:
+    if not _parachute_dir:
         return
 
     async with _config_lock:
-        config = load_bots_config(_vault_path)
+        config = load_bots_config(_parachute_dir)
         platform_config = getattr(config, platform, None)
         if not platform_config:
             return

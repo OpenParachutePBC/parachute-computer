@@ -132,7 +132,7 @@ async def list_agents(request: Request) -> dict[str, Any]:
     items.append(_vault_agent_to_item().model_dump())
 
     # 2. SDK-native agents from {vault}/.claude/agents/
-    for agent_item in _scan_sdk_agents(settings.vault_path):
+    for agent_item in _scan_sdk_agents(Path.home()):
         items.append(agent_item.model_dump())
 
     return {"agents": items}
@@ -155,7 +155,7 @@ async def get_agent(request: Request, name: str) -> dict[str, Any]:
         return item
 
     # Check SDK agents
-    agents_dir = _get_sdk_agents_dir(settings.vault_path)
+    agents_dir = _get_sdk_agents_dir(Path.home())
     agent_file = agents_dir / f"{name}.md"
     if agent_file.exists():
         content = agent_file.read_text(encoding="utf-8")
@@ -201,7 +201,7 @@ async def create_agent(request: Request, body: CreateAgentInput) -> dict[str, An
     _validate_agent_name(body.name)
 
     settings = get_settings()
-    agents_dir = _get_sdk_agents_dir(settings.vault_path)
+    agents_dir = _get_sdk_agents_dir(Path.home())
     agents_dir.mkdir(parents=True, exist_ok=True)
 
     agent_file = agents_dir / f"{body.name}.md"
@@ -235,7 +235,7 @@ async def create_agent(request: Request, body: CreateAgentInput) -> dict[str, An
 async def upload_agent(request: Request, file: UploadFile = File(...)) -> dict[str, Any]:
     """Upload a .md agent file to .claude/agents/."""
     settings = get_settings()
-    agents_dir = _get_sdk_agents_dir(settings.vault_path)
+    agents_dir = _get_sdk_agents_dir(Path.home())
     agents_dir.mkdir(parents=True, exist_ok=True)
 
     if not file.filename:
@@ -257,7 +257,7 @@ async def upload_agent(request: Request, file: UploadFile = File(...)) -> dict[s
     logger.info(f"Uploaded agent: {name} at {agent_file}")
 
     # Scan the file for display info
-    for agent_item in _scan_sdk_agents(settings.vault_path):
+    for agent_item in _scan_sdk_agents(Path.home()):
         if agent_item.name == name:
             return agent_item.model_dump()
 
@@ -280,7 +280,7 @@ async def delete_agent(request: Request, name: str) -> dict[str, Any]:
     _validate_agent_name(name)
 
     settings = get_settings()
-    agents_dir = _get_sdk_agents_dir(settings.vault_path)
+    agents_dir = _get_sdk_agents_dir(Path.home())
     agent_file = agents_dir / f"{name}.md"
 
     if not agent_file.exists():

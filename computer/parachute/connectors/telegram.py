@@ -238,7 +238,7 @@ class TelegramConnector(BotConnector):
 
         chat_id = str(update.effective_chat.id)
         chat_type = "dm" if update.effective_chat.type == "private" else "group"
-        db = getattr(self.server, "database", None)
+        db = getattr(self.server, "session_store", None)
 
         if db:
             session = await db.get_session_by_bot_link("telegram", chat_id)
@@ -331,7 +331,7 @@ class TelegramConnector(BotConnector):
             )
 
         # Session-aware response mode gating
-        db = getattr(self.server, "database", None)
+        db = getattr(self.server, "session_store", None)
         session = await db.get_session_by_bot_link("telegram", chat_id) if db else None
 
         # Determine response mode: per-session overrides connector default

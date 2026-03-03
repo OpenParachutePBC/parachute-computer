@@ -1,12 +1,9 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:file_picker/file_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
-import 'package:parachute/core/providers/file_system_provider.dart';
 import 'package:parachute/features/daily/journal/providers/journal_providers.dart';
-import 'package:parachute/features/chat/providers/chat_providers.dart';
 
 /// Provider for markdown import status. Invalidated after a successful import.
 final _importStatusProvider = FutureProvider.autoDispose<Map<String, dynamic>?>((ref) async {
@@ -72,87 +69,6 @@ class _VaultSettingsSectionState extends ConsumerState<VaultSettingsSection> {
     }
   }
 
-  Future<void> _changeVaultFolder() async {
-    final dailyService = ref.read(dailyFileSystemServiceProvider);
-    final chatService = ref.read(chatFileSystemServiceProvider);
-
-    // Handle Android permissions
-    if (Platform.isAndroid) {
-      final hasPermission = await dailyService.hasStoragePermission();
-      if (!hasPermission) {
-        final granted = await dailyService.requestStoragePermission();
-        if (!granted) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: const Text('Storage permission required'),
-                backgroundColor: BrandColors.error,
-              ),
-            );
-          }
-          return;
-        }
-      }
-    }
-
-    debugPrint('[Settings] Opening folder picker...');
-
-    try {
-      final selectedDirectory = await FilePicker.platform.getDirectoryPath(
-        dialogTitle: 'Choose Parachute Folder',
-      );
-
-      debugPrint('[Settings] Folder picker returned: $selectedDirectory');
-
-      if (selectedDirectory != null) {
-        // Update both services to use the same vault location
-        final dailySuccess = await dailyService.setVaultPath(selectedDirectory, migrateFiles: false);
-        final chatSuccess = await chatService.setVaultPath(selectedDirectory, migrateFiles: false);
-
-        if (dailySuccess && chatSuccess) {
-          // Clear local cache so stale entries from the old vault don't appear.
-          // Await the future to ensure clearAll() runs even if cache is still initializing.
-          await ref.read(journalLocalCacheProvider.future).then((c) => c.clearAll());
-
-          // Invalidate all providers that depend on file paths so they refresh
-          ref.invalidate(todayJournalProvider);
-          ref.invalidate(selectedJournalProvider);
-          ref.invalidate(chatLogServiceFutureProvider);
-          ref.invalidate(selectedChatLogProvider);
-          ref.invalidate(reflectionServiceFutureProvider);
-          ref.invalidate(selectedReflectionProvider);
-          ref.invalidate(dailyRootPathProvider);
-          ref.invalidate(chatRootPathProvider);
-
-          widget.onVaultChanged();
-
-          if (mounted) {
-            final displayPath = await dailyService.getVaultPathDisplay();
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('Parachute vault: $displayPath'),
-                backgroundColor: BrandColors.success,
-              ),
-            );
-          }
-        }
-      } else {
-        debugPrint('[Settings] User cancelled folder picker or picker failed');
-      }
-    } catch (e, stackTrace) {
-      debugPrint('[Settings] Error in folder picker: $e');
-      debugPrint('[Settings] Stack trace: $stackTrace');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error opening folder picker: $e'),
-            backgroundColor: BrandColors.error,
-          ),
-        );
-      }
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -168,7 +84,7 @@ class _VaultSettingsSectionState extends ConsumerState<VaultSettingsSection> {
             ),
             SizedBox(width: Spacing.sm),
             Text(
-              'Parachute Vault',
+              'Storage Location',
               style: TextStyle(
                 fontWeight: FontWeight.bold,
                 fontSize: TypographyTokens.bodyLarge,
@@ -179,7 +95,7 @@ class _VaultSettingsSectionState extends ConsumerState<VaultSettingsSection> {
         ),
         SizedBox(height: Spacing.sm),
         Text(
-          'Your Parachute data is stored locally in this folder.',
+          'Your Parachute data is stored in your home directory.',
           style: TextStyle(
             fontSize: TypographyTokens.bodySmall,
             color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
@@ -250,28 +166,15 @@ class _VaultSettingsSectionState extends ConsumerState<VaultSettingsSection> {
         ),
         SizedBox(height: Spacing.lg),
 
-        Row(
-          children: [
-            Expanded(
-              child: OutlinedButton.icon(
-                onPressed: _changeVaultFolder,
-                icon: const Icon(Icons.folder, size: 18),
-                label: const Text('Change'),
-              ),
+        if (Platform.isMacOS || Platform.isLinux || Platform.isWindows)
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: () => _openFolder(widget.vaultPath),
+              icon: const Icon(Icons.open_in_new, size: 18),
+              label: const Text('Open in Finder'),
             ),
-            SizedBox(width: Spacing.sm),
-            Expanded(
-              child: FilledButton.icon(
-                onPressed: () => _openFolder(widget.vaultPath),
-                icon: const Icon(Icons.open_in_new, size: 18),
-                label: const Text('Open'),
-                style: FilledButton.styleFrom(
-                  backgroundColor: isDark ? BrandColors.nightForest : BrandColors.forest,
-                ),
-              ),
-            ),
-          ],
-        ),
+          ),
         SizedBox(height: Spacing.xl),
         const _JournalImportSection(),
       ],
