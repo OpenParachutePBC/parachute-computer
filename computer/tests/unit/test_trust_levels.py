@@ -250,19 +250,22 @@ class TestDockerSandbox:
         assert container_name == "parachute-env-my-project"
 
     def test_persistent_container_args_has_tools_volume(self, vault_path):
-        from parachute.core.sandbox import TOOLS_VOLUME_NAME
+        from parachute.core.sandbox import TOOLS_VOLUME_NAME, SCRATCH_VOLUME_PREFIX
         sandbox = DockerSandbox(vault_path=vault_path)
         config = AgentSandboxConfig(session_id="test123")
         labels = {"app": "parachute", "type": "env"}
         home_dir = vault_path / ".parachute" / "sandbox" / "envs" / "test123" / "home"
         vault_mounts = ["-v", f"{vault_path}:/home/sandbox/Parachute:ro"]
         args = sandbox._build_persistent_container_args(
-            "parachute-env-test123", config, labels, home_dir, vault_mounts
+            "parachute-env-test123", "test123", config, labels, home_dir, vault_mounts
         )
         arg_str = " ".join(args)
         assert TOOLS_VOLUME_NAME in arg_str
         assert "/opt/parachute-tools" in arg_str
         assert "readonly" in arg_str
+        # Scratch volume is mounted at /scratch (persistent named volume)
+        assert f"{SCRATCH_VOLUME_PREFIX}-test123" in arg_str
+        assert "/scratch" in arg_str
 
     def test_persistent_container_args_mounts_home_dir(self, vault_path):
         """All containers bind-mount the vault home dir to /home/sandbox/."""
@@ -272,7 +275,7 @@ class TestDockerSandbox:
         home_dir = vault_path / ".parachute" / "sandbox" / "envs" / "my-env" / "home"
         vault_mounts = ["-v", f"{vault_path}:/home/sandbox/Parachute:ro"]
         args = sandbox._build_persistent_container_args(
-            "parachute-env-my-env", config, labels, home_dir, vault_mounts
+            "parachute-env-my-env", "my-env", config, labels, home_dir, vault_mounts
         )
         arg_str = " ".join(args)
         assert f"{home_dir}:/home/sandbox:rw" in arg_str
@@ -286,7 +289,7 @@ class TestDockerSandbox:
         home_dir = vault_path / ".parachute" / "sandbox" / "envs" / "my-env" / "home"
         vault_mounts = ["-v", f"{vault_path}:/home/sandbox/Parachute:ro"]
         args = sandbox._build_persistent_container_args(
-            "parachute-env-my-env", config, labels, home_dir, vault_mounts
+            "parachute-env-my-env", "my-env", config, labels, home_dir, vault_mounts
         )
         arg_str = " ".join(args)
         # Home mount comes first, vault overlay comes second

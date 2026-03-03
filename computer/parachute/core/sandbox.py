@@ -47,6 +47,9 @@ SANDBOX_IMAGE = "parachute-sandbox:latest"
 # Shared read-only tools volume — mounted at /opt/parachute-tools in all containers
 TOOLS_VOLUME_NAME = "parachute-tools"
 
+# Per-env persistent scratch volume prefix — mounted at /scratch in named env containers
+SCRATCH_VOLUME_PREFIX = "parachute-scratch"
+
 # Container resource limits
 # Ephemeral containers (--rm, short-lived) can run with less memory.
 # Persistent containers need more — the Claude SDK process alone uses 300–500 MB.
@@ -478,6 +481,7 @@ class DockerSandbox:
     async def _ensure_container(
         self,
         container_name: str,
+        slug: str,
         home_dir: Path,
         labels: dict[str, str],
         config: AgentSandboxConfig,
@@ -501,7 +505,7 @@ class DockerSandbox:
             vault_mounts.extend(self._build_capability_mounts(config))
 
             args = self._build_persistent_container_args(
-                container_name, config, labels, home_dir, vault_mounts
+                container_name, slug, config, labels, home_dir, vault_mounts
             )
 
             proc = await asyncio.create_subprocess_exec(
@@ -524,6 +528,7 @@ class DockerSandbox:
 
         Container: parachute-env-<slug>
         Home dir: vault/.parachute/sandbox/envs/<slug>/home/ → /home/sandbox/
+        Scratch: parachute-scratch-<slug> volume → /scratch (persistent across restarts)
         Creates if absent, starts if stopped. Idempotent.
         """
         container_name = f"parachute-env-{slug}"
@@ -534,7 +539,8 @@ class DockerSandbox:
             "env_slug": slug,
             "config_hash": self._calculate_config_hash(),
         }
-        return await self._ensure_container(container_name, home_dir, labels, config)
+        await self._ensure_scratch_volume(slug)
+        return await self._ensure_container(container_name, slug, home_dir, labels, config)
 
     async def run_session(
         self,
@@ -565,7 +571,7 @@ class DockerSandbox:
             yield event
 
     async def delete_container(self, slug: str) -> None:
-        """Stop and remove a container env and its vault home directory."""
+        """Stop and remove a container env, its vault home directory, and scratch volume."""
         container_name = f"parachute-env-{slug}"
         await self._stop_container(container_name)
         await self._remove_container(container_name)
@@ -574,6 +580,7 @@ class DockerSandbox:
         if home_dir.exists():
             await asyncio.to_thread(shutil.rmtree, home_dir, True)
             logger.info(f"Removed home dir for container env {slug}")
+        await self._remove_scratch_volume(slug)
 
     async def _inspect_status(self, container_name: str) -> str | None:
         """Get container status via docker inspect. Returns None if not found."""
@@ -590,6 +597,7 @@ class DockerSandbox:
     def _build_persistent_container_args(
         self,
         container_name: str,
+        slug: str,
         config: AgentSandboxConfig,
         labels: dict[str, str],
         home_dir: Path,
@@ -599,6 +607,7 @@ class DockerSandbox:
 
         Args:
             container_name: Name for the container
+            slug: Container env slug (used to name the scratch volume)
             config: Sandbox configuration
             labels: Docker labels for discovery
             home_dir: Host directory bind-mounted to /home/sandbox/ for portability.
@@ -647,6 +656,12 @@ class DockerSandbox:
 
         # Vault mounts (nested inside /home/sandbox/Parachute/ — read-only overlay)
         args.extend(vault_mounts)
+
+        # Persistent scratch volume — survives container restarts
+        args.extend([
+            "--mount",
+            f"source={SCRATCH_VOLUME_PREFIX}-{slug},target=/scratch",
+        ])
 
         # Shared tools volume (read-only) — bin/ in PATH, python/ in PYTHONPATH
         args.extend([
@@ -846,6 +861,34 @@ class DockerSandbox:
         await proc.wait()
         # returncode 0 = created, may also succeed if already exists
 
+    async def _ensure_scratch_volume(self, slug: str) -> None:
+        """Create a persistent scratch volume for a container env if it doesn't exist.
+
+        Named volume parachute-scratch-<slug> is mounted at /scratch inside the
+        container, replacing the ephemeral tmpfs. Files survive container restarts.
+        """
+        vol = f"{SCRATCH_VOLUME_PREFIX}-{slug}"
+        proc = await asyncio.create_subprocess_exec(
+            "docker", "volume", "create",
+            "--label", "app=parachute",
+            "--label", "type=scratch",
+            "--label", f"slug={slug}",
+            vol,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        await proc.wait()
+
+    async def _remove_scratch_volume(self, slug: str) -> None:
+        """Remove the persistent scratch volume for a container env."""
+        vol = f"{SCRATCH_VOLUME_PREFIX}-{slug}"
+        proc = await asyncio.create_subprocess_exec(
+            "docker", "volume", "rm", vol,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        await proc.wait()  # Ignore errors — volume may not exist
+
     async def reconcile(self, active_slugs: set[str] | None = None) -> None:
         """Reconcile parachute containers on server startup.
 
@@ -922,3 +965,44 @@ class DockerSandbox:
 
         if active_env_names:
             logger.info(f"Active env containers: {', '.join(active_env_names)}")
+
+        # Clean up orphaned scratch volumes
+        if active_slugs is not None:
+            await self._reconcile_scratch_volumes(active_slugs)
+
+    async def _reconcile_scratch_volumes(self, active_slugs: set[str]) -> None:
+        """Remove scratch volumes for container envs that no longer exist in the DB."""
+        proc = await asyncio.create_subprocess_exec(
+            "docker", "volume", "ls",
+            "--filter", "label=type=scratch",
+            "--format", "{{.Name}}",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        stdout, _ = await proc.communicate()
+        if proc.returncode != 0:
+            return
+
+        orphans = []
+        for line in stdout.decode().strip().split("\n"):
+            vol = line.strip()
+            if not vol.startswith(f"{SCRATCH_VOLUME_PREFIX}-"):
+                continue
+            slug = vol[len(f"{SCRATCH_VOLUME_PREFIX}-"):]
+            if slug not in active_slugs:
+                orphans.append(vol)
+
+        if orphans:
+            results = await asyncio.gather(*[
+                asyncio.create_subprocess_exec(
+                    "docker", "volume", "rm", vol,
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
+                for vol in orphans
+            ], return_exceptions=True)
+            # Wait for all removals
+            for result in results:
+                if isinstance(result, asyncio.subprocess.Process):
+                    await result.wait()
+            logger.info(f"Removed {len(orphans)} orphaned scratch volume(s): {', '.join(orphans)}")

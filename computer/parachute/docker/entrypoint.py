@@ -163,12 +163,24 @@ async def run():
         emit({"type": "error", "error": f"Invalid PARACHUTE_SESSION_ID format"})
         sys.exit(1)
 
-    # Create per-session scratch directory under /scratch (tmpfs)
+    # Create per-session scratch directory under /scratch
+    # Persistent env containers: named Docker volume mounted here (survives restarts)
     # Gives agent an isolated writable workspace without polluting /tmp
     scratch_dir = None
     if session_id and os.path.isdir("/scratch"):
         scratch_dir = f"/scratch/{session_id}"
         os.makedirs(scratch_dir, exist_ok=True)
+
+    # Add parachute-tools paths to environment so installed packages are usable
+    # bin/ → PATH (CLI tools), python/ → PYTHONPATH (pip --target installs)
+    _tools_bin = "/opt/parachute-tools/bin"
+    _tools_python = "/opt/parachute-tools/python"
+    _path = os.environ.get("PATH", "")
+    if _tools_bin not in _path:
+        os.environ["PATH"] = f"{_tools_bin}:{_path}" if _path else _tools_bin
+    _pythonpath = os.environ.get("PYTHONPATH", "")
+    if _tools_python not in _pythonpath:
+        os.environ["PYTHONPATH"] = f"{_tools_python}:{_pythonpath}" if _pythonpath else _tools_python
 
     # Token: prefer stdin payload (persistent mode), fall back to env var (ephemeral mode)
     oauth_token = request.get("claude_token") or os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
