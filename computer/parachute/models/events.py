@@ -257,7 +257,7 @@ class PromptMetadataEvent(BaseModel):
         description="List of specialized agents available",
     )
 
-    # Capability info (populated after workspace filtering)
+    # Capability info
     available_skills: list[str] = Field(
         alias="availableSkills",
         default_factory=list,

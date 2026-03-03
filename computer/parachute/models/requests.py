@@ -136,12 +136,6 @@ class ChatRequest(BaseModel):
         description="Model to use (e.g., 'claude-sonnet-4-5-20250929'). "
                     "Overrides server DEFAULT_MODEL env var.",
     )
-    workspace_id: Optional[str] = Field(
-        alias="workspaceId",
-        default=None,
-        pattern=r"^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$",
-        description="Workspace slug to use for this session's capabilities and defaults.",
-    )
     container_id: Optional[str] = Field(
         alias="containerId",
         default=None,

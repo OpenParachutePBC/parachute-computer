@@ -208,12 +208,6 @@ class Session(BaseModel):
         serialization_alias="linkedBotChatType",
         description="Chat type: dm, group, or NULL",
     )
-    workspace_id: Optional[str] = Field(
-        default=None,
-        alias="workspaceId",
-        serialization_alias="workspaceId",
-        description="Workspace slug this session belongs to",
-    )
     parent_session_id: Optional[str] = Field(
         default=None,
         alias="parentSessionId",
@@ -339,7 +333,6 @@ class SessionCreate(BaseModel):
     linked_bot_platform: Optional[str] = None
     linked_bot_chat_id: Optional[str] = None
     linked_bot_chat_type: Optional[str] = None
-    workspace_id: Optional[str] = None
     parent_session_id: Optional[str] = None
     created_by: str = "user"
     container_env_id: Optional[str] = None
@@ -358,7 +351,6 @@ class SessionUpdate(BaseModel):
     metadata: Optional[dict[str, Any]] = None
     trust_level: Optional[str] = None
     working_directory: Optional[str] = None
-    workspace_id: Optional[str] = None
     bridge_session_id: Optional[str] = None
     bridge_context_log: Optional[str] = None
     container_env_id: Optional[str] = None

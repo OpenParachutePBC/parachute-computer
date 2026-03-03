@@ -1,20 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
-import '../models/workspace.dart';
-import '../../settings/models/trust_level.dart';
 import '../providers/chat_layout_provider.dart';
-import '../providers/workspace_providers.dart';
+import '../providers/container_env_providers.dart';
 import '../widgets/session_list_panel.dart';
 import '../widgets/chat_content_panel.dart';
-import '../widgets/workspace_dialog.dart';
 
 /// Adaptive shell for the chat feature.
 ///
 /// Uses LayoutBuilder to pick the right layout:
 /// - **Mobile** (<600px): Just SessionListPanel; tapping a session pushes ChatScreen.
 /// - **Tablet** (600–1199px): Two-column — session list + chat content side by side.
-/// - **Desktop** (≥1200px): Three-column — workspace sidebar + session list + chat content.
+/// - **Desktop** (≥1200px): Three-column — container env sidebar + session list + chat content.
 class ChatShell extends ConsumerWidget {
   const ChatShell({super.key});
 
@@ -97,7 +94,7 @@ class _TabletLayout extends StatelessWidget {
   }
 }
 
-/// Desktop: three-column layout — workspace sidebar + session list + chat content.
+/// Desktop: three-column layout — container env sidebar + session list + chat content.
 class _DesktopLayout extends StatelessWidget {
   const _DesktopLayout();
 
@@ -107,10 +104,10 @@ class _DesktopLayout extends StatelessWidget {
 
     return Row(
       children: [
-        // Workspace sidebar
+        // Container env sidebar
         SizedBox(
           width: 220,
-          child: _WorkspaceSidebar(isDark: isDark),
+          child: _ContainerEnvSidebar(isDark: isDark),
         ),
         // Session list
         SizedBox(
@@ -135,16 +132,16 @@ class _DesktopLayout extends StatelessWidget {
   }
 }
 
-/// Workspace sidebar showing app header, workspace list, and workspace management.
-class _WorkspaceSidebar extends ConsumerWidget {
+/// Container env sidebar showing app header, env list, and create button.
+class _ContainerEnvSidebar extends ConsumerWidget {
   final bool isDark;
 
-  const _WorkspaceSidebar({required this.isDark});
+  const _ContainerEnvSidebar({required this.isDark});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final workspacesAsync = ref.watch(workspacesProvider);
-    final activeSlug = ref.watch(activeWorkspaceProvider).valueOrNull;
+    final containerEnvsAsync = ref.watch(containerEnvsProvider);
+    final activeSlug = ref.watch(activeContainerEnvProvider).valueOrNull;
 
     return Container(
       color: isDark ? BrandColors.nightSurfaceElevated : BrandColors.softWhite,
@@ -182,11 +179,11 @@ class _WorkspaceSidebar extends ConsumerWidget {
                 : BrandColors.stone.withValues(alpha: 0.2),
           ),
 
-          // Workspaces section
+          // Environments section header
           Padding(
             padding: EdgeInsets.fromLTRB(Spacing.md, Spacing.md, Spacing.md, Spacing.xs),
             child: Text(
-              'WORKSPACES',
+              'ENVIRONMENTS',
               style: TextStyle(
                 fontSize: TypographyTokens.labelSmall,
                 fontWeight: FontWeight.w600,
@@ -197,23 +194,24 @@ class _WorkspaceSidebar extends ConsumerWidget {
           ),
 
           // "All Chats" option
-          _WorkspaceItem(
+          _EnvItem(
             name: 'All Chats',
             icon: Icons.chat_bubble_outline,
             isActive: activeSlug == null,
             isDark: isDark,
-            onTap: () => ref.read(activeWorkspaceProvider.notifier).setWorkspace(null),
+            onTap: () =>
+                ref.read(activeContainerEnvProvider.notifier).setContainerEnv(null),
           ),
 
-          // Workspace list
+          // Container env list
           Expanded(
-            child: workspacesAsync.when(
-              data: (workspaces) {
-                if (workspaces.isEmpty) {
+            child: containerEnvsAsync.when(
+              data: (envs) {
+                if (envs.isEmpty) {
                   return Padding(
                     padding: EdgeInsets.all(Spacing.md),
                     child: Text(
-                      'No workspaces yet',
+                      'No named environments yet',
                       style: TextStyle(
                         fontSize: TypographyTokens.bodySmall,
                         color: isDark
@@ -225,28 +223,35 @@ class _WorkspaceSidebar extends ConsumerWidget {
                 }
                 return ListView.builder(
                   padding: EdgeInsets.zero,
-                  itemCount: workspaces.length,
+                  itemCount: envs.length,
                   itemBuilder: (context, index) {
-                    final ws = workspaces[index];
-                    return _WorkspaceItem(
-                      name: ws.name,
-                      icon: _workspaceIcon(ws),
-                      isActive: activeSlug == ws.slug,
+                    final env = envs[index];
+                    return _EnvItem(
+                      name: env.displayName,
+                      icon: Icons.dns_outlined,
+                      isActive: activeSlug == env.slug,
                       isDark: isDark,
-                      subtitle: ws.model ?? ws.defaultTrustLevel,
-                      onTap: () => ref.read(activeWorkspaceProvider.notifier).setWorkspace(ws.slug),
-                      onEdit: () async {
-                        final saved = await EditWorkspaceDialog.show(context, ws);
-                        if (saved == true) ref.invalidate(workspacesProvider);
-                      },
+                      onTap: () => ref
+                          .read(activeContainerEnvProvider.notifier)
+                          .setContainerEnv(env.slug),
                       onDelete: () async {
-                        final confirmed = await confirmDeleteWorkspace(context, ws);
+                        final confirmed = await _confirmDeleteEnv(context, env.displayName);
                         if (!confirmed) return;
-                        final service = ref.read(workspaceServiceProvider);
-                        await service.deleteWorkspace(ws.slug);
-                        ref.invalidate(workspacesProvider);
-                        if (activeSlug == ws.slug) {
-                          ref.read(activeWorkspaceProvider.notifier).setWorkspace(null);
+                        try {
+                          final service = ref.read(containerEnvServiceProvider);
+                          await service.deleteContainerEnv(env.slug);
+                          ref.invalidate(containerEnvsProvider);
+                          if (activeSlug == env.slug) {
+                            ref
+                                .read(activeContainerEnvProvider.notifier)
+                                .setContainerEnv(null);
+                          }
+                        } catch (e) {
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text('Failed to delete: $e')),
+                            );
+                          }
                         }
                       },
                     );
@@ -266,7 +271,7 @@ class _WorkspaceSidebar extends ConsumerWidget {
               error: (_, __) => Padding(
                 padding: EdgeInsets.all(Spacing.md),
                 child: Text(
-                  'Could not load workspaces',
+                  'Could not load environments',
                   style: TextStyle(
                     fontSize: TypographyTokens.bodySmall,
                     color: BrandColors.error,
@@ -284,9 +289,9 @@ class _WorkspaceSidebar extends ConsumerWidget {
                 : BrandColors.stone.withValues(alpha: 0.2),
           ),
 
-          // New workspace button
+          // New environment button
           InkWell(
-            onTap: () => _showCreateWorkspaceDialog(context, ref),
+            onTap: () => _showCreateEnvDialog(context, ref),
             child: Padding(
               padding: EdgeInsets.symmetric(horizontal: Spacing.md, vertical: Spacing.sm),
               child: Row(
@@ -298,7 +303,7 @@ class _WorkspaceSidebar extends ConsumerWidget {
                   ),
                   SizedBox(width: Spacing.sm),
                   Text(
-                    'New Workspace',
+                    'New Env',
                     style: TextStyle(
                       fontSize: TypographyTokens.bodySmall,
                       fontWeight: FontWeight.w500,
@@ -315,48 +320,104 @@ class _WorkspaceSidebar extends ConsumerWidget {
     );
   }
 
-  IconData _workspaceIcon(Workspace ws) {
-    final tl = TrustLevel.fromString(ws.defaultTrustLevel);
-    return tl == TrustLevel.sandboxed ? Icons.shield_outlined : Icons.workspaces_outline;
+  Future<bool> _confirmDeleteEnv(BuildContext context, String displayName) async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('Delete "$displayName"?'),
+        content: const Text(
+          'Sessions in this environment will be unlinked but not deleted.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            style: FilledButton.styleFrom(backgroundColor: BrandColors.error),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    return result ?? false;
   }
 
-  void _showCreateWorkspaceDialog(BuildContext context, WidgetRef ref) {
-    CreateWorkspaceDialog.show(
-      context,
-      onCreated: (ws) {
-        ref.invalidate(workspacesProvider);
-        ref.read(activeWorkspaceProvider.notifier).setWorkspace(ws.slug);
-      },
-    );
+  void _showCreateEnvDialog(BuildContext context, WidgetRef ref) {
+    final controller = TextEditingController();
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('New Environment'),
+        content: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 400),
+          child: TextField(
+            controller: controller,
+            autofocus: true,
+            decoration: const InputDecoration(
+              labelText: 'Display name',
+              hintText: 'e.g., Work Projects',
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () async {
+              final name = controller.text.trim();
+              if (name.isEmpty) return;
+              Navigator.pop(dialogContext);
+              try {
+                final service = ref.read(containerEnvServiceProvider);
+                final created = await service.createContainerEnv(
+                  ContainerEnvCreate(displayName: name),
+                );
+                ref.invalidate(containerEnvsProvider);
+                ref
+                    .read(activeContainerEnvProvider.notifier)
+                    .setContainerEnv(created.slug);
+              } catch (e) {
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Failed to create environment: $e')),
+                  );
+                }
+              }
+            },
+            child: const Text('Create'),
+          ),
+        ],
+      ),
+    ).then((_) => controller.dispose());
   }
 }
 
-/// Single workspace item in the sidebar.
-class _WorkspaceItem extends StatelessWidget {
+/// Single environment item in the sidebar.
+class _EnvItem extends StatelessWidget {
   final String name;
   final IconData icon;
   final bool isActive;
   final bool isDark;
   final String? subtitle;
   final VoidCallback onTap;
-  final VoidCallback? onEdit;
   final VoidCallback? onDelete;
 
-  const _WorkspaceItem({
+  const _EnvItem({
     required this.name,
     required this.icon,
     required this.isActive,
     required this.isDark,
     this.subtitle,
     required this.onTap,
-    this.onEdit,
     this.onDelete,
   });
 
   @override
   Widget build(BuildContext context) {
-    final hasActions = onEdit != null || onDelete != null;
-
     return InkWell(
       onTap: onTap,
       child: Container(
@@ -387,7 +448,9 @@ class _WorkspaceItem extends StatelessWidget {
                       fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
                       color: isActive
                           ? (isDark ? BrandColors.nightText : BrandColors.charcoal)
-                          : (isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood),
+                          : (isDark
+                              ? BrandColors.nightTextSecondary
+                              : BrandColors.driftwood),
                     ),
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -405,7 +468,7 @@ class _WorkspaceItem extends StatelessWidget {
                 ],
               ),
             ),
-            if (hasActions)
+            if (onDelete != null)
               SizedBox(
                 width: 24,
                 height: 24,
@@ -418,17 +481,13 @@ class _WorkspaceItem extends StatelessWidget {
                     color: isDark ? BrandColors.nightTextSecondary : BrandColors.stone,
                   ),
                   onSelected: (value) {
-                    if (value == 'edit') onEdit?.call();
                     if (value == 'delete') onDelete?.call();
                   },
                   itemBuilder: (context) => [
-                    if (onEdit != null)
-                      const PopupMenuItem(value: 'edit', child: Text('Edit')),
-                    if (onDelete != null)
-                      PopupMenuItem(
-                        value: 'delete',
-                        child: Text('Delete', style: TextStyle(color: BrandColors.error)),
-                      ),
+                    PopupMenuItem(
+                      value: 'delete',
+                      child: Text('Delete', style: TextStyle(color: BrandColors.error)),
+                    ),
                   ],
                 ),
               ),

@@ -239,7 +239,7 @@ class DiscordConnector(BotConnector):
             if count == 0:
                 await message.reply(
                     "Session created! Configure it in the Parachute app "
-                    "(set workspace and trust level), then activate it."
+                    "(set trust level), then activate it."
                 )
             elif count == 1:
                 await message.reply(
@@ -451,7 +451,7 @@ class DiscordConnector(BotConnector):
             if count == 0:
                 await interaction.followup.send(
                     "Session created! Configure it in the Parachute app "
-                    "(set workspace and trust level), then activate it."
+                    "(set trust level), then activate it."
                 )
             else:
                 await interaction.followup.send(

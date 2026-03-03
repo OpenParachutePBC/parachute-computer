@@ -288,7 +288,7 @@ class TelegramConnector(BotConnector):
         if count == 0:
             await update.message.reply_text(
                 "Session created! Configure it in the Parachute app "
-                "(set workspace and trust level), then activate it."
+                "(set trust level), then activate it."
             )
         elif count == 1:
             await update.message.reply_text(

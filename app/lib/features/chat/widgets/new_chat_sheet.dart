@@ -3,15 +3,15 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/features/settings/models/trust_level.dart';
 import '../models/agent_info.dart';
-import '../models/workspace.dart';
 import '../providers/agent_providers.dart';
-import '../providers/workspace_providers.dart';
+import '../models/container_env.dart';
+import '../providers/container_env_providers.dart';
 import 'directory_picker.dart';
 
 /// Result from the new chat sheet
 class NewChatConfig {
-  /// Workspace slug to associate with this chat
-  final String? workspaceId;
+  /// Container env slug to associate with this chat (null = private)
+  final String? containerEnvId;
 
   /// Optional working directory for file operations
   final String? workingDirectory;
@@ -26,16 +26,12 @@ class NewChatConfig {
   final TrustLevel? trustLevel;
 
   const NewChatConfig({
-    this.workspaceId,
+    this.containerEnvId,
     this.workingDirectory,
     this.agentType,
     this.agentPath,
     this.trustLevel,
   });
-
-  /// Legacy getter for backwards compatibility - always returns root context
-  List<String> get contextFolders => [""];
-  List<String> get contexts => contextFolders;
 }
 
 /// Bottom sheet for configuring a new chat session
@@ -64,48 +60,25 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
   String? _workingDirectory;
   String? _selectedAgentId; // null = default
   TrustLevel? _selectedTrustLevel; // null = module default
-  Workspace? _selectedWorkspace; // null = no workspace
+  String? _selectedContainerEnvId; // null = private (no named env)
   bool _initialized = false;
-
-  void _selectWorkspace(Workspace? workspace) {
-    setState(() {
-      _selectedWorkspace = workspace;
-      if (workspace != null) {
-        // Auto-fill from workspace defaults
-        if (workspace.workingDirectory != null) {
-          _workingDirectory = workspace.workingDirectory;
-        }
-        // Set default trust from workspace (user can still change freely)
-        if (_selectedTrustLevel == null) {
-          final wsTrust = TrustLevel.fromString(workspace.defaultTrustLevel);
-          _selectedTrustLevel = wsTrust == TrustLevel.direct ? null : wsTrust;
-        }
-      }
-    });
-  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     final hasDirectory = _workingDirectory != null && _workingDirectory!.isNotEmpty;
-    final workspacesAsync = ref.watch(workspacesProvider);
+    final containerEnvsAsync = ref.watch(containerEnvsProvider);
 
-    // Pre-populate from active sidebar workspace on first build
+    // Pre-populate from active sidebar container env on first build
     if (!_initialized) {
       _initialized = true;
-      final activeSlug = ref.read(activeWorkspaceProvider);
+      final activeSlug = ref.read(activeContainerEnvProvider).valueOrNull;
       if (activeSlug != null) {
-        final workspaces = workspacesAsync.valueOrNull;
-        if (workspaces != null) {
-          final active = workspaces.where((w) => w.slug == activeSlug).firstOrNull;
-          if (active != null) {
-            // Use addPostFrameCallback to avoid setState during build
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (mounted) _selectWorkspace(active);
-            });
-          }
-        }
+        // Use addPostFrameCallback to avoid setState during build
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) setState(() => _selectedContainerEnvId = activeSlug);
+        });
       }
     }
 
@@ -178,8 +151,8 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                // ── Workspace (first section) ──
-                _buildWorkspaceSection(isDark, workspacesAsync),
+                // ── Environment (first section) ──
+                _buildContainerEnvSection(isDark, containerEnvsAsync),
 
                 const SizedBox(height: Spacing.lg),
 
@@ -238,7 +211,7 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
                               Text(
                                 hasDirectory
                                     ? _displayPath(_workingDirectory!)
-                                    : 'Auto workspace',
+                                    : 'Auto',
                                 style: TextStyle(
                                   fontSize: TypographyTokens.bodyMedium,
                                   fontWeight: hasDirectory ? FontWeight.w500 : FontWeight.w400,
@@ -248,7 +221,7 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
                               Text(
                                 hasDirectory
                                     ? _workingDirectory!
-                                    : 'Each chat gets its own contained workspace',
+                                    : 'Each chat gets its own container',
                                 style: TextStyle(
                                   fontSize: TypographyTokens.bodySmall,
                                   color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
@@ -340,7 +313,7 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
                     Navigator.pop(
                       context,
                       NewChatConfig(
-                        workspaceId: _selectedWorkspace?.slug,
+                        containerEnvId: _selectedContainerEnvId,
                         workingDirectory: _workingDirectory,
                         agentType: selected?.isBuiltin == true ? null : selected?.name,
                         agentPath: selected?.path,
@@ -380,7 +353,11 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
       data: (agents) {
         if (agents.isEmpty) return const SizedBox.shrink();
         // Default selection is the builtin agent (first item)
-        _selectedAgentId ??= agents.first.name;
+        if (_selectedAgentId == null) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) setState(() => _selectedAgentId = agents.first.name);
+          });
+        }
         return Wrap(
           spacing: Spacing.sm,
           runSpacing: Spacing.sm,
@@ -399,7 +376,11 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
       ),
       error: (_, _) {
         // Fallback: show just "Default" agent
-        _selectedAgentId ??= 'vault-agent';
+        if (_selectedAgentId == null) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) setState(() => _selectedAgentId = 'vault-agent');
+          });
+        }
         final fallback = const AgentInfo(
           name: 'vault-agent',
           description: 'Standard vault agent',
@@ -539,15 +520,15 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
     );
   }
 
-  Widget _buildWorkspaceSection(bool isDark, AsyncValue<List<Workspace>> workspacesAsync) {
-    return workspacesAsync.when(
-      data: (workspaces) {
-        if (workspaces.isEmpty) return const SizedBox.shrink();
+  Widget _buildContainerEnvSection(bool isDark, AsyncValue<List<ContainerEnv>> containerEnvsAsync) {
+    return containerEnvsAsync.when(
+      data: (envs) {
+        if (envs.isEmpty) return const SizedBox.shrink();
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Workspace',
+              'Environment',
               style: TextStyle(
                 fontSize: TypographyTokens.labelMedium,
                 fontWeight: FontWeight.w600,
@@ -556,7 +537,7 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
             ),
             const SizedBox(height: Spacing.xs),
             Text(
-              'Pre-configured environment with tools and permissions',
+              'Named container environment for this chat',
               style: TextStyle(
                 fontSize: TypographyTokens.bodySmall,
                 color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
@@ -567,8 +548,8 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
               spacing: Spacing.sm,
               runSpacing: Spacing.sm,
               children: [
-                _buildWorkspaceChip(null, 'None', isDark),
-                ...workspaces.map((w) => _buildWorkspaceChip(w, w.name, isDark)),
+                _buildEnvChip(null, 'Private', Icons.lock_outline, isDark),
+                ...envs.map((e) => _buildEnvChip(e.slug, e.displayName, Icons.dns_outlined, isDark)),
               ],
             ),
           ],
@@ -579,12 +560,12 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
     );
   }
 
-  Widget _buildWorkspaceChip(Workspace? workspace, String label, bool isDark) {
-    final isSelected = _selectedWorkspace?.slug == workspace?.slug;
+  Widget _buildEnvChip(String? slug, String label, IconData icon, bool isDark) {
+    final isSelected = _selectedContainerEnvId == slug;
     final color = isDark ? BrandColors.nightForest : BrandColors.forest;
 
     return GestureDetector(
-      onTap: () => _selectWorkspace(workspace),
+      onTap: () => setState(() => _selectedContainerEnvId = slug),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         decoration: BoxDecoration(
@@ -603,7 +584,7 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(
-              workspace == null ? Icons.do_not_disturb_alt : Icons.workspaces_outlined,
+              icon,
               size: 14,
               color: isSelected ? color : (isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood),
             ),

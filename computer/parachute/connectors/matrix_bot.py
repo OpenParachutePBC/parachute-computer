@@ -431,8 +431,7 @@ class MatrixConnector(BotConnector):
             if count == 0:
                 await self._send_room_message(
                     room_id,
-                    "Session created! Configure it in the Parachute app "
-                    "(set workspace and trust level), then activate it.",
+                    "Session created! Configure it in the Parachute app, then activate it.",
                 )
             elif count == 1:
                 await self._send_room_message(

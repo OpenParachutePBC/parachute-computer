@@ -532,6 +532,71 @@ class Database:
             await self._connection.commit()
             logger.info("Added container_envs table and container_env_id column (v22)")
 
+        # v23: drop workspace_id column from sessions (workspace system removed)
+        async with self._connection.execute(
+            "SELECT version FROM schema_version WHERE version = 23"
+        ) as cursor:
+            row = await cursor.fetchone()
+        if not row:
+            try:
+                # SQLite < 3.35.0 doesn't support DROP COLUMN — rebuild table preserving
+                # all column types, NOT NULL constraints, and DEFAULT values.
+                await self._connection.executescript("""
+                    CREATE TABLE sessions_new (
+                        id TEXT PRIMARY KEY,
+                        title TEXT,
+                        module TEXT NOT NULL DEFAULT 'chat',
+                        source TEXT NOT NULL DEFAULT 'parachute',
+                        working_directory TEXT,
+                        vault_root TEXT,
+                        model TEXT,
+                        message_count INTEGER DEFAULT 0,
+                        archived INTEGER DEFAULT 0,
+                        created_at TEXT NOT NULL,
+                        last_accessed TEXT NOT NULL,
+                        continued_from TEXT,
+                        agent_type TEXT,
+                        trust_level TEXT DEFAULT 'direct',
+                        linked_bot_platform TEXT,
+                        linked_bot_chat_id TEXT,
+                        linked_bot_chat_type TEXT,
+                        parent_session_id TEXT,
+                        created_by TEXT DEFAULT 'user',
+                        summary TEXT,
+                        bridge_session_id TEXT,
+                        bridge_context_log TEXT,
+                        container_env_id TEXT,
+                        metadata TEXT
+                    );
+                    INSERT INTO sessions_new SELECT
+                        id, title, module, source, working_directory, vault_root, model,
+                        message_count, archived, created_at, last_accessed,
+                        continued_from, agent_type, trust_level,
+                        linked_bot_platform, linked_bot_chat_id, linked_bot_chat_type,
+                        parent_session_id, created_by, summary,
+                        bridge_session_id, bridge_context_log, container_env_id, metadata
+                    FROM sessions;
+                    DROP TABLE sessions;
+                    ALTER TABLE sessions_new RENAME TO sessions;
+                    CREATE INDEX IF NOT EXISTS idx_sessions_module ON sessions(module);
+                    CREATE INDEX IF NOT EXISTS idx_sessions_archived ON sessions(archived);
+                    CREATE INDEX IF NOT EXISTS idx_sessions_source ON sessions(source);
+                    CREATE INDEX IF NOT EXISTS idx_sessions_last_accessed ON sessions(last_accessed DESC);
+                    CREATE INDEX IF NOT EXISTS idx_sessions_created_at ON sessions(created_at DESC);
+                    CREATE INDEX IF NOT EXISTS idx_sessions_agent_type ON sessions(agent_type);
+                    CREATE INDEX IF NOT EXISTS idx_sessions_trust_level ON sessions(trust_level);
+                    CREATE INDEX IF NOT EXISTS idx_sessions_linked_bot ON sessions(linked_bot_platform, linked_bot_chat_id);
+                    CREATE INDEX IF NOT EXISTS idx_sessions_parent_session ON sessions(parent_session_id);
+                    CREATE INDEX IF NOT EXISTS idx_sessions_parent_active ON sessions(parent_session_id, archived);
+                """)
+                await self._connection.execute(
+                    "INSERT OR IGNORE INTO schema_version (version, applied_at) VALUES (23, datetime('now'))"
+                )
+                await self._connection.commit()
+                logger.info("Removed workspace_id from sessions (v23)")
+            except Exception as e:
+                logger.warning(f"Could not remove workspace_id column from sessions (v23): {e}")
+
     async def close(self) -> None:
         """Close database connection."""
         if self._connection:
@@ -578,7 +643,6 @@ class Database:
         linked_bot_platform = getattr(session, 'linked_bot_platform', None)
         linked_bot_chat_id = getattr(session, 'linked_bot_chat_id', None)
         linked_bot_chat_type = getattr(session, 'linked_bot_chat_type', None)
-        workspace_id = getattr(session, 'workspace_id', None)
         parent_session_id = getattr(session, 'parent_session_id', None)
         created_by = getattr(session, 'created_by', 'user')
 
@@ -593,9 +657,9 @@ class Database:
                 message_count, archived, created_at, last_accessed,
                 continued_from, agent_type, trust_level,
                 linked_bot_platform, linked_bot_chat_id, linked_bot_chat_type,
-                workspace_id, parent_session_id, created_by, bridge_session_id,
+                parent_session_id, created_by, bridge_session_id,
                 bridge_context_log, container_env_id, metadata
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 session.id,
@@ -615,7 +679,6 @@ class Database:
                 linked_bot_platform,
                 linked_bot_chat_id,
                 linked_bot_chat_type,
-                workspace_id,
                 parent_session_id,
                 created_by,
                 bridge_session_id,
@@ -681,10 +744,6 @@ class Database:
             updates.append("working_directory = ?")
             params.append(update.working_directory)
 
-        if update.workspace_id is not None:
-            updates.append("workspace_id = ?")
-            params.append(update.workspace_id)
-
         if update.bridge_session_id is not None:
             updates.append("bridge_session_id = ?")
             params.append(update.bridge_session_id)
@@ -727,7 +786,6 @@ class Database:
         archived: Optional[bool] = None,
         agent_type: Optional[str] = None,
         search: Optional[str] = None,
-        workspace_id: Optional[str] = None,
         trust_level: Optional[str] = None,
         limit: int = 100,
         offset: int = 0,
@@ -751,10 +809,6 @@ class Database:
         if search:
             query += " AND title LIKE ?"
             params.append(f"%{search}%")
-
-        if workspace_id is not None:
-            query += " AND workspace_id = ?"
-            params.append(workspace_id)
 
         if trust_level is not None:
             query += " AND trust_level = ?"
@@ -1238,7 +1292,7 @@ class Database:
         set_clauses = []
         values: list[Any] = []
         for key, value in kwargs.items():
-            if key in ("trust_level", "module", "workspace_id"):
+            if key in ("trust_level", "module"):
                 set_clauses.append(f"{key} = ?")
                 values.append(value)
         if set_clauses:
@@ -1472,7 +1526,6 @@ class Database:
             linked_bot_platform=row["linked_bot_platform"] if "linked_bot_platform" in keys else None,
             linked_bot_chat_id=row["linked_bot_chat_id"] if "linked_bot_chat_id" in keys else None,
             linked_bot_chat_type=row["linked_bot_chat_type"] if "linked_bot_chat_type" in keys else None,
-            workspace_id=row["workspace_id"] if "workspace_id" in keys else None,
             parent_session_id=row["parent_session_id"] if "parent_session_id" in keys else None,
             created_by=row["created_by"] if "created_by" in keys else "user",
             summary=row["summary"] if "summary" in keys else None,

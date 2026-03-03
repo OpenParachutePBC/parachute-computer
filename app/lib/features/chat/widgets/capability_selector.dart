@@ -5,15 +5,45 @@ import '../providers/agent_providers.dart';
 import '../providers/skill_providers.dart';
 import '../providers/mcp_providers.dart';
 import '../providers/plugin_providers.dart';
-import '../models/workspace.dart';
 
-/// Editor for workspace capabilities (agents, skills, MCP servers).
+/// Capability set for grouping sessions by allowed agents/skills/mcps/plugins.
 ///
-/// Shows three sections. For sparse lists (<=3 items), shows inline checkboxes
+/// Each field is either "all", "none", or a List<String> of named items.
+class CapabilitySet {
+  final dynamic mcps;
+  final dynamic skills;
+  final dynamic agents;
+  final dynamic plugins;
+
+  const CapabilitySet({
+    this.mcps = 'all',
+    this.skills = 'all',
+    this.agents = 'all',
+    this.plugins = 'all',
+  });
+
+  Map<String, dynamic> toJson() => {
+        'mcps': mcps,
+        'skills': skills,
+        'agents': agents,
+        'plugins': plugins,
+      };
+
+  factory CapabilitySet.fromJson(Map<String, dynamic> json) => CapabilitySet(
+        mcps: json['mcps'] ?? 'all',
+        skills: json['skills'] ?? 'all',
+        agents: json['agents'] ?? 'all',
+        plugins: json['plugins'] ?? 'all',
+      );
+}
+
+/// Editor for capability sets (agents, skills, MCP servers, plugins).
+///
+/// Shows four sections. For sparse lists (<=3 items), shows inline checkboxes
 /// directly. For 4+ items, shows All/None/Custom toggles.
 class CapabilitiesEditor extends ConsumerWidget {
-  final WorkspaceCapabilities capabilities;
-  final ValueChanged<WorkspaceCapabilities> onChanged;
+  final CapabilitySet capabilities;
+  final ValueChanged<CapabilitySet> onChanged;
 
   const CapabilitiesEditor({
     super.key,
@@ -48,7 +78,7 @@ class CapabilitiesEditor extends ConsumerWidget {
             data: (list) => list.map((a) => a.name).toList(),
           ),
           isLoading: agents.isLoading,
-          onChanged: (val) => onChanged(WorkspaceCapabilities(
+          onChanged: (val) => onChanged(CapabilitySet(
             mcps: capabilities.mcps,
             skills: capabilities.skills,
             agents: val,
@@ -64,7 +94,7 @@ class CapabilitiesEditor extends ConsumerWidget {
             data: (list) => list.map((s) => s.name).toList(),
           ),
           isLoading: skills.isLoading,
-          onChanged: (val) => onChanged(WorkspaceCapabilities(
+          onChanged: (val) => onChanged(CapabilitySet(
             mcps: capabilities.mcps,
             skills: val,
             agents: capabilities.agents,
@@ -80,7 +110,7 @@ class CapabilitiesEditor extends ConsumerWidget {
             data: (list) => list.map((m) => m.name).toList(),
           ),
           isLoading: mcps.isLoading,
-          onChanged: (val) => onChanged(WorkspaceCapabilities(
+          onChanged: (val) => onChanged(CapabilitySet(
             mcps: val,
             skills: capabilities.skills,
             agents: capabilities.agents,
@@ -96,7 +126,7 @@ class CapabilitiesEditor extends ConsumerWidget {
             data: (list) => list.map((p) => p.slug).toList(),
           ),
           isLoading: plugins.isLoading,
-          onChanged: (val) => onChanged(WorkspaceCapabilities(
+          onChanged: (val) => onChanged(CapabilitySet(
             mcps: capabilities.mcps,
             skills: capabilities.skills,
             agents: capabilities.agents,

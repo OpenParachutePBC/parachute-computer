@@ -1,8 +1,8 @@
 """
-Tests for multi-agent MCP tools (create_session, send_message, list_workspace_sessions).
+Tests for multi-agent MCP tools (create_session, send_message).
 
-Tests session context injection, workspace isolation, trust level enforcement,
-rate limiting, spawn limits, and content validation.
+Tests session context injection, trust level enforcement, rate limiting,
+spawn limits, and content validation.
 """
 
 import asyncio
@@ -20,7 +20,6 @@ from parachute.mcp_server import (
     SessionContext,
     create_session,
     send_message,
-    list_workspace_sessions,
 )
 
 
@@ -62,7 +61,6 @@ async def parent_session(db: Database):
         module="chat",
         source=SessionSource.PARACHUTE,
         trust_level="direct",
-        workspace_id="test-workspace",
     )
     session = await db.create_session(session_create)
     return session
@@ -73,7 +71,6 @@ def session_context_direct():
     """Create a direct (trusted) session context."""
     return SessionContext(
         session_id="parent_sess_abc123",
-        workspace_id="test-workspace",
         trust_level="direct",
     )
 
@@ -83,7 +80,6 @@ def session_context_sandboxed():
     """Create a sandboxed (untrusted) session context."""
     return SessionContext(
         session_id="sandbox_sess_def456",
-        workspace_id="test-workspace",
         trust_level="sandboxed",
     )
 
@@ -98,11 +94,9 @@ class TestSessionContext:
         """Test SessionContext with all fields set."""
         ctx = SessionContext(
             session_id="sess_123",
-            workspace_id="my-workspace",
             trust_level="sandboxed",
         )
         assert ctx.session_id == "sess_123"
-        assert ctx.workspace_id == "my-workspace"
         assert ctx.trust_level == "sandboxed"
         assert ctx.is_available
 
@@ -110,11 +104,9 @@ class TestSessionContext:
         """Test SessionContext with missing fields."""
         ctx = SessionContext(
             session_id=None,
-            workspace_id=None,
             trust_level=None,
         )
         assert ctx.session_id is None
-        assert ctx.workspace_id is None
         assert ctx.trust_level is None
         assert not ctx.is_available
 
@@ -122,8 +114,7 @@ class TestSessionContext:
         """Test SessionContext with partial fields returns not available."""
         ctx = SessionContext(
             session_id="sess_123",
-            workspace_id=None,
-            trust_level="direct",
+            trust_level=None,
         )
         assert not ctx.is_available  # Not all required fields set
 
@@ -151,7 +142,6 @@ class TestCreateSession:
             assert "session_id" in result
             assert result["title"] == "Child Session"
             assert result["agent_type"] == "researcher"
-            assert result["workspace_id"] == "test-workspace"
             assert result["trust_level"] == "direct"
             assert result["parent_session_id"] == "parent_sess_abc123"
 
@@ -299,12 +289,11 @@ class TestSendMessage:
     @pytest.mark.asyncio
     async def test_send_message_success(self, db, parent_session, session_context_direct):
         """Test successful message validation (delivery pending SDK support)."""
-        # Create a recipient session in the same workspace
+        # Create a recipient session
         recipient = SessionCreate(
             id="recipient_sess_789",
             title="Recipient",
             trust_level="direct",
-            workspace_id="test-workspace",
         )
         await db.create_session(recipient)
 
@@ -348,29 +337,6 @@ class TestSendMessage:
             assert "not found" in result["error"]
 
     @pytest.mark.asyncio
-    async def test_send_message_workspace_boundary(self, db, parent_session, session_context_direct):
-        """Test send_message enforces workspace boundaries."""
-        # Create a recipient in a different workspace
-        other_workspace_session = SessionCreate(
-            id="other_sess_999",
-            title="Other Workspace Session",
-            trust_level="direct",
-            workspace_id="other-workspace",
-        )
-        await db.create_session(other_workspace_session)
-
-        with patch("parachute.mcp_server._session_context", session_context_direct), \
-             patch("parachute.mcp_server.get_db", return_value=db):
-
-            result = await send_message(
-                session_id="other_sess_999",
-                message="Cross-workspace message",
-            )
-
-            assert "error" in result
-            assert "workspace boundaries" in result["error"]
-
-    @pytest.mark.asyncio
     async def test_send_message_trust_level_enforcement(self, db, session_context_sandboxed):
         """Test sandboxed sessions can only message other sandboxed sessions."""
         # Create a sandboxed sender session
@@ -378,16 +344,14 @@ class TestSendMessage:
             id="sandbox_sess_def456",
             title="Sandboxed Sender",
             trust_level="sandboxed",
-            workspace_id="test-workspace",
         )
         await db.create_session(sender)
 
-        # Create a direct recipient in the same workspace
+        # Create a direct recipient
         recipient = SessionCreate(
             id="direct_sess_888",
             title="Direct Recipient",
             trust_level="direct",
-            workspace_id="test-workspace",
         )
         await db.create_session(recipient)
 
@@ -409,7 +373,6 @@ class TestSendMessage:
             id="recipient_sess_789",
             title="Recipient",
             trust_level="direct",
-            workspace_id="test-workspace",
         )
         await db.create_session(recipient)
 
@@ -433,101 +396,3 @@ class TestSendMessage:
             assert "control characters" in result["error"]
 
 
-# ---------------------------------------------------------------------------
-# list_workspace_sessions Tests
-# ---------------------------------------------------------------------------
-
-
-class TestListWorkspaceSessions:
-    @pytest.mark.asyncio
-    async def test_list_workspace_sessions_success(self, db, parent_session, session_context_direct):
-        """Test successful listing of workspace sessions."""
-        # Create a few more sessions in the same workspace
-        for i in range(3):
-            await db.create_session(SessionCreate(
-                id=f"child_{i}",
-                title=f"Child {i}",
-                trust_level="direct",
-                workspace_id="test-workspace",
-            ))
-
-        with patch("parachute.mcp_server._session_context", session_context_direct), \
-             patch("parachute.mcp_server.get_db", return_value=db):
-
-            result = await list_workspace_sessions()
-
-            assert result["workspace_id"] == "test-workspace"
-            assert result["caller_trust_level"] == "direct"
-            assert result["total_sessions"] == 4  # parent + 3 children
-            assert len(result["sessions"]) == 4
-
-    @pytest.mark.asyncio
-    async def test_list_workspace_sessions_no_context(self):
-        """Test list_workspace_sessions fails without session context."""
-        with patch("parachute.mcp_server._session_context", None):
-            result = await list_workspace_sessions()
-
-            assert "error" in result
-            assert "Session context not available" in result["error"]
-
-    @pytest.mark.asyncio
-    async def test_list_workspace_sessions_trust_filtering(self, db, session_context_sandboxed):
-        """Test sandboxed sessions only see other sandboxed sessions."""
-        # Create sandboxed sender
-        await db.create_session(SessionCreate(
-            id="sandbox_sess_def456",
-            title="Sandboxed Sender",
-            trust_level="sandboxed",
-            workspace_id="test-workspace",
-        ))
-
-        # Create mixed trust sessions in the same workspace
-        await db.create_session(SessionCreate(
-            id="direct_1",
-            title="Direct 1",
-            trust_level="direct",
-            workspace_id="test-workspace",
-        ))
-        await db.create_session(SessionCreate(
-            id="sandbox_1",
-            title="Sandboxed 1",
-            trust_level="sandboxed",
-            workspace_id="test-workspace",
-        ))
-        await db.create_session(SessionCreate(
-            id="sandbox_2",
-            title="Sandboxed 2",
-            trust_level="sandboxed",
-            workspace_id="test-workspace",
-        ))
-
-        with patch("parachute.mcp_server._session_context", session_context_sandboxed), \
-             patch("parachute.mcp_server.get_db", return_value=db):
-
-            result = await list_workspace_sessions()
-
-            # Should only see 3 sandboxed sessions (sender + sandbox_1 + sandbox_2)
-            assert result["total_sessions"] == 3
-            for session in result["sessions"]:
-                assert session["trust_level"] == "sandboxed"
-
-    @pytest.mark.asyncio
-    async def test_list_workspace_sessions_isolation(self, db, parent_session, session_context_direct):
-        """Test workspace isolation - sessions from other workspaces not visible."""
-        # Create sessions in another workspace
-        for i in range(2):
-            await db.create_session(SessionCreate(
-                id=f"other_{i}",
-                title=f"Other {i}",
-                trust_level="direct",
-                workspace_id="other-workspace",
-            ))
-
-        with patch("parachute.mcp_server._session_context", session_context_direct), \
-             patch("parachute.mcp_server.get_db", return_value=db):
-
-            result = await list_workspace_sessions()
-
-            # Should only see parent session (from test-workspace)
-            assert result["total_sessions"] == 1
-            assert result["sessions"][0]["id"] == "parent_sess_abc123"

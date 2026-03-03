@@ -11,20 +11,17 @@ def test_inject_all_context_fields():
     }
 
     session_id = "test_session_123"
-    workspace_id = "test-workspace"
     trust_level = "sandboxed"
 
     # Inject context (inline pattern from orchestrator)
     for mcp_name, mcp_config in mcps.items():
         env = {**mcp_config.get("env", {})}
         env["PARACHUTE_SESSION_ID"] = session_id
-        env["PARACHUTE_WORKSPACE_ID"] = workspace_id
         env["PARACHUTE_TRUST_LEVEL"] = trust_level
         mcps[mcp_name] = {**mcp_config, "env": env}
 
     # Verify all MCPs received context
     assert mcps["parachute"]["env"]["PARACHUTE_SESSION_ID"] == session_id
-    assert mcps["parachute"]["env"]["PARACHUTE_WORKSPACE_ID"] == workspace_id
     assert mcps["parachute"]["env"]["PARACHUTE_TRUST_LEVEL"] == trust_level
 
     # Verify existing env vars preserved
@@ -41,7 +38,6 @@ def test_inject_does_not_mutate_cache():
     for mcp_name, mcp_config in mcps.items():
         env = {**mcp_config.get("env", {})}
         env["PARACHUTE_SESSION_ID"] = "sess_123"
-        env["PARACHUTE_WORKSPACE_ID"] = "ws"
         env["PARACHUTE_TRUST_LEVEL"] = "direct"
         mcps[mcp_name] = {**mcp_config, "env": env}
 
@@ -63,26 +59,9 @@ def test_inject_valid_trust_levels(trust: str):
         env = {**mcp_config.get("env", {})}
         env["PARACHUTE_TRUST_LEVEL"] = trust
         env["PARACHUTE_SESSION_ID"] = "sess_123"
-        env["PARACHUTE_WORKSPACE_ID"] = ""
         mcps[mcp_name] = {**mcp_config, "env": env}
 
     assert mcps["test"]["env"]["PARACHUTE_TRUST_LEVEL"] == trust
-
-
-def test_inject_empty_workspace():
-    """Empty workspace_id is handled correctly."""
-    mcps = {"test": {"command": "python"}}
-
-    workspace_id = ""  # No workspace
-
-    for mcp_name, mcp_config in mcps.items():
-        env = {**mcp_config.get("env", {})}
-        env["PARACHUTE_SESSION_ID"] = "sess_123"
-        env["PARACHUTE_WORKSPACE_ID"] = workspace_id
-        env["PARACHUTE_TRUST_LEVEL"] = "direct"
-        mcps[mcp_name] = {**mcp_config, "env": env}
-
-    assert mcps["test"]["env"]["PARACHUTE_WORKSPACE_ID"] == ""
 
 
 def test_inject_multiple_servers():
@@ -94,18 +73,15 @@ def test_inject_multiple_servers():
     }
 
     session_id = "sess_abc"
-    workspace_id = "workspace"
     trust_level = "sandboxed"
 
     for mcp_name, mcp_config in mcps.items():
         env = {**mcp_config.get("env", {})}
         env["PARACHUTE_SESSION_ID"] = session_id
-        env["PARACHUTE_WORKSPACE_ID"] = workspace_id
         env["PARACHUTE_TRUST_LEVEL"] = trust_level
         mcps[mcp_name] = {**mcp_config, "env": env}
 
     # All servers have context
     for mcp_name in ["mcp1", "mcp2", "mcp3"]:
         assert mcps[mcp_name]["env"]["PARACHUTE_SESSION_ID"] == session_id
-        assert mcps[mcp_name]["env"]["PARACHUTE_WORKSPACE_ID"] == workspace_id
         assert mcps[mcp_name]["env"]["PARACHUTE_TRUST_LEVEL"] == trust_level

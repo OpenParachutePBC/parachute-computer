@@ -234,7 +234,6 @@ class SessionManager:
         model: Optional[str] = None,
         title: Optional[str] = None,
         agent_type: Optional[str] = None,
-        workspace_id: Optional[str] = None,
     ) -> Session:
         """
         Finalize a new session with the SDK-provided session ID.
@@ -254,7 +253,6 @@ class SessionManager:
         linked_bot_chat_type = getattr(placeholder, 'linked_bot_chat_type', None)
         trust_level = getattr(placeholder, 'trust_level', None)
         metadata = getattr(placeholder, 'metadata', None)
-        final_workspace_id = workspace_id or getattr(placeholder, 'workspace_id', None)
         final_container_env_id = getattr(placeholder, 'container_env_id', None)
 
         if sdk_session_id == placeholder.id:
@@ -265,7 +263,6 @@ class SessionManager:
                 model=model,
                 agent_type=final_agent_type,
                 working_directory=relative_wd,
-                workspace_id=final_workspace_id,
             )
             session = await self.db.update_session(sdk_session_id, update)
             logger.debug(f"Updated existing session {sdk_session_id[:8]} with finalization fields")
@@ -284,7 +281,6 @@ class SessionManager:
                     linked_bot_platform=linked_bot_platform,
                     linked_bot_chat_id=linked_bot_chat_id,
                     linked_bot_chat_type=linked_bot_chat_type,
-                    workspace_id=final_workspace_id,
                     container_env_id=final_container_env_id,
                     metadata=metadata,
                 )
@@ -340,7 +336,6 @@ class SessionManager:
         archived: bool = False,
         agent_type: Optional[str] = None,
         search: Optional[str] = None,
-        workspace_id: Optional[str] = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[Session]:
@@ -350,7 +345,6 @@ class SessionManager:
             archived=archived,
             agent_type=agent_type,
             search=search,
-            workspace_id=workspace_id,
             limit=limit,
             offset=offset,
         )

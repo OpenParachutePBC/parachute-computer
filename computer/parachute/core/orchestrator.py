@@ -28,7 +28,7 @@ from parachute.db.database import Database
 from parachute.lib.context_loader import format_context_for_prompt, load_agent_context
 from parachute.lib.credentials import load_credentials
 from parachute.core.context_folders import ContextFolderService
-from parachute.core.capability_filter import filter_by_trust_level, filter_capabilities
+from parachute.core.capability_filter import filter_by_trust_level
 from parachute.lib.mcp_loader import load_mcp_servers, resolve_mcp_servers, validate_and_filter_servers
 from parachute.models.agent import AgentDefinition, AgentType, create_vault_agent
 from parachute.lib.typed_errors import ErrorCode, parse_error
@@ -249,7 +249,6 @@ class Orchestrator:
         agent_type: Optional[str] = None,
         trust_level: Optional[str] = None,
         model: Optional[str] = None,
-        workspace_id: Optional[str] = None,
         container_id: Optional[str] = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         """
@@ -269,21 +268,6 @@ class Orchestrator:
             logger.info(f"Ignoring agent_path={agent_path!r} — SDK handles agent discovery natively")
         agent = create_vault_agent()
 
-        # Load workspace config if specified
-        workspace_config = None
-        if workspace_id:
-            from parachute.core.workspaces import get_workspace
-            workspace_config = get_workspace(self.vault_path, workspace_id)
-            if workspace_config:
-                logger.info(f"Loaded workspace: {workspace_id} ({workspace_config.name})")
-                # Apply workspace defaults (explicit params take priority)
-                if not working_directory and workspace_config.working_directory:
-                    working_directory = workspace_config.working_directory
-                if not model and workspace_config.model:
-                    model = workspace_config.model
-            else:
-                logger.warning(f"Workspace not found: {workspace_id}")
-
         # Get or create session (before building prompt so we can load prior conversation)
         session, resume_info, is_new = await self.session_manager.get_or_create_session(
             session_id=session_id,
@@ -292,19 +276,6 @@ class Orchestrator:
             trust_level=trust_level,
             container_env_id=container_id,
         )
-
-        # Fall back to session's stored workspace for workspace defaults
-        # (e.g., when user resumes a session without the workspace filter active)
-        if not workspace_config and hasattr(session, 'workspace_id') and session.workspace_id:
-            from parachute.core.workspaces import get_workspace
-            workspace_config = get_workspace(self.vault_path, session.workspace_id)
-            if workspace_config:
-                workspace_id = session.workspace_id
-                logger.info(f"Using session's stored workspace: {workspace_id} ({workspace_config.name})")
-                if not working_directory and workspace_config.working_directory:
-                    working_directory = workspace_config.working_directory
-                if not model and workspace_config.model:
-                    model = workspace_config.model
 
         # For imported sessions, handle context continuity
         # - Claude Code sessions with existing JSONL: use SDK resume directly
@@ -607,10 +578,10 @@ class Orchestrator:
             agents_dict = None
 
             # Determine effective trust level early (needed for capability filtering)
-            # Priority: client param > session stored > workspace default > direct (default)
+            # Priority: client param > session stored > direct (default)
             from parachute.core.trust import normalize_trust_level
 
-            logger.info(f"Trust resolution: client={trust_level}, session.trust_level={session.trust_level}, ws_default={workspace_config.default_trust_level if workspace_config else None}")
+            logger.info(f"Trust resolution: client={trust_level}, session.trust_level={session.trust_level}")
 
             if trust_level:
                 # Client explicitly set trust level — use it
@@ -623,17 +594,9 @@ class Orchestrator:
             elif session.trust_level:
                 # Session has stored trust level (resumed session)
                 session_trust = session.get_trust_level()
-            elif workspace_config and workspace_config.default_trust_level:
-                # Workspace provides default
-                try:
-                    session_trust = TrustLevel(normalize_trust_level(workspace_config.default_trust_level))
-                    logger.info(f"Using workspace default trust: {session_trust.value}")
-                except ValueError:
-                    logger.warning(f"Invalid workspace default_trust_level: {workspace_config.default_trust_level}")
-                    session_trust = TrustLevel.DIRECT
             else:
                 # Default to direct (bare metal) — sandboxed requires explicit opt-in
-                # via client param, session config, workspace default, or bot connector
+                # via client param, session config, or bot connector
                 session_trust = TrustLevel.DIRECT
 
             effective_trust = session_trust.value
@@ -649,33 +612,9 @@ class Orchestrator:
                         f"{pre_count} → {len(resolved_mcps)} MCPs"
                     )
 
-            # Stage 2: Workspace capability filtering
-            if workspace_config and workspace_config.capabilities:
-                agent_names = list(agents_dict.keys()) if agents_dict else []
-                filtered = filter_capabilities(
-                    capabilities=workspace_config.capabilities,
-                    all_mcps=resolved_mcps,
-                    all_skills=skill_names,
-                    all_agents=agent_names,
-                    plugin_dirs=plugin_dirs,
-                )
-                resolved_mcps = filtered.mcp_servers or None
-                plugin_dirs = filtered.plugin_dirs
-                skill_names = filtered.skills if filtered.skills is not None else skill_names
-                if agents_dict and filtered.agents is not None:
-                    agents_dict = {k: v for k, v in agents_dict.items() if k in filtered.agents}
-                logger.info(
-                    f"Workspace {workspace_id} filtered: "
-                    f"mcps={len(resolved_mcps) if resolved_mcps else 0}, "
-                    f"plugins={len(plugin_dirs)}, "
-                    f"skills={len(skill_names)}, "
-                    f"agents={len(agents_dict) if agents_dict else 0}"
-                )
-
             # Inject session context into MCP server env vars
             if resolved_mcps:
                 session_id = session.id
-                workspace_id_str = workspace_id or ""
                 trust_level_str = effective_trust
 
                 for mcp_name, mcp_config in resolved_mcps.items():
@@ -683,8 +622,8 @@ class Orchestrator:
                     env = {**mcp_config.get("env", {})}
                     # Direct assignment - orchestrator is authoritative source
                     env["PARACHUTE_SESSION_ID"] = session_id
-                    env["PARACHUTE_WORKSPACE_ID"] = workspace_id_str
                     env["PARACHUTE_TRUST_LEVEL"] = trust_level_str
+                    env["PARACHUTE_CONTAINER_ENV_ID"] = session.container_env_id or ""
                     # Update config with new env dict
                     resolved_mcps[mcp_name] = {**mcp_config, "env": env}
 
@@ -943,7 +882,6 @@ class Orchestrator:
                                     sbx["session"] = await self.session_manager.finalize_session(
                                         sbx["session"], sandbox_sid, captured_model, title=title,
                                         agent_type=agent_type,
-                                        workspace_id=workspace_id,
                                     )
                                     sbx["finalized"] = True
                                     logger.info(f"Finalized sandbox session: {sandbox_sid[:8]} trust={effective_trust}")
@@ -1123,7 +1061,6 @@ class Orchestrator:
                         session = await self.session_manager.finalize_session(
                             session, captured_session_id, captured_model, title=title,
                             agent_type=agent_type,
-                            workspace_id=workspace_id,
                         )
                         session_finalized = True
                         logger.info(f"Early finalized session: {captured_session_id[:8]}...")
@@ -1293,7 +1230,6 @@ class Orchestrator:
                 session = await self.session_manager.finalize_session(
                     session, captured_session_id, captured_model, title=title,
                     agent_type=agent_type,
-                    workspace_id=workspace_id,
                 )
                 session_finalized = True
                 logger.info(f"Finalized session: {captured_session_id[:8]}...")
@@ -1679,7 +1615,6 @@ The user is now continuing this conversation with you. Respond naturally as if y
         archived: bool = False,
         search: Optional[str] = None,
         limit: int = 100,
-        workspace_id: Optional[str] = None,
     ) -> list[dict[str, Any]]:
         """List all chat sessions."""
         sessions = await self.session_manager.list_sessions(
@@ -1687,7 +1622,6 @@ The user is now continuing this conversation with you. Respond naturally as if y
             archived=archived,
             search=search,
             limit=limit,
-            workspace_id=workspace_id,
         )
         return [s.model_dump(by_alias=True) for s in sessions]
 
