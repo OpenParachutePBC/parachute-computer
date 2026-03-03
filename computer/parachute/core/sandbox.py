@@ -50,12 +50,11 @@ TOOLS_VOLUME_NAME = "parachute-tools"
 # Per-env persistent scratch volume prefix — mounted at /scratch in named env containers
 SCRATCH_VOLUME_PREFIX = "parachute-scratch"
 
-# Container resource limits
-# Ephemeral containers (--rm, short-lived) can run with less memory.
-# Persistent containers need more — the Claude SDK process alone uses 300–500 MB.
-CONTAINER_MEMORY_LIMIT_EPHEMERAL = "512m"
-CONTAINER_MEMORY_LIMIT_PERSISTENT = "1.5g"
-CONTAINER_CPU_LIMIT = "1.0"
+# Container resource limits — intentionally relaxed for a single-user local tool.
+# OrbStack manages the VM memory budget; these are just runaway-process guardrails.
+CONTAINER_MEMORY_LIMIT_EPHEMERAL = "4g"
+CONTAINER_MEMORY_LIMIT_PERSISTENT = "4g"
+CONTAINER_CPU_LIMIT = "2.0"
 
 
 @dataclass
@@ -148,7 +147,7 @@ class DockerSandbox:
         # Combine image tag and resource limits into deterministic string.
         # Bump the trailing version string whenever hardening flags change to
         # force reconcile() to rebuild containers on the next server restart.
-        config_str = f"{SANDBOX_IMAGE}:{CONTAINER_MEMORY_LIMIT_PERSISTENT}:{CONTAINER_CPU_LIMIT}:v3"
+        config_str = f"{SANDBOX_IMAGE}:{CONTAINER_MEMORY_LIMIT_PERSISTENT}:{CONTAINER_CPU_LIMIT}:v4"
 
         # SHA-256 hash, truncate to 12 chars (48 bits)
         hash_digest = hashlib.sha256(config_str.encode()).hexdigest()
@@ -249,8 +248,8 @@ class DockerSandbox:
             # Security hardening (match persistent container flags)
             "--cap-drop", "ALL",
             "--security-opt", "no-new-privileges",
-            "--pids-limit", "100",
-            "--ulimit", "nproc=64:64",
+            "--pids-limit", "300",
+            "--ulimit", "nproc=256:256",
             "--ulimit", "nofile=4096:8192",
             # Per-session scratch space (tmpfs — no disk persistence)
             "--tmpfs", "/scratch:size=512m,uid=1000,gid=1000",
@@ -582,6 +581,40 @@ class DockerSandbox:
             logger.info(f"Removed home dir for container env {slug}")
         await self._remove_scratch_volume(slug)
 
+    async def stop_all_env_containers(self) -> None:
+        """Stop all running parachute-env-* containers.
+
+        Called on server shutdown so containers don't idle indefinitely between
+        restarts. Uses docker stop (not rm) — containers restart cleanly on next
+        ensure_container() call via docker start.
+        """
+        if not await self.is_available():
+            return
+
+        proc = await asyncio.create_subprocess_exec(
+            "docker", "ps",
+            "--filter", "label=app=parachute",
+            "--filter", "label=type=env",
+            "--format", "{{.Names}}",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        stdout, _ = await proc.communicate()
+        if proc.returncode != 0:
+            return
+
+        names = [n.strip() for n in stdout.decode().strip().split("\n") if n.strip()]
+        if not names:
+            return
+
+        # Stop all in parallel with a short grace period (containers are idle).
+        # _stop_container never raises (TimeoutError is swallowed), so gather
+        # won't propagate failures — each container is stopped best-effort.
+        await asyncio.gather(*[
+            self._stop_container(name, grace_seconds=5) for name in names
+        ])
+        logger.info(f"Stopped {len(names)} env container(s) on shutdown")
+
     async def _inspect_status(self, container_name: str) -> str | None:
         """Get container status via docker inspect. Returns None if not found."""
         proc = await asyncio.create_subprocess_exec(
@@ -627,8 +660,8 @@ class DockerSandbox:
             # Security hardening
             "--cap-drop", "ALL",
             "--security-opt", "no-new-privileges",
-            "--pids-limit", "100",
-            "--ulimit", "nproc=64:64",
+            "--pids-limit", "300",
+            "--ulimit", "nproc=256:256",
             "--ulimit", "nofile=4096:8192",
             # /tmp and /run as tmpfs (no disk persistence)
             "--tmpfs", "/tmp:size=128m,uid=1000,gid=1000",
@@ -825,15 +858,21 @@ class DockerSandbox:
                 f"Failed to start {container_name}: {stderr.decode()}"
             )
 
-    async def _stop_container(self, container_name: str) -> None:
-        """Stop a running container with 10s grace period."""
+    async def _stop_container(self, container_name: str, grace_seconds: int = 10) -> None:
+        """Stop a running container.
+
+        Args:
+            grace_seconds: Time Docker waits for SIGTERM before sending SIGKILL.
+                Default 10s for normal use; pass 5 for bulk shutdown where
+                containers are idle and fast stop is preferred.
+        """
         proc = await asyncio.create_subprocess_exec(
-            "docker", "stop", "-t", "10", container_name,
+            "docker", "stop", "-t", str(grace_seconds), container_name,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL,
         )
         try:
-            await asyncio.wait_for(proc.wait(), timeout=15)
+            await asyncio.wait_for(proc.wait(), timeout=grace_seconds + 5)
         except asyncio.TimeoutError:
             pass
 

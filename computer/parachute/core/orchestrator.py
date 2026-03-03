@@ -228,7 +228,19 @@ class Orchestrator:
 
     async def reconcile_containers(self) -> None:
         """Reconcile sandbox containers on startup."""
-        # Use container_env slugs for orphan detection (not session IDs)
+        # Remove container_env DB records for envs where every session is empty
+        # (message_count == 0) and the env is older than 5 minutes. These are
+        # abandoned or failed sessions that never sent a message.
+        orphan_slugs = await self.database.list_orphan_container_env_slugs(min_age_minutes=5)
+        if orphan_slugs:
+            logger.info(f"Pruning {len(orphan_slugs)} orphan container_env record(s): {orphan_slugs}")
+            for slug in orphan_slugs:
+                try:
+                    await self.database.delete_container_env(slug)
+                except Exception as e:
+                    logger.warning(f"Failed to delete orphan container_env {slug}: {e}")
+
+        # Use remaining container_env slugs for Docker orphan detection
         active_envs = await self.database.list_container_envs()
         active_slugs = {env.slug for env in active_envs}
         await self._sandbox.reconcile(active_slugs=active_slugs)

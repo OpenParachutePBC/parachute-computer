@@ -168,6 +168,14 @@ async def lifespan(app: FastAPI):
     # Shutdown
     logger.info("Shutting down...")
 
+    # Stop all running env containers so they don't idle between restarts.
+    # They restart cleanly on next ensure_container() call via docker start.
+    if app.state.sandbox:
+        try:
+            await app.state.sandbox.stop_all_env_containers()
+        except Exception as e:
+            logger.warning(f"Error stopping env containers on shutdown: {e}")
+
     # Stop any running bot connectors
     from parachute.api.bots import _connectors as bot_connectors
     for platform, connector in list(bot_connectors.items()):

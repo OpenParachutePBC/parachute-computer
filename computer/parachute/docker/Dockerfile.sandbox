@@ -73,6 +73,11 @@ RUN useradd -m -u 1000 -s /bin/bash sandbox
 # Set ownership so sandbox user can read tools when mounted
 RUN chown -R sandbox:sandbox /opt/parachute-tools
 
+# Create /scratch with sandbox ownership — Docker named volumes initialize
+# from this directory's permissions on first mount, so new scratch volumes
+# will be writable by the sandbox user without a separate chown step.
+RUN mkdir -p /scratch && chown sandbox:sandbox /scratch
+
 # Health check (verify Python is functional)
 HEALTHCHECK --interval=60s --timeout=10s --retries=2 \
     CMD python -c "print('ok')" || exit 1
