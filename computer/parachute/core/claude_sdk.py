@@ -269,7 +269,7 @@ async def query_streaming(
 
     # Capture CLI stderr for debugging tool execution issues
     def _stderr_callback(line: str) -> None:
-        logger.debug(f"CLI stderr: {line.rstrip()}")
+        logger.warning(f"CLI stderr: {line.rstrip()}")
     options_kwargs["stderr"] = _stderr_callback
 
     options = ClaudeAgentOptions(**options_kwargs)

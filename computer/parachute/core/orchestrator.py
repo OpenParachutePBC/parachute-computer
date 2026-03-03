@@ -324,33 +324,33 @@ class Orchestrator:
         effective_working_dir: Optional[str] = working_directory or override_working_dir or session.working_directory
         effective_cwd = self.session_manager.resolve_working_directory(effective_working_dir)
 
-        # Validate working directory exists - fall back appropriately
-        if not effective_cwd.exists():
-            # For existing sessions, we need to find where the transcript actually is
-            # and use that cwd so the SDK can locate it
-            if not is_new and session.id != "pending":
-                resume_cwd = self.session_manager.get_session_resume_cwd(session.id)
-                if resume_cwd:
-                    logger.info(
-                        f"Working directory {effective_cwd} doesn't exist, "
-                        f"using transcript's original cwd: {resume_cwd}"
-                    )
-                    effective_cwd = Path(resume_cwd)
-                    effective_working_dir = resume_cwd
-                else:
-                    logger.warning(
-                        f"Working directory does not exist: {effective_cwd}, "
-                        f"falling back to home directory"
-                    )
-                    effective_cwd = Path.home()
-                    effective_working_dir = None
-            else:
+        # For existing sessions, always verify the transcript's cwd so the SDK
+        # can locate the JSONL file via path encoding.  A session with
+        # workingDirectory=None resolves to Path.home() which exists, but the
+        # transcript may live in a completely different project directory.
+        if not is_new and session.id != "pending":
+            resume_cwd = self.session_manager.get_session_resume_cwd(session.id)
+            if resume_cwd and str(resume_cwd) != str(effective_cwd):
+                logger.info(
+                    f"Overriding working directory {effective_cwd} → {resume_cwd} "
+                    f"to match transcript location for SDK resume"
+                )
+                effective_cwd = Path(resume_cwd)
+                effective_working_dir = resume_cwd
+            elif not effective_cwd.exists():
                 logger.warning(
                     f"Working directory does not exist: {effective_cwd}, "
                     f"falling back to home directory"
                 )
                 effective_cwd = Path.home()
                 effective_working_dir = None
+        elif not effective_cwd.exists():
+            logger.warning(
+                f"Working directory does not exist: {effective_cwd}, "
+                f"falling back to home directory"
+            )
+            effective_cwd = Path.home()
+            effective_working_dir = None
 
         # Apply system prompt override from config_overrides (only if no explicit prompt given)
         override_system_prompt = config_overrides.get("system_prompt")
