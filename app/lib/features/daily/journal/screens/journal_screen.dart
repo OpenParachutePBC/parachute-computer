@@ -408,11 +408,20 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
     int? durationSeconds,
   }) async {
     if (entry != null) {
+      final date = ref.read(selectedJournalDateProvider);
       setState(() {
-        final date = ref.read(selectedJournalDateProvider);
         _cachedJournal = (_cachedJournal ?? JournalDay.empty(date)).addEntry(entry);
         _shouldScrollToBottom = true;
       });
+      // Write to SQLite cache immediately so Phase 1 of the next provider load
+      // includes this entry — prevents the new entry flashing away when the
+      // cache-first read fires before the server fetch completes.
+      final cache = await ref.read(journalLocalCacheProvider.future);
+      final dateStr = '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+      final existing = cache.getEntries(dateStr);
+      if (!existing.any((e) => e.id == entry.id)) {
+        cache.putEntries(dateStr, [...existing, entry]);
+      }
     } else {
       // Offline — queue for later upload and show as pending
       final queue = await ref.read(pendingQueueProvider.future);
