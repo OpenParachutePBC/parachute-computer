@@ -57,11 +57,11 @@ class JournalLocalCache {
 
   // ── Read ───────────────────────────────────────────────────────────────────
 
-  /// Return all cached entries for [date] (YYYY-MM-DD), newest first.
+  /// Return all cached entries for [date] (YYYY-MM-DD), oldest first.
   List<JournalEntry> getEntries(String date) {
     try {
       final rows = _db.select(
-        'SELECT * FROM journal_entries WHERE date = ? ORDER BY created_at DESC',
+        'SELECT * FROM journal_entries WHERE date = ? ORDER BY created_at ASC',
         [date],
       );
       return rows.map(_rowToEntry).toList();

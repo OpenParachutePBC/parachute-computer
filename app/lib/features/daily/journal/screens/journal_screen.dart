@@ -668,6 +668,13 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
         });
       }
 
+      // Update SQLite cache immediately so Phase 1 sees the edited content.
+      final date = ref.read(selectedJournalDateProvider);
+      final dateStr = '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+      final cache = await ref.read(journalLocalCacheProvider.future);
+      final existing = cache.getEntries(dateStr);
+      cache.putEntries(dateStr, existing.map((e) => e.id == entryId ? updated : e).toList());
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -1144,6 +1151,16 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
         final ok = await api.deleteEntry(entry.id);
         if (!ok) throw Exception('Delete failed');
         debugPrint('[JournalScreen] Entry deleted successfully');
+
+        // Remove from SQLite cache immediately so Phase 1 doesn't re-add the entry.
+        final cache = await ref.read(journalLocalCacheProvider.future);
+        cache.removeEntry(entry.id);
+
+        if (mounted && _cachedJournal != null) {
+          setState(() {
+            _cachedJournal = _cachedJournal!.removeEntry(entry.id);
+          });
+        }
 
         ref.invalidate(selectedJournalProvider);
         ref.read(journalRefreshTriggerProvider.notifier).state++;

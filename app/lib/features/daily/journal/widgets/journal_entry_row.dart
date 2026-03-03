@@ -262,13 +262,15 @@ class _JournalEntryRowState extends ConsumerState<JournalEntryRow> {
   }
 
   /// Returns the display title for the header.
-  /// For entries with no title, falls back to the time portion of createdAt
-  /// (checked in UTC to avoid local-timezone shift on "00:00 UTC" placeholders).
+  /// For entries with no title, falls back to the local time of createdAt.
+  /// createdAt is already in local time (parsed with .toLocal() in fromServerJson).
+  /// Entries imported from markdown have a time string stored in title directly.
   String get _displayTitle {
     if (widget.entry.title.isNotEmpty) return widget.entry.title;
-    final utc = widget.entry.createdAt.toUtc();
-    if (utc.hour != 0 || utc.minute != 0) {
-      return '${utc.hour.toString().padLeft(2, '0')}:${utc.minute.toString().padLeft(2, '0')}';
+    final local = widget.entry.createdAt.toLocal();
+    // Only show time if it's non-midnight (midnight means no real time was recorded)
+    if (local.hour != 0 || local.minute != 0) {
+      return '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
     }
     return '';
   }

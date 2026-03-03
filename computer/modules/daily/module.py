@@ -624,7 +624,7 @@ class DailyModule:
         if date:
             rows = await graph.execute_cypher(
                 "MATCH (e:Journal_Entry) WHERE e.date = $date "
-                "RETURN e ORDER BY e.created_at DESC",
+                "RETURN e ORDER BY e.created_at ASC",
                 {"date": date},
             )
         else:
