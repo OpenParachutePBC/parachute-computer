@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
 import '../providers/chat_layout_provider.dart';
+import '../models/container_env.dart';
 import '../providers/container_env_providers.dart';
 import '../widgets/session_list_panel.dart';
 import '../widgets/chat_content_panel.dart';

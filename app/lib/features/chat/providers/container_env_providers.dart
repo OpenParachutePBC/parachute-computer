@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/providers/app_state_provider.dart';
+import 'package:parachute/core/providers/feature_flags_provider.dart' show aiServerUrlProvider;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/container_env.dart';
 import '../models/chat_session.dart';
