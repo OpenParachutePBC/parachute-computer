@@ -17,15 +17,12 @@ class VaultSettingsSection extends ConsumerStatefulWidget {
   final String dailyFolderName;
   final String chatFolderName;
   final bool showChatFolder;
-  final VoidCallback onVaultChanged;
-
   const VaultSettingsSection({
     super.key,
     required this.vaultPath,
     required this.dailyFolderName,
     required this.chatFolderName,
     required this.showChatFolder,
-    required this.onVaultChanged,
   });
 
   @override

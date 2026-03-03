@@ -144,11 +144,6 @@ class TestSettingsYamlIntegration:
                 s = Settings()
                 assert s.auth_mode == "always"
 
-    def test_config_dir_property(self, vault, tmp_path, monkeypatch):
-        monkeypatch.chdir(tmp_path)
-        with patch("parachute.config.PARACHUTE_DIR", vault):
-            s = Settings()
-            assert s.config_dir == vault
 
     def test_log_dir_property(self, vault, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)

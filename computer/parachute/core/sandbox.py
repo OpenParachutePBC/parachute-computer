@@ -153,6 +153,26 @@ class DockerSandbox:
         hash_digest = hashlib.sha256(config_str.encode()).hexdigest()
         return hash_digest[:12]
 
+    def _is_safe_mount_path(self, path: Path) -> bool:
+        """Return True only if the resolved path is within home or parachute_dir."""
+        try:
+            resolved = path.resolve()
+        except (OSError, ValueError):
+            return False
+        home = Path.home().resolve()
+        parachute = self.parachute_dir.resolve()
+        try:
+            resolved.relative_to(home)
+            return True
+        except ValueError:
+            pass
+        try:
+            resolved.relative_to(parachute)
+            return True
+        except ValueError:
+            pass
+        return False
+
     def _build_mounts(self, config: AgentSandboxConfig) -> list[str]:
         """Build Docker volume mount flags based on config."""
         mounts = []
@@ -180,8 +200,11 @@ class DockerSandbox:
                 full_path = home / clean
                 container_path = f"/home/sandbox/Parachute/{clean}"
             else:
-                # Absolute path outside home — mount as-is
+                # Absolute path outside home — validate before mounting
                 full_path = Path(clean)
+                if not self._is_safe_mount_path(full_path):
+                    logger.warning(f"Rejecting mount outside home: {full_path}")
+                    continue
                 container_path = f"/home/sandbox{clean}"
             if full_path.exists():
                 mounts.extend(["-v", f"{full_path}:{container_path}:rw"])
@@ -301,7 +324,11 @@ class DockerSandbox:
             mcp_names = ",".join(config.mcp_servers.keys())
             env_lines.append(f"PARACHUTE_MCP_SERVERS={mcp_names}")
 
-        fd, env_file_path = tempfile.mkstemp(suffix='.env', prefix='parachute-sandbox-')
+        # Use a mode-0700 subdirectory to keep credential files out of world-listable /tmp
+        run_dir = self.parachute_dir / "run"
+        run_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+
+        fd, env_file_path = tempfile.mkstemp(suffix='.env', prefix='parachute-sandbox-', dir=run_dir)
         try:
             with os.fdopen(fd, 'w') as f:
                 f.write('\n'.join(env_lines) + '\n')
@@ -326,7 +353,7 @@ class DockerSandbox:
 
         if capabilities:
             fd2, caps_file_path = tempfile.mkstemp(
-                suffix='.json', prefix='parachute-caps-'
+                suffix='.json', prefix='parachute-caps-', dir=run_dir
             )
             try:
                 with os.fdopen(fd2, 'w') as f:
@@ -341,7 +368,7 @@ class DockerSandbox:
         # Mount system prompt as file (avoids env var size limits)
         if config.system_prompt:
             fd3, prompt_file = tempfile.mkstemp(
-                suffix='.txt', prefix='parachute-prompt-'
+                suffix='.txt', prefix='parachute-prompt-', dir=run_dir
             )
             try:
                 with os.fdopen(fd3, 'w') as f:

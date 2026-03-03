@@ -36,10 +36,6 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _esc(s: str) -> str:
-    """Escape a string value for inline Cypher f-string usage."""
-    return s.replace("\\", "\\\\").replace("'", "\\'")
-
 
 class GraphSessionStore:
     """
@@ -111,15 +107,6 @@ class GraphSessionStore:
                 "resolved_by": "STRING",
             },
             primary_key="request_id",
-        )
-        await self.graph.ensure_node_table(
-            "Parachute_KV",
-            {
-                "kv_key": "STRING",
-                "value": "STRING",
-                "updated_at": "STRING",
-            },
-            primary_key="kv_key",
         )
         logger.info("GraphSessionStore: schema ready")
 
@@ -339,6 +326,8 @@ class GraphSessionStore:
             where_parts.append("s.title CONTAINS $search")
             params["search"] = search
 
+        limit = max(1, min(int(limit), 10000))
+        offset = max(0, int(offset))
         where_clause = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
         skip_clause = f" SKIP {offset}" if offset > 0 else ""
         query = (
@@ -371,16 +360,16 @@ class GraphSessionStore:
         self, session_id: str, increment: int = 1
     ) -> None:
         """Increment message count and touch last_accessed."""
-        # Fetch current count, increment in Python, write back
-        rows = await self.graph.execute_cypher(
-            "MATCH (s:Parachute_Session {session_id: $session_id}) RETURN s.message_count",
-            {"session_id": session_id},
-        )
-        if not rows:
-            return
-        current = rows[0].get("s.message_count", 0) or 0
-        new_count = current + increment
+        # Read and write inside the same lock to prevent concurrent-update races
         async with self.graph.write_lock:
+            rows = await self.graph.execute_cypher(
+                "MATCH (s:Parachute_Session {session_id: $session_id}) RETURN s.message_count",
+                {"session_id": session_id},
+            )
+            if not rows:
+                return
+            current = rows[0].get("s.message_count", 0) or 0
+            new_count = current + increment
             await self.graph._execute(
                 "MATCH (s:Parachute_Session {session_id: $session_id}) "
                 "SET s.message_count = $count, s.last_accessed = $last_accessed",
@@ -918,39 +907,6 @@ class GraphSessionStore:
                 continue
             orphans.append(slug)
         return orphans
-
-    # ── Metadata (Key-Value Store) ────────────────────────────────────────────
-
-    async def set_metadata(self, key: str, value: str) -> None:
-        """Set a metadata value."""
-        async with self.graph.write_lock:
-            await self.graph._execute(
-                "MERGE (kv:Parachute_KV {kv_key: $kv_key}) "
-                "SET kv.value = $value, kv.updated_at = $updated_at",
-                {"kv_key": key, "value": value, "updated_at": _now()},
-            )
-
-    async def get_metadata(self, key: str) -> Optional[str]:
-        """Get a metadata value."""
-        rows = await self.graph.execute_cypher(
-            "MATCH (kv:Parachute_KV {kv_key: $kv_key}) RETURN kv.value",
-            {"kv_key": key},
-        )
-        if rows:
-            return rows[0].get("kv.value")
-        return None
-
-    async def delete_metadata(self, key: str) -> bool:
-        """Delete a metadata entry."""
-        existing = await self.get_metadata(key)
-        if existing is None:
-            return False
-        async with self.graph.write_lock:
-            await self.graph._execute(
-                "MATCH (kv:Parachute_KV {kv_key: $kv_key}) DETACH DELETE kv",
-                {"kv_key": key},
-            )
-        return True
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 

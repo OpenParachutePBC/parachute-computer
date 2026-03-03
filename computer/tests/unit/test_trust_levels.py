@@ -7,6 +7,7 @@ import json
 import tempfile
 from datetime import datetime
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -205,7 +206,10 @@ class TestDockerSandbox:
         config = AgentSandboxConfig(
             session_id="test", allowed_paths=[str(blogs_dir)]
         )
-        mounts = sandbox._build_mounts(config)
+        # Patch Path.home so tmp_path is treated as home (safety check passes)
+        with patch("parachute.core.sandbox.Path") as mock_path_cls:
+            mock_path_cls.home.return_value = tmp_path.resolve()
+            mounts = sandbox._build_mounts(config)
         # Should mount specific path read-write
         mount_str = " ".join(mounts)
         assert "Blogs" in mount_str

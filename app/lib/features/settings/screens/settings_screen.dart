@@ -70,14 +70,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     }
   }
 
-  Future<void> _reloadVaultInfo() async {
-    final dailyService = ref.read(dailyFileSystemServiceProvider);
-    final displayPath = await dailyService.getVaultPathDisplay();
-    if (mounted) {
-      setState(() => _vaultPath = displayPath);
-    }
-  }
-
   /// Builds model selection widget — dynamic picker when supervisor is available.
   Widget _buildModelSection() {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -208,7 +200,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               dailyFolderName: _dailyFolderName,
               chatFolderName: _chatFolderName,
               showChatFolder: showChatFolder,
-              onVaultChanged: _reloadVaultInfo,
             ),
           ),
 

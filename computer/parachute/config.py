@@ -287,11 +287,6 @@ class Settings(BaseSettings):
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
     @property
-    def config_dir(self) -> Path:
-        """The Parachute config directory (same as parachute_dir)."""
-        return PARACHUTE_DIR
-
-    @property
     def log_dir(self) -> Path:
         """Get the daemon log directory path."""
         return PARACHUTE_DIR / "logs"
