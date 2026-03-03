@@ -1274,13 +1274,17 @@ class Database:
         return cursor.rowcount > 0
 
     async def list_orphan_container_env_slugs(self, min_age_minutes: int = 5) -> list[str]:
-        """Return slugs of container envs that have only empty sessions.
+        """Return slugs of container envs that are safe to prune.
 
-        An "orphan" env is one where every referencing session has message_count == 0
-        AND the env is older than min_age_minutes. This catches failed or aborted sessions
-        that auto-created a container_env record but never sent a message.
+        An env is pruned when ALL of the following hold:
+          - It is older than min_age_minutes (avoids racing with in-progress session creation)
+          - No session referencing this env has message_count > 0
 
-        Named envs with any real session history are never returned — if any session
+        This covers two cases:
+          - Envs where every referencing session has message_count == 0 (aborted before first message)
+          - Envs with no sessions at all (container_env record created but session creation failed)
+
+        Named envs with any real session history are protected — if any session
         referencing this env has message_count > 0, the env is excluded.
         """
         rows = await self.connection.execute_fetchall(

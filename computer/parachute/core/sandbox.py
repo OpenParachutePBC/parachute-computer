@@ -607,25 +607,13 @@ class DockerSandbox:
         if not names:
             return
 
-        # Stop all in parallel with a short grace period (containers are idle)
-        results = await asyncio.gather(*[
-            self._stop_container_short(name) for name in names
-        ], return_exceptions=True)
-
-        stopped = sum(1 for r in results if not isinstance(r, Exception))
-        logger.info(f"Stopped {stopped}/{len(names)} env container(s) on shutdown")
-
-    async def _stop_container_short(self, container_name: str) -> None:
-        """Stop a container with a 5s grace period (used during server shutdown)."""
-        proc = await asyncio.create_subprocess_exec(
-            "docker", "stop", "-t", "5", container_name,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-        try:
-            await asyncio.wait_for(proc.wait(), timeout=8)
-        except asyncio.TimeoutError:
-            pass
+        # Stop all in parallel with a short grace period (containers are idle).
+        # _stop_container never raises (TimeoutError is swallowed), so gather
+        # won't propagate failures — each container is stopped best-effort.
+        await asyncio.gather(*[
+            self._stop_container(name, grace_seconds=5) for name in names
+        ])
+        logger.info(f"Stopped {len(names)} env container(s) on shutdown")
 
     async def _inspect_status(self, container_name: str) -> str | None:
         """Get container status via docker inspect. Returns None if not found."""
@@ -870,15 +858,21 @@ class DockerSandbox:
                 f"Failed to start {container_name}: {stderr.decode()}"
             )
 
-    async def _stop_container(self, container_name: str) -> None:
-        """Stop a running container with 10s grace period."""
+    async def _stop_container(self, container_name: str, grace_seconds: int = 10) -> None:
+        """Stop a running container.
+
+        Args:
+            grace_seconds: Time Docker waits for SIGTERM before sending SIGKILL.
+                Default 10s for normal use; pass 5 for bulk shutdown where
+                containers are idle and fast stop is preferred.
+        """
         proc = await asyncio.create_subprocess_exec(
-            "docker", "stop", "-t", "10", container_name,
+            "docker", "stop", "-t", str(grace_seconds), container_name,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL,
         )
         try:
-            await asyncio.wait_for(proc.wait(), timeout=15)
+            await asyncio.wait_for(proc.wait(), timeout=grace_seconds + 5)
         except asyncio.TimeoutError:
             pass
 
