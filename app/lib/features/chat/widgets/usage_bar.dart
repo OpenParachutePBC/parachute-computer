@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
 import '../models/claude_usage.dart';
 import '../providers/chat_providers.dart';
+import '../providers/chat_message_providers.dart' show chatMessagesProvider;
 
 /// Compact usage bar showing Claude usage limits
 ///
@@ -102,6 +103,9 @@ class _UsageContent extends ConsumerWidget {
               isDark: isDark,
             ),
           ],
+          // Active model chip
+          const Spacer(),
+          _ModelChip(isDark: isDark),
           // Refresh button
           SizedBox(width: Spacing.sm),
           GestureDetector(
@@ -113,6 +117,57 @@ class _UsageContent extends ConsumerWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Small chip showing the active model (e.g. "Opus 4.6", "Sonnet 4.6").
+/// Reads from ChatMessagesState.model which is set by the SSE model event.
+/// Hidden when no model is known yet.
+class _ModelChip extends ConsumerWidget {
+  final bool isDark;
+
+  const _ModelChip({required this.isDark});
+
+  /// Format "claude-opus-4-6" → "Opus 4.6", "claude-sonnet-4-5-20250929" → "Sonnet 4.5"
+  String _label(String modelId) {
+    final withoutPrefix = modelId.replaceFirst('claude-', '');
+    final parts = withoutPrefix.split('-');
+    if (parts.isEmpty || parts[0].isEmpty) return modelId;
+    final family = parts[0][0].toUpperCase() + parts[0].substring(1);
+    // Version: skip the date part (parts that are purely numeric and long)
+    final versionParts = parts.skip(1).where((p) => p.length <= 3).toList();
+    if (versionParts.isEmpty) return family;
+    return '$family ${versionParts.join('.')}';
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final model = ref.watch(chatMessagesProvider.select((s) => s.model));
+    if (model == null) return const SizedBox.shrink();
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: isDark
+            ? BrandColors.nightForest.withValues(alpha: 0.25)
+            : BrandColors.forest.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: isDark
+              ? BrandColors.nightForest.withValues(alpha: 0.4)
+              : BrandColors.forest.withValues(alpha: 0.3),
+          width: 0.5,
+        ),
+      ),
+      child: Text(
+        _label(model),
+        style: TextStyle(
+          fontSize: 10,
+          fontWeight: FontWeight.w500,
+          color: isDark ? BrandColors.nightForest : BrandColors.forest,
+        ),
       ),
     );
   }

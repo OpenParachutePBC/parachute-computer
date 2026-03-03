@@ -18,7 +18,6 @@ import '../widgets/trust_levels_section.dart';
 import '../widgets/bot_connectors_section.dart';
 import '../widgets/hooks_section.dart';
 import '../widgets/migration_section.dart';
-import '../widgets/model_selection_section.dart';
 import '../widgets/model_picker_dropdown.dart';
 import '../widgets/server_control_section.dart';
 import '../widgets/about_section.dart';
@@ -79,21 +78,42 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     }
   }
 
-  /// Builds model selection widget - dynamic picker if supervisor available, static fallback otherwise
+  /// Builds model selection widget — dynamic picker when supervisor is available.
   Widget _buildModelSection() {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final supervisorStatusAsync = ref.watch(supervisorStatusNotifierProvider);
 
     return supervisorStatusAsync.when(
       data: (status) {
-        // Supervisor is available - use dynamic model picker
         if (status.supervisorUptimeSeconds > 0) {
           return const ModelPickerDropdown();
         }
-        // Supervisor not running - fall back to static picker
-        return const ModelSelectionSection();
+        return _buildNoSupervisorModelMessage(isDark);
       },
-      loading: () => const ModelSelectionSection(), // Use static while checking
-      error: (_, __) => const ModelSelectionSection(), // Fall back on error
+      loading: () => const SizedBox.shrink(),
+      error: (_, __) => _buildNoSupervisorModelMessage(isDark),
+    );
+  }
+
+  Widget _buildNoSupervisorModelMessage(bool isDark) {
+    return Row(
+      children: [
+        Icon(
+          Icons.smart_toy_outlined,
+          size: 20,
+          color: isDark ? BrandColors.nightTextSecondary : BrandColors.stone,
+        ),
+        SizedBox(width: Spacing.sm),
+        Expanded(
+          child: Text(
+            'Start the Parachute server to configure the model.',
+            style: TextStyle(
+              fontSize: TypographyTokens.bodySmall,
+              color: isDark ? BrandColors.nightTextSecondary : BrandColors.stone,
+            ),
+          ),
+        ),
+      ],
     );
   }
 

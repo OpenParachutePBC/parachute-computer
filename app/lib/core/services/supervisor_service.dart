@@ -28,6 +28,17 @@ class SupervisorService {
     await _dio.post('/supervisor/server/restart');
   }
 
+  /// Read current server config (secrets redacted by server).
+  Future<Map<String, dynamic>> getConfig() async {
+    final response = await _dio.get('/supervisor/config');
+    return (response.data['config'] as Map<String, dynamic>?) ?? {};
+  }
+
+  /// Update config values. Does NOT restart the server.
+  Future<void> updateConfig(Map<String, dynamic> values) async {
+    await _dio.put('/supervisor/config', data: {'values': values, 'restart': false});
+  }
+
   void dispose() {
     _dio.close(); // Close connection pool
   }

@@ -74,6 +74,36 @@ class AvailableModels extends _$AvailableModels {
   }
 }
 
+/// Cached supervisor server config (reads default_model etc).
+///
+/// Wraps GET /supervisor/config. Exposes [setModel] to persist
+/// a new default_model via PUT /supervisor/config.
+///
+/// keepAlive: true — app-level config; must survive widget disposal so
+/// chat_message_providers can always read it via ref.read.
+@Riverpod(keepAlive: true)
+class SupervisorConfig extends _$SupervisorConfig {
+  @override
+  Future<Map<String, dynamic>> build() async {
+    final service = ref.watch(supervisorServiceProvider);
+    return service.getConfig();
+  }
+
+  /// Persist a model change to config.yaml, with rollback on failure.
+  Future<void> setModel(String modelId) async {
+    final previousState = state;
+    // Optimistic update — show new model immediately in the picker
+    state = AsyncData({...?state.valueOrNull, 'default_model': modelId});
+    try {
+      final service = ref.read(supervisorServiceProvider);
+      await service.updateConfig({'default_model': modelId});
+    } catch (_) {
+      state = previousState;
+      rethrow;
+    }
+  }
+}
+
 /// Server control actions
 @riverpod
 class ServerControl extends _$ServerControl {

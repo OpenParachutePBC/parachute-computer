@@ -13,7 +13,7 @@ import '../services/chat_service.dart';
 import '../services/background_stream_manager.dart';
 import 'package:parachute/core/services/logging_service.dart';
 import 'package:parachute/core/providers/core_service_providers.dart';
-import 'package:parachute/core/providers/app_state_provider.dart' show modelPreferenceProvider;
+import 'package:parachute/core/providers/supervisor_providers.dart' show supervisorConfigProvider;
 import 'chat_session_actions.dart' show newChatModeProvider;
 import 'chat_session_providers.dart';
 import 'container_env_providers.dart' show activeContainerEnvProvider;
@@ -1268,9 +1268,8 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
       }
       _clearReloadClaudeMdFlag();
 
-      // Read model preference
-      final modelPref = _ref.read(modelPreferenceProvider).valueOrNull;
-      final modelApiValue = modelPref?.apiValue;
+      // Read model from server config (source of truth)
+      final modelApiValue = _ref.read(supervisorConfigProvider).valueOrNull?['default_model'] as String?;
 
       // Read active container env - prefer explicit param, fall back to sidebar filter
       final activeContainerEnv = containerEnvId ?? _ref.read(activeContainerEnvProvider).valueOrNull;
