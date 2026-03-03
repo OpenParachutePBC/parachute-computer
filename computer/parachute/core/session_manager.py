@@ -499,13 +499,8 @@ class SessionManager:
         """
         filename = f"{session_id}.jsonl"
 
-        def decode_project_path(encoded_name: str) -> str:
-            """Decode a project directory name to a path."""
-            # Claude encodes paths by replacing / with -
-            # Handle leading - which represents root /
-            if encoded_name.startswith("-"):
-                return "/" + encoded_name[1:].replace("-", "/")
-            return encoded_name.replace("-", "/")
+        # Import here to avoid circular dependency at module level
+        from parachute.api.claude_code import resolve_project_path
 
         # Search in ~/.claude (primary location)
         home_projects = Path.home() / ".claude" / "projects"
@@ -514,7 +509,7 @@ class SessionManager:
                 if project_dir.is_dir():
                     candidate = project_dir / filename
                     if candidate.exists():
-                        decoded_cwd = decode_project_path(project_dir.name)
+                        decoded_cwd = resolve_project_path(project_dir)
                         return (candidate, decoded_cwd, "home")
 
         return None
