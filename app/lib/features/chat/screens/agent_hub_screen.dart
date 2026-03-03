@@ -4,7 +4,7 @@ import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/features/settings/screens/settings_screen.dart';
 import '../models/chat_session.dart';
 import '../providers/chat_providers.dart';
-import '../providers/workspace_providers.dart' show activeWorkspaceProvider;
+import '../providers/container_env_providers.dart' show activeContainerEnvProvider;
 import '../widgets/session_list_item.dart';
 import '../widgets/new_chat_sheet.dart';
 import 'chat_screen.dart';
@@ -676,10 +676,6 @@ class _AgentHubScreenState extends ConsumerState<AgentHubScreen> {
     // Clear session and store configuration
     ref.read(newChatProvider)();
 
-    // Store contexts directly in the chat state so they survive navigation
-    ref.read(chatMessagesProvider.notifier).setSelectedContexts(config.contextFolders);
-    ref.read(selectedContextFoldersProvider.notifier).state = config.contextFolders;
-
     // Set working directory if specified
     if (config.workingDirectory != null) {
       ref.read(chatMessagesProvider.notifier).setWorkingDirectory(
@@ -687,9 +683,9 @@ class _AgentHubScreenState extends ConsumerState<AgentHubScreen> {
           );
     }
 
-    // Set workspace if selected
-    if (config.workspaceId != null) {
-      ref.read(activeWorkspaceProvider.notifier).setWorkspace(config.workspaceId);
+    // Set container env if selected
+    if (config.containerEnvId != null) {
+      ref.read(activeContainerEnvProvider.notifier).setContainerEnv(config.containerEnvId);
     }
 
     if (mounted) {
@@ -717,10 +713,6 @@ class _AgentHubScreenState extends ConsumerState<AgentHubScreen> {
 
     ref.read(newChatProvider)();
 
-    // Store contexts directly in the chat state so they survive navigation
-    ref.read(chatMessagesProvider.notifier).setSelectedContexts(config.contextFolders);
-    ref.read(selectedContextFoldersProvider.notifier).state = config.contextFolders;
-
     // Set working directory if specified
     if (config.workingDirectory != null) {
       ref.read(chatMessagesProvider.notifier).setWorkingDirectory(
@@ -728,9 +720,9 @@ class _AgentHubScreenState extends ConsumerState<AgentHubScreen> {
           );
     }
 
-    // Set workspace if selected
-    if (config.workspaceId != null) {
-      ref.read(activeWorkspaceProvider.notifier).setWorkspace(config.workspaceId);
+    // Set container env if selected
+    if (config.containerEnvId != null) {
+      ref.read(activeContainerEnvProvider.notifier).setContainerEnv(config.containerEnvId);
     }
 
     if (mounted) {

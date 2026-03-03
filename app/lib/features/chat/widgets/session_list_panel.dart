@@ -7,8 +7,8 @@ import '../providers/chat_providers.dart';
 import '../services/chat_service.dart';
 import '../providers/chat_layout_provider.dart';
 import '../providers/session_search_provider.dart';
-import '../providers/workspace_providers.dart';
-import '../models/workspace.dart';
+import '../models/container_env.dart';
+import '../providers/container_env_providers.dart';
 import '../widgets/session_config_sheet.dart';
 import '../widgets/session_list_item.dart';
 import '../screens/chat_screen.dart';
@@ -45,8 +45,8 @@ class _SessionListPanelState extends ConsumerState<SessionListPanel> {
 
   Widget _buildHeader(BuildContext context, bool isDark) {
     final layoutMode = ref.watch(chatLayoutModeProvider);
-    final activeSlug = ref.watch(activeWorkspaceProvider).valueOrNull;
-    final workspacesAsync = ref.watch(workspacesProvider);
+    final activeSlug = ref.watch(activeContainerEnvProvider).valueOrNull;
+    final containerEnvsAsync = ref.watch(containerEnvsProvider);
 
     return Container(
       padding: EdgeInsets.symmetric(horizontal: Spacing.md, vertical: Spacing.sm),
@@ -69,10 +69,10 @@ class _SessionListPanelState extends ConsumerState<SessionListPanel> {
               color: isDark ? BrandColors.nightText : BrandColors.charcoal,
             ),
           ),
-          // Workspace filter chip (hidden on desktop where sidebar handles this)
+          // Container env filter chip (hidden on desktop where sidebar handles this)
           if (layoutMode != ChatLayoutMode.desktop) ...[
             const SizedBox(width: Spacing.xs),
-            _buildWorkspaceChip(isDark, activeSlug, workspacesAsync),
+            _buildEnvChip(isDark, activeSlug, containerEnvsAsync),
           ],
           const Spacer(),
           IconButton(
@@ -118,15 +118,15 @@ class _SessionListPanelState extends ConsumerState<SessionListPanel> {
   ) {
     final searchQuery = ref.watch(sessionSearchQueryProvider);
 
-    final activeWorkspace = ref.watch(activeWorkspaceProvider).valueOrNull;
+    final activeContainerEnv = ref.watch(activeContainerEnvProvider).valueOrNull;
 
     final AsyncValue<List<ChatSession>> sessionsAsync;
     if (_showArchived) {
       sessionsAsync = ref.watch(archivedSessionsProvider);
     } else if (searchQuery.isNotEmpty) {
       sessionsAsync = ref.watch(searchedSessionsProvider);
-    } else if (activeWorkspace != null) {
-      sessionsAsync = ref.watch(workspaceSessionsProvider);
+    } else if (activeContainerEnv != null) {
+      sessionsAsync = ref.watch(containerEnvSessionsProvider);
     } else {
       sessionsAsync = ref.watch(chatSessionsProvider);
     }
@@ -183,22 +183,22 @@ class _SessionListPanelState extends ConsumerState<SessionListPanel> {
     );
   }
 
-  Widget _buildWorkspaceChip(
+  Widget _buildEnvChip(
     bool isDark,
     String? activeSlug,
-    AsyncValue<List<Workspace>> workspacesAsync,
+    AsyncValue<List<ContainerEnv>> containerEnvsAsync,
   ) {
     final hasFilter = activeSlug != null;
-    final label = workspacesAsync.whenOrNull(
-      data: (workspaces) {
+    final label = containerEnvsAsync.whenOrNull(
+      data: (envs) {
         if (activeSlug == null) return null;
-        final ws = workspaces.where((w) => w.slug == activeSlug);
-        return ws.isNotEmpty ? ws.first.name : activeSlug;
+        final match = envs.where((e) => e.slug == activeSlug);
+        return match.isNotEmpty ? match.first.displayName : activeSlug;
       },
     );
 
     return GestureDetector(
-      onTap: () => _showWorkspacePicker(isDark),
+      onTap: () => _showEnvPicker(isDark),
       child: Container(
         padding: EdgeInsets.symmetric(
           horizontal: Spacing.sm,
@@ -214,7 +214,7 @@ class _SessionListPanelState extends ConsumerState<SessionListPanel> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(
-              hasFilter ? Icons.workspaces : Icons.filter_list,
+              hasFilter ? Icons.dns_outlined : Icons.filter_list,
               size: 14,
               color: hasFilter
                   ? (isDark ? BrandColors.nightForest : BrandColors.forest)
@@ -249,9 +249,9 @@ class _SessionListPanelState extends ConsumerState<SessionListPanel> {
     );
   }
 
-  void _showWorkspacePicker(bool isDark) {
-    final workspacesAsync = ref.read(workspacesProvider);
-    final activeSlug = ref.read(activeWorkspaceProvider).valueOrNull;
+  void _showEnvPicker(bool isDark) {
+    final containerEnvsAsync = ref.read(containerEnvsProvider);
+    final activeSlug = ref.read(activeContainerEnvProvider).valueOrNull;
 
     showModalBottomSheet(
       context: context,
@@ -285,7 +285,7 @@ class _SessionListPanelState extends ConsumerState<SessionListPanel> {
                 Padding(
                   padding: EdgeInsets.all(Spacing.md),
                   child: Text(
-                    'Filter by Workspace',
+                    'Filter by Environment',
                     style: TextStyle(
                       fontSize: TypographyTokens.titleSmall,
                       fontWeight: FontWeight.w600,
@@ -310,20 +310,20 @@ class _SessionListPanelState extends ConsumerState<SessionListPanel> {
                       ? Icon(Icons.check, color: isDark ? BrandColors.nightForest : BrandColors.forest)
                       : null,
                   onTap: () {
-                    ref.read(activeWorkspaceProvider.notifier).setWorkspace(null);
+                    ref.read(activeContainerEnvProvider.notifier).setContainerEnv(null);
                     Navigator.pop(sheetContext);
                   },
                 ),
-                // Scrollable workspace list
+                // Scrollable env list
                 Flexible(
                   child: SingleChildScrollView(
-                    child: workspacesAsync.when(
-                      data: (workspaces) {
-                        if (workspaces.isEmpty) {
+                    child: containerEnvsAsync.when(
+                      data: (envs) {
+                        if (envs.isEmpty) {
                           return Padding(
                             padding: EdgeInsets.all(Spacing.lg),
                             child: Text(
-                              'No workspaces configured',
+                              'No named environments configured',
                               style: TextStyle(
                                 color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
                               ),
@@ -332,38 +332,27 @@ class _SessionListPanelState extends ConsumerState<SessionListPanel> {
                         }
                         return Column(
                           mainAxisSize: MainAxisSize.min,
-                          children: workspaces.map((ws) {
-                            final isActive = ws.slug == activeSlug;
+                          children: envs.map((env) {
+                            final isActive = env.slug == activeSlug;
                             return ListTile(
                               leading: Icon(
-                                Icons.workspaces,
+                                Icons.dns_outlined,
                                 color: isActive
                                     ? (isDark ? BrandColors.nightForest : BrandColors.forest)
                                     : (isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood),
                               ),
                               title: Text(
-                                ws.name,
+                                env.displayName,
                                 style: TextStyle(
                                   color: isDark ? BrandColors.nightText : BrandColors.ink,
                                   fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
                                 ),
                               ),
-                              subtitle: ws.description.isNotEmpty
-                                  ? Text(
-                                      ws.description,
-                                      style: TextStyle(
-                                        fontSize: TypographyTokens.labelSmall,
-                                        color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
-                                      ),
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                    )
-                                  : null,
                               trailing: isActive
                                   ? Icon(Icons.check, color: isDark ? BrandColors.nightForest : BrandColors.forest)
                                   : null,
                               onTap: () {
-                                ref.read(activeWorkspaceProvider.notifier).setWorkspace(ws.slug);
+                                ref.read(activeContainerEnvProvider.notifier).setContainerEnv(env.slug);
                                 Navigator.pop(sheetContext);
                               },
                             );
@@ -374,10 +363,10 @@ class _SessionListPanelState extends ConsumerState<SessionListPanel> {
                         padding: EdgeInsets.all(Spacing.lg),
                         child: const CircularProgressIndicator(),
                       ),
-                      error: (_, _) => Padding(
+                      error: (_, __) => Padding(
                         padding: EdgeInsets.all(Spacing.lg),
                         child: Text(
-                          'Failed to load workspaces',
+                          'Failed to load environments',
                           style: TextStyle(color: BrandColors.error),
                         ),
                       ),

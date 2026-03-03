@@ -59,15 +59,15 @@ _brain_base_url: str = ""
 class SessionContext:
     """Immutable session context injected by orchestrator via env vars."""
     session_id: str | None
-    workspace_id: str | None
     trust_level: str | None  # Will be normalized to TrustLevelStr
+    container_env_id: str | None = None
 
     @classmethod
     def from_env(cls) -> Self:
         """Read session context from environment variables.
 
         Normalizes trust level to canonical TrustLevelStr values.
-        Validates session_id and workspace_id formats.
+        Validates session_id format.
         """
         from parachute.core.trust import normalize_trust_level
 
@@ -81,25 +81,18 @@ class SessionContext:
                 logger.warning(f"Invalid session_id format from env: {session_id!r}")
                 session_id = None
 
-        # Workspace ID validation (alphanumeric + hyphens, lowercase)
-        workspace_id = os.getenv("PARACHUTE_WORKSPACE_ID")
-        if workspace_id:
-            workspace_pattern = re.compile(r'^[a-z0-9-]+$')
-            if not workspace_pattern.match(workspace_id):
-                logger.warning(f"Invalid workspace_id format from env: {workspace_id!r}")
-                workspace_id = None
-
         raw_trust = os.getenv("PARACHUTE_TRUST_LEVEL")
+        container_env_id = os.getenv("PARACHUTE_CONTAINER_ENV_ID") or None
         return cls(
             session_id=session_id,
-            workspace_id=workspace_id,
             trust_level=normalize_trust_level(raw_trust) if raw_trust else None,
+            container_env_id=container_env_id,
         )
 
     @property
     def is_available(self) -> bool:
         """Check if session context is fully populated."""
-        return all([self.session_id, self.workspace_id, self.trust_level])
+        return all([self.session_id, self.trust_level])
 
 
 # Module-level session context singleton
@@ -276,7 +269,7 @@ TOOLS = [
     # Multi-Agent Session Tools
     Tool(
         name="create_session",
-        description="Create a child session in the caller's workspace. Workspace and trust level are inherited from session context. Enforces spawn limits (max 10 children) and rate limiting (1/second).",
+        description="Create a child session. Trust level and container env are inherited from session context. Enforces spawn limits (max 10 children) and rate limiting (1/second).",
         inputSchema={
             "type": "object",
             "properties": {
@@ -298,7 +291,7 @@ TOOLS = [
     ),
     Tool(
         name="send_message",
-        description="Send a message to another session in the same workspace. Enforces workspace boundary and trust level restrictions (sandboxed can only message sandboxed).",
+        description="Send a message to another session. Enforces trust level restrictions (sandboxed can only message sandboxed).",
         inputSchema={
             "type": "object",
             "properties": {
@@ -312,14 +305,6 @@ TOOLS = [
                 },
             },
             "required": ["session_id", "message"],
-        },
-    ),
-    Tool(
-        name="list_workspace_sessions",
-        description="List all sessions in the caller's workspace. Respects trust level restrictions (sandboxed only sees sandboxed sessions). Returns session metadata including parent-child relationships.",
-        inputSchema={
-            "type": "object",
-            "properties": {},
         },
     ),
     # Daily Journal Tools
@@ -804,9 +789,9 @@ async def create_session(
     initial_message: str,
 ) -> dict[str, Any]:
     """
-    Create a child session in the caller's workspace.
+    Create a child session.
 
-    Workspace and trust level are inherited from session context env vars.
+    Trust level and container env are inherited from session context env vars.
     Enforces spawn limits (max 10 children) and rate limiting (1/second).
     """
     # Validate session context is available
@@ -837,8 +822,8 @@ async def create_session(
 
     db = await get_db()
     parent_session_id = _session_context.session_id
-    workspace_id = _session_context.workspace_id
     trust_level = _session_context.trust_level
+    container_env_id = _session_context.container_env_id
 
     # Enforce spawn limit (max 10 children)
     child_count = await db.count_children(parent_session_id)
@@ -866,10 +851,10 @@ async def create_session(
         title=title.strip(),
         module="chat",
         source=SessionSource.PARACHUTE,
-        working_directory=None,  # Inherit from workspace
+        working_directory=None,
         agent_type=agent_type,
         trust_level=trust_level,
-        workspace_id=workspace_id,
+        container_env_id=container_env_id,
         parent_session_id=parent_session_id,
         created_by=f"agent:{parent_session_id}",
     )
@@ -877,14 +862,14 @@ async def create_session(
     # Create session in database
     await db.create_session(session_create)
 
-    logger.info(f"Created child session {session_id} (parent: {parent_session_id}, workspace: {workspace_id})")
+    logger.info(f"Created child session {session_id} (parent: {parent_session_id})")
 
     return {
         "success": True,
         "session_id": session_id,
         "title": title,
         "agent_type": agent_type,
-        "workspace_id": workspace_id,
+        "container_env_id": container_env_id,
         "trust_level": trust_level,
         "parent_session_id": parent_session_id,
         "initial_message_queued": True,
@@ -897,9 +882,9 @@ async def send_message(
     message: str,
 ) -> dict[str, Any]:
     """
-    Send a message to another session in the same workspace.
+    Send a message to another session.
 
-    Enforces workspace boundary and trust level restrictions.
+    Enforces trust level restrictions (sandboxed can only message sandboxed).
     """
     # Validate session context is available
     if not _session_context or not _session_context.is_available:
@@ -920,20 +905,12 @@ async def send_message(
 
     db = await get_db()
     sender_session_id = _session_context.session_id
-    sender_workspace_id = _session_context.workspace_id
     sender_trust_level = _session_context.trust_level
 
     # Get recipient session
     recipient_session = await db.get_session(session_id.strip())
     if not recipient_session:
         return {"error": f"Recipient session not found: {session_id}"}
-
-    # Enforce workspace boundary
-    recipient_workspace_id = recipient_session.workspace_id
-    if recipient_workspace_id != sender_workspace_id:
-        return {
-            "error": f"Cannot send message across workspace boundaries (sender: {sender_workspace_id}, recipient: {recipient_workspace_id})"
-        }
 
     # Enforce trust level restrictions (sandboxed can only message sandboxed)
     recipient_trust_level = recipient_session.get_trust_level().value
@@ -945,7 +922,7 @@ async def send_message(
     # Message delivery: inject into recipient's SDK session
     # For MVP, we'll just log the message - actual delivery requires SDK integration
     logger.info(
-        f"Message delivery: {sender_session_id[:8]}→{session_id[:8]} (workspace: {sender_workspace_id})"
+        f"Message delivery: {sender_session_id[:8]}→{session_id[:8]}"
     )
 
     # TODO: Implement actual message injection into SDK session
@@ -956,62 +933,6 @@ async def send_message(
         "validation_passed": True,
         "sender_session_id": sender_session_id,
         "recipient_session_id": session_id,
-        "workspace_id": sender_workspace_id,
-    }
-
-
-async def list_workspace_sessions() -> dict[str, Any]:
-    """
-    List all sessions in the caller's workspace.
-
-    Respects trust level restrictions (sandboxed only sees sandboxed sessions).
-    Returns session metadata including parent-child relationships.
-    """
-    # Validate session context is available
-    if not _session_context or not _session_context.is_available:
-        return {
-            "error": "Session context not available. This tool can only be called from an active session."
-        }
-
-    db = await get_db()
-    workspace_id = _session_context.workspace_id
-    trust_level = _session_context.trust_level
-
-    # Get sessions in the workspace with trust level filtering at SQL level
-    if trust_level == "sandboxed":
-        # Sandboxed sessions only see other sandboxed sessions
-        sessions = await db.list_sessions(
-            workspace_id=workspace_id,
-            trust_level="sandboxed",
-            limit=1000
-        )
-    else:
-        # Direct sessions see all sessions
-        sessions = await db.list_sessions(workspace_id=workspace_id, limit=1000)
-
-    # Format response
-    result_sessions = []
-    for session in sessions:
-        result_sessions.append({
-            "id": session.id,
-            "title": session.title,
-            "agent_type": session.agent_type,
-            "trust_level": session.get_trust_level().value,
-            "source": session.source.value,
-            "module": session.module,
-            "message_count": session.message_count,
-            "created_at": session.created_at.isoformat(),
-            "last_accessed": session.last_accessed.isoformat(),
-            "archived": session.archived,
-            "parent_session_id": session.parent_session_id,
-            "created_by": session.created_by,
-        })
-
-    return {
-        "workspace_id": workspace_id,
-        "caller_trust_level": trust_level,
-        "total_sessions": len(result_sessions),
-        "sessions": result_sessions,
     }
 
 
@@ -1298,8 +1219,6 @@ async def handle_tool_call(name: str, arguments: dict[str, Any]) -> str:
                 session_id=arguments["session_id"],
                 message=arguments["message"],
             )
-        elif name == "list_workspace_sessions":
-            result = await list_workspace_sessions()
         # Daily Journal Tools
         elif name == "search_journals":
             result = await search_journals(
@@ -1459,7 +1378,6 @@ def main():
     if _session_context.is_available:
         logger.info(
             f"Session context: session={_session_context.session_id[:8]}, "
-            f"workspace={_session_context.workspace_id}, "
             f"trust={_session_context.trust_level}"
         )
     else:

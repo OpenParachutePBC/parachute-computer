@@ -17,7 +17,6 @@ async def test_session_context_in_resolved_mcps():
 
     # Simulate orchestrator injection (inline pattern from orchestrator.py)
     session_id = "test_sess_abc123"
-    workspace_id = "test-workspace"
     trust_level = "direct"
 
     for mcp_name, mcp_config in resolved_mcps.items():
@@ -25,7 +24,6 @@ async def test_session_context_in_resolved_mcps():
         env = {**mcp_config.get("env", {})}
         # Direct assignment - orchestrator is authoritative source
         env["PARACHUTE_SESSION_ID"] = session_id
-        env["PARACHUTE_WORKSPACE_ID"] = workspace_id
         env["PARACHUTE_TRUST_LEVEL"] = trust_level
         # Update config with new env dict
         resolved_mcps[mcp_name] = {**mcp_config, "env": env}
@@ -34,7 +32,6 @@ async def test_session_context_in_resolved_mcps():
     assert "test" in resolved_mcps
     test_env = resolved_mcps["test"]["env"]
     assert test_env["PARACHUTE_SESSION_ID"] == session_id
-    assert test_env["PARACHUTE_WORKSPACE_ID"] == workspace_id
     assert test_env["PARACHUTE_TRUST_LEVEL"] == trust_level
 
     # Verify existing env vars preserved

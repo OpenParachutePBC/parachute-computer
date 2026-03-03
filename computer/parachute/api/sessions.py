@@ -29,7 +29,6 @@ class SessionConfigUpdate(BaseModel):
         alias="configOverrides",
         description="Config overrides merged into session metadata",
     )
-    workspace_id: Optional[str] = Field(None, alias="workspaceId", description="Workspace slug for this session")
     response_mode: Optional[str] = Field(None, alias="responseMode", description="Response mode: all_messages or mention_only")
     mention_pattern: Optional[str] = Field(None, alias="mentionPattern", description="Custom mention trigger pattern")
 
@@ -71,7 +70,6 @@ async def list_sessions(
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
     archived: Optional[bool] = Query(None, description="Filter by archived status"),
-    workspace_id: Optional[str] = Query(None, alias="workspaceId", description="Filter by workspace slug"),
 ) -> dict[str, Any]:
     """
     List all sessions.
@@ -82,7 +80,6 @@ async def list_sessions(
     - limit: Maximum number of sessions to return
     - offset: Number of sessions to skip
     - archived: Filter by archived status
-    - workspaceId: Filter by workspace slug
     """
     orchestrator = get_orchestrator(request)
 
@@ -95,7 +92,6 @@ async def list_sessions(
             archived=show_archived,
             search=search,
             limit=limit,
-            workspace_id=workspace_id,
         )
     except Exception as e:
         logger.error(f"Failed to list sessions: {e}", exc_info=True)
@@ -180,7 +176,7 @@ async def activate_session(
     """
     Activate a pending bot session.
 
-    Clears pending_initialization, applies trust_level and workspace_id,
+    Clears pending_initialization, applies trust_level,
     and notifies the bot connector.
     """
     db = request.app.state.database
@@ -218,10 +214,6 @@ async def activate_session(
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid trust level")
         update.trust_level = body.trust_level
-
-    if body.workspace_id is not None:
-        ws_value = body.workspace_id if body.workspace_id else None
-        await db.update_session_config(session_id, workspace_id=ws_value)
 
     await db.update_session(session_id, update)
 
@@ -327,12 +319,6 @@ async def update_session_config(
         existing_meta["config_overrides"] = body.config_overrides
         update.metadata = existing_meta
         has_changes = True
-
-    if body.workspace_id is not None:
-        has_changes = True
-        # Empty string clears workspace, otherwise set slug
-        ws_value = body.workspace_id if body.workspace_id else None
-        await db.update_session_config(session_id, workspace_id=ws_value)
 
     if body.response_mode is not None or body.mention_pattern is not None:
         meta = dict(session.metadata or {}) if hasattr(session, "metadata") else {}

@@ -18,8 +18,7 @@ import '../widgets/directory_picker.dart';
 import '../widgets/unified_session_settings.dart';
 import '../../settings/models/trust_level.dart';
 import '../../settings/screens/settings_screen.dart';
-import '../providers/workspace_providers.dart' show activeWorkspaceProvider;
-import '../widgets/workspace_chip_row.dart';
+import '../providers/container_env_providers.dart' show activeContainerEnvProvider;
 import '../widgets/bridge_session_viewer_sheet.dart';
 
 /// Main chat screen for AI conversations
@@ -261,7 +260,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           agentType: _pendingAgentType,
           agentPath: _pendingAgentPath,
           trustLevel: _pendingTrustLevel,
-          workspaceId: ref.read(activeWorkspaceProvider).valueOrNull,
+          containerEnvId: ref.read(activeContainerEnvProvider).valueOrNull,
         );
 
     // Clear pending context, agentType, agentPath, and trustLevel after first message
@@ -945,24 +944,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               ],
             ),
             const SizedBox(height: Spacing.xl),
-            // Workspace selector for new chats
-            WorkspaceChipRow(
-              onSelected: (workspace) {
-                if (workspace != null) {
-                  // Set default trust from workspace (user can still change freely)
-                  if (_pendingTrustLevel == null) {
-                    final wsTrust = TrustLevel.fromString(workspace.defaultTrustLevel);
-                    setState(() {
-                      _pendingTrustLevel = wsTrust == TrustLevel.direct ? null : wsTrust.name;
-                    });
-                  }
-                  // Auto-fill working directory
-                  if (workspace.workingDirectory != null) {
-                    ref.read(chatMessagesProvider.notifier).setWorkingDirectory(workspace.workingDirectory);
-                  }
-                }
-              },
-            ),
             const SizedBox(height: Spacing.md),
             // Trust level selector for new chats
             _buildTrustLevelSelector(isDark),
