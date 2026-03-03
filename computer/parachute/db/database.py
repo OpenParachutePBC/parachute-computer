@@ -1273,6 +1273,30 @@ class Database:
         await self.connection.commit()
         return cursor.rowcount > 0
 
+    async def list_orphan_container_env_slugs(self, min_age_minutes: int = 5) -> list[str]:
+        """Return slugs of container envs that have only empty sessions.
+
+        An "orphan" env is one where every referencing session has message_count == 0
+        AND the env is older than min_age_minutes. This catches failed or aborted sessions
+        that auto-created a container_env record but never sent a message.
+
+        Named envs with any real session history are never returned — if any session
+        referencing this env has message_count > 0, the env is excluded.
+        """
+        rows = await self.connection.execute_fetchall(
+            """
+            SELECT slug FROM container_envs
+            WHERE created_at < datetime('now', ? || ' minutes')
+              AND slug NOT IN (
+                  SELECT DISTINCT container_env_id FROM sessions
+                  WHERE container_env_id IS NOT NULL
+                    AND message_count > 0
+              )
+            """,
+            (f"-{min_age_minutes}",),
+        )
+        return [row["slug"] for row in rows]
+
     def _row_to_container_env(self, row: aiosqlite.Row) -> ContainerEnv:
         """Convert a database row to a ContainerEnv model."""
         return ContainerEnv(
