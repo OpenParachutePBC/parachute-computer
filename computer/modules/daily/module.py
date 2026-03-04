@@ -16,10 +16,12 @@ Storage layout:
 import asyncio
 import json
 import logging
+import os
 import re
 import shutil
+import tempfile
 import uuid
-from datetime import date as _date, datetime, timezone
+from datetime import date as _date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal, Optional
 
@@ -30,7 +32,75 @@ from pydantic import BaseModel, field_validator
 # Audio/image assets directory — fixed, not user-configurable
 ASSETS_DIR = Path.home() / ".parachute" / "daily" / "assets"
 
+# Append-only JSONL redo log for crash recovery (rolled to 90 days)
+REDO_LOG_PATH = Path.home() / ".parachute" / "daily" / "entries.jsonl"
+
 logger = logging.getLogger(__name__)
+
+
+def _append_redo_log(
+    entry_id: str,
+    date: str,
+    content: str,
+    created_at: str,
+    title: str,
+    entry_type: str,
+    audio_path: str,
+    extra_meta: dict | None,
+) -> None:
+    """Append entry to JSONL redo log. Filesystem-only, never raises."""
+    record = {
+        "entry_id": entry_id,
+        "date": date,
+        "content": content,
+        "created_at": created_at,
+        "title": title,
+        "entry_type": entry_type,
+        "audio_path": audio_path,
+        "extra_meta": extra_meta or {},
+    }
+    try:
+        REDO_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with REDO_LOG_PATH.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except Exception as e:
+        logger.warning(f"Daily: redo log append failed: {e}")
+
+
+def _trim_redo_log() -> list[dict]:
+    """Remove entries older than 90 days and return the kept records.
+
+    Uses an atomic write-to-temp + os.replace so a crash mid-trim cannot
+    truncate the log. Never raises — returns an empty list on any error.
+    """
+    if not REDO_LOG_PATH.exists():
+        return []
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=90)).strftime("%Y-%m-%d")
+    try:
+        kept_lines: list[str] = []
+        kept_records: list[dict] = []
+        for line in REDO_LOG_PATH.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                rec = json.loads(line)
+                if rec.get("date", "") >= cutoff:
+                    kept_lines.append(line)
+                    kept_records.append(rec)
+            except json.JSONDecodeError:
+                logger.warning(f"Daily: redo log corrupt line skipped: {line[:80]!r}")
+        fd, tmp_path = tempfile.mkstemp(dir=REDO_LOG_PATH.parent, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write("\n".join(kept_lines) + ("\n" if kept_lines else ""))
+            os.replace(tmp_path, REDO_LOG_PATH)
+        except Exception:
+            os.unlink(tmp_path)
+            raise
+        return kept_records
+    except Exception as e:
+        logger.warning(f"Daily: redo log trim failed: {e}")
+        return []
 
 
 class CreateEntryRequest(BaseModel):
@@ -186,6 +256,10 @@ class DailyModule:
         # Migrate vault agent files → Caller graph nodes (idempotent MERGE)
         await _migrate_callers_from_vault(self.vault_path, graph)
 
+        # Trim redo log (90-day rolling), then replay any entries missing from graph
+        redo_records = _trim_redo_log()
+        await self._recover_from_redo_log(graph, redo_records)
+
         logger.info("Daily: graph schema ready (Kuzu primary storage)")
 
     async def _ensure_new_columns(self, graph) -> None:
@@ -256,6 +330,63 @@ class DailyModule:
                 f"Daily: migrated {migrated} audio paths to absolute "
                 f"({missing} not found on disk)"
             )
+
+    async def _recover_from_redo_log(self, graph, records: list[dict]) -> None:
+        """Replay any redo log entries that are missing from the graph.
+
+        Accepts the records already parsed by _trim_redo_log (no second file read).
+        Runs on every startup — safe because _write_to_graph uses MERGE (idempotent).
+        Normally a no-op. Activates after WAL corruption or abrupt power loss.
+
+        Note: entries are appended to the redo log *after* a successful graph write,
+        so this log recovers WAL-loss scenarios (existing WAL discarded on startup),
+        not mid-write crashes.
+        """
+        if not records:
+            return
+
+        # Check each entry individually with parameterized queries (no string interpolation)
+        existing_ids: set[str] = set()
+        try:
+            for rec in records:
+                rows = await graph.execute_cypher(
+                    "MATCH (e:Journal_Entry {entry_id: $entry_id}) RETURN e.entry_id AS entry_id",
+                    {"entry_id": rec["entry_id"]},
+                )
+                if rows:
+                    existing_ids.add(rec["entry_id"])
+        except Exception as e:
+            logger.warning(f"Daily: redo log recovery query failed: {e}")
+            return
+
+        missing_records = [r for r in records if r["entry_id"] not in existing_ids]
+        if not missing_records:
+            return
+
+        logger.warning(
+            f"Daily: redo log recovery — replaying {len(missing_records)} "
+            f"entries missing from graph (likely WAL loss)"
+        )
+        recovered = 0
+        for rec in missing_records:
+            try:
+                await self._write_to_graph(
+                    graph,
+                    entry_id=rec["entry_id"],
+                    date=rec["date"],
+                    content=rec["content"],
+                    created_at=rec["created_at"],
+                    title=rec.get("title", ""),
+                    entry_type=rec.get("entry_type", "text"),
+                    audio_path=rec.get("audio_path", ""),
+                    extra_meta=rec.get("extra_meta"),
+                )
+                recovered += 1
+            except Exception as e:
+                logger.warning(f"Daily: redo log recovery failed for {rec['entry_id']!r}: {e}")
+        logger.warning(
+            f"Daily: redo log recovery complete — {recovered}/{len(missing_records)} entries recovered"
+        )
 
     def _find_legacy_md_files(self) -> list:
         """
@@ -621,6 +752,7 @@ class DailyModule:
             audio_path=audio_path,
             extra_meta=extra_meta,
         )
+        _append_redo_log(entry_id, date, content, created_at, title, entry_type, audio_path, extra_meta)
 
         logger.info(f"Daily: created entry {entry_id}")
         return {
