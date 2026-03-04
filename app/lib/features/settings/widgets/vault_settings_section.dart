@@ -16,20 +16,7 @@ final _importStatusProvider = FutureProvider.autoDispose<Map<String, dynamic>?>(
 /// journal files. The vault path concept is no longer user-configurable;
 /// audio files are now stored on the server at ~/.parachute/daily/assets/.
 class VaultSettingsSection extends ConsumerStatefulWidget {
-  // Parameters kept for API compatibility but no longer used in the UI.
-  // They will be removed in a follow-up cleanup once all callers are updated.
-  final String vaultPath;
-  final String dailyFolderName;
-  final String chatFolderName;
-  final bool showChatFolder;
-
-  const VaultSettingsSection({
-    super.key,
-    required this.vaultPath,
-    required this.dailyFolderName,
-    required this.chatFolderName,
-    required this.showChatFolder,
-  });
+  const VaultSettingsSection({super.key});
 
   @override
   ConsumerState<VaultSettingsSection> createState() => _VaultSettingsSectionState();

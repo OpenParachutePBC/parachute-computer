@@ -4,7 +4,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/core/providers/app_state_provider.dart'
     show AppMode, appModeProvider, isDailyOnlyFlavor, isComputerFlavor;
-import 'package:parachute/core/providers/file_system_provider.dart';
 import 'package:parachute/core/providers/server_providers.dart' show isBundledAppProvider;
 import 'package:parachute/core/providers/bare_metal_provider.dart' show isBareMetalServerRunningProvider;
 import '../widgets/omi_device_section.dart';
@@ -43,33 +42,6 @@ class SettingsScreen extends ConsumerStatefulWidget {
 }
 
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
-  bool _isLoading = true;
-  String _vaultPath = '';
-  String _dailyFolderName = '';
-  String _chatFolderName = '';
-
-  @override
-  void initState() {
-    super.initState();
-    _loadSettings();
-  }
-
-  Future<void> _loadSettings() async {
-    // Load vault path and folder names
-    final dailyService = ref.read(dailyFileSystemServiceProvider);
-    await dailyService.initialize();
-    _vaultPath = await dailyService.getVaultPathDisplay();
-    _dailyFolderName = await dailyService.getModuleFolderName();
-
-    final chatService = ref.read(chatFileSystemServiceProvider);
-    await chatService.initialize();
-    _chatFolderName = await chatService.getModuleFolderName();
-
-    if (mounted) {
-      setState(() => _isLoading = false);
-    }
-  }
-
   /// Builds model selection widget — dynamic picker when supervisor is available.
   Widget _buildModelSection() {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -124,13 +96,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final showServerSettings = !isDailyOnlyFlavor;
     final showFullModeSettings = showServerSettings && showChatFolder;
     final showComputerControls = showServerSettings && isComputerFlavor && (Platform.isMacOS || Platform.isLinux);
-
-    if (_isLoading) {
-      return Scaffold(
-        appBar: AppBar(title: const Text('Settings')),
-        body: const Center(child: CircularProgressIndicator()),
-      );
-    }
 
     return Scaffold(
       appBar: AppBar(
@@ -195,12 +160,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           // Vault Section (always shown)
           SettingsCard(
             isDark: isDark,
-            child: VaultSettingsSection(
-              vaultPath: _vaultPath,
-              dailyFolderName: _dailyFolderName,
-              chatFolderName: _chatFolderName,
-              showChatFolder: showChatFolder,
-            ),
+            child: const VaultSettingsSection(),
           ),
 
           // Sync Section (remote clients only)
