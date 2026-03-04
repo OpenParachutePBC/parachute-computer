@@ -58,12 +58,19 @@ class FileSystemService {
   // One-time migrations
   // ============================================================
 
+  /// Sentinel key — increment suffix (v2, v3…) when adding new migrations.
+  static const _migrationKey = 'parachute_fss_migration_v1';
+
   /// Run one-time SharedPreferences migrations.
   ///
-  /// Call from main() before runApp(). Safe to call on every launch — the
-  /// migration key ensures each migration runs exactly once.
+  /// REQUIRES: [WidgetsFlutterBinding.ensureInitialized()] (or equivalent)
+  /// must have been called before this method. On Android/iOS,
+  /// [SharedPreferences.getInstance()] will throw if the binding is not ready.
+  ///
+  /// Call from [main()] after binding initialization, before [runApp()].
+  /// Safe to call on every launch — [_migrationKey] ensures each migration
+  /// runs exactly once.
   static Future<void> runMigrations() async {
-    const migrationKey = 'parachute_fss_migration_v1';
     // Stale daily vault-path keys accumulated before PR #173 moved audio
     // storage server-side. They are never written post-PR-#173 and can be
     // safely removed.
@@ -79,11 +86,11 @@ class FileSystemService {
       'parachute_daily_chatlog_folder',
     ];
     final prefs = await SharedPreferences.getInstance();
-    if (prefs.getBool(migrationKey) == true) return;
+    if (prefs.getBool(_migrationKey) == true) return;
     for (final key in staleKeys) {
       await prefs.remove(key);
     }
-    await prefs.setBool(migrationKey, true);
+    await prefs.setBool(_migrationKey, true);
     debugPrint('[FileSystemService] runMigrations: v1 complete — cleared ${staleKeys.length} stale daily keys');
   }
 
