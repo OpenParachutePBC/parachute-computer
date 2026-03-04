@@ -95,21 +95,6 @@ def _schedule_from_list(scheduler: AsyncIOScheduler, agents: list) -> dict[str, 
     return results
 
 
-async def _load_daily_reflection_config(vault_path: Path, graph=None) -> Optional[dict[str, Any]]:
-    """Load reflection agent config. Queries graph first, falls back to vault file."""
-    from parachute.core.daily_agent import get_daily_agent_config
-
-    config = await get_daily_agent_config(vault_path, "reflection", graph=graph)
-    if not config:
-        return None
-
-    return {
-        "enabled": config.schedule_enabled,
-        "time": config.schedule_time,
-        "name": config.display_name,
-    }
-
-
 # =============================================================================
 # Scheduler Lifecycle
 # =============================================================================
