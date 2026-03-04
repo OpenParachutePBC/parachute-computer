@@ -1,5 +1,3 @@
-import 'package:parachute/core/services/file_system_service.dart';
-
 /// Helper functions for journal screen
 class JournalHelpers {
   /// Get the relative path for a journal file for a given date
@@ -17,18 +15,23 @@ class JournalHelpers {
     return '$hour:$minute';
   }
 
-  /// Get full path for an audio file from relative path
-  static Future<String> getFullAudioPath(String relativePath) async {
-    final fileSystem = FileSystemService.daily();
-    final vaultPath = await fileSystem.getRootPath();
-    return '$vaultPath/$relativePath';
-  }
-
-  /// Get full path for an image file from relative path
-  static Future<String> getFullImagePath(String relativePath) async {
-    final fileSystem = FileSystemService.daily();
-    final vaultPath = await fileSystem.getRootPath();
-    return '$vaultPath/$relativePath';
+  /// Build an HTTP URL for an audio file stored on the server.
+  ///
+  /// For absolute server paths like `/Users/foo/.parachute/daily/assets/2026-03-03/rec.wav`,
+  /// derives the relative segment and returns `$serverBaseUrl/api/daily/assets/2026-03-03/rec.wav`.
+  ///
+  /// For legacy relative paths (before migration), returns a best-effort URL.
+  static String getAudioUrl(String audioPath, String serverBaseUrl) {
+    if (audioPath.startsWith('/')) {
+      const assetsMarker = '/daily/assets/';
+      final idx = audioPath.indexOf(assetsMarker);
+      if (idx != -1) {
+        final rel = audioPath.substring(idx + assetsMarker.length);
+        return '$serverBaseUrl/api/daily/assets/$rel';
+      }
+    }
+    // Legacy relative path — pass through as-is
+    return '$serverBaseUrl/api/daily/assets/$audioPath';
   }
 
   /// Format duration in seconds to human-readable string

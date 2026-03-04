@@ -484,6 +484,8 @@ async def observe(
         activity_summary: Optional[str] = None
         actions: list[str] = []
 
+        from parachute.models.session import SessionUpdate
+
         if structured_data:
             activity_summary = structured_data.get("activity")
             new_title = structured_data.get("title")
@@ -501,7 +503,6 @@ async def observe(
                 )
 
             # 2. Session title/summary updates (SQLite)
-            from parachute.models.session import SessionUpdate
             session_update = SessionUpdate()
             needs_update = False
 

@@ -121,7 +121,7 @@ def load_server_config(vault_path: Path) -> ServerConfig:
     Returns:
         ServerConfig with loaded or default values
     """
-    config_path = vault_path / ".parachute" / "server.yaml"
+    config_path = vault_path / "server.yaml"
 
     config = ServerConfig(_config_path=config_path)
 

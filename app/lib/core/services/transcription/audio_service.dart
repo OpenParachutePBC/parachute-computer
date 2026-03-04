@@ -350,13 +350,18 @@ class AudioService {
         return false;
       }
 
-      final file = File(filePath);
-      if (!await file.exists()) {
-        debugPrint('File not found: $filePath');
-        return false;
+      if (filePath.startsWith('http://') || filePath.startsWith('https://')) {
+        // Server-hosted audio: stream via HTTP
+        await _player.setUrl(filePath);
+      } else {
+        // Local file
+        final file = File(filePath);
+        if (!await file.exists()) {
+          debugPrint('File not found: $filePath');
+          return false;
+        }
+        await _player.setFilePath(filePath);
       }
-
-      await _player.setFilePath(filePath);
       await _player.play();
 
       debugPrint('Playing recording: $filePath');
