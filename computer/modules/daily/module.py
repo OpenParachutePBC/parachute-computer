@@ -2,28 +2,32 @@
 Daily module — Journal entries with Kuzu graph as primary storage.
 
 Provides CRUD operations for daily journal entries stored as nodes in the
-shared Kuzu graph database. Audio and image files remain on the filesystem;
+shared Kuzu graph database. Audio and image files live on the server filesystem;
 only metadata and content are stored in the graph.
 
 Entry IDs are timestamp strings: "YYYY-MM-DD-HH-MM-SS-ffffff" (with microseconds)
 
 Storage layout:
   ~/.parachute/graph/            ← Kuzu database (primary store, all modules share)
-  ~/Daily/assets/                ← Audio/image files (filesystem)
-  ~/Daily/entries/               ← Legacy .md files (migrated on first load, then unused)
-  ~/Parachute/Daily/journals/    ← Pre-restructure markdown files (also migrated on first load)
+  ~/.parachute/daily/assets/     ← Audio/image files uploaded to server (absolute paths in graph)
+  ~/Parachute/Daily/journals/    ← Pre-restructure markdown files (importable on request)
 """
 
 import json
 import logging
 import re
+import shutil
+import uuid
 from datetime import date as _date, datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import APIRouter, Query
-from fastapi.responses import JSONResponse, Response
+from fastapi import APIRouter, Query, UploadFile
+from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel
+
+# Audio/image assets directory — fixed, not user-configurable
+ASSETS_DIR = Path.home() / ".parachute" / "daily" / "assets"
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +42,14 @@ class UpdateEntryRequest(BaseModel):
     metadata: Optional[dict] = None  # merged (not replaced) into existing metadata
 
 
+class FlexibleImportRequest(BaseModel):
+    source_dir: str                  # absolute path the user selected
+    format: str = "parachute"        # "parachute" | "obsidian" | "logseq" | "plain"
+    dry_run: bool = False            # if True, parse but don't write to graph
+    date_from: Optional[str] = None  # YYYY-MM-DD inclusive filter
+    date_to: Optional[str] = None    # YYYY-MM-DD inclusive filter
+
+
 class DailyModule:
     """Daily module for journal entry management. Kuzu graph is primary storage."""
 
@@ -46,9 +58,6 @@ class DailyModule:
 
     def __init__(self, vault_path: Path, **kwargs):
         self.vault_path = vault_path
-        # entries_dir kept for audio file storage and one-time markdown migration
-        self.entries_dir = vault_path / "Daily" / "entries"
-        self.entries_dir.mkdir(parents=True, exist_ok=True)
 
     async def on_load(self) -> None:
         """Register Daily schema in shared graph."""
@@ -85,6 +94,9 @@ class DailyModule:
         # Add new columns to existing databases (idempotent schema migration)
         await self._ensure_new_columns(graph)
 
+        # Migrate relative audio paths to absolute (one-time, idempotent)
+        await self._migrate_audio_paths_to_absolute(graph)
+
         logger.info("Daily: graph schema ready (Kuzu primary storage)")
 
     async def _ensure_new_columns(self, graph) -> None:
@@ -107,6 +119,55 @@ class DailyModule:
                 )
                 logger.info(f"Daily: added column Journal_Entry.{col}")
 
+    async def _migrate_audio_paths_to_absolute(self, graph) -> None:
+        """One-time: convert relative audio_path values in graph to absolute.
+
+        Already-absolute paths (starting with '/') are skipped. Tries known
+        legacy roots in order; logs entries where no file is found.
+        """
+        rows = await graph.execute_cypher(
+            "MATCH (e:Journal_Entry) "
+            "WHERE e.audio_path IS NOT NULL AND e.audio_path <> '' "
+            "AND NOT e.audio_path STARTS WITH '/' "
+            "RETURN e.entry_id AS entry_id, e.audio_path AS audio_path"
+        )
+        if not rows:
+            return
+
+        legacy_roots = [
+            Path.home() / "Parachute" / "Daily",
+            Path.home() / "Daily",
+            ASSETS_DIR.parent,  # ~/.parachute/daily
+        ]
+
+        migrated = 0
+        missing = 0
+        for row in rows:
+            eid = row["entry_id"]
+            rel_path = row["audio_path"]
+            resolved = None
+            for root in legacy_roots:
+                candidate = root / rel_path
+                if candidate.exists():
+                    resolved = str(candidate)
+                    break
+            if resolved:
+                async with graph.write_lock:
+                    await graph.execute_cypher(
+                        "MATCH (e:Journal_Entry {entry_id: $id}) SET e.audio_path = $path",
+                        {"id": eid, "path": resolved},
+                    )
+                migrated += 1
+            else:
+                logger.debug(f"Daily: audio not found for entry {eid!r}: {rel_path!r}")
+                missing += 1
+
+        if migrated or missing:
+            logger.info(
+                f"Daily: migrated {migrated} audio paths to absolute "
+                f"({missing} not found on disk)"
+            )
+
     def _find_legacy_md_files(self) -> list:
         """
         Find all legacy markdown journal files across known locations.
@@ -125,7 +186,6 @@ class DailyModule:
         for search_dir in [
             self.vault_path / "Daily" / "journals",
             self.vault_path / "Parachute" / "Daily" / "journals",  # pre-restructure legacy path
-            self.entries_dir,
         ]:
             if search_dir.exists():
                 for f in search_dir.glob("*.md"):
@@ -709,6 +769,210 @@ class DailyModule:
             snippet = f"{snippet}..."
         return snippet
 
+    # ── Flexible Importers ────────────────────────────────────────────────────
+
+    def _parse_file(self, md_file: Path, fmt: str) -> list[dict]:
+        """Dispatch to format-specific parser."""
+        if fmt == "parachute":
+            return self._parse_md_file(md_file)
+        elif fmt == "obsidian":
+            return self._parse_obsidian(md_file)
+        elif fmt == "logseq":
+            return self._parse_logseq(md_file)
+        else:  # plain
+            return self._parse_plain(md_file)
+
+    def _parse_obsidian(self, md_file: Path) -> list[dict]:
+        """
+        Obsidian daily note parser.
+
+        Splits on bare `---` HR or `## ` H2 headings.
+        Uses frontmatter `date:` or filename stem for date.
+        """
+        raw = md_file.read_text(encoding="utf-8", errors="replace")
+        file_stem = md_file.stem
+        file_date = file_stem[:10] if len(file_stem) >= 10 else ""
+
+        meta: dict = {}
+        content_block = raw
+        if raw.startswith("---\n"):
+            try:
+                import frontmatter as fm
+                post = fm.loads(raw)
+                meta = {k: self._sanitize_fm_value(v) for k, v in post.metadata.items()}
+                content_block = post.content or ""
+            except ImportError:
+                pass
+
+        date_raw = meta.get("date", "")
+        date = str(date_raw)[:10] if date_raw else file_date
+
+        # Split on HR (---) or H2 headings
+        sections = [s.strip() for s in re.split(r'\n---(?:\n|$)|\n(?=## )', content_block) if s.strip()]
+        if not sections:
+            return []
+
+        result = []
+        for i, section in enumerate(sections):
+            entry_id = file_stem if i == 0 else f"{file_stem}-{i}"
+            # Use H2 heading as title if present
+            title_match = re.match(r'^## (.+)', section)
+            title = title_match.group(1).strip() if title_match else ""
+            content = section[title_match.end():].strip() if title_match else section
+            result.append({
+                "entry_id": entry_id,
+                "date": date,
+                "content": content,
+                "created_at": f"{date}T00:00:00+00:00",
+                "title": title,
+                "entry_type": "text",
+                "audio_path": "",
+                "brain_links": [],
+                "extra_meta": {},
+            })
+        return result
+
+    def _parse_logseq(self, md_file: Path) -> list[dict]:
+        """
+        Logseq daily note parser.
+
+        Splits on top-level `- ` bullets (not indented). Each bullet = one entry.
+        Date from filename stem (YYYY-MM-DD).
+        """
+        raw = md_file.read_text(encoding="utf-8", errors="replace")
+        file_stem = md_file.stem
+        file_date = file_stem[:10] if len(file_stem) >= 10 else ""
+
+        # Collect top-level bullet blocks
+        blocks: list[str] = []
+        current: list[str] = []
+        for line in raw.splitlines():
+            if line.startswith("- "):
+                if current:
+                    blocks.append("\n".join(current))
+                current = [line[2:]]  # strip leading "- "
+            elif current and (line.startswith("  ") or line == ""):
+                current.append(line.strip())
+            else:
+                # Not a top-level bullet — skip (page properties, etc.)
+                pass
+
+        if current:
+            blocks.append("\n".join(current))
+
+        result = []
+        for i, block in enumerate(blocks):
+            content = block.strip()
+            if not content:
+                continue
+            entry_id = f"{file_stem}-{i}"
+            result.append({
+                "entry_id": entry_id,
+                "date": file_date,
+                "content": content,
+                "created_at": f"{file_date}T00:00:00+00:00",
+                "title": "",
+                "entry_type": "text",
+                "audio_path": "",
+                "brain_links": [],
+                "extra_meta": {},
+            })
+        return result
+
+    def _parse_plain(self, md_file: Path) -> list[dict]:
+        """Plain text parser — whole file = one entry. Date from filename."""
+        raw = md_file.read_text(encoding="utf-8", errors="replace").strip()
+        if not raw:
+            return []
+        file_stem = md_file.stem
+        file_date = file_stem[:10] if len(file_stem) >= 10 else ""
+        return [{
+            "entry_id": file_stem,
+            "date": file_date,
+            "content": raw,
+            "created_at": f"{file_date}T00:00:00+00:00",
+            "title": "",
+            "entry_type": "text",
+            "audio_path": "",
+            "brain_links": [],
+            "extra_meta": {},
+        }]
+
+    async def _flexible_import(
+        self,
+        graph,
+        source_dir: Path,
+        fmt: str,
+        dry_run: bool,
+        date_from: str | None,
+        date_to: str | None,
+    ) -> dict:
+        """Parse files from source_dir using fmt, optionally write to graph."""
+        import re as _re
+        date_pattern = _re.compile(r'^\d{4}-\d{2}-\d{2}')
+
+        md_files = sorted([
+            f for f in source_dir.glob("*.md")
+            if date_pattern.match(f.stem)
+        ])
+        files_found = len(md_files)
+
+        rows = await graph.execute_cypher(
+            "MATCH (e:Journal_Entry) RETURN e.entry_id AS entry_id"
+        )
+        existing_ids = {r["entry_id"] for r in rows}
+
+        all_entries: list[dict] = []
+        for md_file in md_files:
+            try:
+                entries = self._parse_file(md_file, fmt)
+            except Exception as e:
+                logger.warning(f"Daily flexible import: parse failed for {md_file.name}: {e}")
+                continue
+
+            for entry in entries:
+                # Apply date filters
+                entry_date = entry.get("date", "")
+                if date_from and entry_date < date_from:
+                    continue
+                if date_to and entry_date > date_to:
+                    continue
+                all_entries.append(entry)
+
+        already_imported = sum(1 for e in all_entries if e["entry_id"] in existing_ids)
+        to_import = [e for e in all_entries if e["entry_id"] not in existing_ids]
+
+        sample = [
+            {"id": e["entry_id"], "date": e["date"], "snippet": e["content"][:100]}
+            for e in all_entries[:3]
+        ]
+
+        if dry_run:
+            return {
+                "files_found": files_found,
+                "entries_parsed": len(all_entries),
+                "already_imported": already_imported,
+                "to_import": len(to_import),
+                "sample": sample,
+            }
+
+        imported = 0
+        for entry in to_import:
+            try:
+                await self._write_to_graph(graph, **entry)
+                imported += 1
+            except Exception as e:
+                logger.error(f"Daily flexible import: write failed for {entry['entry_id']!r}: {e}")
+
+        return {
+            "files_found": files_found,
+            "entries_parsed": len(all_entries),
+            "already_imported": already_imported,
+            "to_import": len(to_import),
+            "sample": sample,
+            "imported": imported,
+        }
+
     # ── Routes ────────────────────────────────────────────────────────────────
 
     def get_router(self) -> APIRouter:
@@ -794,7 +1058,6 @@ class DailyModule:
             search_dirs = [
                 str(self.vault_path / "Daily" / "journals"),
                 str(self.vault_path / "Parachute" / "Daily" / "journals"),
-                str(self.entries_dir),
             ]
             if graph is None or total_md == 0:
                 return {
@@ -847,6 +1110,35 @@ class DailyModule:
                 "message": f"Cleared {entry_count} entries and {day_count} day nodes. Markdown files are untouched.",
             }
 
+        # ── Assets ───────────────────────────────────────────────────────────
+
+        @router.post("/assets/upload", status_code=201)
+        async def upload_asset(file: UploadFile, date: str | None = None):
+            """Receive an audio/image file and save it to ~/.parachute/daily/assets/{date}/."""
+            date_str = date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            dest_dir = ASSETS_DIR / date_str
+            dest_dir.mkdir(parents=True, exist_ok=True)
+
+            safe_name = f"{uuid.uuid4().hex[:8]}_{file.filename}"
+            dest_path = dest_dir / safe_name
+
+            with open(dest_path, "wb") as out:
+                shutil.copyfileobj(file.file, out)
+
+            logger.info(f"Daily: saved uploaded asset to {dest_path}")
+            return {"path": str(dest_path), "filename": safe_name}
+
+        @router.get("/assets/{path:path}")
+        async def serve_asset(path: str):
+            """Stream an audio/image file. Path is relative to ASSETS_DIR."""
+            assets_root = ASSETS_DIR.resolve()
+            full_path = (assets_root / path).resolve()
+            if not str(full_path).startswith(str(assets_root)):
+                return JSONResponse(status_code=403, content={"error": "forbidden"})
+            if not full_path.exists():
+                return JSONResponse(status_code=404, content={"error": "not found"})
+            return FileResponse(full_path)
+
         @router.post("/import")
         async def trigger_import():
             """Manually trigger markdown-to-graph migration. Safe to call multiple times."""
@@ -876,5 +1168,36 @@ class DailyModule:
                 "pending": still_pending,
                 "message": f"Imported {newly_imported} entries ({still_pending} remaining)",
             }
+
+        @router.post("/import/flexible")
+        async def flexible_import(body: FlexibleImportRequest):
+            """Format-aware journal importer. Accepts Parachute, Obsidian, Logseq, or plain files."""
+            graph = self._get_graph()
+            if graph is None:
+                return JSONResponse(status_code=503, content={"error": "GraphDB not available"})
+
+            source = Path(body.source_dir).expanduser()
+            if not source.is_dir():
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": f"source_dir not found: {body.source_dir}"},
+                )
+
+            valid_formats = {"parachute", "obsidian", "logseq", "plain"}
+            if body.format not in valid_formats:
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": f"Unknown format: {body.format!r}. Valid: {sorted(valid_formats)}"},
+                )
+
+            result = await self._flexible_import(
+                graph,
+                source_dir=source,
+                fmt=body.format,
+                dry_run=body.dry_run,
+                date_from=body.date_from,
+                date_to=body.date_to,
+            )
+            return result
 
         return router

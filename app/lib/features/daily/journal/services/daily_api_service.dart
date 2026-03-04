@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import '../models/journal_entry.dart';
@@ -184,6 +185,41 @@ class DailyApiService {
     }
   }
 
+  /// Upload an audio file to the server.
+  ///
+  /// Returns the absolute server path to store in the entry, or null on failure.
+  Future<String?> uploadAudio(File audioFile, {String? date}) async {
+    final uri = Uri.parse('$baseUrl/api/daily/assets/upload');
+    debugPrint('[DailyApiService] POST $uri (audio upload)');
+    try {
+      final dateStr = date ?? _todayStr();
+      final request = http.MultipartRequest('POST', uri)
+        ..files.add(await http.MultipartFile.fromPath('file', audioFile.path))
+        ..fields['date'] = dateStr;
+      if (apiKey != null && apiKey!.isNotEmpty) {
+        request.headers['X-API-Key'] = apiKey!;
+      }
+      final streamed = await request.send().timeout(const Duration(seconds: 30));
+      if (streamed.statusCode == 201) {
+        final body = jsonDecode(await streamed.stream.bytesToString()) as Map<String, dynamic>;
+        return body['path'] as String?;
+      }
+      debugPrint('[DailyApiService] uploadAudio ${streamed.statusCode}');
+      return null;
+    } catch (e) {
+      debugPrint('[DailyApiService] uploadAudio error: $e');
+      return null;
+    }
+  }
+
+  static String _todayStr() {
+    final now = DateTime.now();
+    final y = now.year.toString();
+    final m = now.month.toString().padLeft(2, '0');
+    final d = now.day.toString().padLeft(2, '0');
+    return '$y-$m-$d';
+  }
+
   /// Keyword search across all entries.
   ///
   /// Returns empty list on error or when offline.
@@ -225,6 +261,40 @@ class DailyApiService {
       return jsonDecode(response.body) as Map<String, dynamic>;
     } catch (e) {
       debugPrint('[DailyApiService] getImportStatus error: $e');
+      return null;
+    }
+  }
+
+  /// Flexible journal import from any directory + format.
+  ///
+  /// [format]: "parachute" | "obsidian" | "logseq" | "plain"
+  /// [dryRun]: if true, parse but don't write to graph — returns preview.
+  Future<Map<String, dynamic>?> flexibleImport({
+    required String sourceDir,
+    required String format,
+    bool dryRun = false,
+    String? dateFrom,
+    String? dateTo,
+  }) async {
+    final uri = Uri.parse('$baseUrl/api/daily/import/flexible');
+    try {
+      final body = jsonEncode({
+        'source_dir': sourceDir,
+        'format': format,
+        'dry_run': dryRun,
+        if (dateFrom != null) 'date_from': dateFrom,
+        if (dateTo != null) 'date_to': dateTo,
+      });
+      final response = await _client
+          .post(uri, headers: _headers, body: body)
+          .timeout(const Duration(minutes: 5));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        debugPrint('[DailyApiService] flexibleImport ${response.statusCode}: ${response.body}');
+        return null;
+      }
+      return jsonDecode(response.body) as Map<String, dynamic>;
+    } catch (e) {
+      debugPrint('[DailyApiService] flexibleImport error: $e');
       return null;
     }
   }
