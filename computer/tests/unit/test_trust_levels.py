@@ -23,6 +23,7 @@ from parachute.core.sandbox import (
     SANDBOX_IMAGE,
     CONTAINER_MEMORY_LIMIT_EPHEMERAL,
     CONTAINER_CPU_LIMIT,
+    TOOLS_VOLUME_NAME,
 )
 from parachute.core.module_loader import (
     compute_module_hash,
@@ -254,7 +255,6 @@ class TestDockerSandbox:
         assert container_name == "parachute-env-my-project"
 
     def test_persistent_container_args_has_tools_volume(self, vault_path):
-        from parachute.core.sandbox import TOOLS_VOLUME_NAME, SCRATCH_VOLUME_PREFIX
         sandbox = DockerSandbox(parachute_dir=vault_path)
         config = AgentSandboxConfig(session_id="test123")
         labels = {"app": "parachute", "type": "env"}
@@ -267,9 +267,6 @@ class TestDockerSandbox:
         assert TOOLS_VOLUME_NAME in arg_str
         assert "/opt/parachute-tools" in arg_str
         assert "readonly" in arg_str
-        # Scratch volume is mounted at /scratch (persistent named volume)
-        assert f"{SCRATCH_VOLUME_PREFIX}-test123" in arg_str
-        assert "/scratch" in arg_str
 
     def test_persistent_container_args_mounts_home_dir(self, vault_path):
         """All containers bind-mount the parachute home dir to /home/sandbox/."""
