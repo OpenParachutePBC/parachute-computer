@@ -36,7 +36,7 @@ async def get_scheduler_info() -> dict[str, Any]:
     - agents: Configuration for all daily agents
     - config: Legacy field
     """
-    return get_scheduler_status(Path.home())
+    return await get_scheduler_status(Path.home())
 
 
 @router.post("/scheduler/reload")
@@ -46,7 +46,7 @@ async def reload_scheduler_config() -> dict[str, Any]:
 
     Call this after editing Daily/.agents/*.md to apply schedule changes.
     """
-    result = reload_scheduler(Path.home())
+    result = await reload_scheduler(Path.home())
 
     if not result.get("success"):
         raise HTTPException(status_code=500, detail=result.get("error", "Unknown error"))

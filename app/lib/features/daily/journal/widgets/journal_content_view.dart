@@ -51,7 +51,7 @@ class JournalContentView extends ConsumerWidget {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     // Watch agent cards and chat log for the selected date
-    final agentCardsAsync = ref.watch(agentCardsProvider(_dateStr(selectedDate)));
+    final agentCardsAsync = ref.watch(cardsProvider(_dateStr(selectedDate)));
     final chatLogAsync = ref.watch(selectedChatLogProvider);
 
     // Check if we have any content at all
