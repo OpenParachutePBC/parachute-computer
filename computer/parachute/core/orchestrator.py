@@ -1501,6 +1501,8 @@ class Orchestrator:
             file_paths: list[str] = []
 
             for ctx in contexts:
+                # .md entries are individual files → loaded by context_loader (lib/)
+                # everything else is a folder path → walked by context_folders (core/)
                 if ctx.endswith(".md"):
                     file_paths.append(ctx)
                 else:
