@@ -43,21 +43,23 @@ Flutter app:
 
 ## Acceptance Criteria
 
-- [ ] New audio recordings are uploaded to the server and saved to `~/.parachute/daily/assets/{date}/filename.wav`
-- [ ] Audio paths in the graph are absolute server paths (e.g., `/Users/parachute/.parachute/daily/assets/...`)
-- [ ] Server exposes `POST /api/daily/assets/upload` (multipart) to receive and store audio files
-- [ ] Server exposes `GET /api/daily/assets/{path}` for streaming audio back to any client
-- [ ] Existing relative paths in graph are migrated to absolute on first server boot
-- [ ] Flutter app no longer has a vault path settings section or SharedPreferences vault keys
-- [ ] Journal importer accepts: source directory + format (Parachute / Obsidian / Logseq / Plain)
-- [ ] Import preview: dry-run returns entry count and sample entries before committing
-- [ ] Flutter settings import section has directory picker, format selector, preview, and confirm
+- [x] New audio recordings are uploaded to the server and saved to `~/.parachute/daily/assets/{date}/filename.wav`
+- [x] Audio paths in the graph are absolute server paths (e.g., `/Users/parachute/.parachute/daily/assets/...`)
+- [x] Server exposes `POST /api/daily/assets/upload` (multipart) to receive and store audio files
+- [x] Server exposes `GET /api/daily/assets/{path}` for streaming audio back to any client
+- [x] Existing relative paths in graph are migrated to absolute on first server boot
+- [x] Flutter app no longer has vault path SharedPreferences keys (`parachute_daily_vault_path`, `parachute_daily_secure_bookmark`, `parachute_daily_module_folder`, `parachute_vault_path`, etc.)
+- [x] Journal importer accepts: source directory + format (Parachute / Obsidian / Logseq / Plain)
+- [x] Import preview: dry-run returns entry count and sample entries before committing
+- [x] Flutter settings import section has directory picker, format selector, preview, and confirm
+
+> **Status as of 2026-03-04:** All phases complete — #172 done.
 
 ## Implementation Phases
 
 ---
 
-### Phase 1 — Server: Absolute Audio Paths + Asset Serving
+### ~~Phase 1 — Server: Absolute Audio Paths + Asset Serving~~ ✅ Done (PR #171)
 
 **Goal:** Server knows where audio lives; paths in graph are self-contained.
 
@@ -151,7 +153,7 @@ When the Flutter app sends `audio_path` after uploading, store the absolute serv
 
 ---
 
-### Phase 2 — Flutter: Upload Audio to Server
+### ~~Phase 2 — Flutter: Upload Audio to Server~~ ✅ Done (PR #171 + PR #191)
 
 **Goal:** Audio lives on the server. Flutter uploads the file immediately after recording, then creates the entry with the server-returned path. No vault path needed.
 
@@ -233,7 +235,7 @@ if (serverPath != null) {
 
 ---
 
-### Phase 3 — Flutter: Remove Vault Path Settings
+### ~~Phase 3 — Flutter: Remove Vault Path Settings~~ ✅ Done
 
 **Goal:** Vault path concept is gone from the UI and SharedPreferences.
 
@@ -274,7 +276,7 @@ The section gets renamed `JournalImportSection` and only shows the import UI.
 
 ---
 
-### Phase 4 — Flexible Journal Importer
+### ~~Phase 4 — Flexible Journal Importer~~ ✅ Done (PR #171)
 
 **Goal:** Any Obsidian/Logseq/plain/Parachute vault can be imported in one step from Settings.
 

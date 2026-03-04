@@ -67,14 +67,3 @@ final chatContextsPathProvider = FutureProvider<String>((ref) async {
   return service.getFolderPath('contexts');
 });
 
-/// Check if Daily vault is configured
-final isDailyConfiguredProvider = FutureProvider<bool>((ref) async {
-  final service = ref.watch(dailyFileSystemServiceProvider);
-  return service.isUserConfigured();
-});
-
-/// Check if Chat vault is configured
-final isChatConfiguredProvider = FutureProvider<bool>((ref) async {
-  final service = ref.watch(chatFileSystemServiceProvider);
-  return service.isUserConfigured();
-});

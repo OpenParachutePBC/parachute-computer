@@ -5,8 +5,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/core/providers/app_state_provider.dart';
 import 'package:parachute/core/providers/bare_metal_provider.dart';
-import 'package:parachute/core/services/computer_service.dart';
-import 'package:parachute/core/services/file_system_service.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 /// Setup wizard for Parachute Computer
@@ -57,20 +55,10 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
 
   /// Load previously saved settings (vault path and mode)
   Future<void> _loadSavedSettings() async {
-    // Load saved vault path
-    final savedVaultPath = await ref.read(vaultPathProvider.future);
-    if (savedVaultPath != null && savedVaultPath.isNotEmpty) {
-      setState(() {
-        _selectedVaultPath = savedVaultPath;
-        _vaultPathSelected = true;
-      });
-    } else {
-      // Default to home directory
-      final home = Platform.environment['HOME'] ?? '';
-      setState(() {
-        _selectedVaultPath = home;
-      });
-    }
+    // Default vault path to home directory (vault path is no longer persisted)
+    setState(() {
+      _selectedVaultPath = Platform.environment['HOME'] ?? '';
+    });
   }
 
   /// Get the home directory path
@@ -455,30 +443,11 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
       debugPrint('[ComputerSetupWizard] WARNING: Server URL not confirmed, proceeding anyway. Got: $savedUrl');
     }
 
-    // In Parachute Computer mode, fetch vault path from server and configure FileSystemService
-    // This ensures app and server use the same vault - no sync needed
+    // Refresh vault path display from server (for the onboarding ready screen)
     try {
-      final serverService = ComputerService();
-      final serverVaultPath = await serverService.getServerVaultPath();
-      if (serverVaultPath != null) {
-        debugPrint('[ComputerSetupWizard] Server vault path: $serverVaultPath');
-
-        // Update FileSystemService instances to use the server's vault path
-        final dailyFs = FileSystemService.daily();
-        final chatFs = FileSystemService.chat();
-
-        await dailyFs.setVaultPath(serverVaultPath, migrateFiles: false);
-        await chatFs.setVaultPath(serverVaultPath, migrateFiles: false);
-
-        // Refresh the vault path provider
-        await ref.read(vaultPathProvider.notifier).refreshFromServer();
-
-        debugPrint('[ComputerSetupWizard] FileSystemService configured with server vault path');
-      } else {
-        debugPrint('[ComputerSetupWizard] WARNING: Could not fetch server vault path');
-      }
+      await ref.read(vaultPathProvider.notifier).refreshFromServer();
     } catch (e) {
-      debugPrint('[ComputerSetupWizard] Error configuring vault path from server: $e');
+      debugPrint('[ComputerSetupWizard] Error refreshing vault path: $e');
     }
 
     // Invalidate the app mode provider to force a rebuild with new server URL
@@ -738,9 +707,6 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
 
   Future<void> _confirmVaultPath() async {
     if (_selectedVaultPath == null) return;
-
-    // Save the vault path
-    await ref.read(vaultPathProvider.notifier).setVaultPath(_selectedVaultPath);
 
     // Create the directory if it doesn't exist
     final dir = Directory(_selectedVaultPath!);
