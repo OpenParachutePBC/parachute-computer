@@ -19,6 +19,7 @@ import 'core/providers/server_providers.dart';
 import 'core/providers/sync_provider.dart';
 import 'core/providers/core_service_providers.dart';
 import 'core/services/deep_link_service.dart';
+import 'core/services/file_system_service.dart';
 import 'core/services/logging_service.dart';
 import 'core/services/model_download_service.dart';
 import 'core/widgets/model_download_banner.dart';
@@ -45,6 +46,9 @@ void main() async {
 
   // Create provider container for early initialization
   final container = ProviderContainer();
+
+  // Run one-time SharedPreferences migrations
+  await FileSystemService.runMigrations();
 
   // Initialize global services (logging, etc.)
   await initializeGlobalServices(container);
