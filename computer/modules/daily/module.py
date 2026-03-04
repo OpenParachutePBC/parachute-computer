@@ -13,6 +13,7 @@ Storage layout:
   ~/Parachute/Daily/journals/    ← Pre-restructure markdown files (importable on request)
 """
 
+import asyncio
 import json
 import logging
 import re
@@ -20,11 +21,11 @@ import shutil
 import uuid
 from datetime import date as _date, datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, Query, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 # Audio/image assets directory — fixed, not user-configurable
 ASSETS_DIR = Path.home() / ".parachute" / "daily" / "assets"
@@ -43,11 +44,22 @@ class UpdateEntryRequest(BaseModel):
 
 
 class FlexibleImportRequest(BaseModel):
-    source_dir: str                  # absolute path the user selected
-    format: str = "parachute"        # "parachute" | "obsidian" | "logseq" | "plain"
-    dry_run: bool = False            # if True, parse but don't write to graph
+    source_dir: str
+    format: Literal["parachute", "obsidian", "logseq", "plain"] = "parachute"
+    dry_run: bool = False
     date_from: Optional[str] = None  # YYYY-MM-DD inclusive filter
     date_to: Optional[str] = None    # YYYY-MM-DD inclusive filter
+
+    @field_validator("date_from", "date_to", mode="before")
+    @classmethod
+    def validate_date(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        try:
+            datetime.strptime(v, "%Y-%m-%d")
+        except ValueError:
+            raise ValueError("must be YYYY-MM-DD")
+        return v
 
 
 class DailyModule:
@@ -908,13 +920,11 @@ class DailyModule:
         date_to: str | None,
     ) -> dict:
         """Parse files from source_dir using fmt, optionally write to graph."""
-        import re as _re
-        date_pattern = _re.compile(r'^\d{4}-\d{2}-\d{2}')
+        date_pattern = re.compile(r'^\d{4}-\d{2}-\d{2}')
 
-        md_files = sorted([
-            f for f in source_dir.glob("*.md")
-            if date_pattern.match(f.stem)
-        ])
+        md_files = await asyncio.to_thread(
+            lambda: sorted(f for f in source_dir.glob("*.md") if date_pattern.match(f.stem))
+        )
         files_found = len(md_files)
 
         rows = await graph.execute_cypher(
@@ -925,14 +935,16 @@ class DailyModule:
         all_entries: list[dict] = []
         for md_file in md_files:
             try:
-                entries = self._parse_file(md_file, fmt)
+                entries = await asyncio.to_thread(self._parse_file, md_file, fmt)
             except Exception as e:
                 logger.warning(f"Daily flexible import: parse failed for {md_file.name}: {e}")
                 continue
 
             for entry in entries:
-                # Apply date filters
+                # Apply date filters (date_from/date_to are validated YYYY-MM-DD strings)
                 entry_date = entry.get("date", "")
+                if not entry_date:
+                    continue
                 if date_from and entry_date < date_from:
                     continue
                 if date_to and entry_date > date_to:
@@ -949,6 +961,7 @@ class DailyModule:
 
         if dry_run:
             return {
+                "dry_run": True,
                 "files_found": files_found,
                 "entries_parsed": len(all_entries),
                 "already_imported": already_imported,
@@ -965,6 +978,7 @@ class DailyModule:
                 logger.error(f"Daily flexible import: write failed for {entry['entry_id']!r}: {e}")
 
         return {
+            "dry_run": False,
             "files_found": files_found,
             "entries_parsed": len(all_entries),
             "already_imported": already_imported,
@@ -1116,14 +1130,23 @@ class DailyModule:
         async def upload_asset(file: UploadFile, date: str | None = None):
             """Receive an audio/image file and save it to ~/.parachute/daily/assets/{date}/."""
             date_str = date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
-            dest_dir = ASSETS_DIR / date_str
-            dest_dir.mkdir(parents=True, exist_ok=True)
 
-            safe_name = f"{uuid.uuid4().hex[:8]}_{file.filename}"
+            # Validate date param to prevent path traversal
+            if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_str):
+                return JSONResponse(status_code=400, content={"error": "invalid date parameter"})
+            assets_root = ASSETS_DIR.resolve()
+            dest_dir = (assets_root / date_str).resolve()
+            if not dest_dir.is_relative_to(assets_root):
+                return JSONResponse(status_code=400, content={"error": "invalid date parameter"})
+
+            # Strip directory components from filename to prevent traversal
+            bare_name = Path(file.filename).name if file.filename else "upload"
+            safe_name = f"{uuid.uuid4().hex[:8]}_{bare_name}"
             dest_path = dest_dir / safe_name
 
-            with open(dest_path, "wb") as out:
-                shutil.copyfileobj(file.file, out)
+            contents = await file.read()
+            await asyncio.to_thread(dest_dir.mkdir, parents=True, exist_ok=True)
+            await asyncio.to_thread(dest_path.write_bytes, contents)
 
             logger.info(f"Daily: saved uploaded asset to {dest_path}")
             return {"path": str(dest_path), "filename": safe_name}
@@ -1133,7 +1156,7 @@ class DailyModule:
             """Stream an audio/image file. Path is relative to ASSETS_DIR."""
             assets_root = ASSETS_DIR.resolve()
             full_path = (assets_root / path).resolve()
-            if not str(full_path).startswith(str(assets_root)):
+            if not full_path.is_relative_to(assets_root):
                 return JSONResponse(status_code=403, content={"error": "forbidden"})
             if not full_path.exists():
                 return JSONResponse(status_code=404, content={"error": "not found"})
@@ -1181,13 +1204,6 @@ class DailyModule:
                 return JSONResponse(
                     status_code=400,
                     content={"error": f"source_dir not found: {body.source_dir}"},
-                )
-
-            valid_formats = {"parachute", "obsidian", "logseq", "plain"}
-            if body.format not in valid_formats:
-                return JSONResponse(
-                    status_code=400,
-                    content={"error": f"Unknown format: {body.format!r}. Valid: {sorted(valid_formats)}"},
                 )
 
             result = await self._flexible_import(

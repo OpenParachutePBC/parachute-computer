@@ -492,8 +492,8 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
       debugPrint('[JournalScreen] Offline — voice entry queued');
     }
 
-    // Delete local temp file after successful upload
-    if (serverPath != null) {
+    // Delete local temp file only after both upload AND entry creation succeeded
+    if (serverPath != null && entry != null) {
       try {
         await File(localAudioPath).delete();
       } catch (e) {
@@ -1022,7 +1022,7 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
     final audioPath = entry.audioPath;
     if (audioPath == null) return const SizedBox.shrink();
 
-    final serverBaseUrl = ref.watch(aiServerUrlProvider).valueOrNull ?? 'http://localhost:3333';
+    final serverBaseUrl = ref.read(aiServerUrlProvider).valueOrNull ?? 'http://localhost:3333';
     final audioUrl = JournalHelpers.getAudioUrl(audioPath, serverBaseUrl);
     final duration = Duration(seconds: entry.durationSeconds ?? 0);
 
