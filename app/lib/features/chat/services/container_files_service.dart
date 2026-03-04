@@ -178,6 +178,10 @@ class ContainerFilesService {
       throw Exception('Delete failed: ${response.statusCode} ${response.body}');
     }
 
+    if (response.statusCode == 204 || response.body.isEmpty) {
+      return ContainerFileOpResult(success: true, path: path, message: 'Deleted');
+    }
+
     return ContainerFileOpResult.fromJson(
         jsonDecode(response.body) as Map<String, dynamic>);
   }

@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
@@ -63,11 +64,7 @@ class _ContainerFileViewerScreenState
   }
 
   String _bytesToString(Uint8List bytes) {
-    try {
-      return String.fromCharCodes(bytes);
-    } catch (_) {
-      return bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join(' ');
-    }
+    return utf8.decode(bytes, allowMalformed: true);
   }
 
   @override

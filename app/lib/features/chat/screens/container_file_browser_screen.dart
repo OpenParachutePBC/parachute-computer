@@ -162,6 +162,7 @@ class _ContainerFileBrowserScreenState
           currentPath.isEmpty ? name : '$currentPath/$name';
       final service = ref.read(containerFilesServiceProvider);
       await service.mkdir(widget.slug, newPath);
+      if (!mounted) return;
       _showSnackBar('Folder "$name" created');
       _refresh();
     } catch (e) {
@@ -215,6 +216,7 @@ class _ContainerFileBrowserScreenState
     try {
       final service = ref.read(containerFilesServiceProvider);
       await service.delete(widget.slug, item.path);
+      if (!mounted) return;
       _showSnackBar('Deleted "${item.name}"');
       _refresh();
     } catch (e) {
@@ -286,7 +288,11 @@ class _ContainerFileBrowserScreenState
                   ),
                   onPressed: () async {
                     Navigator.pop(context);
-                    await _shareBytes(bytes!, item.name);
+                    try {
+                      await _shareBytes(bytes!, item.name);
+                    } catch (e) {
+                      if (mounted) _showSnackBar('Share failed: $e', isError: true);
+                    }
                   },
                 ),
                 TextButton(
