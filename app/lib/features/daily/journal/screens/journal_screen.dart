@@ -3,9 +3,10 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:http/http.dart' as http;
+import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
-import 'package:parachute/core/providers/file_system_provider.dart';
 import 'package:parachute/core/providers/feature_flags_provider.dart' show aiServerUrlProvider;
 import 'package:parachute/core/providers/sync_provider.dart';
 import '../../recorder/providers/service_providers.dart';
@@ -778,19 +779,23 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
     debugPrint('[JournalScreen] Starting transcription for entry ${entry.id}');
 
     try {
-      // If audio path is already absolute, use it directly; otherwise prepend vault path
+      // Use local file if it exists (absolute path on same machine as server).
+      // Otherwise download from server to a temp file (cross-device or relative path).
       String fullAudioPath;
-      if (audioPath.startsWith('/')) {
+      if (audioPath.startsWith('/') && await File(audioPath).exists()) {
         fullAudioPath = audioPath;
       } else {
-        final fileSystemService = ref.read(fileSystemServiceProvider);
-        final vaultPath = await fileSystemService.getRootPath();
-        fullAudioPath = '$vaultPath/$audioPath';
-      }
-
-      final audioFile = File(fullAudioPath);
-      if (!await audioFile.exists()) {
-        throw Exception('Audio file not found at $fullAudioPath');
+        final serverBaseUrl =
+            ref.read(aiServerUrlProvider).valueOrNull ?? 'http://localhost:3333';
+        final audioUrl = JournalHelpers.getAudioUrl(audioPath, serverBaseUrl);
+        final response = await http.get(Uri.parse(audioUrl));
+        if (response.statusCode != 200) {
+          throw Exception('Audio not available (HTTP ${response.statusCode})');
+        }
+        final tempDir = await getTemporaryDirectory();
+        final tempFile = File('${tempDir.path}/transcribe_${entry.id}.wav');
+        await tempFile.writeAsBytes(response.bodyBytes);
+        fullAudioPath = tempFile.path;
       }
 
       final postProcessingService = ref.read(recordingPostProcessingProvider);

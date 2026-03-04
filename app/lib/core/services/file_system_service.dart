@@ -55,6 +55,39 @@ class FileSystemService {
   factory FileSystemService.forModule(ModuleType moduleType) => FileSystemService(moduleType);
 
   // ============================================================
+  // One-time migrations
+  // ============================================================
+
+  /// Run one-time SharedPreferences migrations.
+  ///
+  /// Call from main() before runApp(). Safe to call on every launch — the
+  /// migration key ensures each migration runs exactly once.
+  static Future<void> runMigrations() async {
+    const migrationKey = 'parachute_fss_migration_v1';
+    // Stale daily vault-path keys accumulated before PR #173 moved audio
+    // storage server-side. They are never written post-PR-#173 and can be
+    // safely removed.
+    const staleKeys = [
+      'parachute_daily_vault_path',
+      'parachute_daily_root_path',
+      'parachute_daily_secure_bookmark',
+      'parachute_daily_user_configured',
+      'parachute_daily_module_folder',
+      'parachute_daily_journals_folder',
+      'parachute_daily_assets_folder',
+      'parachute_daily_reflections_folder',
+      'parachute_daily_chatlog_folder',
+    ];
+    final prefs = await SharedPreferences.getInstance();
+    if (prefs.getBool(migrationKey) == true) return;
+    for (final key in staleKeys) {
+      await prefs.remove(key);
+    }
+    await prefs.setBool(migrationKey, true);
+    debugPrint('[FileSystemService] runMigrations: v1 complete — cleared ${staleKeys.length} stale daily keys');
+  }
+
+  // ============================================================
   // Constants
   // ============================================================
 
