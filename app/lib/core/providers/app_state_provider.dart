@@ -117,7 +117,6 @@ enum AppMode {
 enum AppTab {
   chat,
   daily,
-  vault,
   brain,
 }
 
@@ -190,7 +189,7 @@ final visibleTabsProvider = Provider<List<AppTab>>((ref) {
 
   return switch (mode) {
     AppMode.dailyOnly => [AppTab.daily],
-    AppMode.full => [AppTab.chat, AppTab.daily, AppTab.vault, AppTab.brain],
+    AppMode.full => [AppTab.chat, AppTab.daily, AppTab.brain],
   };
 });
 
