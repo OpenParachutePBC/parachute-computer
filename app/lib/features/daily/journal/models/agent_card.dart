@@ -1,7 +1,7 @@
-/// An agent's output stored as a graph node.
+/// An agent's output stored as a graph node (Card).
 ///
 /// Replaces the vault-file-based [AgentOutput] model. Cards are fetched from
-/// [DailyApiService.fetchAgentCards] and stored in the Kuzu graph as AgentCard nodes.
+/// [DailyApiService.fetchCards] and stored in the Kuzu graph as Card nodes.
 class AgentCard {
   /// Primary key: "{agent_name}:{date}" — deterministic, enables idempotent re-runs.
   final String cardId;

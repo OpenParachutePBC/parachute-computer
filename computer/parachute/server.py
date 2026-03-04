@@ -101,17 +101,19 @@ async def lifespan(app: FastAPI):
     # Discover existing persistent container env containers
     await orchestrator.reconcile_containers()
 
-    # Initialize scheduler for automated tasks
-    scheduler = await init_scheduler(settings.parachute_dir)
-    app.state.scheduler = scheduler
-    logger.info("Scheduler initialized")
-
     # Load modules from ~/.parachute/modules/
     module_loader = ModuleLoader(settings.parachute_dir)
     modules = await module_loader.discover_and_load()
     app.state.module_loader = module_loader
     app.state.modules = modules
     logger.info(f"Loaded {len(modules)} modules: {list(modules.keys())}")
+
+    # Initialize scheduler after modules so Caller nodes are migrated first
+    from parachute.core.interfaces import get_registry
+    graph = get_registry().get("GraphDB")
+    scheduler = await init_scheduler(settings.parachute_dir, graph=graph)
+    app.state.scheduler = scheduler
+    logger.info("Scheduler initialized")
 
     # Register module routes dynamically and track which modules have routers
     module_has_router: dict[str, bool] = {}

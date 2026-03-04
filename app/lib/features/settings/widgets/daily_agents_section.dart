@@ -40,7 +40,7 @@ class _DailyAgentsSectionState extends ConsumerState<DailyAgentsSection> {
       final apiKey = await ref.read(apiKeyProvider.future);
 
       final response = await http.get(
-        Uri.parse('$serverUrl/api/modules/daily/agents'),
+        Uri.parse('$serverUrl/api/daily/callers'),
         headers: {
           if (apiKey != null && apiKey.isNotEmpty) 'Authorization': 'Bearer $apiKey',
         },
@@ -50,7 +50,7 @@ class _DailyAgentsSectionState extends ConsumerState<DailyAgentsSection> {
         if (response.statusCode == 200) {
           final data = json.decode(response.body);
           setState(() {
-            _agents = List<Map<String, dynamic>>.from(data['agents'] ?? []);
+            _agents = List<Map<String, dynamic>>.from(data['callers'] ?? []);
             _isLoadingAgents = false;
           });
         } else {
@@ -84,7 +84,7 @@ class _DailyAgentsSectionState extends ConsumerState<DailyAgentsSection> {
       );
 
       final response = await http.post(
-        Uri.parse('$serverUrl/api/modules/daily/agents/$agentName/run'),
+        Uri.parse('$serverUrl/api/daily/cards/$agentName/run'),
         headers: {
           'Content-Type': 'application/json',
           if (apiKey != null && apiKey.isNotEmpty) 'Authorization': 'Bearer $apiKey',
@@ -156,7 +156,7 @@ class _DailyAgentsSectionState extends ConsumerState<DailyAgentsSection> {
       final apiKey = await ref.read(apiKeyProvider.future);
 
       final response = await http.post(
-        Uri.parse('$serverUrl/api/modules/daily/agents/$agentName/reset'),
+        Uri.parse('$serverUrl/api/daily/callers/$agentName/reset'),
         headers: {
           if (apiKey != null && apiKey.isNotEmpty) 'Authorization': 'Bearer $apiKey',
         },
@@ -372,14 +372,14 @@ class _DailyAgentsSectionState extends ConsumerState<DailyAgentsSection> {
 
   Widget _buildAgentCard(Map<String, dynamic> agent, bool isDark) {
     final name = agent['name'] as String? ?? 'unknown';
-    final displayName = agent['displayName'] as String? ?? name;
+    final displayName = agent['display_name'] as String? ?? name;
     final description = agent['description'] as String? ?? '';
-    final schedule = agent['schedule'] as Map<String, dynamic>? ?? {};
-    final state = agent['state'] as Map<String, dynamic>? ?? {};
-    final scheduleTime = schedule['time'] as String? ?? '--:--';
-    final scheduleEnabled = schedule['enabled'] as bool? ?? true;
-    final lastRunAt = state['lastRunAt'] as String?;
-    final runCount = state['runCount'] as int? ?? 0;
+    // Caller nodes have flat fields
+    // (no nested state in Caller nodes)
+    final scheduleTime = agent['schedule_time'] as String? ?? '--:--';
+    final scheduleEnabledRaw = agent['schedule_enabled']; final scheduleEnabled = scheduleEnabledRaw is bool ? scheduleEnabledRaw : scheduleEnabledRaw?.toString().toLowerCase() == 'true';
+    final String? lastRunAt = null;
+    const int runCount = 0;
 
     // Format last run time
     String lastRunDisplay = 'Never run';

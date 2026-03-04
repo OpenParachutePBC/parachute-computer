@@ -190,7 +190,7 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
     bool isToday,
   ) {
     // Watch agent cards and chat log for the selected date
-    final agentCardsAsync = ref.watch(agentCardsProvider(_formatDateStr(selectedDate)));
+    final agentCardsAsync = ref.watch(cardsProvider(_formatDateStr(selectedDate)));
     final chatLogAsync = ref.watch(selectedChatLogProvider);
 
     // Handle scroll to bottom after new entry is added
