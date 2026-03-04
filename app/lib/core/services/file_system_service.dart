@@ -322,12 +322,6 @@ class FileSystemService {
     return path;
   }
 
-  /// Always returns true — vault path is no longer user-configurable.
-  Future<bool> isUserConfigured() async => true;
-
-  /// No-op — vault path is no longer user-configurable.
-  Future<void> markAsConfigured() async {}
-
   /// Set the vault root path in-memory (no longer persisted to SharedPreferences).
   ///
   /// The vault path is not user-configurable; this method exists for callers that

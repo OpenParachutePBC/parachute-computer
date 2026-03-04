@@ -33,34 +33,28 @@ class OnboardingScreen extends ConsumerStatefulWidget {
   ConsumerState<OnboardingScreen> createState() => _OnboardingScreenState();
 }
 
-class _OnboardingScreenState extends ConsumerState<OnboardingScreen> with WidgetsBindingObserver {
+class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   int _currentStep = 0;
-  final _serverUrlController = TextEditingController();
 
-  /// Whether this is a bundled Parachute Computer (has embedded server)
-  /// Detected on first build
-  bool? _isBundledApp;
+  /// Whether this is a bundled Parachute Computer (has embedded server).
+  /// Read once in initState — isBundledAppProvider is compile-time constant.
+  late bool _isBundledApp;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
+    _isBundledApp = ref.read(isBundledAppProvider);
   }
 
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    _serverUrlController.dispose();
     super.dispose();
   }
 
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {}
-
   Future<void> _continueFromWelcome() async {
-    // Initialize the file system service with the default path
     final service = ref.read(dailyFileSystemServiceProvider);
     await service.initialize();
+    if (!mounted) return;
     _nextStep();
   }
 
@@ -137,9 +131,6 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> with Widget
   }
 
   Widget _buildStep(bool isDark) {
-    // Detect bundled mode on first build (lazy initialization)
-    _isBundledApp ??= ref.read(isBundledAppProvider);
-
     debugPrint('[Onboarding] _buildStep: step=$_currentStep, flavor=$appFlavor, isDailyOnly=$isDailyOnlyFlavor, isBundled=$_isBundledApp, isComputer=$isComputerFlavor, totalSteps=$_totalSteps');
 
     // Computer flavor has its own flow - wizard handles vault selection
@@ -308,25 +299,6 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> with Widget
                     Expanded(
                       child: Text(
                         'Server running at localhost:3333',
-                        style: TextStyle(
-                          fontFamily: 'monospace',
-                          fontSize: TypographyTokens.bodySmall,
-                          color: isDark ? BrandColors.nightText : BrandColors.charcoal,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ]
-              // Show remote server URL for client flavor
-              else if (_serverUrlController.text.isNotEmpty) ...[
-                Row(
-                  children: [
-                    Icon(Icons.cloud, color: BrandColors.turquoise, size: 20),
-                    SizedBox(width: Spacing.sm),
-                    Expanded(
-                      child: Text(
-                        _serverUrlController.text,
                         style: TextStyle(
                           fontFamily: 'monospace',
                           fontSize: TypographyTokens.bodySmall,

@@ -342,10 +342,6 @@ class VaultPathNotifier extends AsyncNotifier<String?> {
     state = AsyncData(path);
   }
 
-  /// No-op — vault path is no longer persisted to SharedPreferences.
-  Future<void> setVaultPath(String? path) async {
-    state = AsyncData(path);
-  }
 }
 
 /// Vault path provider with notifier for updates
@@ -363,28 +359,6 @@ final syncDisabledProvider = Provider<bool>((ref) {
   // share the same filesystem
   return isComputerFlavor;
 });
-
-/// Default vault path options
-class VaultPathOption {
-  final String path;
-  final String label;
-  final String description;
-
-  const VaultPathOption({
-    required this.path,
-    required this.label,
-    required this.description,
-  });
-}
-
-/// Get the default vault path (~)
-/// On desktop, defaults to home directory for the "operating at root" experience.
-String getDefaultVaultPath() {
-  final home = const String.fromEnvironment('HOME', defaultValue: '');
-  if (home.isNotEmpty) return home;
-  // Fallback for platforms where HOME isn't set at compile time
-  return '~';
-}
 
 // ============================================================================
 // App Version
@@ -424,7 +398,6 @@ Future<void> resetSetup(WidgetRef ref) async {
   // Clear setup-related keys
   await prefs.remove('parachute_server_url');
   await prefs.remove('parachute_server_mode');
-  await prefs.remove('parachute_vault_path');
   await prefs.remove('parachute_onboarding_complete');
 
   // Invalidate providers to force reload
