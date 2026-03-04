@@ -63,7 +63,12 @@ class FlexibleImportRequest(BaseModel):
 
 
 async def _migrate_callers_from_vault(vault_path: Path, graph) -> None:
-    """Seed Caller nodes from vault .agents/*.md files. Idempotent MERGE."""
+    """Seed Caller nodes from vault .agents/*.md files.
+
+    Uses ON CREATE SET so existing graph edits (via /callers API) are not
+    overwritten on every server restart. Only newly-discovered agents are
+    seeded; existing nodes only get their updated_at timestamp refreshed.
+    """
     from parachute.core.daily_agent import DailyAgentConfig
     agents_dir = vault_path / "Daily" / ".agents"
     if not agents_dir.exists():
@@ -76,11 +81,13 @@ async def _migrate_callers_from_vault(vault_path: Path, graph) -> None:
         try:
             await graph.execute_cypher(
                 "MERGE (c:Caller {name: $name}) "
-                "SET c.display_name = $display_name, c.description = $description, "
+                "ON CREATE SET "
+                "    c.display_name = $display_name, c.description = $description, "
                 "    c.system_prompt = $system_prompt, c.tools = $tools, "
                 "    c.model = $model, c.schedule_enabled = $schedule_enabled, "
                 "    c.schedule_time = $schedule_time, c.enabled = 'true', "
-                "    c.updated_at = $now",
+                "    c.created_at = $now "
+                "SET c.updated_at = $now",
                 {
                     "name": config.name,
                     "display_name": config.display_name,
@@ -1287,26 +1294,6 @@ class DailyModule:
                 date_to=body.date_to,
             )
             return result
-
-        # ── Agents ───────────────────────────────────────────────────────────
-
-        @router.get("/agents")
-        async def list_agents():
-            """List all configured daily agents."""
-            from parachute.core.daily_agent import discover_daily_agents
-            agents = discover_daily_agents(self.vault_path)
-            return {
-                "agents": [
-                    {
-                        "name": a.name,
-                        "display_name": a.display_name,
-                        "description": a.description,
-                        "schedule_enabled": a.schedule_enabled,
-                        "schedule_time": a.schedule_time,
-                    }
-                    for a in agents
-                ]
-            }
 
         @router.get("/cards")
         @router.get("/agent-cards")  # backward-compat alias

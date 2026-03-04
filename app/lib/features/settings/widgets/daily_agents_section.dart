@@ -76,6 +76,8 @@ class _DailyAgentsSectionState extends ConsumerState<DailyAgentsSection> {
       final serverUrl = await featureFlags.getAiServerUrl();
       final apiKey = await ref.read(apiKeyProvider.future);
 
+      if (!mounted) return;
+
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Running $agentName...'),
@@ -93,7 +95,7 @@ class _DailyAgentsSectionState extends ConsumerState<DailyAgentsSection> {
       );
 
       if (mounted) {
-        if (response.statusCode == 200) {
+        if (response.statusCode == 202) {
           ScaffoldMessenger.of(context).clearSnackBars();
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -377,7 +379,10 @@ class _DailyAgentsSectionState extends ConsumerState<DailyAgentsSection> {
     // Caller nodes have flat fields
     // (no nested state in Caller nodes)
     final scheduleTime = agent['schedule_time'] as String? ?? '--:--';
-    final scheduleEnabledRaw = agent['schedule_enabled']; final scheduleEnabled = scheduleEnabledRaw is bool ? scheduleEnabledRaw : scheduleEnabledRaw?.toString().toLowerCase() == 'true';
+    final scheduleEnabledRaw = agent['schedule_enabled'];
+    final scheduleEnabled = scheduleEnabledRaw is bool
+        ? scheduleEnabledRaw
+        : scheduleEnabledRaw?.toString().toLowerCase() == 'true';
     final String? lastRunAt = null;
     const int runCount = 0;
 
