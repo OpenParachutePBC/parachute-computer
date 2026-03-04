@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:record/record.dart';
 
@@ -184,6 +185,19 @@ class StreamingAudioRecorder {
 
       // Finalize WAV file
       await _finalizeStreamingWavFile();
+
+      // Stage to app documents so Android cannot evict the file before upload
+      if (_audioFilePath != null) {
+        final appDocDir = await getApplicationDocumentsDirectory();
+        final pendingDir = Directory('${appDocDir.path}/parachute/pending-audio');
+        await pendingDir.create(recursive: true);
+        final timestamp = DateTime.now().millisecondsSinceEpoch;
+        final stagedPath = '${pendingDir.path}/$timestamp.wav';
+        await File(_audioFilePath!).copy(stagedPath);
+        await File(_audioFilePath!).delete();
+        _audioFilePath = stagedPath;
+        debugPrint('[StreamingAudioRecorder] Staged audio to app documents: $stagedPath');
+      }
 
       _recordingStartTime = null;
 

@@ -462,36 +462,44 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
     debugPrint('[JournalScreen] Adding voice entry via API...');
     final api = ref.read(dailyApiServiceProvider);
 
-    // Upload audio to server; fall back to local path if offline/failed
+    // Try to upload audio to server first
     final serverPath = await api.uploadAudio(File(localAudioPath));
-    final audioPath = serverPath ?? localAudioPath;
 
-    final entry = await api.createEntry(
-      content: transcript,
-      metadata: {
-        'type': 'voice',
-        'audio_path': audioPath,
-        'duration_seconds': duration,
-      },
-    );
-    await _appendEntryToCache(
-      entry,
-      content: transcript,
-      type: JournalEntryType.voice,
-      audioPath: audioPath,
-      durationSeconds: duration,
-    );
-    if (entry == null) {
-      debugPrint('[JournalScreen] Offline — voice entry queued');
-    }
-
-    // Delete local temp file only after both upload AND entry creation succeeded
-    if (serverPath != null && entry != null) {
-      try {
-        await File(localAudioPath).delete();
-      } catch (e) {
-        debugPrint('[JournalScreen] Failed to delete temp audio: $e');
+    if (serverPath != null) {
+      // Online: create entry with server audio path
+      final entry = await api.createEntry(
+        content: transcript,
+        metadata: {
+          'type': 'voice',
+          'audio_path': serverPath,
+          'duration_seconds': duration,
+        },
+      );
+      await _appendEntryToCache(
+        entry,
+        content: transcript,
+        type: JournalEntryType.voice,
+        audioPath: serverPath,
+        durationSeconds: duration,
+      );
+      // Delete staged file only after both upload AND entry creation succeeded
+      if (entry != null) {
+        try {
+          await File(localAudioPath).delete();
+        } catch (e) {
+          debugPrint('[JournalScreen] Failed to delete staged audio: $e');
+        }
       }
+    } else {
+      // Offline: queue with staged local path — PendingEntryQueue will upload on reconnect
+      debugPrint('[JournalScreen] Offline — voice entry queued with staged audio');
+      await _appendEntryToCache(
+        null,
+        content: transcript,
+        type: JournalEntryType.voice,
+        audioPath: localAudioPath,
+        durationSeconds: duration,
+      );
     }
   }
 

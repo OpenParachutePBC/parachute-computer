@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/journal_entry.dart';
@@ -99,18 +100,34 @@ class PendingEntryQueue extends ChangeNotifier {
     final remaining = <_PendingItem>[];
     for (final item in List<_PendingItem>.from(_items)) {
       try {
+        // If audioPath is a local file path, upload it before creating the entry.
+        // This prevents local Android paths from ever reaching the server.
+        String? resolvedAudioPath = item.audioPath;
+        if (item.audioPath != null && item.audioPath!.startsWith('/')) {
+          final serverPath = await api.uploadAudio(File(item.audioPath!));
+          if (serverPath == null) {
+            // Audio upload failed — keep in queue; never send local path to server
+            debugPrint('[PendingEntryQueue] Audio upload pending for ${item.localId}');
+            remaining.add(item);
+            continue;
+          }
+          // Upload succeeded — delete staged file and use server URL
+          try { await File(item.audioPath!).delete(); } catch (_) {}
+          resolvedAudioPath = serverPath;
+        }
+
         final result = await api.createEntry(
           content: item.content,
           metadata: {
             if (item.type != 'text') 'type': item.type,
             if (item.title != null && item.title!.isNotEmpty) 'title': item.title!,
-            if (item.audioPath != null) 'audio_path': item.audioPath!,
+            if (resolvedAudioPath != null) 'audio_path': resolvedAudioPath,
             if (item.imagePath != null) 'image_path': item.imagePath!,
             if (item.durationSeconds != null) 'duration_seconds': item.durationSeconds!,
           },
         );
         if (result == null) {
-          // Upload failed; keep in queue
+          // Entry creation failed; keep in queue
           remaining.add(item);
         } else {
           debugPrint('[PendingEntryQueue] Flushed ${item.localId} → ${result.id}');

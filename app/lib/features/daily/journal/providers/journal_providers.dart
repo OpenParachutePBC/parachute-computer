@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/providers/file_system_provider.dart';
 import 'package:parachute/core/providers/feature_flags_provider.dart' show aiServerUrlProvider;
 import 'package:parachute/core/providers/app_state_provider.dart' show apiKeyProvider;
+import 'package:parachute/core/providers/backend_health_provider.dart' show periodicServerHealthProvider;
 import 'package:parachute/core/services/computer_service.dart' show DailyAgentInfo;
 import '../models/chat_log.dart';
 import '../models/journal_entry.dart';
@@ -74,6 +75,19 @@ class _TodayJournalNotifier extends AutoDisposeAsyncNotifier<JournalDay> {
   @override
   Future<JournalDay> build() async {
     ref.watch(journalRefreshTriggerProvider);
+
+    // Flush pending queue when connectivity restores (offline → online transition)
+    ref.listen(periodicServerHealthProvider, (previous, next) async {
+      final wasHealthy = previous?.valueOrNull?.isHealthy ?? false;
+      final isHealthy = next.valueOrNull?.isHealthy ?? false;
+      if (!wasHealthy && isHealthy) {
+        final api = ref.read(dailyApiServiceProvider);
+        final queue = await ref.read(pendingQueueProvider.future);
+        await queue.flush(api);
+        ref.read(journalRefreshTriggerProvider.notifier).state++;
+      }
+    });
+
     return _loadJournal(ref, DateTime.now(), (day) => state = AsyncData(day));
   }
 }
