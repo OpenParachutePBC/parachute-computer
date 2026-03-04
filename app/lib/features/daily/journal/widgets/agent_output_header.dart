@@ -1,26 +1,22 @@
 import 'dart:io';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
-import '../models/agent_output.dart';
+import '../models/agent_card.dart';
 import '../screens/agent_log_screen.dart';
 import '../../../chat/widgets/inline_audio_player.dart';
 
 /// Expandable header showing output from a daily agent
 ///
-/// This is a generic version of MorningReflectionHeader that works
-/// with any agent type. The icon/color are determined by the agent config.
+/// Accepts an [AgentCard] from the graph — no vault-file dependencies.
 class AgentOutputHeader extends StatefulWidget {
-  final AgentOutput output;
-  final DailyAgentConfig agentConfig;
+  final AgentCard card;
   final bool initiallyExpanded;
 
   const AgentOutputHeader({
     super.key,
-    required this.output,
-    required this.agentConfig,
+    required this.card,
     this.initiallyExpanded = false,
   });
 
@@ -74,7 +70,7 @@ class _AgentOutputHeaderState extends State<AgentOutputHeader>
     final isDark = theme.brightness == Brightness.dark;
 
     // Get icon and color for this agent
-    final (icon, color) = _getAgentIconAndColor(widget.agentConfig.name);
+    final (icon, color) = _getAgentIconAndColor(widget.card.agentName);
 
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -127,7 +123,7 @@ class _AgentOutputHeaderState extends State<AgentOutputHeader>
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          widget.agentConfig.displayName,
+                          widget.card.displayName,
                           style: theme.textTheme.titleMedium?.copyWith(
                             color: isDark ? BrandColors.softWhite : BrandColors.ink,
                             fontWeight: FontWeight.w600,
@@ -154,13 +150,13 @@ class _AgentOutputHeaderState extends State<AgentOutputHeader>
                       Navigator.of(context).push(
                         MaterialPageRoute(
                           builder: (context) => AgentLogScreen(
-                            agentName: widget.agentConfig.name,
-                            displayName: widget.agentConfig.displayName,
+                            agentName: widget.card.agentName,
+                            displayName: widget.card.displayName,
                           ),
                         ),
                       );
                     },
-                    tooltip: 'View ${widget.agentConfig.displayName} log',
+                    tooltip: 'View ${widget.card.displayName} log',
                     padding: EdgeInsets.zero,
                     constraints: const BoxConstraints(),
                   ),
@@ -198,13 +194,13 @@ class _AgentOutputHeaderState extends State<AgentOutputHeader>
                     ),
                     const SizedBox(height: 8),
                     MarkdownBody(
-                      data: widget.output.content,
+                      data: widget.card.content,
                       selectable: true,
                       imageBuilder: (uri, title, alt) => _buildImage(
-                        uri, title, alt, _getBasePath(), isDark,
+                        uri, title, alt, '', isDark,
                       ),
                       onTapLink: (text, href, title) => _handleLinkTap(
-                        context, text, href, title, _getBasePath(),
+                        context, text, href, title, '',
                       ),
                       styleSheet: MarkdownStyleSheet(
                         p: theme.textTheme.bodyMedium?.copyWith(
@@ -270,7 +266,7 @@ class _AgentOutputHeaderState extends State<AgentOutputHeader>
 
   /// Get icon and color for an agent based on its name
   ///
-  /// In the future, this could be configurable via agent frontmatter
+  /// In the future, this could be configurable via agent config
   (IconData, Color) _getAgentIconAndColor(String agentName) {
     switch (agentName) {
       case 'reflection':
@@ -280,14 +276,6 @@ class _AgentOutputHeaderState extends State<AgentOutputHeader>
       default:
         return (Icons.smart_toy_outlined, BrandColors.driftwood);
     }
-  }
-
-  /// Get the base path for resolving relative asset paths
-  /// Uses the output file path's directory
-  String _getBasePath() {
-    final filePath = widget.output.filePath;
-    if (filePath == null) return '';
-    return File(filePath).parent.path;
   }
 
   /// Resolve a relative asset path to an absolute path

@@ -50,14 +50,14 @@ class JournalContentView extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    // Watch agent outputs and chat log for the selected date
-    final agentOutputsAsync = ref.watch(agentOutputsForDateProvider(selectedDate));
+    // Watch agent cards and chat log for the selected date
+    final agentCardsAsync = ref.watch(agentCardsProvider(_dateStr(selectedDate)));
     final chatLogAsync = ref.watch(selectedChatLogProvider);
 
     // Check if we have any content at all
     final hasJournalEntries = journal.entries.isNotEmpty;
-    final agentOutputs = agentOutputsAsync.valueOrNull ?? [];
-    final hasAgentOutputs = agentOutputs.isNotEmpty;
+    final agentCards = agentCardsAsync.valueOrNull ?? [];
+    final hasAgentOutputs = agentCards.isNotEmpty;
     final hasChatLog = chatLogAsync.valueOrNull?.hasContent ?? false;
 
     return RefreshIndicator(
@@ -78,10 +78,7 @@ class JournalContentView extends ConsumerWidget {
             // These are shown at the top, each in their own expandable header
             if (hasAgentOutputs)
               SliverToBoxAdapter(
-                child: JournalAgentOutputsSection(
-                  outputs: agentOutputs,
-                  date: selectedDate,
-                ),
+                child: JournalAgentOutputsSection(cards: agentCards),
               ),
 
             // AI Conversations (if available) - collapsible section at top
@@ -145,6 +142,10 @@ class JournalContentView extends ConsumerWidget {
         ),
       ),
     );
+  }
+
+  String _dateStr(DateTime date) {
+    return '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
   }
 
   Widget _buildJournalEntry(
