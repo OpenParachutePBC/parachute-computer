@@ -23,6 +23,8 @@ from typing import Any
 
 import real_ladybug as lb
 
+_CHECKPOINT_INTERVAL = 300  # seconds between periodic WAL checkpoints
+
 logger = logging.getLogger(__name__)
 
 # Internal LadybugDB fields stripped from all API responses
@@ -49,6 +51,7 @@ class GraphService:
         self._conn: lb.AsyncConnection | None = None
         self._write_lock = asyncio.Lock()
         self._connected = False
+        self._checkpoint_task: asyncio.Task | None = None
 
     @property
     def write_lock(self) -> asyncio.Lock:
@@ -93,9 +96,46 @@ class GraphService:
         self._connected = True
         logger.info(f"GraphService connected: {self.db_path}")
 
+    async def checkpoint(self) -> None:
+        """Flush the WAL to the main database file. Idempotent, never raises."""
+        if not self._connected or self._conn is None:
+            return
+        try:
+            async with self._write_lock:
+                await self._conn.execute("CHECKPOINT")
+            logger.debug("GraphService: WAL checkpointed")
+        except Exception as e:
+            logger.warning(f"GraphService: checkpoint failed: {e}")
+
+    def start_checkpoint_loop(self, interval_seconds: int = _CHECKPOINT_INTERVAL) -> None:
+        """Start a background task that checkpoints the WAL periodically."""
+        if self._checkpoint_task is not None:
+            return
+
+        async def _loop() -> None:
+            while True:
+                await asyncio.sleep(interval_seconds)
+                await self.checkpoint()
+                logger.info("GraphService: periodic WAL checkpoint complete")
+
+        self._checkpoint_task = asyncio.create_task(_loop(), name="graph-checkpoint")
+        logger.info(f"GraphService: checkpoint loop started (every {interval_seconds}s)")
+
+    async def stop_checkpoint_loop(self) -> None:
+        """Cancel the periodic checkpoint task, if running."""
+        if self._checkpoint_task is not None:
+            self._checkpoint_task.cancel()
+            try:
+                await self._checkpoint_task
+            except asyncio.CancelledError:
+                pass
+            self._checkpoint_task = None
+
     async def close(self) -> None:
-        """Close the database connection."""
+        """Checkpoint WAL, stop background task, then close the connection."""
+        await self.stop_checkpoint_loop()
         if self._conn is not None:
+            await self.checkpoint()
             try:
                 self._conn.close()
             except Exception as e:

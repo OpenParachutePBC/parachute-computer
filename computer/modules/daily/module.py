@@ -19,7 +19,7 @@ import logging
 import re
 import shutil
 import uuid
-from datetime import date as _date, datetime, timezone
+from datetime import date as _date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal, Optional
 
@@ -30,7 +30,63 @@ from pydantic import BaseModel, field_validator
 # Audio/image assets directory — fixed, not user-configurable
 ASSETS_DIR = Path.home() / ".parachute" / "daily" / "assets"
 
+# Append-only JSONL redo log for crash recovery (rolled to 90 days)
+REDO_LOG_PATH = Path.home() / ".parachute" / "daily" / "entries.jsonl"
+
 logger = logging.getLogger(__name__)
+
+
+def _append_redo_log(
+    entry_id: str,
+    date: str,
+    content: str,
+    created_at: str,
+    title: str,
+    entry_type: str,
+    audio_path: str,
+    extra_meta: dict | None,
+) -> None:
+    """Append entry to JSONL redo log. Filesystem-only, never raises."""
+    record = {
+        "entry_id": entry_id,
+        "date": date,
+        "content": content,
+        "created_at": created_at,
+        "title": title,
+        "entry_type": entry_type,
+        "audio_path": audio_path,
+        "extra_meta": extra_meta or {},
+    }
+    try:
+        REDO_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with REDO_LOG_PATH.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except Exception as e:
+        logger.warning(f"Daily: redo log append failed: {e}")
+
+
+def _trim_redo_log() -> None:
+    """Remove entries older than 90 days from the redo log. Never raises."""
+    if not REDO_LOG_PATH.exists():
+        return
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=90)).strftime("%Y-%m-%d")
+    try:
+        lines = REDO_LOG_PATH.read_text(encoding="utf-8").splitlines()
+        kept = []
+        for line in lines:
+            if not line.strip():
+                continue
+            try:
+                rec = json.loads(line)
+                if rec.get("date", "") >= cutoff:
+                    kept.append(line)
+            except json.JSONDecodeError:
+                pass
+        REDO_LOG_PATH.write_text(
+            "\n".join(kept) + ("\n" if kept else ""), encoding="utf-8"
+        )
+    except Exception as e:
+        logger.warning(f"Daily: redo log trim failed: {e}")
 
 
 class CreateEntryRequest(BaseModel):
@@ -186,6 +242,10 @@ class DailyModule:
         # Migrate vault agent files → Caller graph nodes (idempotent MERGE)
         await _migrate_callers_from_vault(self.vault_path, graph)
 
+        # Trim redo log (90-day rolling), then replay any entries missing from graph
+        _trim_redo_log()
+        await self._recover_from_redo_log(graph)
+
         logger.info("Daily: graph schema ready (Kuzu primary storage)")
 
     async def _ensure_new_columns(self, graph) -> None:
@@ -256,6 +316,72 @@ class DailyModule:
                 f"Daily: migrated {migrated} audio paths to absolute "
                 f"({missing} not found on disk)"
             )
+
+    async def _recover_from_redo_log(self, graph) -> None:
+        """Replay any JSONL redo log entries that are missing from the graph.
+
+        Runs on every startup — safe because _write_to_graph uses MERGE (idempotent).
+        Normally a no-op. Activates after WAL corruption or abrupt power loss.
+        """
+        if not REDO_LOG_PATH.exists():
+            return
+        try:
+            lines = [l for l in REDO_LOG_PATH.read_text(encoding="utf-8").splitlines() if l.strip()]
+        except Exception as e:
+            logger.warning(f"Daily: redo log read failed: {e}")
+            return
+        if not lines:
+            return
+
+        records: list[dict] = []
+        for line in lines:
+            try:
+                records.append(json.loads(line))
+            except json.JSONDecodeError:
+                pass
+        if not records:
+            return
+
+        # Find which entry_ids already exist in graph
+        ids_literal = ", ".join(f"'{r['entry_id']}'" for r in records)
+        try:
+            existing_rows = await graph.execute_cypher(
+                f"MATCH (e:Journal_Entry) WHERE e.entry_id IN [{ids_literal}] "
+                "RETURN e.entry_id AS entry_id"
+            )
+            existing_ids = {row["entry_id"] for row in existing_rows}
+        except Exception as e:
+            logger.warning(f"Daily: redo log recovery query failed: {e}")
+            return
+
+        missing_records = [r for r in records if r["entry_id"] not in existing_ids]
+        if not missing_records:
+            return
+
+        logger.warning(
+            f"Daily: redo log recovery — replaying {len(missing_records)} "
+            f"entries missing from graph (likely WAL loss)"
+        )
+        recovered = 0
+        for rec in missing_records:
+            try:
+                await self._write_to_graph(
+                    graph,
+                    entry_id=rec["entry_id"],
+                    date=rec["date"],
+                    content=rec["content"],
+                    created_at=rec["created_at"],
+                    title=rec.get("title", ""),
+                    entry_type=rec.get("entry_type", "text"),
+                    audio_path=rec.get("audio_path", ""),
+                    extra_meta=rec.get("extra_meta"),
+                )
+                recovered += 1
+            except Exception as e:
+                logger.warning(f"Daily: redo log recovery failed for {rec['entry_id']!r}: {e}")
+        logger.warning(
+            f"Daily: redo log recovery complete — {recovered}/{len(missing_records)} entries recovered"
+        )
 
     def _find_legacy_md_files(self) -> list:
         """
@@ -621,6 +747,7 @@ class DailyModule:
             audio_path=audio_path,
             extra_meta=extra_meta,
         )
+        _append_redo_log(entry_id, date, content, created_at, title, entry_type, audio_path, extra_meta)
 
         logger.info(f"Daily: created entry {entry_id}")
         return {
