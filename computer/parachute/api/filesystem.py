@@ -32,12 +32,19 @@ def get_vault_path(request: Request) -> Path:
 
 
 def _check_vault_path(vault_path: Path, target: Path) -> Path:
-    """Resolve target and verify it's within vault. Returns resolved path."""
-    resolved = target.resolve()
-    vault_resolved = vault_path.resolve()
-    if not str(resolved).startswith(str(vault_resolved)):
+    """Verify target is within vault. Returns normalized path.
+
+    Uses normpath instead of resolve() so intentional symlinks inside the vault
+    (e.g. ~/Parachute → /Volumes/ExternalSSD/Parachute) are permitted while
+    still blocking path traversal attacks via '..' components.
+    """
+    vault_norm = Path(os.path.normpath(vault_path))
+    target_norm = Path(os.path.normpath(target))
+    try:
+        target_norm.relative_to(vault_norm)
+    except ValueError:
         raise HTTPException(status_code=403, detail="Access denied: path outside vault")
-    return resolved
+    return target_norm
 
 
 @router.get("/ls")
