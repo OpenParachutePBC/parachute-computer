@@ -31,8 +31,6 @@ import 'features/chat/screens/chat_screen.dart';
 import 'features/chat/providers/chat_providers.dart';
 import 'features/chat/widgets/message_bubble.dart' show currentlyRenderingMarkdown, markMarkdownAsFailed;
 import 'features/daily/journal/providers/journal_providers.dart';
-import 'features/vault/screens/vault_browser_screen.dart';
-import 'features/vault/screens/remote_files_screen.dart';
 import 'features/brain/screens/brain_home_screen.dart';
 import 'features/settings/screens/settings_screen.dart';
 import 'features/onboarding/screens/onboarding_screen.dart';
@@ -233,7 +231,6 @@ class _TabShellState extends ConsumerState<_TabShell> with WidgetsBindingObserve
   /// when tabs are conditionally shown/hidden
   final GlobalKey<NavigatorState> _chatNavigatorKey = GlobalKey<NavigatorState>();
   final GlobalKey<NavigatorState> _dailyNavigatorKey = GlobalKey<NavigatorState>();
-  final GlobalKey<NavigatorState> _vaultNavigatorKey = GlobalKey<NavigatorState>();
   final GlobalKey<NavigatorState> _brainNavigatorKey = GlobalKey<NavigatorState>();
 
   @override
@@ -336,7 +333,6 @@ class _TabShellState extends ConsumerState<_TabShell> with WidgetsBindingObserve
       final tabIndex = switch (target.tab) {
         'chat' => visibleTabs.indexOf(AppTab.chat),
         'daily' => visibleTabs.indexOf(AppTab.daily),
-        'vault' => visibleTabs.indexOf(AppTab.vault),
         'brain' => visibleTabs.indexOf(AppTab.brain),
         'settings' => -1, // Settings is a route, not a tab
         _ => -1,
@@ -577,18 +573,6 @@ class _TabShellState extends ConsumerState<_TabShell> with WidgetsBindingObserve
       if (showAllTabs)
         NavigationDestination(
           icon: Icon(
-            Icons.folder_outlined,
-            color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
-          ),
-          selectedIcon: Icon(
-            Icons.folder,
-            color: isDark ? BrandColors.nightTurquoise : BrandColors.turquoise,
-          ),
-          label: 'Vault',
-        ),
-      if (showAllTabs)
-        NavigationDestination(
-          icon: Icon(
             Icons.psychology_outlined,
             color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
           ),
@@ -604,7 +588,7 @@ class _TabShellState extends ConsumerState<_TabShell> with WidgetsBindingObserve
     final safeIndex = currentIndex.clamp(0, destinations.length - 1);
 
     // Map visual index to actual tab for IndexedStack
-    // In full mode: [Chat, Daily, Vault] -> indices 0, 1, 2
+    // In full mode: [Chat, Daily, Brain] -> indices 0, 1, 2
     // In daily-only mode: [Daily] -> visual index 0 maps to actual index 1
     final actualIndex = showAllTabs ? safeIndex : 1;
 
@@ -641,17 +625,7 @@ class _TabShellState extends ConsumerState<_TabShell> with WidgetsBindingObserve
                     );
                   },
                 ),
-                // Vault tab (index 2) - hidden when not in full mode
-                Navigator(
-                  key: _vaultNavigatorKey,
-                  onGenerateRoute: (settings) {
-                    return MaterialPageRoute(
-                      builder: (context) => const VaultBrowserScreen(),
-                      settings: settings,
-                    );
-                  },
-                ),
-                // Brain tab (index 3) - hidden when not in full mode
+                // Brain tab (index 2) - hidden when not in full mode
                 Navigator(
                   key: _brainNavigatorKey,
                   onGenerateRoute: (settings) {

@@ -17,6 +17,13 @@ Daily Journal Tools:
 - list_recent_journals: List recent journal dates
 - get_journal: Get a specific day's journal entries
 
+Graph Query Tools:
+- get_graph_schema: Returns all node and relationship tables with columns
+- list_conversations: List conversation sessions from the graph
+- get_conversation: Get a single session by ID from the graph
+- list_projects: List named project environments (container envs)
+- list_entries: List Daily journal entries from the graph
+
 Run with:
     python -m parachute.mcp_server /path/to/vault
 """
@@ -51,7 +58,7 @@ logger = logging.getLogger("ParachuteMCP")
 
 # Global session_store connection
 _db = None
-_brain_base_url: str = ""
+_graph_base_url: str = ""
 _PARACHUTE_DIR = Path.home() / ".parachute"
 
 
@@ -365,259 +372,54 @@ TOOLS = [
             "required": ["date"],
         },
     ),
-    # Brain Knowledge Graph Tools
+    # Graph Query Tools
     Tool(
-        name="brain_list_types",
-        description="List all Brain schema types with field definitions and entity counts.",
+        name="get_graph_schema",
+        description=(
+            "Returns all node and relationship tables in the graph database with their "
+            "column names and types. Call this first to understand what data is queryable."
+        ),
         inputSchema={"type": "object", "properties": {}},
     ),
     Tool(
-        name="brain_create_type",
-        description="Create a new Brain schema type (class) with field definitions.",
+        name="list_conversations",
+        description="List conversation sessions from the graph.",
         inputSchema={
             "type": "object",
             "properties": {
-                "name": {"type": "string", "description": "PascalCase type name (e.g. 'Project', 'Person')"},
-                "fields": {
-                    "type": "object",
-                    "description": "Field definitions keyed by snake_case field name",
-                    "additionalProperties": {
-                        "type": "object",
-                        "properties": {
-                            "type": {"type": "string", "enum": ["string", "integer", "boolean", "datetime", "enum", "link"]},
-                            "required": {"type": "boolean"},
-                            "values": {"type": "array", "items": {"type": "string"}},
-                            "link_type": {"type": "string"},
-                            "description": {"type": "string"},
-                        },
-                        "required": ["type"],
-                    },
-                },
-                "key_strategy": {"type": "string", "enum": ["Random", "Lexical", "Hash", "ValueHash"]},
-                "description": {"type": "string"},
+                "module": {"type": "string", "description": "Filter by module: chat, daily"},
+                "limit": {"type": "integer", "description": "Max results (default 20)"},
+                "archived": {"type": "boolean", "description": "Include archived (default false)"},
             },
-            "required": ["name", "fields"],
         },
     ),
     Tool(
-        name="brain_update_type",
-        description="Update an existing Brain schema type's fields (full field replacement).",
+        name="get_conversation",
+        description="Get a single conversation session by ID.",
+        inputSchema={
+            "type": "object",
+            "properties": {"session_id": {"type": "string"}},
+            "required": ["session_id"],
+        },
+    ),
+    Tool(
+        name="list_projects",
+        description="List named project environments (shared containers).",
+        inputSchema={
+            "type": "object",
+            "properties": {"limit": {"type": "integer", "description": "Max results (default 20)"}},
+        },
+    ),
+    Tool(
+        name="list_entries",
+        description="List Daily journal entries.",
         inputSchema={
             "type": "object",
             "properties": {
-                "name": {"type": "string", "description": "Type name to update"},
-                "fields": {
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "object",
-                        "properties": {
-                            "type": {"type": "string", "enum": ["string", "integer", "boolean", "datetime", "enum", "link"]},
-                            "required": {"type": "boolean"},
-                            "values": {"type": "array", "items": {"type": "string"}},
-                            "link_type": {"type": "string"},
-                            "description": {"type": "string"},
-                        },
-                        "required": ["type"],
-                    },
-                },
+                "date_from": {"type": "string", "description": "YYYY-MM-DD"},
+                "date_to": {"type": "string", "description": "YYYY-MM-DD"},
+                "limit": {"type": "integer", "description": "Max results (default 20)"},
             },
-            "required": ["name", "fields"],
-        },
-    ),
-    Tool(
-        name="brain_delete_type",
-        description="Delete a Brain schema type. Blocked if entities of this type exist.",
-        inputSchema={
-            "type": "object",
-            "properties": {"name": {"type": "string", "description": "Type name to delete"}},
-            "required": ["name"],
-        },
-    ),
-    Tool(
-        name="brain_create_entity",
-        description="Create a new entity in the Brain knowledge graph with schema validation.",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "entity_type": {"type": "string", "description": "Type name (e.g. 'Person', 'Project')"},
-                "data": {"type": "object", "description": "Entity fields as key-value pairs"},
-                "commit_msg": {"type": "string"},
-            },
-            "required": ["entity_type", "data"],
-        },
-    ),
-    Tool(
-        name="brain_query_entities",
-        description="Query Brain entities by type with optional pagination.",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "entity_type": {"type": "string"},
-                "limit": {"type": "integer", "default": 100},
-                "offset": {"type": "integer", "default": 0},
-            },
-            "required": ["entity_type"],
-        },
-    ),
-    Tool(
-        name="brain_get_entity",
-        description="Retrieve a specific Brain entity by its IRI.",
-        inputSchema={
-            "type": "object",
-            "properties": {"entity_id": {"type": "string", "description": "Entity IRI (e.g., 'Person/john_doe')"}},
-            "required": ["entity_id"],
-        },
-    ),
-    Tool(
-        name="brain_update_entity",
-        description="Update an existing Brain entity's fields (partial update).",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "entity_id": {"type": "string"},
-                "data": {"type": "object"},
-                "commit_msg": {"type": "string"},
-            },
-            "required": ["entity_id", "data"],
-        },
-    ),
-    Tool(
-        name="brain_delete_entity",
-        description="Delete a Brain entity and all its relationships.",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "entity_id": {"type": "string"},
-                "commit_msg": {"type": "string"},
-            },
-            "required": ["entity_id"],
-        },
-    ),
-    Tool(
-        name="brain_create_relationship",
-        description="Create a relationship between two Brain entities.",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "from_id": {"type": "string"},
-                "relationship": {"type": "string"},
-                "to_id": {"type": "string"},
-            },
-            "required": ["from_id", "relationship", "to_id"],
-        },
-    ),
-    Tool(
-        name="brain_traverse_graph",
-        description="Traverse the Brain knowledge graph from a starting entity following relationships.",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "start_id": {"type": "string"},
-                "relationship": {"type": "string"},
-                "max_depth": {"type": "integer", "default": 2},
-            },
-            "required": ["start_id", "relationship"],
-        },
-    ),
-    Tool(
-        name="brain_list_saved_queries",
-        description="List all saved filter queries for Brain.",
-        inputSchema={"type": "object", "properties": {}},
-    ),
-    Tool(
-        name="brain_save_query",
-        description="Save a named filter query for Brain for later reuse.",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "name": {"type": "string"},
-                "entity_type": {"type": "string"},
-                "filters": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "field_name": {"type": "string"},
-                            "operator": {"type": "string", "enum": ["eq", "neq", "contains"]},
-                            "value": {},
-                        },
-                        "required": ["field_name", "operator", "value"],
-                    },
-                },
-            },
-            "required": ["name", "entity_type", "filters"],
-        },
-    ),
-    Tool(
-        name="brain_delete_saved_query",
-        description="Delete a Brain saved query by its ID.",
-        inputSchema={
-            "type": "object",
-            "properties": {"query_id": {"type": "string"}},
-            "required": ["query_id"],
-        },
-    ),
-    Tool(
-        name="brain_add_episode",
-        description=(
-            "Ingest text as an episode into the knowledge graph. "
-            "Graphiti's LLM extracts Person, Project, Area, and Topic entities automatically. "
-            "Use this as the primary way to contribute knowledge to Brain."
-        ),
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "name": {
-                    "type": "string",
-                    "description": "Short title for this episode (e.g. 'Journal 2026-02-25 morning')",
-                },
-                "episode_body": {
-                    "type": "string",
-                    "description": "Text content to extract entities from",
-                },
-                "source_description": {
-                    "type": "string",
-                    "description": "Where this text comes from (e.g. 'Daily journal', 'Chat session')",
-                },
-                "reference_time": {
-                    "type": "string",
-                    "description": "ISO 8601 timestamp for temporal anchoring. Defaults to now.",
-                },
-            },
-            "required": ["name", "episode_body", "source_description"],
-        },
-    ),
-    Tool(
-        name="brain_search",
-        description=(
-            "Hybrid search (semantic + BM25) over the Brain knowledge graph. "
-            "Returns matching facts and relationships. "
-            "Preferred over brain_query_entities for natural language queries."
-        ),
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "query": {"type": "string", "description": "Natural language search query"},
-                "num_results": {
-                    "type": "integer",
-                    "description": "Maximum results (default 10, max 50)",
-                    "minimum": 1,
-                    "maximum": 50,
-                },
-            },
-            "required": ["query"],
-        },
-    ),
-    Tool(
-        name="brain_cypher_query",
-        description="Execute a raw Cypher query against the Brain Kuzu graph database.",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "query": {"type": "string", "description": "Cypher query string"},
-                "params": {"type": "object", "description": "Optional query parameters"},
-            },
-            "required": ["query"],
         },
     ),
 ]
@@ -1147,14 +949,14 @@ async def get_journal(date: str) -> Optional[dict[str, Any]]:
         return {"date": date, "error": str(e)}
 
 
-async def _brain_call(method: str, path: str, **kwargs) -> dict[str, Any]:
-    """Make an HTTP call to the local brain API."""
-    if not _brain_base_url:
-        return {"error": "Brain module not available"}
-    url = f"{_brain_base_url}{path}"
+async def _graph_call(path: str) -> dict[str, Any]:
+    """Make a GET request to the local graph API."""
+    if not _graph_base_url:
+        return {"error": "Graph API not available"}
+    url = f"{_graph_base_url}{path}"
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await getattr(client, method)(url, **kwargs)
+            response = await client.get(url)
             if response.status_code >= 400:
                 try:
                     detail = response.json().get("detail", response.text)
@@ -1163,9 +965,9 @@ async def _brain_call(method: str, path: str, **kwargs) -> dict[str, Any]:
                 return {"error": detail, "status_code": response.status_code}
             return response.json()
     except httpx.ConnectError:
-        return {"error": "Brain API unavailable — is the server running?"}
+        return {"error": "Graph API unavailable — is the server running?"}
     except Exception as e:
-        logger.error(f"Brain API call failed ({method} {path}): {e}")
+        logger.error(f"Graph API call failed (GET {path}): {e}")
         return {"error": str(e)}
 
 
@@ -1237,85 +1039,25 @@ async def handle_tool_call(name: str, arguments: dict[str, Any]) -> str:
             result = await get_journal(date=arguments["date"])
             if result is None:
                 return json.dumps({"error": f"Journal not found for date: {arguments['date']}"})
-        # Brain Knowledge Graph Tools
-        elif name == "brain_list_types":
-            result = await _brain_call("get", "/types")
-        elif name == "brain_create_type":
-            payload: dict[str, Any] = {"name": arguments["name"], "fields": arguments["fields"]}
-            if "key_strategy" in arguments:
-                payload["key_strategy"] = arguments["key_strategy"]
-            if "description" in arguments:
-                payload["description"] = arguments["description"]
-            result = await _brain_call("post", "/types", json=payload)
-        elif name == "brain_update_type":
-            type_name = urllib.parse.quote(arguments["name"], safe="")
-            result = await _brain_call("put", f"/types/{type_name}", json={"fields": arguments["fields"]})
-        elif name == "brain_delete_type":
-            type_name = urllib.parse.quote(arguments["name"], safe="")
-            result = await _brain_call("delete", f"/types/{type_name}")
-        elif name == "brain_create_entity":
-            payload = {"entity_type": arguments["entity_type"], "data": arguments["data"]}
-            if "commit_msg" in arguments:
-                payload["commit_msg"] = arguments["commit_msg"]
-            result = await _brain_call("post", "/entities", json=payload)
-        elif name == "brain_query_entities":
-            entity_type = urllib.parse.quote(arguments["entity_type"], safe="")
-            params = {"limit": arguments.get("limit", 100), "offset": arguments.get("offset", 0)}
-            result = await _brain_call("get", f"/entities/{entity_type}", params=params)
-        elif name == "brain_get_entity":
-            result = await _brain_call("get", "/entities/by_id", params={"id": arguments["entity_id"]})
-        elif name == "brain_update_entity":
-            entity_id = urllib.parse.quote(arguments["entity_id"], safe="")
-            payload = {"data": arguments["data"]}
-            if "commit_msg" in arguments:
-                payload["commit_msg"] = arguments["commit_msg"]
-            result = await _brain_call("put", f"/entities/{entity_id}", json=payload)
-        elif name == "brain_delete_entity":
-            entity_id = urllib.parse.quote(arguments["entity_id"], safe="")
-            kwargs: dict[str, Any] = {}
-            if "commit_msg" in arguments:
-                kwargs["json"] = {"commit_msg": arguments["commit_msg"]}
-            result = await _brain_call("delete", f"/entities/{entity_id}", **kwargs)
-        elif name == "brain_create_relationship":
-            result = await _brain_call("post", "/relationships", json={
-                "from_id": arguments["from_id"],
-                "relationship": arguments["relationship"],
-                "to_id": arguments["to_id"],
-            })
-        elif name == "brain_traverse_graph":
-            result = await _brain_call("post", "/traverse", json={
-                "start_id": arguments["start_id"],
-                "relationship": arguments["relationship"],
-                "max_depth": arguments.get("max_depth", 2),
-            })
-        elif name == "brain_list_saved_queries":
-            result = await _brain_call("get", "/queries")
-        elif name == "brain_save_query":
-            result = await _brain_call("post", "/queries", json={
-                "name": arguments["name"],
-                "entity_type": arguments["entity_type"],
-                "filters": arguments["filters"],
-            })
-        elif name == "brain_delete_saved_query":
-            query_id = urllib.parse.quote(arguments["query_id"], safe="")
-            result = await _brain_call("delete", f"/queries/{query_id}")
-        elif name == "brain_add_episode":
-            result = await _brain_call("post", "/episodes", json={
-                "name": arguments["name"],
-                "episode_body": arguments["episode_body"],
-                "source_description": arguments["source_description"],
-                **({} if "reference_time" not in arguments else {"reference_time": arguments["reference_time"]}),
-            })
-        elif name == "brain_search":
-            result = await _brain_call("post", "/search", json={
-                "query": arguments["query"],
-                "num_results": arguments.get("num_results", 10),
-            })
-        elif name == "brain_cypher_query":
-            result = await _brain_call("post", "/cypher", json={
-                "query": arguments["query"],
-                "params": arguments.get("params"),
-            })
+        # Graph Query Tools
+        elif name == "get_graph_schema":
+            result = await _graph_call("/schema")
+        elif name == "list_conversations":
+            params = {k: arguments[k] for k in ("module", "limit") if k in arguments}
+            if "archived" in arguments:
+                params["archived"] = "true" if arguments["archived"] else "false"
+            qs = ("?" + urllib.parse.urlencode(params)) if params else ""
+            result = await _graph_call(f"/sessions{qs}")
+        elif name == "get_conversation":
+            sid = urllib.parse.quote(arguments["session_id"], safe="")
+            result = await _graph_call(f"/sessions/{sid}")
+        elif name == "list_projects":
+            qs = f"?limit={arguments['limit']}" if "limit" in arguments else ""
+            result = await _graph_call(f"/container_envs{qs}")
+        elif name == "list_entries":
+            params = {k: arguments[k] for k in ("date_from", "date_to", "limit") if k in arguments}
+            qs = ("?" + urllib.parse.urlencode(params)) if params else ""
+            result = await _graph_call(f"/daily/entries{qs}")
         else:
             return json.dumps({"error": f"Unknown tool: {name}"})
 
@@ -1328,9 +1070,9 @@ async def handle_tool_call(name: str, arguments: dict[str, Any]) -> str:
 
 async def run_server():
     """Run the MCP server."""
-    global _brain_base_url
+    global _graph_base_url
     port = os.environ.get("PARACHUTE_SERVER_PORT", "3333")
-    _brain_base_url = f"http://localhost:{port}/api/brain"
+    _graph_base_url = f"http://localhost:{port}/api/graph"
 
     logger.info(f"Starting Parachute MCP server (parachute_dir: {_PARACHUTE_DIR})")
 

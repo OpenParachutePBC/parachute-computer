@@ -1000,29 +1000,6 @@ class Orchestrator:
                 f"is_new={is_new}, session={session.id[:8] if session.id else None}"
             )
 
-            # Bridge agent pre-hook: enrich system prompt with brain context.
-            # Awaited (result needed before chat agent starts). Degrades gracefully
-            # when Brain module is absent or bridge fails.
-            try:
-                from parachute.core.interfaces import get_registry
-                _bridge_brain = get_registry().get("BrainInterface")
-                if _bridge_brain and message:
-                    from parachute.core.bridge_agent import enrich as bridge_enrich
-                    _bridge_ctx = await bridge_enrich(
-                        message=message,
-                        session_summary=session.summary,
-                        brain=_bridge_brain,
-                        claude_token=self.settings.claude_code_oauth_token,
-                        vault_path=Path.home(),
-                    )
-                    if _bridge_ctx:
-                        actual_message = f"<brain_context>\n{_bridge_ctx}\n</brain_context>\n\n{actual_message}"
-                        logger.info(f"Bridge: injected {len(_bridge_ctx)} chars of brain context into user message")
-                else:
-                    logger.debug("Bridge: brain not available, skipping enrich")
-            except Exception as _bridge_err:
-                logger.warning(f"Bridge enrich error (non-fatal): {_bridge_err}")
-
             async for event in query_streaming(
                 prompt=actual_message,
                 # Full prompt overrides preset, append content adds to it
@@ -1261,7 +1238,7 @@ class Orchestrator:
             duration_ms = int((time.time() - start_time) * 1000)
 
             # Bridge agent post-turn observe: handles session metadata (title,
-            # summary, activity log) AND brain writeback in one fire-and-forget task.
+            # summary, activity log) in a fire-and-forget task.
             # Uses session.message_count (pre-increment) to compute exchange number.
             if final_session_id and final_session_id != "pending" and message and result_text:
                 from parachute.core.bridge_agent import observe as bridge_observe

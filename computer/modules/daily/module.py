@@ -490,42 +490,6 @@ class DailyModule:
         from parachute.core.interfaces import get_registry
         return get_registry().get("GraphDB")
 
-    def _get_brain(self):
-        """Return BrainInterface from registry, or None if unavailable."""
-        from parachute.core.interfaces import get_registry
-        return get_registry().get("BrainInterface")
-
-    async def _find_brain_suggestions(self, content: str) -> list[dict]:
-        """Search Brain for entities mentioned in the content."""
-        brain = self._get_brain()
-        if not brain:
-            return []
-
-        suggestions = []
-        seen_ids = set()
-        words = set()
-        for match in re.finditer(r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b', content):
-            words.add(match.group())
-        for match in re.finditer(r'\b[A-Z][a-z]{2,}\b', content):
-            words.add(match.group())
-
-        for word in words:
-            try:
-                results = await brain.search(word)
-                for result in results:
-                    para_id = result.get("para_id", "")
-                    if para_id and para_id not in seen_ids:
-                        seen_ids.add(para_id)
-                        suggestions.append({
-                            "para_id": para_id,
-                            "name": result.get("name", ""),
-                            "matched_term": word,
-                        })
-            except Exception as e:
-                logger.debug(f"Brain search failed for '{word}': {e}")
-
-        return suggestions
-
     async def _write_to_graph(
         self,
         graph,
@@ -537,12 +501,11 @@ class DailyModule:
         title: str = "",
         entry_type: str = "text",
         audio_path: str = "",
-        brain_links: list | None = None,
         extra_meta: dict | None = None,
     ) -> None:
         """Write (MERGE) a Journal_Entry node + Day node + HAS_ENTRY edge."""
         snippet = content[:200]
-        brain_links_json = json.dumps(brain_links or [])
+        brain_links_json = json.dumps([])
         metadata_json = json.dumps(extra_meta or {})
 
         async with graph.write_lock:
@@ -626,7 +589,7 @@ class DailyModule:
     # ── CRUD ──────────────────────────────────────────────────────────────────
 
     async def create_entry(self, content: str, metadata: dict[str, Any] | None = None) -> dict:
-        """Create a new daily entry in the graph. Returns {id, created_at, brain_suggestions}."""
+        """Create a new daily entry in the graph. Returns {id, created_at}."""
         graph = self._get_graph()
         if graph is None:
             raise RuntimeError("GraphDB unavailable — cannot create entry")
@@ -647,10 +610,6 @@ class DailyModule:
         known = {"title", "type", "audio_path"}
         extra_meta = {k: v for k, v in meta.items() if k not in known}
 
-        # Brain suggestions
-        brain_suggestions = await self._find_brain_suggestions(content)
-        brain_links = [s["para_id"] for s in brain_suggestions]
-
         await self._write_to_graph(
             graph,
             entry_id=entry_id,
@@ -660,7 +619,6 @@ class DailyModule:
             title=title,
             entry_type=entry_type,
             audio_path=audio_path,
-            brain_links=brain_links,
             extra_meta=extra_meta,
         )
 
@@ -668,7 +626,6 @@ class DailyModule:
         return {
             "id": entry_id,
             "created_at": created_at,
-            "brain_suggestions": brain_suggestions,
         }
 
     async def update_entry(

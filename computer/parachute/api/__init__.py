@@ -6,7 +6,7 @@ from fastapi import APIRouter
 
 from parachute.api import (
     agents, auth, bots, capabilities, chat, claude_code, container_files, containers,
-    context_folders, filesystem, health, hooks, imports, mcp, models, modules, plugins,
+    context_folders, filesystem, graph, health, hooks, imports, mcp, models, modules, plugins,
     prompts, sandbox, scheduler, sessions, settings, skills, sync, usage,
 )
 
@@ -39,3 +39,4 @@ api_router.include_router(agents.router, tags=["agents"])
 api_router.include_router(capabilities.router, tags=["capabilities"])
 api_router.include_router(plugins.router, tags=["plugins"])
 api_router.include_router(settings.router, tags=["settings"])
+api_router.include_router(graph.router, tags=["graph"])
