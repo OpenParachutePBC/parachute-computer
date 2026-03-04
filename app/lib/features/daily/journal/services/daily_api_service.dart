@@ -317,11 +317,11 @@ class DailyApiService {
     }
   }
 
-  /// Fetch all AgentCard nodes for a specific date (YYYY-MM-DD).
+  /// Fetch all Card nodes for a specific date (YYYY-MM-DD).
   ///
   /// Returns an empty list on error or if the server is unreachable.
-  Future<List<AgentCard>> fetchAgentCards(String date) async {
-    final uri = Uri.parse('$baseUrl/api/daily/agent-cards').replace(
+  Future<List<AgentCard>> fetchCards(String date) async {
+    final uri = Uri.parse('$baseUrl/api/daily/cards').replace(
       queryParameters: {'date': date},
     );
     debugPrint('[DailyApiService] GET $uri');
@@ -330,7 +330,7 @@ class DailyApiService {
           .get(uri, headers: _headers)
           .timeout(_timeout);
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        debugPrint('[DailyApiService] fetchAgentCards ${response.statusCode}');
+        debugPrint('[DailyApiService] fetchCards ${response.statusCode}');
         return [];
       }
       final decoded = jsonDecode(response.body) as Map<String, dynamic>;
@@ -339,40 +339,44 @@ class DailyApiService {
           .map((j) => AgentCard.fromJson(j as Map<String, dynamic>))
           .toList();
     } catch (e) {
-      debugPrint('[DailyApiService] fetchAgentCards error: $e');
+      debugPrint('[DailyApiService] fetchCards error: $e');
       return [];
     }
   }
 
-  /// Fetch all configured daily agents from the server.
+  /// Fetch all configured Caller (agent definition) nodes from the server.
   ///
   /// Returns an empty list on error or if the server is unreachable.
-  Future<List<DailyAgentInfo>> fetchAgents() async {
-    final uri = Uri.parse('$baseUrl/api/daily/agents');
+  Future<List<DailyAgentInfo>> fetchCallers() async {
+    final uri = Uri.parse('$baseUrl/api/daily/callers');
     debugPrint('[DailyApiService] GET $uri');
     try {
       final response = await _client
           .get(uri, headers: _headers)
           .timeout(_timeout);
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        debugPrint('[DailyApiService] fetchAgents ${response.statusCode}');
+        debugPrint('[DailyApiService] fetchCallers ${response.statusCode}');
         return [];
       }
       final decoded = jsonDecode(response.body) as Map<String, dynamic>;
-      final List<dynamic> data = decoded['agents'] as List<dynamic>? ?? [];
+      final List<dynamic> data = decoded['callers'] as List<dynamic>? ?? [];
       return data.map((raw) {
         final j = raw as Map<String, dynamic>;
+        final scheduleEnabledRaw = j['schedule_enabled'];
+        final scheduleEnabled = scheduleEnabledRaw is bool
+            ? scheduleEnabledRaw
+            : scheduleEnabledRaw?.toString().toLowerCase() == 'true';
         return DailyAgentInfo(
           name: j['name'] as String? ?? '',
           displayName: j['display_name'] as String? ?? j['name'] as String? ?? '',
           description: j['description'] as String? ?? '',
-          scheduleEnabled: j['schedule_enabled'] as bool? ?? true,
+          scheduleEnabled: scheduleEnabled,
           scheduleTime: j['schedule_time'] as String? ?? '03:00',
           outputPath: '',
         );
       }).toList();
     } catch (e) {
-      debugPrint('[DailyApiService] fetchAgents error: $e');
+      debugPrint('[DailyApiService] fetchCallers error: $e');
       return [];
     }
   }
@@ -384,7 +388,7 @@ class DailyApiService {
     final queryParams = <String, String>{
       if (date != null) 'date': date,
     };
-    final uri = Uri.parse('$baseUrl/api/daily/agent-cards/$agentName/run')
+    final uri = Uri.parse('$baseUrl/api/daily/cards/$agentName/run')
         .replace(queryParameters: queryParams.isEmpty ? null : queryParams);
     debugPrint('[DailyApiService] POST $uri');
     try {

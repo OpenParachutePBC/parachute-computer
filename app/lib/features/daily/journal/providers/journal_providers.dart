@@ -165,26 +165,26 @@ final selectedChatLogProvider = FutureProvider.autoDispose<ChatLog?>((ref) async
 });
 
 // ============================================================================
-// Agent Card Providers (graph-backed)
+// Card Providers (graph-backed)
 // ============================================================================
 
-/// Fetch all AgentCard nodes for a date from the server.
+/// Fetch all Card nodes for a date from the server.
 ///
 /// Family parameter: YYYY-MM-DD date string.
 /// Returns empty list if offline or server unavailable.
-final agentCardsProvider =
+final cardsProvider =
     FutureProvider.autoDispose.family<List<AgentCard>, String>((ref, dateStr) async {
   ref.watch(journalRefreshTriggerProvider);
   final api = ref.watch(dailyApiServiceProvider);
-  return api.fetchAgentCards(dateStr);
+  return api.fetchCards(dateStr);
 });
 
-/// Fetch registered agent configs from the server.
+/// Fetch registered Caller (agent definition) nodes from the server.
 ///
 /// Used by [AgentTriggerCard] to enumerate agents without local file reads.
-final dailyAgentsProvider =
+final callersProvider =
     FutureProvider.autoDispose<List<DailyAgentInfo>>((ref) async {
   ref.watch(journalRefreshTriggerProvider);
   final api = ref.watch(dailyApiServiceProvider);
-  return api.fetchAgents();
+  return api.fetchCallers();
 });

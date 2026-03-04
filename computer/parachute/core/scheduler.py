@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 # Global scheduler instance
 _scheduler: Optional[AsyncIOScheduler] = None
 _vault_path: Optional[Path] = None
+_graph = None
 
 
 def _parse_time(time_str: str) -> tuple[int, int]:
@@ -59,86 +60,51 @@ async def _run_daily_agent_job(agent_name: str):
         logger.error(f"Agent '{agent_name}' failed: {e}", exc_info=True)
 
 
-def _schedule_daily_agent(scheduler: AsyncIOScheduler, vault_path: Path, agent_name: str) -> bool:
-    """Schedule a daily agent based on its config file."""
-    from parachute.core.daily_agent import get_daily_agent_config
-
-    config = get_daily_agent_config(vault_path, agent_name)
-    if not config:
-        logger.warning(f"No config found for agent '{agent_name}'")
-        return False
-
-    if not config.schedule_enabled:
-        logger.info(f"Agent '{agent_name}' schedule disabled")
-        return False
-
-    hour, minute = config.get_schedule_hour_minute()
-    job_id = f"daily_{agent_name}"
-
-    # Remove existing job if present
-    try:
-        scheduler.remove_job(job_id)
-    except JobLookupError:
-        pass
-
-    scheduler.add_job(
-        _run_daily_agent_job,
-        CronTrigger(hour=hour, minute=minute),
-        id=job_id,
-        name=f"Daily {config.display_name}",
-        args=[agent_name],
-        replace_existing=True,
-    )
-
-    logger.info(f"Scheduled agent '{agent_name}' at {hour:02d}:{minute:02d}")
-    return True
-
-
-def _schedule_all_daily_agents(scheduler: AsyncIOScheduler, vault_path: Path) -> dict[str, bool]:
-    """Discover and schedule all daily agents."""
-    from parachute.core.daily_agent import discover_daily_agents
-
-    agents = discover_daily_agents(vault_path)
+def _schedule_from_list(scheduler: AsyncIOScheduler, agents: list) -> dict[str, bool]:
+    """Schedule all agents from a pre-loaded list of DailyAgentConfig."""
     if not agents:
         logger.info("No daily agents found to schedule")
         return {}
 
     results = {}
     for config in agents:
-        results[config.name] = _schedule_daily_agent(scheduler, vault_path, config.name)
+        if not config.schedule_enabled:
+            logger.info(f"Agent '{config.name}' schedule disabled")
+            results[config.name] = False
+            continue
+
+        hour, minute = config.get_schedule_hour_minute()
+        job_id = f"daily_{config.name}"
+
+        try:
+            scheduler.remove_job(job_id)
+        except JobLookupError:
+            pass
+
+        scheduler.add_job(
+            _run_daily_agent_job,
+            CronTrigger(hour=hour, minute=minute),
+            id=job_id,
+            name=f"Daily {config.display_name}",
+            args=[config.name],
+            replace_existing=True,
+        )
+        logger.info(f"Scheduled agent '{config.name}' at {hour:02d}:{minute:02d}")
+        results[config.name] = True
 
     return results
-
-
-def _load_daily_reflection_config(vault_path: Path) -> Optional[dict[str, Any]]:
-    """
-    Load daily reflection config from Daily/.agents/reflection.md frontmatter.
-
-    Returns None if the file doesn't exist (reflection agent is disabled).
-    Returns config dict with schedule info if file exists.
-    """
-    from parachute.core.daily_agent import get_daily_agent_config
-
-    config = get_daily_agent_config(vault_path, "reflection")
-    if not config:
-        return None
-
-    return {
-        "enabled": config.schedule_enabled,
-        "time": config.schedule_time,
-        "name": config.display_name,
-    }
 
 
 # =============================================================================
 # Scheduler Lifecycle
 # =============================================================================
 
-async def init_scheduler(vault_path: Path) -> AsyncIOScheduler:
+async def init_scheduler(vault_path: Path, graph=None) -> AsyncIOScheduler:
     """Initialize and start the scheduler."""
-    global _scheduler, _vault_path
+    global _scheduler, _vault_path, _graph
 
     _vault_path = vault_path
+    _graph = graph
 
     if _scheduler is not None:
         logger.warning("Scheduler already initialized")
@@ -147,8 +113,10 @@ async def init_scheduler(vault_path: Path) -> AsyncIOScheduler:
     # Create scheduler
     _scheduler = AsyncIOScheduler()
 
-    # Schedule all daily agents
-    results = _schedule_all_daily_agents(_scheduler, vault_path)
+    # Discover and schedule all daily agents
+    from parachute.core.daily_agent import discover_daily_agents
+    agents = await discover_daily_agents(vault_path, graph=graph)
+    results = _schedule_from_list(_scheduler, agents)
     logger.info(f"Scheduled daily agents: {results}")
 
     # Start the scheduler
@@ -173,15 +141,15 @@ def get_scheduler() -> Optional[AsyncIOScheduler]:
     return _scheduler
 
 
-def get_scheduler_status(vault_path: Path) -> dict[str, Any]:
+async def get_scheduler_status(vault_path: Path, graph=None) -> dict[str, Any]:
     """Get the current scheduler status."""
-    global _scheduler
+    global _scheduler, _graph
 
     from parachute.core.daily_agent import discover_daily_agents
 
     agents_config: dict[str, Any] = {}
     try:
-        agents = discover_daily_agents(vault_path)
+        agents = await discover_daily_agents(vault_path, graph=graph or _graph)
         for agent in agents:
             agents_config[agent.name] = {
                 "display_name": agent.display_name,
@@ -214,15 +182,16 @@ def get_scheduler_status(vault_path: Path) -> dict[str, Any]:
     return status
 
 
-def reload_scheduler(vault_path: Path) -> dict[str, Any]:
-    """Reload scheduler configuration from agent files."""
-    global _scheduler
+async def reload_scheduler(vault_path: Path, graph=None) -> dict[str, Any]:
+    """Reload scheduler configuration from graph (or vault files as fallback)."""
+    global _scheduler, _graph
 
     if not _scheduler or not _scheduler.running:
         return {"success": False, "error": "Scheduler not running"}
 
-    # Re-schedule all daily agents
-    results = _schedule_all_daily_agents(_scheduler, vault_path)
+    from parachute.core.daily_agent import discover_daily_agents
+    agents = await discover_daily_agents(vault_path, graph=graph or _graph)
+    results = _schedule_from_list(_scheduler, agents)
 
     # Build response with next run times
     agents_scheduled = {}

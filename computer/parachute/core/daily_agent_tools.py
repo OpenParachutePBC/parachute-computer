@@ -6,7 +6,7 @@ These tools can be used by any daily agent:
 - read_chat_log: Read AI chat logs for a specific date from vault files
 - read_recent_journals: Read recent journal entries from the graph
 - read_recent_sessions: Read recent AI chat sessions from vault files
-- write_output: Write the agent's output as an AgentCard to the graph
+- write_output: Write the agent's output as a Card to the graph
 
 Uses the claude-agent-sdk's in-process MCP server.
 """
@@ -212,11 +212,11 @@ def create_daily_agent_tools(
 
     @tool(
         "write_output",
-        "Write the agent's output. Saves as an AgentCard in the graph.",
+        "Write the agent's output. Saves as a Card in the graph.",
         {"date": str, "content": str}
     )
     async def write_output(args: dict[str, Any]) -> dict[str, Any]:
-        """Write the agent's output as an AgentCard to the graph."""
+        """Write the agent's output as a Card to the graph."""
         date_str = args.get("date", "").strip()
         content = args.get("content", "").strip()
 
@@ -242,9 +242,9 @@ def create_daily_agent_tools(
         generated_at = datetime.now(timezone.utc).isoformat()
 
         try:
-            # Upsert AgentCard — MERGE is idempotent (re-run for same date updates the card)
+            # Upsert Card — MERGE is idempotent (re-run for same date updates the card)
             await graph.execute_cypher(
-                "MERGE (c:AgentCard {card_id: $card_id}) "
+                "MERGE (c:Card {card_id: $card_id}) "
                 "SET c.agent_name = $agent_name, "
                 "    c.display_name = $display_name, "
                 "    c.content = $content, "
@@ -265,17 +265,17 @@ def create_daily_agent_tools(
             await graph.execute_cypher(
                 "MERGE (d:Day {date: $date}) "
                 "WITH d "
-                "MATCH (c:AgentCard {card_id: $card_id}) "
-                "MERGE (d)-[:HAS_AGENT_CARD]->(c)",
+                "MATCH (c:Card {card_id: $card_id}) "
+                "MERGE (d)-[:HAS_CARD]->(c)",
                 {"date": date_str, "card_id": card_id},
             )
 
-            logger.info(f"Agent '{config.name}' wrote AgentCard to graph for {date_str}")
+            logger.info(f"Agent '{config.name}' wrote Card to graph for {date_str}")
             return {
                 "content": [{"type": "text", "text": f"Successfully wrote output to graph (card_id: {card_id})"}]
             }
         except Exception as e:
-            logger.error(f"Error writing AgentCard to graph: {e}")
+            logger.error(f"Error writing Card to graph: {e}")
             return {
                 "content": [{"type": "text", "text": f"Error writing output: {e}"}],
                 "is_error": True

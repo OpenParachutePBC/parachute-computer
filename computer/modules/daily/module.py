@@ -62,6 +62,49 @@ class FlexibleImportRequest(BaseModel):
         return v
 
 
+async def _migrate_callers_from_vault(vault_path: Path, graph) -> None:
+    """Seed Caller nodes from vault .agents/*.md files.
+
+    Uses ON CREATE SET so existing graph edits (via /callers API) are not
+    overwritten on every server restart. Only newly-discovered agents are
+    seeded; existing nodes only get their updated_at timestamp refreshed.
+    """
+    from parachute.core.daily_agent import DailyAgentConfig
+    agents_dir = vault_path / "Daily" / ".agents"
+    if not agents_dir.exists():
+        return
+    for md_file in agents_dir.glob("*.md"):
+        config = DailyAgentConfig.from_file(md_file)
+        if config is None:
+            continue
+        now = datetime.now(timezone.utc).isoformat()
+        try:
+            await graph.execute_cypher(
+                "MERGE (c:Caller {name: $name}) "
+                "ON CREATE SET "
+                "    c.display_name = $display_name, c.description = $description, "
+                "    c.system_prompt = $system_prompt, c.tools = $tools, "
+                "    c.model = $model, c.schedule_enabled = $schedule_enabled, "
+                "    c.schedule_time = $schedule_time, c.enabled = 'true', "
+                "    c.created_at = $now "
+                "SET c.updated_at = $now",
+                {
+                    "name": config.name,
+                    "display_name": config.display_name,
+                    "description": config.description,
+                    "system_prompt": config.system_prompt,
+                    "tools": json.dumps(config.tools),
+                    "model": config.raw_metadata.get("model", ""),
+                    "schedule_enabled": "true" if config.schedule_enabled else "false",
+                    "schedule_time": config.schedule_time,
+                    "now": now,
+                },
+            )
+            logger.info(f"Daily: migrated caller from vault: {config.name}")
+        except Exception as e:
+            logger.warning(f"Daily: failed to migrate caller '{config.name}': {e}")
+
+
 class DailyModule:
     """Daily module for journal entry management. Kuzu graph is primary storage."""
 
@@ -103,7 +146,7 @@ class DailyModule:
         )
         await graph.ensure_rel_table("HAS_ENTRY", "Day", "Journal_Entry")
         await graph.ensure_node_table(
-            "AgentCard",
+            "Card",
             {
                 "card_id": "STRING",       # PK: "{agent_name}:{date}" — idempotent MERGE
                 "agent_name": "STRING",
@@ -115,13 +158,33 @@ class DailyModule:
             },
             primary_key="card_id",
         )
-        await graph.ensure_rel_table("HAS_AGENT_CARD", "Day", "AgentCard")
+        await graph.ensure_rel_table("HAS_CARD", "Day", "Card")
+        await graph.ensure_node_table(
+            "Caller",
+            {
+                "name": "STRING",           # PK: agent name, e.g. "reflection"
+                "display_name": "STRING",
+                "description": "STRING",
+                "system_prompt": "STRING",  # full markdown body
+                "tools": "STRING",          # JSON array string
+                "model": "STRING",
+                "schedule_enabled": "STRING",  # "true" / "false"
+                "schedule_time": "STRING",  # "HH:MM"
+                "enabled": "STRING",        # "true" / "false"
+                "created_at": "STRING",
+                "updated_at": "STRING",
+            },
+            primary_key="name",
+        )
 
         # Add new columns to existing databases (idempotent schema migration)
         await self._ensure_new_columns(graph)
 
         # Migrate relative audio paths to absolute (one-time, idempotent)
         await self._migrate_audio_paths_to_absolute(graph)
+
+        # Migrate vault agent files → Caller graph nodes (idempotent MERGE)
+        await _migrate_callers_from_vault(self.vault_path, graph)
 
         logger.info("Daily: graph schema ready (Kuzu primary storage)")
 
@@ -1232,29 +1295,10 @@ class DailyModule:
             )
             return result
 
-        # ── Agents ───────────────────────────────────────────────────────────
-
-        @router.get("/agents")
-        async def list_agents():
-            """List all configured daily agents."""
-            from parachute.core.daily_agent import discover_daily_agents
-            agents = discover_daily_agents(self.vault_path)
-            return {
-                "agents": [
-                    {
-                        "name": a.name,
-                        "display_name": a.display_name,
-                        "description": a.description,
-                        "schedule_enabled": a.schedule_enabled,
-                        "schedule_time": a.schedule_time,
-                    }
-                    for a in agents
-                ]
-            }
-
-        @router.get("/agent-cards")
-        async def list_agent_cards(date: str | None = Query(None)):
-            """Fetch all AgentCard nodes, optionally filtered by date."""
+        @router.get("/cards")
+        @router.get("/agent-cards")  # backward-compat alias
+        async def list_cards(date: str | None = Query(None)):
+            """Fetch all Card nodes, optionally filtered by date."""
             graph = self._get_graph()
             if graph is None:
                 return JSONResponse(status_code=503, content={"error": "GraphDB not available"})
@@ -1262,17 +1306,18 @@ class DailyModule:
                 if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
                     return JSONResponse(status_code=400, content={"error": "invalid date"})
                 rows = await graph.execute_cypher(
-                    "MATCH (c:AgentCard) WHERE c.date = $date RETURN c ORDER BY c.generated_at ASC",
+                    "MATCH (c:Card) WHERE c.date = $date RETURN c ORDER BY c.generated_at ASC",
                     {"date": date},
                 )
             else:
                 rows = await graph.execute_cypher(
-                    "MATCH (c:AgentCard) RETURN c ORDER BY c.generated_at DESC"
+                    "MATCH (c:Card) RETURN c ORDER BY c.generated_at DESC"
                 )
             return {"cards": rows, "count": len(rows)}
 
-        @router.get("/agent-cards/{agent_name}")
-        async def get_agent_card(agent_name: str, date: str | None = Query(None)):
+        @router.get("/cards/{agent_name}")
+        @router.get("/agent-cards/{agent_name}")  # backward-compat alias
+        async def get_card(agent_name: str, date: str | None = Query(None)):
             """Get a specific agent's card, optionally filtered to a specific date."""
             graph = self._get_graph()
             if graph is None:
@@ -1281,12 +1326,12 @@ class DailyModule:
                 if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
                     return JSONResponse(status_code=400, content={"error": "invalid date"})
                 rows = await graph.execute_cypher(
-                    "MATCH (c:AgentCard) WHERE c.agent_name = $name AND c.date = $date RETURN c",
+                    "MATCH (c:Card) WHERE c.agent_name = $name AND c.date = $date RETURN c",
                     {"name": agent_name, "date": date},
                 )
             else:
                 rows = await graph.execute_cypher(
-                    "MATCH (c:AgentCard) WHERE c.agent_name = $name "
+                    "MATCH (c:Card) WHERE c.agent_name = $name "
                     "RETURN c ORDER BY c.generated_at DESC",
                     {"name": agent_name},
                 )
@@ -1294,8 +1339,9 @@ class DailyModule:
                 return JSONResponse(status_code=404, content={"error": "not found"})
             return rows[0] if date else {"cards": rows, "count": len(rows)}
 
-        @router.post("/agent-cards/{agent_name}/run", status_code=202)
-        async def run_agent_card(
+        @router.post("/cards/{agent_name}/run", status_code=202)
+        @router.post("/agent-cards/{agent_name}/run", status_code=202)  # backward-compat alias
+        async def run_card(
             agent_name: str,
             date: str | None = Query(None),
             force: bool = Query(False),
@@ -1306,5 +1352,118 @@ class DailyModule:
                 run_daily_agent(self.vault_path, agent_name, date=date, force=force)
             )
             return {"status": "started", "agent": agent_name, "date": date}
+
+        # ── Callers (agent definitions) ──────────────────────────────────────
+
+        @router.get("/callers")
+        @router.get("/agents")  # backward-compat alias
+        async def list_callers():
+            """List all Caller nodes from the graph."""
+            graph = self._get_graph()
+            if graph is None:
+                return JSONResponse(status_code=503, content={"error": "GraphDB not available"})
+            rows = await graph.execute_cypher(
+                "MATCH (c:Caller) RETURN c ORDER BY c.name"
+            )
+            return {"callers": rows, "count": len(rows)}
+
+        @router.get("/callers/{name}")
+        async def get_caller(name: str):
+            """Get a specific Caller node."""
+            graph = self._get_graph()
+            if graph is None:
+                return JSONResponse(status_code=503, content={"error": "GraphDB not available"})
+            rows = await graph.execute_cypher(
+                "MATCH (c:Caller {name: $name}) RETURN c",
+                {"name": name},
+            )
+            if not rows:
+                return JSONResponse(status_code=404, content={"error": "not found"})
+            return rows[0]
+
+        @router.post("/callers", status_code=201)
+        async def create_caller(body: dict):
+            """Create or update a Caller node (MERGE on name)."""
+            graph = self._get_graph()
+            if graph is None:
+                return JSONResponse(status_code=503, content={"error": "GraphDB not available"})
+            name = body.get("name", "").strip()
+            if not name:
+                return JSONResponse(status_code=400, content={"error": "name required"})
+            now = datetime.now(timezone.utc).isoformat()
+            await graph.execute_cypher(
+                "MERGE (c:Caller {name: $name}) "
+                "SET c.display_name = $display_name, c.description = $description, "
+                "    c.system_prompt = $system_prompt, c.tools = $tools, "
+                "    c.model = $model, c.schedule_enabled = $schedule_enabled, "
+                "    c.schedule_time = $schedule_time, c.enabled = $enabled, "
+                "    c.updated_at = $now",
+                {
+                    "name": name,
+                    "display_name": body.get("display_name") or name.replace("-", " ").title(),
+                    "description": body.get("description") or "",
+                    "system_prompt": body.get("system_prompt") or "",
+                    "tools": json.dumps(body.get("tools") or ["read_journal", "read_chat_log", "read_recent_journals"]),
+                    "model": body.get("model") or "",
+                    "schedule_enabled": "true" if body.get("schedule_enabled", True) else "false",
+                    "schedule_time": body.get("schedule_time") or "3:00",
+                    "enabled": "true" if body.get("enabled", True) else "false",
+                    "now": now,
+                },
+            )
+            rows = await graph.execute_cypher(
+                "MATCH (c:Caller {name: $name}) RETURN c", {"name": name}
+            )
+            return rows[0] if rows else {"name": name}
+
+        @router.put("/callers/{name}")
+        async def update_caller(name: str, body: dict):
+            """Update fields on an existing Caller node."""
+            graph = self._get_graph()
+            if graph is None:
+                return JSONResponse(status_code=503, content={"error": "GraphDB not available"})
+            now = datetime.now(timezone.utc).isoformat()
+            # Fetch existing
+            rows = await graph.execute_cypher(
+                "MATCH (c:Caller {name: $name}) RETURN c", {"name": name}
+            )
+            if not rows:
+                return JSONResponse(status_code=404, content={"error": "not found"})
+            existing = rows[0]
+            await graph.execute_cypher(
+                "MATCH (c:Caller {name: $name}) "
+                "SET c.display_name = $display_name, c.description = $description, "
+                "    c.system_prompt = $system_prompt, c.tools = $tools, "
+                "    c.model = $model, c.schedule_enabled = $schedule_enabled, "
+                "    c.schedule_time = $schedule_time, c.enabled = $enabled, "
+                "    c.updated_at = $now",
+                {
+                    "name": name,
+                    "display_name": body.get("display_name", existing.get("display_name") or name),
+                    "description": body.get("description", existing.get("description") or ""),
+                    "system_prompt": body.get("system_prompt", existing.get("system_prompt") or ""),
+                    "tools": json.dumps(body.get("tools")) if "tools" in body else existing.get("tools") or "[]",
+                    "model": body.get("model", existing.get("model") or ""),
+                    "schedule_enabled": "true" if body.get("schedule_enabled", existing.get("schedule_enabled") == "true") else "false",
+                    "schedule_time": body.get("schedule_time", existing.get("schedule_time") or "3:00"),
+                    "enabled": "true" if body.get("enabled", existing.get("enabled") == "true") else "false",
+                    "now": now,
+                },
+            )
+            rows = await graph.execute_cypher(
+                "MATCH (c:Caller {name: $name}) RETURN c", {"name": name}
+            )
+            return rows[0] if rows else {"name": name}
+
+        @router.delete("/callers/{name}", status_code=204)
+        async def delete_caller(name: str):
+            """Delete a Caller node."""
+            graph = self._get_graph()
+            if graph is None:
+                return JSONResponse(status_code=503, content={"error": "GraphDB not available"})
+            await graph.execute_cypher(
+                "MATCH (c:Caller {name: $name}) DELETE c", {"name": name}
+            )
+            return Response(status_code=204)
 
         return router

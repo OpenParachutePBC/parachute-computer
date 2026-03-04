@@ -166,6 +166,28 @@ class DailyAgentConfig:
             logger.error(f"Error loading agent config from {agent_file}: {e}")
             return None
 
+    @classmethod
+    def from_row(cls, row: dict) -> "DailyAgentConfig":
+        """Build config from a Caller graph node row."""
+        tools_raw = row.get("tools") or '["read_journal", "read_chat_log", "read_recent_journals"]'
+        try:
+            tools = json.loads(tools_raw)
+        except (json.JSONDecodeError, TypeError):
+            tools = ["read_journal", "read_chat_log", "read_recent_journals"]
+        schedule_enabled = row.get("schedule_enabled", "true")
+        if isinstance(schedule_enabled, str):
+            schedule_enabled = schedule_enabled.lower() == "true"
+        return cls(
+            name=row["name"],
+            display_name=row.get("display_name") or row["name"].replace("-", " ").title(),
+            description=row.get("description") or "",
+            system_prompt=row.get("system_prompt") or "",
+            schedule_enabled=schedule_enabled,
+            schedule_time=row.get("schedule_time") or "3:00",
+            tools=tools,
+            raw_metadata={"model": row.get("model", "")},
+        )
+
     def get_output_path(self, date: str) -> str:
         """Get the output file path for a specific date."""
         return self.output_path.format(name=self.name, date=date)
@@ -191,12 +213,26 @@ def _get_graph():
         return None
 
 
-def discover_daily_agents(vault_path: Path) -> list[DailyAgentConfig]:
+async def discover_daily_agents(vault_path: Path, graph=None) -> list[DailyAgentConfig]:
     """
-    Discover all daily agents configured in Daily/.agents/.
+    Discover all daily agents. Queries Caller nodes from the graph first;
+    falls back to vault file scan if the graph is unavailable.
 
     Returns a list of agent configurations sorted by name.
     """
+    g = graph or _get_graph()
+    if g is not None:
+        try:
+            rows = await g.execute_cypher(
+                "MATCH (c:Caller) WHERE c.enabled = 'true' RETURN c ORDER BY c.name"
+            )
+            agents = [DailyAgentConfig.from_row(r) for r in rows]
+            logger.info(f"Discovered {len(agents)} callers from graph")
+            return agents
+        except Exception as e:
+            logger.warning(f"Graph discovery failed, falling back to vault files: {e}")
+
+    # Fallback: vault file scan (startup edge case before migration runs)
     agents_dir = vault_path / "Daily" / ".agents"
     if not agents_dir.exists():
         return []
@@ -206,13 +242,26 @@ def discover_daily_agents(vault_path: Path) -> list[DailyAgentConfig]:
         config = DailyAgentConfig.from_file(agent_file)
         if config:
             agents.append(config)
-            logger.info(f"Discovered daily agent: {config.name} (enabled={config.schedule_enabled})")
+            logger.info(f"Discovered daily agent from file: {config.name} (enabled={config.schedule_enabled})")
 
     return sorted(agents, key=lambda a: a.name)
 
 
-def get_daily_agent_config(vault_path: Path, agent_name: str) -> Optional[DailyAgentConfig]:
-    """Get configuration for a specific daily agent."""
+async def get_daily_agent_config(vault_path: Path, agent_name: str, graph=None) -> Optional[DailyAgentConfig]:
+    """Get configuration for a specific daily agent. Queries graph first, falls back to vault file."""
+    g = graph or _get_graph()
+    if g is not None:
+        try:
+            rows = await g.execute_cypher(
+                "MATCH (c:Caller {name: $name}) RETURN c",
+                {"name": agent_name},
+            )
+            if rows:
+                return DailyAgentConfig.from_row(rows[0])
+        except Exception as e:
+            logger.warning(f"Graph lookup for caller '{agent_name}' failed, falling back to vault file: {e}")
+
+    # Fallback: vault file
     agent_file = vault_path / "Daily" / ".agents" / f"{agent_name}.md"
     return DailyAgentConfig.from_file(agent_file)
 
@@ -287,11 +336,11 @@ async def run_daily_agent(
         Result dict with status, output path, etc.
     """
     # Load agent configuration
-    config = get_daily_agent_config(vault_path, agent_name)
+    config = await get_daily_agent_config(vault_path, agent_name)
     if not config:
         return {
             "status": "error",
-            "error": f"Agent '{agent_name}' not found in Daily/.agents/",
+            "error": f"Agent '{agent_name}' not found",
         }
 
     # Determine date - default to yesterday
@@ -350,12 +399,12 @@ async def run_daily_agent(
 
     graph = _get_graph()
 
-    # Write initial "running" AgentCard to graph so Flutter can poll status
+    # Write initial "running" Card to graph so Flutter can poll status
     card_id = f"{agent_name}:{output_date}"
     if graph is not None:
         try:
             await graph.execute_cypher(
-                "MERGE (c:AgentCard {card_id: $card_id}) "
+                "MERGE (c:Card {card_id: $card_id}) "
                 "SET c.agent_name = $agent_name, "
                 "    c.display_name = $display_name, "
                 "    c.content = '', "
@@ -373,8 +422,8 @@ async def run_daily_agent(
             await graph.execute_cypher(
                 "MERGE (d:Day {date: $date}) "
                 "WITH d "
-                "MATCH (c:AgentCard {card_id: $card_id}) "
-                "MERGE (d)-[:HAS_AGENT_CARD]->(c)",
+                "MATCH (c:Card {card_id: $card_id}) "
+                "MERGE (d)-[:HAS_CARD]->(c)",
                 {"date": output_date, "card_id": card_id},
             )
         except Exception as e:
@@ -520,11 +569,11 @@ async def run_daily_agent(
         logger.error(f"Agent '{agent_name}' error: {e}", exc_info=True)
         result["status"] = "error"
         result["error"] = str(e)
-        # Mark AgentCard as failed so Flutter shows the right status
+        # Mark Card as failed so Flutter shows the right status
         if graph is not None:
             try:
                 await graph.execute_cypher(
-                    "MATCH (c:AgentCard {card_id: $card_id}) SET c.status = 'failed'",
+                    "MATCH (c:Card {card_id: $card_id}) SET c.status = 'failed'",
                     {"card_id": card_id},
                 )
             except Exception:

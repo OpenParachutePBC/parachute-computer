@@ -371,7 +371,7 @@ class _AgentTriggerCardState extends ConsumerState<AgentTriggerCard> {
       ref.read(agentTriggerStateProvider(widget.agent.name).notifier).state =
           AsyncValue.data(result);
 
-      // Trigger refresh so agentCardsProvider picks up the running card
+      // Trigger refresh so cardsProvider picks up the running card
       if (result.success) {
         ref.read(journalRefreshTriggerProvider.notifier).state++;
       }
