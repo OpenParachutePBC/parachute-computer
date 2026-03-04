@@ -16,8 +16,10 @@ Storage layout:
 import asyncio
 import json
 import logging
+import os
 import re
 import shutil
+import tempfile
 import uuid
 from datetime import date as _date, datetime, timedelta, timezone
 from pathlib import Path
@@ -65,28 +67,40 @@ def _append_redo_log(
         logger.warning(f"Daily: redo log append failed: {e}")
 
 
-def _trim_redo_log() -> None:
-    """Remove entries older than 90 days from the redo log. Never raises."""
+def _trim_redo_log() -> list[dict]:
+    """Remove entries older than 90 days and return the kept records.
+
+    Uses an atomic write-to-temp + os.replace so a crash mid-trim cannot
+    truncate the log. Never raises — returns an empty list on any error.
+    """
     if not REDO_LOG_PATH.exists():
-        return
+        return []
     cutoff = (datetime.now(timezone.utc) - timedelta(days=90)).strftime("%Y-%m-%d")
     try:
-        lines = REDO_LOG_PATH.read_text(encoding="utf-8").splitlines()
-        kept = []
-        for line in lines:
+        kept_lines: list[str] = []
+        kept_records: list[dict] = []
+        for line in REDO_LOG_PATH.read_text(encoding="utf-8").splitlines():
             if not line.strip():
                 continue
             try:
                 rec = json.loads(line)
                 if rec.get("date", "") >= cutoff:
-                    kept.append(line)
+                    kept_lines.append(line)
+                    kept_records.append(rec)
             except json.JSONDecodeError:
-                pass
-        REDO_LOG_PATH.write_text(
-            "\n".join(kept) + ("\n" if kept else ""), encoding="utf-8"
-        )
+                logger.warning(f"Daily: redo log corrupt line skipped: {line[:80]!r}")
+        fd, tmp_path = tempfile.mkstemp(dir=REDO_LOG_PATH.parent, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write("\n".join(kept_lines) + ("\n" if kept_lines else ""))
+            os.replace(tmp_path, REDO_LOG_PATH)
+        except Exception:
+            os.unlink(tmp_path)
+            raise
+        return kept_records
     except Exception as e:
         logger.warning(f"Daily: redo log trim failed: {e}")
+        return []
 
 
 class CreateEntryRequest(BaseModel):
@@ -243,8 +257,8 @@ class DailyModule:
         await _migrate_callers_from_vault(self.vault_path, graph)
 
         # Trim redo log (90-day rolling), then replay any entries missing from graph
-        _trim_redo_log()
-        await self._recover_from_redo_log(graph)
+        redo_records = _trim_redo_log()
+        await self._recover_from_redo_log(graph, redo_records)
 
         logger.info("Daily: graph schema ready (Kuzu primary storage)")
 
@@ -317,39 +331,30 @@ class DailyModule:
                 f"({missing} not found on disk)"
             )
 
-    async def _recover_from_redo_log(self, graph) -> None:
-        """Replay any JSONL redo log entries that are missing from the graph.
+    async def _recover_from_redo_log(self, graph, records: list[dict]) -> None:
+        """Replay any redo log entries that are missing from the graph.
 
+        Accepts the records already parsed by _trim_redo_log (no second file read).
         Runs on every startup — safe because _write_to_graph uses MERGE (idempotent).
         Normally a no-op. Activates after WAL corruption or abrupt power loss.
-        """
-        if not REDO_LOG_PATH.exists():
-            return
-        try:
-            lines = [l for l in REDO_LOG_PATH.read_text(encoding="utf-8").splitlines() if l.strip()]
-        except Exception as e:
-            logger.warning(f"Daily: redo log read failed: {e}")
-            return
-        if not lines:
-            return
 
-        records: list[dict] = []
-        for line in lines:
-            try:
-                records.append(json.loads(line))
-            except json.JSONDecodeError:
-                pass
+        Note: entries are appended to the redo log *after* a successful graph write,
+        so this log recovers WAL-loss scenarios (existing WAL discarded on startup),
+        not mid-write crashes.
+        """
         if not records:
             return
 
-        # Find which entry_ids already exist in graph
-        ids_literal = ", ".join(f"'{r['entry_id']}'" for r in records)
+        # Check each entry individually with parameterized queries (no string interpolation)
+        existing_ids: set[str] = set()
         try:
-            existing_rows = await graph.execute_cypher(
-                f"MATCH (e:Journal_Entry) WHERE e.entry_id IN [{ids_literal}] "
-                "RETURN e.entry_id AS entry_id"
-            )
-            existing_ids = {row["entry_id"] for row in existing_rows}
+            for rec in records:
+                rows = await graph.execute_cypher(
+                    "MATCH (e:Journal_Entry {entry_id: $entry_id}) RETURN e.entry_id AS entry_id",
+                    {"entry_id": rec["entry_id"]},
+                )
+                if rows:
+                    existing_ids.add(rec["entry_id"])
         except Exception as e:
             logger.warning(f"Daily: redo log recovery query failed: {e}")
             return

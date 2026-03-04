@@ -107,8 +107,11 @@ class GraphService:
         except Exception as e:
             logger.warning(f"GraphService: checkpoint failed: {e}")
 
-    def start_checkpoint_loop(self, interval_seconds: int = _CHECKPOINT_INTERVAL) -> None:
-        """Start a background task that checkpoints the WAL periodically."""
+    async def start_checkpoint_loop(self, interval_seconds: int = _CHECKPOINT_INTERVAL) -> None:
+        """Start a background task that checkpoints the WAL periodically.
+
+        Must be called from a running async context (inside a coroutine or lifespan).
+        """
         if self._checkpoint_task is not None:
             return
 

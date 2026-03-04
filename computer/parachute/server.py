@@ -83,7 +83,7 @@ async def lifespan(app: FastAPI):
     from parachute.core.interfaces import get_registry
     get_registry().publish("GraphDB", graph)
     get_registry().publish("SessionStore", session_store)
-    graph.start_checkpoint_loop()
+    await graph.start_checkpoint_loop()
     logger.info(f"GraphDB initialized: {settings.graph_db_path}")
 
     # Run SQLite migration if needed (one-time)
