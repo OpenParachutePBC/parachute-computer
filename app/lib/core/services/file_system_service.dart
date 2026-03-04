@@ -4,7 +4,6 @@ import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:macos_secure_bookmarks/macos_secure_bookmarks.dart';
 
 /// Module type for the file system service
 enum ModuleType {
@@ -58,8 +57,8 @@ class FileSystemService {
   // One-time migrations
   // ============================================================
 
-  /// Sentinel key — increment suffix (v2, v3…) when adding new migrations.
-  static const _migrationKey = 'parachute_fss_migration_v1';
+  static const _migrationV1Key = 'parachute_fss_migration_v1';
+  static const _migrationV2Key = 'parachute_fss_migration_v2';
 
   /// Run one-time SharedPreferences migrations.
   ///
@@ -68,47 +67,64 @@ class FileSystemService {
   /// [SharedPreferences.getInstance()] will throw if the binding is not ready.
   ///
   /// Call from [main()] after binding initialization, before [runApp()].
-  /// Safe to call on every launch — [_migrationKey] ensures each migration
+  /// Safe to call on every launch — sentinel keys ensure each migration
   /// runs exactly once.
   static Future<void> runMigrations() async {
-    // Stale daily vault-path keys accumulated before PR #173 moved audio
-    // storage server-side. They are never written post-PR-#173 and can be
-    // safely removed.
-    const staleKeys = [
-      'parachute_daily_vault_path',
-      'parachute_daily_root_path',
-      'parachute_daily_secure_bookmark',
-      'parachute_daily_user_configured',
-      'parachute_daily_module_folder',
-      'parachute_daily_journals_folder',
-      'parachute_daily_assets_folder',
-      'parachute_daily_reflections_folder',
-      'parachute_daily_chatlog_folder',
-    ];
     final prefs = await SharedPreferences.getInstance();
-    if (prefs.getBool(_migrationKey) == true) return;
-    for (final key in staleKeys) {
-      await prefs.remove(key);
+
+    // v1: clear stale daily vault-path keys (PR #173 moved audio server-side)
+    if (prefs.getBool(_migrationV1Key) != true) {
+      const v1Keys = [
+        'parachute_daily_vault_path',
+        'parachute_daily_root_path',
+        'parachute_daily_secure_bookmark',
+        'parachute_daily_user_configured',
+        'parachute_daily_module_folder',
+        'parachute_daily_journals_folder',
+        'parachute_daily_assets_folder',
+        'parachute_daily_reflections_folder',
+        'parachute_daily_chatlog_folder',
+      ];
+      for (final key in v1Keys) {
+        await prefs.remove(key);
+      }
+      await prefs.setBool(_migrationV1Key, true);
+      debugPrint('[FileSystemService] runMigrations: v1 complete');
     }
-    await prefs.setBool(_migrationKey, true);
-    debugPrint('[FileSystemService] runMigrations: v1 complete — cleared ${staleKeys.length} stale daily keys');
+
+    // v2: clear chat vault-path keys and global vault path keys now that
+    // vault path is no longer user-configurable (Phase 3 of #172).
+    if (prefs.getBool(_migrationV2Key) != true) {
+      const v2Keys = [
+        // Chat module vault-path keys
+        'parachute_chat_vault_path',
+        'parachute_chat_root_path',
+        'parachute_chat_secure_bookmark',
+        'parachute_chat_user_configured',
+        'parachute_chat_module_folder',
+        'parachute_chat_sessions_folder',
+        'parachute_chat_assets_folder',
+        'parachute_chat_artifacts_folder',
+        'parachute_chat_contexts_folder',
+        'parachute_chat_imports_folder',
+        // Global vault path keys (VaultPathNotifier)
+        'parachute_vault_path',
+        'parachute_server_vault_path',
+      ];
+      for (final key in v2Keys) {
+        await prefs.remove(key);
+      }
+      await prefs.setBool(_migrationV2Key, true);
+      debugPrint('[FileSystemService] runMigrations: v2 complete');
+    }
   }
 
   // ============================================================
   // Constants
   // ============================================================
 
-  // SharedPreferences key prefix
+  // SharedPreferences key prefix (still used for subfolder name keys)
   String get _keyPrefix => 'parachute_${_moduleType.name}_';
-
-  /// Key for vault root path (shared concept, but stored per-module for flexibility)
-  String get _vaultPathKey => '${_keyPrefix}vault_path';
-
-  /// Legacy key - kept for migration from old versions
-  String get _legacyRootPathKey => '${_keyPrefix}root_path';
-
-  String get _secureBookmarkKey => '${_keyPrefix}secure_bookmark';
-  String get _userConfiguredKey => '${_keyPrefix}user_configured';
 
   // Temp audio folder (shared across modules)
   static const String _tempAudioFolderName = 'parachute_audio_temp';
@@ -136,10 +152,6 @@ class FileSystemService {
   bool _isInitialized = false;
   Future<void>? _initializationFuture;
 
-  final SecureBookmarks? _secureBookmarks =
-      Platform.isMacOS ? SecureBookmarks() : null;
-  bool _isAccessingSecurityScopedResource = false;
-
   // ============================================================
   // Folder Configuration by Module
   // ============================================================
@@ -147,9 +159,6 @@ class FileSystemService {
   /// Get the default module folder name (Daily or Chat)
   String get _defaultModuleFolderName =>
       _moduleType == ModuleType.daily ? 'Daily' : 'Chat';
-
-  /// SharedPreferences key for the module folder name
-  String get _moduleFolderKey => '${_keyPrefix}module_folder';
 
   /// Get default folder configuration for this module
   /// Note: These are subfolders within the module folder (e.g., Daily/journals)
@@ -228,111 +237,15 @@ class FileSystemService {
   Future<void> _doInitialize() async {
     try {
       debugPrint('[FileSystemService:${_moduleType.name}] Starting initialization...');
+
+      // Vault path is no longer user-configurable — always use the platform default.
+      // (SharedPreferences vault keys were cleared by runMigrations() v2.)
+      _vaultPath = await _getDefaultVaultPath();
+      _moduleFolderName = _defaultModuleFolderName;
+      debugPrint('[FileSystemService:${_moduleType.name}] vault: $_vaultPath, module folder: $_moduleFolderName');
+
+      // Load subfolder names from preferences (still customisable per-module)
       final prefs = await SharedPreferences.getInstance();
-
-      // Try to load vault path from new key, then check for legacy migration
-      _vaultPath = prefs.getString(_vaultPathKey);
-      _moduleFolderName = prefs.getString(_moduleFolderKey) ?? _defaultModuleFolderName;
-
-      // Migration: check for legacy root_path key
-      if (_vaultPath == null) {
-        final legacyRootPath = prefs.getString(_legacyRootPathKey);
-        if (legacyRootPath != null) {
-          // Legacy path was like ~/Parachute/Daily, extract vault path
-          final moduleSuffix = '/$_defaultModuleFolderName';
-          if (legacyRootPath.endsWith(moduleSuffix)) {
-            _vaultPath = legacyRootPath.substring(0, legacyRootPath.length - moduleSuffix.length);
-            debugPrint('[FileSystemService:${_moduleType.name}] Migrated legacy path: $legacyRootPath -> vault: $_vaultPath');
-          } else {
-            // Legacy path doesn't match expected pattern, use as-is and treat as vault
-            _vaultPath = legacyRootPath;
-            _moduleFolderName = ''; // No subfolder, data is directly in this path
-            debugPrint('[FileSystemService:${_moduleType.name}] Legacy path without module suffix: $_vaultPath');
-          }
-          await prefs.setString(_vaultPathKey, _vaultPath!);
-          await prefs.setString(_moduleFolderKey, _moduleFolderName!);
-        }
-      }
-
-      // Migration: ~/Parachute vault → home directory
-      // The old default was ~/Parachute; the new default is ~/
-      // Only migrate if the user never explicitly configured their vault path
-      // (i.e. this was the default, not a deliberate choice).
-      // Data stays in ~/Daily and ~/Chat — module folders are unchanged.
-      final wasUserConfigured = prefs.getBool(_userConfiguredKey) ?? false;
-      if (!wasUserConfigured && _vaultPath != null) {
-        final home = Platform.environment['HOME'] ?? '';
-        final oldDefault = home.isNotEmpty ? '$home/Parachute' : '';
-        if (oldDefault.isNotEmpty && _vaultPath == oldDefault) {
-          debugPrint('[FileSystemService:${_moduleType.name}] Migrating vault path from ~/Parachute to ~/');
-          _vaultPath = home;
-          _moduleFolderName = _defaultModuleFolderName;
-          await prefs.setString(_vaultPathKey, _vaultPath!);
-          await prefs.setString(_moduleFolderKey, _moduleFolderName!);
-        }
-      }
-
-      // If still no vault path, use default
-      if (_vaultPath == null) {
-        _vaultPath = await _getDefaultVaultPath();
-        _moduleFolderName = _defaultModuleFolderName;
-        debugPrint('[FileSystemService:${_moduleType.name}] Set default vault: $_vaultPath, module folder: $_moduleFolderName');
-        await prefs.setString(_vaultPathKey, _vaultPath!);
-        await prefs.setString(_moduleFolderKey, _moduleFolderName!);
-      } else {
-        debugPrint('[FileSystemService:${_moduleType.name}] Loaded vault: $_vaultPath, module folder: $_moduleFolderName');
-
-        // macOS: restore security-scoped bookmark
-        if (Platform.isMacOS && _secureBookmarks != null) {
-          final bookmarkData = prefs.getString(_secureBookmarkKey);
-          if (bookmarkData != null) {
-            try {
-              final resolvedEntity =
-                  await _secureBookmarks.resolveBookmark(bookmarkData);
-              await _secureBookmarks
-                  .startAccessingSecurityScopedResource(resolvedEntity);
-              _isAccessingSecurityScopedResource = true;
-
-              final resolvedPath = resolvedEntity.path;
-              if (resolvedPath != _vaultPath) {
-                _vaultPath = resolvedPath;
-                await prefs.setString(_vaultPathKey, _vaultPath!);
-              }
-            } catch (e) {
-              debugPrint(
-                  '[FileSystemService:${_moduleType.name}] Failed to restore secure bookmark: $e');
-            }
-          }
-        }
-
-        // Verify access to the full module path
-        final modulePath = _getModulePath();
-        if (!_isAccessingSecurityScopedResource) {
-          final savedDir = Directory(modulePath);
-          bool hasAccess = false;
-
-          try {
-            if (await savedDir.exists()) {
-              hasAccess = true;
-            } else {
-              await savedDir.create(recursive: true);
-              hasAccess = true;
-            }
-          } catch (e) {
-            debugPrint(
-                '[FileSystemService:${_moduleType.name}] Lost access to saved path: $e');
-          }
-
-          if (!hasAccess && (Platform.isMacOS || Platform.isIOS)) {
-            _vaultPath = await _getDefaultVaultPath();
-            _moduleFolderName = _defaultModuleFolderName;
-            await prefs.setString(_vaultPathKey, _vaultPath!);
-            await prefs.setString(_moduleFolderKey, _moduleFolderName!);
-          }
-        }
-      }
-
-      // Load folder names from preferences
       for (final entry in _folderConfigs.entries) {
         final name = prefs.getString(entry.value.prefKey) ?? entry.value.defaultName;
         _folderNames[entry.key] = name;
@@ -409,44 +322,34 @@ class FileSystemService {
     return path;
   }
 
-  /// Check if user has configured a custom path
-  Future<bool> isUserConfigured() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getBool(_userConfiguredKey) ?? false;
-  }
+  /// Always returns true — vault path is no longer user-configurable.
+  Future<bool> isUserConfigured() async => true;
 
-  /// Mark path as user-configured
-  Future<void> markAsConfigured() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_userConfiguredKey, true);
-  }
+  /// No-op — vault path is no longer user-configurable.
+  Future<void> markAsConfigured() async {}
 
-  /// Set the vault root path (e.g., ~/Parachute).
-  /// The module folder (Daily/Chat) will be created inside this path.
+  /// Set the vault root path in-memory (no longer persisted to SharedPreferences).
+  ///
+  /// The vault path is not user-configurable; this method exists for callers that
+  /// previously needed to override the path for a session. The path is only
+  /// held in memory and reverts to the platform default on next app launch.
   Future<bool> setVaultPath(String vaultPath, {bool migrateFiles = true}) async {
     try {
-      debugPrint('[FileSystemService:${_moduleType.name}] setVaultPath called with: $vaultPath');
+      debugPrint('[FileSystemService:${_moduleType.name}] setVaultPath: $vaultPath (in-memory only)');
 
-      // Ensure module folder name is set (initialize if needed)
-      if (_moduleFolderName == null) {
-        _moduleFolderName = _defaultModuleFolderName;
-        debugPrint('[FileSystemService:${_moduleType.name}] Set default module folder: $_moduleFolderName');
-      }
+      _moduleFolderName ??= _defaultModuleFolderName;
 
       final oldModulePath = _vaultPath != null ? _getModulePath() : null;
 
-      // Ensure vault directory exists
+      // Ensure vault and module directories exist
       final vaultDir = Directory(vaultPath);
       if (!await vaultDir.exists()) {
         await vaultDir.create(recursive: true);
       }
 
-      // Calculate new module path
       final newModulePath = _moduleFolderName != null && _moduleFolderName!.isNotEmpty
           ? '$vaultPath/$_moduleFolderName'
           : vaultPath;
-
-      // Ensure module directory exists
       final newModuleDir = Directory(newModulePath);
       if (!await newModuleDir.exists()) {
         await newModuleDir.create(recursive: true);
@@ -456,46 +359,13 @@ class FileSystemService {
       if (migrateFiles && oldModulePath != null && oldModulePath != newModulePath) {
         final oldDir = Directory(oldModulePath);
         if (await oldDir.exists()) {
-          debugPrint(
-              '[FileSystemService:${_moduleType.name}] Migrating files from $oldModulePath to $newModulePath');
+          debugPrint('[FileSystemService:${_moduleType.name}] Migrating files $oldModulePath → $newModulePath');
           await _copyDirectory(oldDir, newModuleDir);
         }
       }
 
-      // macOS: create security-scoped bookmark for vault
-      if (Platform.isMacOS && _secureBookmarks != null) {
-        try {
-          if (_isAccessingSecurityScopedResource && _vaultPath != null) {
-            try {
-              final oldDir = Directory(_vaultPath!);
-              await _secureBookmarks.stopAccessingSecurityScopedResource(oldDir);
-            } catch (e) {
-              debugPrint(
-                  '[FileSystemService:${_moduleType.name}] Error stopping old resource access: $e');
-            }
-            _isAccessingSecurityScopedResource = false;
-          }
-
-          final bookmarkData = await _secureBookmarks.bookmark(vaultDir);
-
-          final prefs = await SharedPreferences.getInstance();
-          await prefs.setString(_secureBookmarkKey, bookmarkData);
-
-          await _secureBookmarks.startAccessingSecurityScopedResource(vaultDir);
-          _isAccessingSecurityScopedResource = true;
-        } catch (e) {
-          debugPrint(
-              '[FileSystemService:${_moduleType.name}] Failed to create secure bookmark: $e');
-        }
-      }
-
       _vaultPath = vaultPath;
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(_vaultPathKey, vaultPath);
-      await prefs.setBool(_userConfiguredKey, true);
-
       await _ensureFolderStructure();
-
       return true;
     } catch (e) {
       debugPrint('[FileSystemService:${_moduleType.name}] Error setting vault path: $e');
@@ -518,12 +388,10 @@ class FileSystemService {
     return setVaultPath(vaultPath, migrateFiles: migrateFiles);
   }
 
-  /// Reset to default path
+  /// Reset to default path (in-memory only — vault path is no longer persisted).
   Future<bool> resetToDefaultPath() async {
     final defaultVaultPath = await _getDefaultVaultPath();
     _moduleFolderName = _defaultModuleFolderName;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_moduleFolderKey, _moduleFolderName!);
     return setVaultPath(defaultVaultPath, migrateFiles: false);
   }
 

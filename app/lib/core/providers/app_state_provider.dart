@@ -310,77 +310,41 @@ final onboardingCompleteProvider = AsyncNotifierProvider<OnboardingNotifier, boo
 // Vault Path Configuration
 // ============================================================================
 
-/// Notifier for vault path with persistence
+/// Notifier for vault path display.
 ///
-/// The vault is where all Parachute data lives: journals, chats, files.
-/// Common locations:
-/// - ~/Parachute: Dedicated vault folder (recommended)
-/// - ~: Home directory as vault (for advanced users)
-/// - Custom path: User-specified location
-///
-/// In Parachute Computer mode, the vault path
-/// is fetched from the server to ensure app and server use the same location.
-/// This eliminates the need for sync - both read/write the same files.
+/// In Parachute Computer mode, the vault path is fetched from the server
+/// health endpoint for display purposes only (e.g., the onboarding ready screen).
+/// The vault path is no longer user-configurable or persisted to SharedPreferences.
 class VaultPathNotifier extends AsyncNotifier<String?> {
-  static const _key = 'parachute_vault_path';
-  static const _serverVaultKey = 'parachute_server_vault_path';
-
   @override
   Future<String?> build() async {
-    // In Parachute Computer mode, try to get vault path from server
-    if (isComputerFlavor) {
-      final serverVaultPath = await _fetchServerVaultPath();
-      if (serverVaultPath != null) {
-        debugPrint('[VaultPathNotifier] Using server vault path: $serverVaultPath');
-        return serverVaultPath;
-      }
-    }
-
-    // Fall back to locally stored path
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_key);
+    if (!isComputerFlavor) return null;
+    return _fetchServerVaultPath();
   }
 
-  /// Fetch vault path from the running server
   Future<String?> _fetchServerVaultPath() async {
     try {
       final service = ComputerService();
       final serverVaultPath = await service.getServerVaultPath();
       if (serverVaultPath != null && serverVaultPath.isNotEmpty) {
-        // Cache the server vault path for offline reference
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setString(_serverVaultKey, serverVaultPath);
         return serverVaultPath;
       }
     } catch (e) {
       debugPrint('[VaultPathNotifier] Error fetching server vault path: $e');
     }
-
-    // Try cached server vault path if server unreachable
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_serverVaultKey);
+    return null;
   }
 
-  /// Refresh vault path from server (call after server starts)
+  /// Refresh vault path from server (call after server starts).
   Future<void> refreshFromServer() async {
     if (!isComputerFlavor) return;
-
-    final serverVaultPath = await _fetchServerVaultPath();
-    if (serverVaultPath != null) {
-      debugPrint('[VaultPathNotifier] Refreshed server vault path: $serverVaultPath');
-      state = AsyncData(serverVaultPath);
-    }
+    final path = await _fetchServerVaultPath();
+    state = AsyncData(path);
   }
 
+  /// No-op — vault path is no longer persisted to SharedPreferences.
   Future<void> setVaultPath(String? path) async {
-    final prefs = await SharedPreferences.getInstance();
-    if (path != null && path.isNotEmpty) {
-      await prefs.setString(_key, path);
-      state = AsyncData(path);
-    } else {
-      await prefs.remove(_key);
-      state = const AsyncData(null);
-    }
+    state = AsyncData(path);
   }
 }
 

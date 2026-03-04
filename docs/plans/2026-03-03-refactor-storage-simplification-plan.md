@@ -48,12 +48,12 @@ Flutter app:
 - [x] Server exposes `POST /api/daily/assets/upload` (multipart) to receive and store audio files
 - [x] Server exposes `GET /api/daily/assets/{path}` for streaming audio back to any client
 - [x] Existing relative paths in graph are migrated to absolute on first server boot
-- [ ] Flutter app no longer has vault path SharedPreferences keys (`parachute_daily_vault_path`, `parachute_daily_secure_bookmark`, `parachute_daily_module_folder`, `parachute_vault_path`, etc.)
+- [x] Flutter app no longer has vault path SharedPreferences keys (`parachute_daily_vault_path`, `parachute_daily_secure_bookmark`, `parachute_daily_module_folder`, `parachute_vault_path`, etc.)
 - [x] Journal importer accepts: source directory + format (Parachute / Obsidian / Logseq / Plain)
 - [x] Import preview: dry-run returns entry count and sample entries before committing
 - [x] Flutter settings import section has directory picker, format selector, preview, and confirm
 
-> **Status as of 2026-03-04:** Phases 1, 2, 4 complete. Only Phase 3 (Flutter vault path removal) remains.
+> **Status as of 2026-03-04:** All phases complete — #172 done.
 
 ## Implementation Phases
 
@@ -235,7 +235,7 @@ if (serverPath != null) {
 
 ---
 
-### Phase 3 — Flutter: Remove Vault Path Settings ← **REMAINING WORK**
+### ~~Phase 3 — Flutter: Remove Vault Path Settings~~ ✅ Done
 
 **Goal:** Vault path concept is gone from the UI and SharedPreferences.
 
