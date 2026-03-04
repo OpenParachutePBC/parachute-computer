@@ -51,7 +51,7 @@ class DailyModule:
         self.entries_dir.mkdir(parents=True, exist_ok=True)
 
     async def on_load(self) -> None:
-        """Register Daily schema in shared graph and migrate any existing .md files."""
+        """Register Daily schema in shared graph."""
         from parachute.core.interfaces import get_registry
         graph = get_registry().get("GraphDB")
         if graph is None:
@@ -82,11 +82,8 @@ class DailyModule:
         )
         await graph.ensure_rel_table("HAS_ENTRY", "Day", "Journal_Entry")
 
-        # Add new columns to existing databases (idempotent migration)
+        # Add new columns to existing databases (idempotent schema migration)
         await self._ensure_new_columns(graph)
-
-        # One-time import of any existing .md files into graph
-        await self._migrate_from_markdown(graph)
 
         logger.info("Daily: graph schema ready (Kuzu primary storage)")
 
