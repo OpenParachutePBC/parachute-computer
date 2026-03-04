@@ -189,8 +189,8 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
     DateTime selectedDate,
     bool isToday,
   ) {
-    // Watch agent outputs and chat log for the selected date
-    final agentOutputsAsync = ref.watch(agentOutputsForDateProvider(selectedDate));
+    // Watch agent cards and chat log for the selected date
+    final agentCardsAsync = ref.watch(agentCardsProvider(_formatDateStr(selectedDate)));
     final chatLogAsync = ref.watch(selectedChatLogProvider);
 
     // Handle scroll to bottom after new entry is added
@@ -203,8 +203,8 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
 
     // Check if we have any content at all
     final hasJournalEntries = journal.entries.isNotEmpty;
-    final agentOutputs = agentOutputsAsync.valueOrNull ?? [];
-    final hasAgentOutputs = agentOutputs.isNotEmpty;
+    final agentCards = agentCardsAsync.valueOrNull ?? [];
+    final hasAgentOutputs = agentCards.isNotEmpty;
     final hasChatLog = chatLogAsync.valueOrNull?.hasContent ?? false;
     final hasAnyContent = hasJournalEntries || hasAgentOutputs || hasChatLog;
 
@@ -269,9 +269,6 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
           ref.invalidate(selectedJournalProvider);
-          ref.invalidate(selectedReflectionProvider);
-          ref.invalidate(localAgentConfigsProvider);
-          ref.invalidate(agentOutputsForDateProvider(selectedDate));
           ref.read(journalRefreshTriggerProvider.notifier).state++;
         }
       });
@@ -282,18 +279,13 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
   // ========== Refresh and Scroll ==========
 
   Future<void> _refreshJournal() async {
-    // Refresh from disk immediately
     ref.invalidate(selectedJournalProvider);
-    ref.invalidate(selectedReflectionProvider);
-
-    // Also refresh agent providers - clear the cache and re-read from disk
-    ref.invalidate(localAgentConfigsProvider);
-    final selectedDate = ref.read(selectedJournalDateProvider);
-    ref.invalidate(agentOutputsForDateProvider(selectedDate));
     ref.read(journalRefreshTriggerProvider.notifier).state++;
-
-    // Providers will re-fetch from server on next read (API-backed)
     debugPrint('[JournalScreen] Refreshing - providers invalidated, will re-fetch from API');
+  }
+
+  String _formatDateStr(DateTime date) {
+    return '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
   }
 
   void _scrollToBottom() {

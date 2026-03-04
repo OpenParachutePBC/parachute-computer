@@ -2,11 +2,11 @@
 Generic Daily Agent Tools.
 
 These tools can be used by any daily agent:
-- read_journal: Read journal entries for a specific date
-- read_chat_log: Read AI chat logs for a specific date
-- read_recent_journals: Read recent journal entries for context
-- read_recent_sessions: Read recent AI chat sessions for context
-- write_output: Write the agent's output to its configured path
+- read_journal: Read journal entries for a specific date from the graph
+- read_chat_log: Read AI chat logs for a specific date from vault files
+- read_recent_journals: Read recent journal entries from the graph
+- read_recent_sessions: Read recent AI chat sessions from vault files
+- write_output: Write the agent's output as an AgentCard to the graph
 
 Uses the claude-agent-sdk's in-process MCP server.
 """
@@ -27,22 +27,20 @@ logger = logging.getLogger(__name__)
 def create_daily_agent_tools(
     vault_path: Path,
     config: "DailyAgentConfig",
+    graph=None,
 ) -> tuple[list[SdkMcpTool], dict[str, Any]]:
     """
-    Create tools for a daily agent bound to a specific vault.
+    Create tools for a daily agent.
 
     Args:
-        vault_path: Path to the vault
+        vault_path: Path to the vault (used only for chat-log vault reads)
         config: Agent configuration
+        graph: GraphDB instance (required for read_journal and write_output)
 
     Returns:
         Tuple of (list of SdkMcpTool instances, server config dict)
     """
-    journals_dir = vault_path / "Daily" / "journals"
     chat_log_dir = vault_path / "Daily" / "chat-log"
-
-    # Determine output directory from config
-    output_path_template = config.output_path
 
     @tool(
         "read_journal",
@@ -50,7 +48,7 @@ def create_daily_agent_tools(
         {"date": str}
     )
     async def read_journal(args: dict[str, Any]) -> dict[str, Any]:
-        """Read journal entries for a date."""
+        """Read journal entries for a date from the graph."""
         date_str = args.get("date", "").strip()
 
         if not date_str:
@@ -59,20 +57,30 @@ def create_daily_agent_tools(
                 "is_error": True
             }
 
-        journal_file = journals_dir / f"{date_str}.md"
-
-        if not journal_file.exists():
+        if graph is None:
             return {
-                "content": [{"type": "text", "text": f"No journal found for {date_str}"}]
+                "content": [{"type": "text", "text": f"No journal found for {date_str} (graph unavailable)"}]
             }
 
         try:
-            content = journal_file.read_text(encoding="utf-8")
+            rows = await graph.execute_cypher(
+                "MATCH (e:Journal_Entry) WHERE e.date = $date "
+                "RETURN e.content AS content, e.created_at AS created_at "
+                "ORDER BY e.created_at ASC",
+                {"date": date_str}
+            )
+            if not rows:
+                return {
+                    "content": [{"type": "text", "text": f"No journal found for {date_str}"}]
+                }
+            entries_text = "\n\n---\n\n".join(
+                r["content"] for r in rows if r.get("content")
+            )
             return {
-                "content": [{"type": "text", "text": f"# Journal for {date_str}\n\n{content}"}]
+                "content": [{"type": "text", "text": f"# Journal for {date_str}\n\n{entries_text}"}]
             }
         except Exception as e:
-            logger.error(f"Error reading journal: {e}")
+            logger.error(f"Error reading journal from graph: {e}")
             return {
                 "content": [{"type": "text", "text": f"Error reading journal: {e}"}],
                 "is_error": True
@@ -84,7 +92,7 @@ def create_daily_agent_tools(
         {"date": str}
     )
     async def read_chat_log(args: dict[str, Any]) -> dict[str, Any]:
-        """Read chat logs for a date."""
+        """Read chat logs for a date from vault files."""
         date_str = args.get("date", "").strip()
 
         if not date_str:
@@ -121,9 +129,14 @@ def create_daily_agent_tools(
         {"days": int}
     )
     async def read_recent_journals(args: dict[str, Any]) -> dict[str, Any]:
-        """Read recent journal entries for context."""
+        """Read recent journal entries from the graph."""
         days_back = args.get("days", 7)
         days_back = min(int(days_back), 30)  # Cap at 30 days
+
+        if graph is None:
+            return {
+                "content": [{"type": "text", "text": "Graph unavailable — cannot read recent journals"}]
+            }
 
         today = datetime.now().astimezone().date()
         journals_found = []
@@ -131,16 +144,20 @@ def create_daily_agent_tools(
         for i in range(1, days_back + 1):
             date = today - timedelta(days=i)
             date_str = date.strftime("%Y-%m-%d")
-            journal_file = journals_dir / f"{date_str}.md"
 
-            if journal_file.exists():
-                try:
-                    content = journal_file.read_text(encoding="utf-8")
+            try:
+                rows = await graph.execute_cypher(
+                    "MATCH (e:Journal_Entry) WHERE e.date = $date "
+                    "RETURN e.content AS content ORDER BY e.created_at ASC",
+                    {"date": date_str}
+                )
+                if rows:
+                    content = "\n\n".join(r["content"] for r in rows if r.get("content"))
                     if len(content) > 5000:
                         content = content[:5000] + "\n\n...(truncated)"
                     journals_found.append(f"## {date_str}\n\n{content}")
-                except Exception:
-                    continue
+            except Exception:
+                continue
 
         if not journals_found:
             return {
@@ -160,7 +177,7 @@ def create_daily_agent_tools(
         {"days": int}
     )
     async def read_recent_sessions(args: dict[str, Any]) -> dict[str, Any]:
-        """Read recent chat sessions for context."""
+        """Read recent chat sessions from vault files."""
         days_back = args.get("days", 7)
         days_back = min(int(days_back), 30)
 
@@ -195,11 +212,11 @@ def create_daily_agent_tools(
 
     @tool(
         "write_output",
-        f"Write the agent's output. For this agent, output goes to: {output_path_template}",
+        "Write the agent's output. Saves as an AgentCard in the graph.",
         {"date": str, "content": str}
     )
     async def write_output(args: dict[str, Any]) -> dict[str, Any]:
-        """Write the agent's output to its configured path."""
+        """Write the agent's output as an AgentCard to the graph."""
         date_str = args.get("date", "").strip()
         content = args.get("content", "").strip()
 
@@ -215,31 +232,50 @@ def create_daily_agent_tools(
                 "is_error": True
             }
 
-        # Get output path from config
-        output_path = config.get_output_path(date_str)
-        output_file = vault_path / output_path
+        if graph is None:
+            return {
+                "content": [{"type": "text", "text": "Error: graph unavailable — cannot write output"}],
+                "is_error": True
+            }
+
+        card_id = f"{config.name}:{date_str}"
+        generated_at = datetime.now(timezone.utc).isoformat()
 
         try:
-            # Ensure directory exists
-            output_file.parent.mkdir(parents=True, exist_ok=True)
+            # Upsert AgentCard — MERGE is idempotent (re-run for same date updates the card)
+            await graph.execute_cypher(
+                "MERGE (c:AgentCard {card_id: $card_id}) "
+                "SET c.agent_name = $agent_name, "
+                "    c.display_name = $display_name, "
+                "    c.content = $content, "
+                "    c.generated_at = $generated_at, "
+                "    c.status = 'done', "
+                "    c.date = $date",
+                {
+                    "card_id": card_id,
+                    "agent_name": config.name,
+                    "display_name": config.display_name,
+                    "content": content,
+                    "generated_at": generated_at,
+                    "date": date_str,
+                },
+            )
 
-            # Add metadata header
-            full_content = f"""---
-date: {date_str}
-agent: {config.name}
-generated_at: {datetime.now(timezone.utc).isoformat()}
----
+            # Link to Day node (MERGE Day for idempotency)
+            await graph.execute_cypher(
+                "MERGE (d:Day {date: $date}) "
+                "WITH d "
+                "MATCH (c:AgentCard {card_id: $card_id}) "
+                "MERGE (d)-[:HAS_AGENT_CARD]->(c)",
+                {"date": date_str, "card_id": card_id},
+            )
 
-{content}
-"""
-            output_file.write_text(full_content, encoding="utf-8")
-
-            logger.info(f"Agent '{config.name}' wrote output for {date_str}")
+            logger.info(f"Agent '{config.name}' wrote AgentCard to graph for {date_str}")
             return {
-                "content": [{"type": "text", "text": f"Successfully wrote output to {output_path}"}]
+                "content": [{"type": "text", "text": f"Successfully wrote output to graph (card_id: {card_id})"}]
             }
         except Exception as e:
-            logger.error(f"Error writing output: {e}")
+            logger.error(f"Error writing AgentCard to graph: {e}")
             return {
                 "content": [{"type": "text", "text": f"Error writing output: {e}"}],
                 "is_error": True
@@ -255,5 +291,3 @@ generated_at: {datetime.now(timezone.utc).isoformat()}
     )
 
     return tools, server_config
-
-

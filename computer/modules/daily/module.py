@@ -102,6 +102,20 @@ class DailyModule:
             primary_key="date",
         )
         await graph.ensure_rel_table("HAS_ENTRY", "Day", "Journal_Entry")
+        await graph.ensure_node_table(
+            "AgentCard",
+            {
+                "card_id": "STRING",       # PK: "{agent_name}:{date}" — idempotent MERGE
+                "agent_name": "STRING",
+                "display_name": "STRING",
+                "content": "STRING",       # markdown body
+                "generated_at": "STRING",  # ISO timestamp
+                "status": "STRING",        # "running" | "done" | "failed"
+                "date": "STRING",          # YYYY-MM-DD (the day this card is for)
+            },
+            primary_key="card_id",
+        )
+        await graph.ensure_rel_table("HAS_AGENT_CARD", "Day", "AgentCard")
 
         # Add new columns to existing databases (idempotent schema migration)
         await self._ensure_new_columns(graph)
@@ -1217,5 +1231,80 @@ class DailyModule:
                 date_to=body.date_to,
             )
             return result
+
+        # ── Agents ───────────────────────────────────────────────────────────
+
+        @router.get("/agents")
+        async def list_agents():
+            """List all configured daily agents."""
+            from parachute.core.daily_agent import discover_daily_agents
+            agents = discover_daily_agents(self.vault_path)
+            return {
+                "agents": [
+                    {
+                        "name": a.name,
+                        "display_name": a.display_name,
+                        "description": a.description,
+                        "schedule_enabled": a.schedule_enabled,
+                        "schedule_time": a.schedule_time,
+                    }
+                    for a in agents
+                ]
+            }
+
+        @router.get("/agent-cards")
+        async def list_agent_cards(date: str | None = Query(None)):
+            """Fetch all AgentCard nodes, optionally filtered by date."""
+            graph = self._get_graph()
+            if graph is None:
+                return JSONResponse(status_code=503, content={"error": "GraphDB not available"})
+            if date:
+                if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
+                    return JSONResponse(status_code=400, content={"error": "invalid date"})
+                rows = await graph.execute_cypher(
+                    "MATCH (c:AgentCard) WHERE c.date = $date RETURN c ORDER BY c.generated_at ASC",
+                    {"date": date},
+                )
+            else:
+                rows = await graph.execute_cypher(
+                    "MATCH (c:AgentCard) RETURN c ORDER BY c.generated_at DESC"
+                )
+            return {"cards": rows, "count": len(rows)}
+
+        @router.get("/agent-cards/{agent_name}")
+        async def get_agent_card(agent_name: str, date: str | None = Query(None)):
+            """Get a specific agent's card, optionally filtered to a specific date."""
+            graph = self._get_graph()
+            if graph is None:
+                return JSONResponse(status_code=503, content={"error": "GraphDB not available"})
+            if date:
+                if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
+                    return JSONResponse(status_code=400, content={"error": "invalid date"})
+                rows = await graph.execute_cypher(
+                    "MATCH (c:AgentCard) WHERE c.agent_name = $name AND c.date = $date RETURN c",
+                    {"name": agent_name, "date": date},
+                )
+            else:
+                rows = await graph.execute_cypher(
+                    "MATCH (c:AgentCard) WHERE c.agent_name = $name "
+                    "RETURN c ORDER BY c.generated_at DESC",
+                    {"name": agent_name},
+                )
+            if not rows:
+                return JSONResponse(status_code=404, content={"error": "not found"})
+            return rows[0] if date else {"cards": rows, "count": len(rows)}
+
+        @router.post("/agent-cards/{agent_name}/run", status_code=202)
+        async def run_agent_card(
+            agent_name: str,
+            date: str | None = Query(None),
+            force: bool = Query(False),
+        ):
+            """Trigger an agent run for a date (async — returns 202 immediately)."""
+            from parachute.core.daily_agent import run_daily_agent
+            asyncio.create_task(
+                run_daily_agent(self.vault_path, agent_name, date=date, force=force)
+            )
+            return {"status": "started", "agent": agent_name, "date": date}
 
         return router

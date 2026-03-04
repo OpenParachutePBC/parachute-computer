@@ -182,6 +182,15 @@ class DailyAgentConfig:
             return (3, 0)
 
 
+def _get_graph():
+    """Get GraphDB from the service registry, or None if unavailable."""
+    try:
+        from parachute.core.interfaces import get_registry
+        return get_registry().get("GraphDB")
+    except Exception:
+        return None
+
+
 def discover_daily_agents(vault_path: Path) -> list[DailyAgentConfig]:
     """
     Discover all daily agents configured in Daily/.agents/.
@@ -308,13 +317,22 @@ async def run_daily_agent(
             "last_run_at": state._state.get("last_run_at"),
         }
 
-    # Check if journal exists for this date (most agents need this)
-    journal_file = vault_path / "Daily" / "journals" / f"{date}.md"
-    if not journal_file.exists() and "read_journal" in config.tools:
-        return {
-            "status": "skipped",
-            "reason": f"No journal found for {date}",
-        }
+    # Check if journal entries exist for this date in the graph
+    if "read_journal" in config.tools:
+        graph_for_check = _get_graph()
+        if graph_for_check is not None:
+            rows = await graph_for_check.execute_cypher(
+                "MATCH (e:Journal_Entry) WHERE e.date = $date RETURN count(e) AS cnt",
+                {"date": date},
+            )
+            has_journal = rows and rows[0].get("cnt", 0) > 0
+        else:
+            has_journal = False
+        if not has_journal:
+            return {
+                "status": "skipped",
+                "reason": f"No journal found for {date}",
+            }
 
     # Load user context
     user_name, user_context = load_user_context(vault_path)
@@ -330,11 +348,43 @@ async def run_daily_agent(
     from claude_agent_sdk import ClaudeAgentOptions, query as sdk_query
     from parachute.core.daily_agent_tools import create_daily_agent_tools
 
+    graph = _get_graph()
+
+    # Write initial "running" AgentCard to graph so Flutter can poll status
+    card_id = f"{agent_name}:{output_date}"
+    if graph is not None:
+        try:
+            await graph.execute_cypher(
+                "MERGE (c:AgentCard {card_id: $card_id}) "
+                "SET c.agent_name = $agent_name, "
+                "    c.display_name = $display_name, "
+                "    c.content = '', "
+                "    c.generated_at = $generated_at, "
+                "    c.status = 'running', "
+                "    c.date = $date",
+                {
+                    "card_id": card_id,
+                    "agent_name": agent_name,
+                    "display_name": config.display_name,
+                    "generated_at": datetime.now(timezone.utc).isoformat(),
+                    "date": output_date,
+                },
+            )
+            await graph.execute_cypher(
+                "MERGE (d:Day {date: $date}) "
+                "WITH d "
+                "MATCH (c:AgentCard {card_id: $card_id}) "
+                "MERGE (d)-[:HAS_AGENT_CARD]->(c)",
+                {"date": output_date, "card_id": card_id},
+            )
+        except Exception as e:
+            logger.warning(f"Could not write initial running card for '{agent_name}': {e}")
+
     # Create tools for this agent
     if create_tools_fn:
         _tools, agent_mcp_config = await create_tools_fn(vault_path, config)
     else:
-        _tools, agent_mcp_config = create_daily_agent_tools(vault_path, config)
+        _tools, agent_mcp_config = create_daily_agent_tools(vault_path, config, graph=graph)
 
     # Load vault MCPs
     vault_mcps = await load_vault_mcps(vault_path)
@@ -456,12 +506,11 @@ async def run_daily_agent(
         # Update state
         state.record_run(date, new_session_id, model_used)
 
-        output_path = config.get_output_path(output_date)
         result["status"] = "completed" if output_written else "completed_no_output"
         result["sdk_session_id"] = new_session_id
         result["model"] = model_used
         result["output_written"] = output_written
-        result["output_path"] = output_path if output_written else None
+        result["card_id"] = card_id if output_written else None
         result["journal_date"] = date
         result["output_date"] = output_date
 
@@ -471,6 +520,15 @@ async def run_daily_agent(
         logger.error(f"Agent '{agent_name}' error: {e}", exc_info=True)
         result["status"] = "error"
         result["error"] = str(e)
+        # Mark AgentCard as failed so Flutter shows the right status
+        if graph is not None:
+            try:
+                await graph.execute_cypher(
+                    "MATCH (c:AgentCard {card_id: $card_id}) SET c.status = 'failed'",
+                    {"card_id": card_id},
+                )
+            except Exception:
+                pass
 
     return result
 

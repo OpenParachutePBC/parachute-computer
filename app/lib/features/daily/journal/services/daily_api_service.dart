@@ -3,6 +3,9 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import '../models/journal_entry.dart';
+import '../models/agent_card.dart';
+import 'package:parachute/core/services/computer_service.dart'
+    show DailyAgentInfo, AgentRunResult;
 
 /// Raw search result from the server API.
 ///
@@ -311,6 +314,95 @@ class DailyApiService {
     } catch (e) {
       debugPrint('[DailyApiService] triggerImport error: $e');
       return null;
+    }
+  }
+
+  /// Fetch all AgentCard nodes for a specific date (YYYY-MM-DD).
+  ///
+  /// Returns an empty list on error or if the server is unreachable.
+  Future<List<AgentCard>> fetchAgentCards(String date) async {
+    final uri = Uri.parse('$baseUrl/api/daily/agent-cards').replace(
+      queryParameters: {'date': date},
+    );
+    debugPrint('[DailyApiService] GET $uri');
+    try {
+      final response = await _client
+          .get(uri, headers: _headers)
+          .timeout(_timeout);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        debugPrint('[DailyApiService] fetchAgentCards ${response.statusCode}');
+        return [];
+      }
+      final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+      final List<dynamic> data = decoded['cards'] as List<dynamic>? ?? [];
+      return data
+          .map((j) => AgentCard.fromJson(j as Map<String, dynamic>))
+          .toList();
+    } catch (e) {
+      debugPrint('[DailyApiService] fetchAgentCards error: $e');
+      return [];
+    }
+  }
+
+  /// Fetch all configured daily agents from the server.
+  ///
+  /// Returns an empty list on error or if the server is unreachable.
+  Future<List<DailyAgentInfo>> fetchAgents() async {
+    final uri = Uri.parse('$baseUrl/api/daily/agents');
+    debugPrint('[DailyApiService] GET $uri');
+    try {
+      final response = await _client
+          .get(uri, headers: _headers)
+          .timeout(_timeout);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        debugPrint('[DailyApiService] fetchAgents ${response.statusCode}');
+        return [];
+      }
+      final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+      final List<dynamic> data = decoded['agents'] as List<dynamic>? ?? [];
+      return data.map((raw) {
+        final j = raw as Map<String, dynamic>;
+        return DailyAgentInfo(
+          name: j['name'] as String? ?? '',
+          displayName: j['display_name'] as String? ?? j['name'] as String? ?? '',
+          description: j['description'] as String? ?? '',
+          scheduleEnabled: j['schedule_enabled'] as bool? ?? true,
+          scheduleTime: j['schedule_time'] as String? ?? '03:00',
+          outputPath: '',
+        );
+      }).toList();
+    } catch (e) {
+      debugPrint('[DailyApiService] fetchAgents error: $e');
+      return [];
+    }
+  }
+
+  /// Trigger an agent run for a date (202 Accepted — runs in background).
+  ///
+  /// Returns an [AgentRunResult] with status "started" on success, or error on failure.
+  Future<AgentRunResult> triggerAgentRun(String agentName, {String? date}) async {
+    final queryParams = <String, String>{
+      if (date != null) 'date': date,
+    };
+    final uri = Uri.parse('$baseUrl/api/daily/agent-cards/$agentName/run')
+        .replace(queryParameters: queryParams.isEmpty ? null : queryParams);
+    debugPrint('[DailyApiService] POST $uri');
+    try {
+      final response = await _client
+          .post(uri, headers: _headers)
+          .timeout(_timeout);
+      if (response.statusCode == 202) {
+        return AgentRunResult(success: true, status: 'started');
+      }
+      debugPrint('[DailyApiService] triggerAgentRun ${response.statusCode}');
+      return AgentRunResult(
+        success: false,
+        status: 'error',
+        error: 'Server returned ${response.statusCode}',
+      );
+    } catch (e) {
+      debugPrint('[DailyApiService] triggerAgentRun error: $e');
+      return AgentRunResult(success: false, status: 'error', error: e.toString());
     }
   }
 

@@ -272,7 +272,11 @@ class _AgentTriggerCardState extends ConsumerState<AgentTriggerCard> {
             const SizedBox(width: 10),
             Expanded(
               child: Text(
-                result.status == 'skipped' ? 'Already generated' : 'Output created!',
+                result.status == 'skipped'
+                    ? 'Already generated'
+                    : result.status == 'started'
+                        ? 'Running in background\u2026'
+                        : 'Output created!',
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                   color: isDark ? BrandColors.softWhite : BrandColors.ink,
                   fontWeight: FontWeight.w500,
@@ -360,14 +364,14 @@ class _AgentTriggerCardState extends ConsumerState<AgentTriggerCard> {
     setState(() => _isTriggering = true);
 
     try {
-      final server = ComputerService();
+      final api = ref.read(dailyApiServiceProvider);
       final dateStr = _formatDate(widget.date);
-      final result = await server.triggerDailyAgent(widget.agent.name, date: dateStr);
+      final result = await api.triggerAgentRun(widget.agent.name, date: dateStr);
 
       ref.read(agentTriggerStateProvider(widget.agent.name).notifier).state =
           AsyncValue.data(result);
 
-      // Trigger refresh to pick up new output
+      // Trigger refresh so agentCardsProvider picks up the running card
       if (result.success) {
         ref.read(journalRefreshTriggerProvider.notifier).state++;
       }
@@ -384,7 +388,6 @@ class _AgentTriggerCardState extends ConsumerState<AgentTriggerCard> {
   void _reset() {
     ref.read(agentTriggerStateProvider(widget.agent.name).notifier).state =
         const AsyncValue.data(null);
-    ref.invalidate(selectedReflectionProvider);
   }
 
   String _formatDate(DateTime date) {
