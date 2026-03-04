@@ -527,6 +527,10 @@ class _RemoteFilesScreenState extends ConsumerState<RemoteFilesScreen> {
             ? BrandColors.nightForest.withValues(alpha: 0.8)
             : BrandColors.forestLight;
         break;
+      case FileItemType.image:
+        icon = Icons.image_outlined;
+        color = isDark ? BrandColors.nightTurquoise : BrandColors.turquoise;
+        break;
       case FileItemType.other:
         icon = Icons.insert_drive_file;
         color = isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood;

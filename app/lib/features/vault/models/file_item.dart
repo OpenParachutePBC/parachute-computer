@@ -4,6 +4,7 @@ enum FileItemType {
   markdown,
   text,
   audio,
+  image,
   other,
 }
 
@@ -52,6 +53,9 @@ class FileItem {
   /// Check if this is an audio file
   bool get isAudio => type == FileItemType.audio;
 
+  /// Check if this is an image file
+  bool get isImage => type == FileItemType.image;
+
   /// Check if this file can be viewed as text (includes markdown and text types)
   bool get isViewableAsText => isMarkdown || isText;
 
@@ -87,6 +91,15 @@ class FileItem {
         case 'm4a':
         case 'aac':
           type = FileItemType.audio;
+          break;
+        case 'png':
+        case 'jpg':
+        case 'jpeg':
+        case 'gif':
+        case 'svg':
+        case 'webp':
+        case 'bmp':
+          type = FileItemType.image;
           break;
         default:
           // Check if it's a known text file extension

@@ -189,6 +189,14 @@ class RemoteFileBrowserService {
       case 'ogg':
       case 'flac':
         return FileItemType.audio;
+      case 'png':
+      case 'jpg':
+      case 'jpeg':
+      case 'gif':
+      case 'svg':
+      case 'webp':
+      case 'bmp':
+        return FileItemType.image;
       default:
         if (_textExtensions.contains(ext)) {
           return FileItemType.text;

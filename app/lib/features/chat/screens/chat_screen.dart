@@ -19,7 +19,10 @@ import '../widgets/unified_session_settings.dart';
 import '../../settings/models/trust_level.dart';
 import '../../settings/screens/settings_screen.dart';
 import '../providers/container_env_providers.dart' show activeContainerEnvProvider;
+import '../providers/container_files_providers.dart'
+    show currentSessionContainerEnvIdProvider;
 import '../widgets/bridge_session_viewer_sheet.dart';
+import 'container_file_browser_screen.dart';
 
 /// Main chat screen for AI conversations
 ///
@@ -396,6 +399,31 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                 icon: const Icon(Icons.folder_outlined, size: 20),
                 tooltip: 'Set working directory',
               ),
+            // Container file browser (only when session has a container env)
+            Builder(builder: (context) {
+              final containerEnvId =
+                  ref.watch(currentSessionContainerEnvIdProvider);
+              if (containerEnvId == null) return const SizedBox.shrink();
+              return IconButton(
+                onPressed: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => ContainerFileBrowserScreen(
+                      slug: containerEnvId,
+                      displayName: 'Container Files',
+                    ),
+                  ),
+                ),
+                icon: Icon(
+                  Icons.folder_zip_outlined,
+                  size: 20,
+                  color: isDark
+                      ? BrandColors.nightTurquoise
+                      : BrandColors.turquoise,
+                ),
+                tooltip: 'Browse container files',
+              );
+            }),
             // Unified session settings
             if (chatState.sessionId != null)
               IconButton(
