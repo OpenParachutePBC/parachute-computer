@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/core/providers/file_system_provider.dart';
+import 'package:parachute/core/providers/feature_flags_provider.dart' show aiServerUrlProvider;
 import 'package:parachute/core/providers/sync_provider.dart';
 import '../../recorder/providers/service_providers.dart';
 import '../models/journal_day.dart';
@@ -464,9 +465,14 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
     }
   }
 
-  Future<void> _addVoiceEntry(String transcript, String audioPath, int duration) async {
+  Future<void> _addVoiceEntry(String transcript, String localAudioPath, int duration) async {
     debugPrint('[JournalScreen] Adding voice entry via API...');
     final api = ref.read(dailyApiServiceProvider);
+
+    // Upload audio to server; fall back to local path if offline/failed
+    final serverPath = await api.uploadAudio(File(localAudioPath));
+    final audioPath = serverPath ?? localAudioPath;
+
     final entry = await api.createEntry(
       content: transcript,
       metadata: {
@@ -484,6 +490,15 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
     );
     if (entry == null) {
       debugPrint('[JournalScreen] Offline — voice entry queued');
+    }
+
+    // Delete local temp file only after both upload AND entry creation succeeded
+    if (serverPath != null && entry != null) {
+      try {
+        await File(localAudioPath).delete();
+      } catch (e) {
+        debugPrint('[JournalScreen] Failed to delete temp audio: $e');
+      }
     }
   }
 
@@ -763,9 +778,15 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
     debugPrint('[JournalScreen] Starting transcription for entry ${entry.id}');
 
     try {
-      final fileSystemService = ref.read(fileSystemServiceProvider);
-      final vaultPath = await fileSystemService.getRootPath();
-      final fullAudioPath = '$vaultPath/$audioPath';
+      // If audio path is already absolute, use it directly; otherwise prepend vault path
+      String fullAudioPath;
+      if (audioPath.startsWith('/')) {
+        fullAudioPath = audioPath;
+      } else {
+        final fileSystemService = ref.read(fileSystemServiceProvider);
+        final vaultPath = await fileSystemService.getRootPath();
+        fullAudioPath = '$vaultPath/$audioPath';
+      }
 
       final audioFile = File(fullAudioPath);
       if (!await audioFile.exists()) {
@@ -889,48 +910,52 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
       final audioService = ref.read(audioServiceProvider);
       await audioService.initialize();
 
-      final fullPath = await JournalHelpers.getFullAudioPath(relativePath);
-      debugPrint('[JournalScreen] Full audio path: $fullPath');
+      final serverBaseUrl =
+          ref.read(aiServerUrlProvider).valueOrNull ?? 'http://localhost:3333';
+      final fullPath = JournalHelpers.getAudioUrl(relativePath, serverBaseUrl);
+      debugPrint('[JournalScreen] Audio URL: $fullPath');
 
-      final file = File(fullPath);
-      if (!await file.exists()) {
-        debugPrint('[JournalScreen] ERROR: Audio file does not exist at: $fullPath');
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text('Audio file not found'),
-                  Text(
-                    relativePath,
-                    style: TextStyle(fontSize: 11, color: Colors.white70),
-                  ),
-                ],
+      if (!fullPath.startsWith('http://') && !fullPath.startsWith('https://')) {
+        final file = File(fullPath);
+        if (!await file.exists()) {
+          debugPrint('[JournalScreen] ERROR: Audio file does not exist at: $fullPath');
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Audio file not found'),
+                    Text(
+                      relativePath,
+                      style: TextStyle(fontSize: 11, color: Colors.white70),
+                    ),
+                  ],
+                ),
+                backgroundColor: BrandColors.error,
+                duration: const Duration(seconds: 3),
               ),
-              backgroundColor: BrandColors.error,
-              duration: const Duration(seconds: 3),
-            ),
-          );
+            );
+          }
+          return;
         }
-        return;
-      }
 
-      final fileSize = await file.length();
-      debugPrint('[JournalScreen] Audio file size: $fileSize bytes');
+        final fileSize = await file.length();
+        debugPrint('[JournalScreen] Audio file size: $fileSize bytes');
 
-      if (fileSize == 0) {
-        debugPrint('[JournalScreen] ERROR: Audio file is empty!');
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Audio file is empty'),
-              duration: Duration(seconds: 2),
-            ),
-          );
+        if (fileSize == 0) {
+          debugPrint('[JournalScreen] ERROR: Audio file is empty!');
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Audio file is empty'),
+                duration: Duration(seconds: 2),
+              ),
+            );
+          }
+          return;
         }
-        return;
       }
 
       final success = await audioService.playRecording(fullPath);
@@ -997,34 +1022,13 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
     final audioPath = entry.audioPath;
     if (audioPath == null) return const SizedBox.shrink();
 
-    return FutureBuilder<String>(
-      future: JournalHelpers.getFullAudioPath(audioPath),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return Container(
-            padding: const EdgeInsets.all(16),
-            child: const Center(child: CircularProgressIndicator(strokeWidth: 2)),
-          );
-        }
+    final serverBaseUrl = ref.read(aiServerUrlProvider).valueOrNull ?? 'http://localhost:3333';
+    final audioUrl = JournalHelpers.getAudioUrl(audioPath, serverBaseUrl);
+    final duration = Duration(seconds: entry.durationSeconds ?? 0);
 
-        if (!snapshot.hasData || snapshot.hasError) {
-          return Container(
-            padding: const EdgeInsets.all(16),
-            child: Text(
-              'Audio not available',
-              style: TextStyle(color: BrandColors.driftwood),
-            ),
-          );
-        }
-
-        final fullPath = snapshot.data!;
-        final duration = Duration(seconds: entry.durationSeconds ?? 0);
-
-        return Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          child: PlaybackControls(filePath: fullPath, duration: duration),
-        );
-      },
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: PlaybackControls(filePath: audioUrl, duration: duration),
     );
   }
 

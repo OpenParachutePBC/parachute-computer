@@ -27,11 +27,12 @@ from parachute.models.session import SessionCreate, SessionUpdate
 class TestSessionSummaryField:
     @pytest.mark.asyncio
     async def test_summary_column_exists(self, test_database):
-        """The sessions table has a summary column after migration."""
-        async with test_database.connection.execute(
-            "SELECT summary FROM sessions LIMIT 1"
-        ):
-            pass  # No exception → column exists
+        """Sessions have a summary field accessible via the store."""
+        from parachute.models.session import SessionCreate
+        session = await test_database.create_session(
+            SessionCreate(id="sumcheck-001", title="Check", module="chat")
+        )
+        assert session.summary is None  # field exists, defaults to None
 
     @pytest.mark.asyncio
     async def test_summary_defaults_to_none(self, test_database):
@@ -92,14 +93,14 @@ class TestContextHook:
         """context_hook outputs profile.md content when present."""
         from parachute.hooks.context_hook import main
 
-        profile = tmp_path / ".parachute" / "profile.md"
-        profile.parent.mkdir(parents=True)
-        profile.write_text("I am a software developer.\nI prefer Python.")
+        parachute_dir = tmp_path / ".parachute"
+        parachute_dir.mkdir(parents=True)
+        (parachute_dir / "profile.md").write_text("I am a software developer.\nI prefer Python.")
 
         hook_input = json.dumps({"session_id": "test-123"})
 
         mock_settings = MagicMock()
-        mock_settings.vault_path = tmp_path
+        mock_settings.parachute_dir = parachute_dir
 
         with (
             patch("sys.stdin.read", return_value=hook_input),
@@ -118,7 +119,7 @@ class TestContextHook:
         hook_input = json.dumps({"session_id": "test-456"})
 
         mock_settings = MagicMock()
-        mock_settings.vault_path = tmp_path  # No .parachute/profile.md here
+        mock_settings.parachute_dir = tmp_path / ".parachute"  # No profile.md here
 
         with (
             patch("sys.stdin.read", return_value=hook_input),
@@ -133,14 +134,14 @@ class TestContextHook:
         """context_hook produces no output when profile.md is empty."""
         from parachute.hooks.context_hook import main
 
-        profile = tmp_path / ".parachute" / "profile.md"
-        profile.parent.mkdir(parents=True)
-        profile.write_text("   \n  ")  # Whitespace only
+        parachute_dir = tmp_path / ".parachute"
+        parachute_dir.mkdir(parents=True)
+        (parachute_dir / "profile.md").write_text("   \n  ")  # Whitespace only
 
         hook_input = json.dumps({"session_id": "test-789"})
 
         mock_settings = MagicMock()
-        mock_settings.vault_path = tmp_path
+        mock_settings.parachute_dir = parachute_dir
 
         with (
             patch("sys.stdin.read", return_value=hook_input),

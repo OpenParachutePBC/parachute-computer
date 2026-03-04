@@ -3,6 +3,7 @@ Filesystem API endpoints for vault browsing.
 """
 
 import logging
+from pathlib import Path
 import os
 from datetime import datetime
 from pathlib import Path
@@ -27,7 +28,7 @@ def get_vault_path(request: Request) -> Path:
     from parachute.config import get_settings
 
     settings = get_settings()
-    return settings.vault_path
+    return Path.home()
 
 
 def _check_vault_path(vault_path: Path, target: Path) -> Path:

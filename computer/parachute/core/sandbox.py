@@ -36,7 +36,7 @@ from typing import Any, AsyncGenerator
 from parachute.lib.credentials import load_credentials
 from parachute.models.session import BOT_SOURCES, SessionSource
 
-SANDBOX_DATA_DIR = ".parachute/sandbox"
+SANDBOX_DATA_DIR = "sandbox"
 SANDBOX_NETWORK_NAME = "parachute-sandbox"
 
 logger = logging.getLogger(__name__)
@@ -81,8 +81,8 @@ class DockerSandbox:
     # Re-check Docker availability every 60 seconds
     _CACHE_TTL = 60
 
-    def __init__(self, vault_path: Path, claude_token: str | None = None):
-        self.vault_path = vault_path
+    def __init__(self, parachute_dir: Path, claude_token: str | None = None):
+        self.parachute_dir = parachute_dir
         self.claude_token = claude_token
         self._docker_available: bool | None = None
         self._checked_at: float = 0
@@ -153,41 +153,69 @@ class DockerSandbox:
         hash_digest = hashlib.sha256(config_str.encode()).hexdigest()
         return hash_digest[:12]
 
+    def _is_safe_mount_path(self, path: Path) -> bool:
+        """Return True only if the resolved path is within home or parachute_dir."""
+        try:
+            resolved = path.resolve()
+        except (OSError, ValueError):
+            return False
+        home = Path.home().resolve()
+        parachute = self.parachute_dir.resolve()
+        try:
+            resolved.relative_to(home)
+            return True
+        except ValueError:
+            pass
+        try:
+            resolved.relative_to(parachute)
+            return True
+        except ValueError:
+            pass
+        return False
+
     def _build_mounts(self, config: AgentSandboxConfig) -> list[str]:
         """Build Docker volume mount flags based on config."""
         mounts = []
 
-        # Mount allowed vault paths
+        home = Path.home()
+        # Mount allowed paths
         for path_pattern in config.allowed_paths:
             # Strip glob suffixes to get directory path
             clean = re.sub(r'(/\*\*?)*$', '', path_pattern)
             if not clean:
                 continue
-            # Paths may be ~/Parachute/... or legacy /vault/ or relative
-            if clean.startswith("~/Parachute/"):
-                # New format - convert to absolute path
-                relative = clean[len("~/Parachute/"):]
-                full_path = self.vault_path / relative
-                container_path = f"/home/sandbox/Parachute/{relative}"
-            elif clean.startswith("/vault/"):
-                # Legacy absolute /vault/ path — migrate to /home/sandbox/Parachute/
+            # Paths may be real absolute or legacy /vault/...
+            if clean.startswith("/vault/"):
+                # Legacy /vault/ path — map to home dir
                 relative = clean[len("/vault/"):]
-                full_path = self.vault_path / relative
+                full_path = home / relative
                 container_path = f"/home/sandbox/Parachute/{relative}"
-            else:
-                # Legacy relative path
-                full_path = self.vault_path / clean
+            elif clean.startswith(str(home)):
+                # Real absolute path under home dir
+                relative = clean[len(str(home)):].lstrip("/")
+                full_path = Path(clean)
+                container_path = f"/home/sandbox/Parachute/{relative}"
+            elif not Path(clean).is_absolute():
+                # Relative path — treat as relative to home
+                full_path = home / clean
                 container_path = f"/home/sandbox/Parachute/{clean}"
+            else:
+                # Absolute path outside home — validate before mounting
+                full_path = Path(clean)
+                if not self._is_safe_mount_path(full_path):
+                    logger.warning(f"Rejecting mount outside home: {full_path}")
+                    continue
+                container_path = f"/home/sandbox{clean}"
             if full_path.exists():
                 mounts.extend(["-v", f"{full_path}:{container_path}:rw"])
                 logger.debug(f"Mounting {full_path} -> {container_path}:rw")
             else:
                 logger.warning(f"Skipping non-existent path: {full_path}")
 
-        # If no specific paths, mount entire vault read-only
+        # If no specific paths, mount home dir read-only
         if not config.allowed_paths:
-            mounts.extend(["-v", f"{self.vault_path}:/home/sandbox/Parachute:ro"])
-            logger.debug(f"Mounting entire vault read-only: {self.vault_path} -> /home/sandbox/Parachute:ro")
+            mounts.extend(["-v", f"{home}:/home/sandbox/Parachute:ro"])
+            logger.debug(f"Mounting home dir read-only: {home} -> /home/sandbox/Parachute:ro")
 
         # Mount capability files/dirs
         mounts.extend(self._build_capability_mounts(config))
@@ -199,23 +227,24 @@ class DockerSandbox:
         """Build Docker volume mounts for capabilities (MCP, skills, agents, plugins)."""
         mounts = []
 
-        # Mount vault MCP config (read-only)
-        mcp_json = self.vault_path / ".mcp.json"
+        home = Path.home()
+        # Mount home MCP config (read-only)
+        mcp_json = home / ".mcp.json"
         if mcp_json.exists():
             mounts.extend(["-v", f"{mcp_json}:/home/sandbox/Parachute/.mcp.json:ro"])
 
         # Mount skills directory (read-only)
-        skills_dir = self.vault_path / ".skills"
+        skills_dir = home / ".skills"
         if skills_dir.is_dir():
             mounts.extend(["-v", f"{skills_dir}:/home/sandbox/Parachute/.skills:ro"])
 
         # Mount custom agents (read-only)
-        agents_dir = self.vault_path / ".parachute" / "agents"
+        agents_dir = self.parachute_dir / "agents"
         if agents_dir.is_dir():
             mounts.extend(["-v", f"{agents_dir}:/home/sandbox/Parachute/.parachute/agents:ro"])
 
-        # Mount vault CLAUDE.md (read-only)
-        claude_md = self.vault_path / "CLAUDE.md"
+        # Mount CLAUDE.md (read-only)
+        claude_md = home / "CLAUDE.md"
         if claude_md.exists():
             mounts.extend(["-v", f"{claude_md}:/home/sandbox/Parachute/CLAUDE.md:ro"])
 
@@ -295,7 +324,11 @@ class DockerSandbox:
             mcp_names = ",".join(config.mcp_servers.keys())
             env_lines.append(f"PARACHUTE_MCP_SERVERS={mcp_names}")
 
-        fd, env_file_path = tempfile.mkstemp(suffix='.env', prefix='parachute-sandbox-')
+        # Use a mode-0700 subdirectory to keep credential files out of world-listable /tmp
+        run_dir = self.parachute_dir / "run"
+        run_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+
+        fd, env_file_path = tempfile.mkstemp(suffix='.env', prefix='parachute-sandbox-', dir=run_dir)
         try:
             with os.fdopen(fd, 'w') as f:
                 f.write('\n'.join(env_lines) + '\n')
@@ -320,7 +353,7 @@ class DockerSandbox:
 
         if capabilities:
             fd2, caps_file_path = tempfile.mkstemp(
-                suffix='.json', prefix='parachute-caps-'
+                suffix='.json', prefix='parachute-caps-', dir=run_dir
             )
             try:
                 with os.fdopen(fd2, 'w') as f:
@@ -335,7 +368,7 @@ class DockerSandbox:
         # Mount system prompt as file (avoids env var size limits)
         if config.system_prompt:
             fd3, prompt_file = tempfile.mkstemp(
-                suffix='.txt', prefix='parachute-prompt-'
+                suffix='.txt', prefix='parachute-prompt-', dir=run_dir
             )
             try:
                 with os.fdopen(fd3, 'w') as f:
@@ -475,7 +508,7 @@ class DockerSandbox:
 
     def _get_container_home_dir(self, slug: str) -> Path:
         """Host-side home directory for a container env (bind-mounted to /home/sandbox/)."""
-        return self.vault_path / SANDBOX_DATA_DIR / "envs" / slug / "home"
+        return self.parachute_dir / SANDBOX_DATA_DIR / "envs" / slug / "home"
 
     async def _ensure_container(
         self,
@@ -500,7 +533,7 @@ class DockerSandbox:
             if config.network_enabled:
                 await self._ensure_sandbox_network()
 
-            vault_mounts = ["-v", f"{self.vault_path}:/home/sandbox/Parachute:ro"]
+            vault_mounts = ["-v", f"{Path.home()}:/home/sandbox/Parachute:ro"]
             vault_mounts.extend(self._build_capability_mounts(config))
 
             args = self._build_persistent_container_args(
@@ -782,7 +815,7 @@ class DockerSandbox:
             # Require explicit non-bot confirmation: None (unknown caller) gets no credentials.
             # Bot sessions (Telegram/Discord/Matrix) and unknown sources never receive host credentials.
             if config.session_source is not None and config.session_source not in BOT_SOURCES:
-                creds = load_credentials(self.vault_path)
+                creds = load_credentials(Path.home())
                 if creds:
                     logger.debug(
                         f"Injecting credentials into container: "

@@ -11,7 +11,6 @@ import uuid
 
 from fastapi import APIRouter, HTTPException, Request
 
-from parachute.db.database import get_database
 from parachute.models.session import ContainerEnvCreate
 
 logger = logging.getLogger(__name__)
@@ -28,9 +27,9 @@ def _slugify(name: str) -> str:
 
 
 @router.get("")
-async def list_container_envs():
+async def list_container_envs(request: Request):
     """List all named container environments."""
-    db = await get_database()
+    db = request.app.state.session_store
     envs = await db.list_container_envs()
     return {"containers": [e.model_dump(by_alias=True) for e in envs]}
 
@@ -42,7 +41,7 @@ async def create_container_env(request: Request, body: ContainerEnvCreate):
     The Docker container is not created here — it is lazily created when a session
     first joins the env. This endpoint only creates the DB record.
     """
-    db = await get_database()
+    db = request.app.state.session_store
     slug = body.slug or _slugify(body.display_name)
 
     # Validate slug
@@ -68,7 +67,7 @@ async def delete_container_env(request: Request, slug: str):
     Stops and removes the Docker container, then deletes the DB record.
     Sessions that were in this env revert to private containers on next turn.
     """
-    db = await get_database()
+    db = request.app.state.session_store
     env = await db.get_container_env(slug)
     if not env:
         raise HTTPException(status_code=404, detail=f"Container env '{slug}' not found")

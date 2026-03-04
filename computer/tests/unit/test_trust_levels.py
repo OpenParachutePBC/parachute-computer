@@ -7,6 +7,7 @@ import json
 import tempfile
 from datetime import datetime
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -37,11 +38,10 @@ from parachute.core.module_loader import (
 
 @pytest.fixture
 def vault_path(tmp_path):
-    """Create a temporary vault path."""
-    vault = tmp_path / "vault"
-    vault.mkdir()
-    (vault / ".parachute").mkdir()
-    return vault
+    """Create a temporary parachute system directory (replaces old vault/.parachute)."""
+    pdir = tmp_path / ".parachute"
+    pdir.mkdir()
+    return pdir
 
 
 def _make_session(trust_level="direct", allowed_paths=None):
@@ -177,42 +177,46 @@ class TestAgentSandboxConfig:
 
 class TestDockerSandbox:
     def test_init(self, vault_path):
-        sandbox = DockerSandbox(vault_path=vault_path)
-        assert sandbox.vault_path == vault_path
+        sandbox = DockerSandbox(parachute_dir=vault_path)
+        assert sandbox.parachute_dir == vault_path
         assert sandbox.claude_token is None
 
     def test_with_token(self, vault_path):
-        sandbox = DockerSandbox(vault_path=vault_path, claude_token="sk-ant-oat01-test")
+        sandbox = DockerSandbox(parachute_dir=vault_path, claude_token="sk-ant-oat01-test")
         assert sandbox.claude_token == "sk-ant-oat01-test"
 
     def test_health_info_initial(self, vault_path):
-        sandbox = DockerSandbox(vault_path=vault_path)
+        sandbox = DockerSandbox(parachute_dir=vault_path)
         info = sandbox.health_info()
         assert info["docker_available"] is None
         assert info["sandbox_image"] == SANDBOX_IMAGE
 
     def test_build_mounts_no_paths(self, vault_path):
-        sandbox = DockerSandbox(vault_path=vault_path)
+        sandbox = DockerSandbox(parachute_dir=vault_path)
         config = AgentSandboxConfig(session_id="test")
         mounts = sandbox._build_mounts(config)
-        # Should mount entire vault read-only when no allowed_paths
+        # Should mount entire home dir read-only when no allowed_paths
         assert "-v" in mounts
-        assert f"{vault_path}:/home/sandbox/Parachute:ro" in mounts
+        assert f"{Path.home()}:/home/sandbox/Parachute:ro" in mounts
 
-    def test_build_mounts_with_paths(self, vault_path):
-        (vault_path / "Blogs").mkdir()
-        sandbox = DockerSandbox(vault_path=vault_path)
+    def test_build_mounts_with_paths(self, vault_path, tmp_path):
+        blogs_dir = tmp_path / "Blogs"
+        blogs_dir.mkdir()
+        sandbox = DockerSandbox(parachute_dir=vault_path)
         config = AgentSandboxConfig(
-            session_id="test", allowed_paths=["Blogs/**/*"]
+            session_id="test", allowed_paths=[str(blogs_dir)]
         )
-        mounts = sandbox._build_mounts(config)
+        # Patch Path.home so tmp_path is treated as home (safety check passes)
+        with patch("parachute.core.sandbox.Path") as mock_path_cls:
+            mock_path_cls.home.return_value = tmp_path.resolve()
+            mounts = sandbox._build_mounts(config)
         # Should mount specific path read-write
         mount_str = " ".join(mounts)
         assert "Blogs" in mount_str
         assert ":rw" in mount_str
 
     def test_build_run_args_network_disabled(self, vault_path):
-        sandbox = DockerSandbox(vault_path=vault_path)
+        sandbox = DockerSandbox(parachute_dir=vault_path)
         config = AgentSandboxConfig(session_id="test-session-id")
         args, _ = sandbox._build_run_args(config)
         assert "--network" in args
@@ -222,7 +226,7 @@ class TestDockerSandbox:
 
     def test_build_run_args_network_enabled(self, vault_path):
         from parachute.core.sandbox import SANDBOX_NETWORK_NAME
-        sandbox = DockerSandbox(vault_path=vault_path)
+        sandbox = DockerSandbox(parachute_dir=vault_path)
         config = AgentSandboxConfig(
             session_id="test", network_enabled=True
         )
@@ -232,15 +236,15 @@ class TestDockerSandbox:
         assert "none" not in args
 
     def test_build_run_args_container_name(self, vault_path):
-        sandbox = DockerSandbox(vault_path=vault_path)
+        sandbox = DockerSandbox(parachute_dir=vault_path)
         config = AgentSandboxConfig(session_id="abcdef1234567890")
         args, _ = sandbox._build_run_args(config)
         assert "parachute-sandbox-abcdef12" in args
 
     def test_get_container_home_dir(self, vault_path):
-        sandbox = DockerSandbox(vault_path=vault_path)
+        sandbox = DockerSandbox(parachute_dir=vault_path)
         home_dir = sandbox._get_container_home_dir("my-env")
-        expected = vault_path / ".parachute" / "sandbox" / "envs" / "my-env" / "home"
+        expected = vault_path / "sandbox" / "envs" / "my-env" / "home"
         assert home_dir == expected
 
     def test_container_name_always_env_prefix(self, vault_path):
@@ -251,11 +255,11 @@ class TestDockerSandbox:
 
     def test_persistent_container_args_has_tools_volume(self, vault_path):
         from parachute.core.sandbox import TOOLS_VOLUME_NAME, SCRATCH_VOLUME_PREFIX
-        sandbox = DockerSandbox(vault_path=vault_path)
+        sandbox = DockerSandbox(parachute_dir=vault_path)
         config = AgentSandboxConfig(session_id="test123")
         labels = {"app": "parachute", "type": "env"}
-        home_dir = vault_path / ".parachute" / "sandbox" / "envs" / "test123" / "home"
-        vault_mounts = ["-v", f"{vault_path}:/home/sandbox/Parachute:ro"]
+        home_dir = vault_path / "sandbox" / "envs" / "test123" / "home"
+        vault_mounts = ["-v", f"{Path.home()}:/home/sandbox/Parachute:ro"]
         args = sandbox._build_persistent_container_args(
             "parachute-env-test123", "test123", config, labels, home_dir, vault_mounts
         )
@@ -268,12 +272,12 @@ class TestDockerSandbox:
         assert "/scratch" in arg_str
 
     def test_persistent_container_args_mounts_home_dir(self, vault_path):
-        """All containers bind-mount the vault home dir to /home/sandbox/."""
-        sandbox = DockerSandbox(vault_path=vault_path)
+        """All containers bind-mount the parachute home dir to /home/sandbox/."""
+        sandbox = DockerSandbox(parachute_dir=vault_path)
         config = AgentSandboxConfig(session_id="test123")
         labels = {"app": "parachute", "type": "env"}
-        home_dir = vault_path / ".parachute" / "sandbox" / "envs" / "my-env" / "home"
-        vault_mounts = ["-v", f"{vault_path}:/home/sandbox/Parachute:ro"]
+        home_dir = vault_path / "sandbox" / "envs" / "my-env" / "home"
+        vault_mounts = ["-v", f"{Path.home()}:/home/sandbox/Parachute:ro"]
         args = sandbox._build_persistent_container_args(
             "parachute-env-my-env", "my-env", config, labels, home_dir, vault_mounts
         )
@@ -282,12 +286,12 @@ class TestDockerSandbox:
         assert home_dir.exists()  # Must be created by the method
 
     def test_persistent_container_args_vault_nested_in_home(self, vault_path):
-        """Vault is mounted inside home (/home/sandbox/Parachute) for nested overlay."""
-        sandbox = DockerSandbox(vault_path=vault_path)
+        """Home dir is mounted inside container (/home/sandbox/Parachute) for nested overlay."""
+        sandbox = DockerSandbox(parachute_dir=vault_path)
         config = AgentSandboxConfig(session_id="test123")
         labels = {"app": "parachute", "type": "env"}
-        home_dir = vault_path / ".parachute" / "sandbox" / "envs" / "my-env" / "home"
-        vault_mounts = ["-v", f"{vault_path}:/home/sandbox/Parachute:ro"]
+        home_dir = vault_path / "sandbox" / "envs" / "my-env" / "home"
+        vault_mounts = ["-v", f"{Path.home()}:/home/sandbox/Parachute:ro"]
         args = sandbox._build_persistent_container_args(
             "parachute-env-my-env", "my-env", config, labels, home_dir, vault_mounts
         )
@@ -362,11 +366,11 @@ class TestModuleHash:
 
 class TestModuleLoaderHashes:
     def test_hash_file_path(self, vault_path):
-        loader = ModuleLoader(vault_path=vault_path)
-        assert loader._hash_file == vault_path / ".parachute" / "module_hashes.json"
+        loader = ModuleLoader(parachute_dir=vault_path)
+        assert loader._hash_file == vault_path / "module_hashes.json"
 
     def test_save_and_load_hashes(self, vault_path):
-        loader = ModuleLoader(vault_path=vault_path)
+        loader = ModuleLoader(parachute_dir=vault_path)
         hashes = {"brain": "abc123", "daily": "def456"}
         loader._save_known_hashes(hashes)
 
@@ -374,12 +378,12 @@ class TestModuleLoaderHashes:
         assert loaded == hashes
 
     def test_load_hashes_missing_file(self, vault_path):
-        loader = ModuleLoader(vault_path=vault_path)
+        loader = ModuleLoader(parachute_dir=vault_path)
         loaded = loader._load_known_hashes()
         assert loaded == {}
 
     def test_approve_module(self, vault_path):
-        loader = ModuleLoader(vault_path=vault_path)
+        loader = ModuleLoader(parachute_dir=vault_path)
         loader._known_hashes = {"brain": "old_hash"}
         loader._pending_approval = {
             "brain": {"hash": "new_hash", "path": "/modules/brain"}
@@ -394,11 +398,11 @@ class TestModuleLoaderHashes:
         assert saved["brain"] == "new_hash"
 
     def test_approve_nonexistent_module(self, vault_path):
-        loader = ModuleLoader(vault_path=vault_path)
+        loader = ModuleLoader(parachute_dir=vault_path)
         assert not loader.approve_module("nonexistent")
 
     def test_get_module_status(self, vault_path):
-        loader = ModuleLoader(vault_path=vault_path)
+        loader = ModuleLoader(parachute_dir=vault_path)
         loader._known_hashes = {"brain": "abc123def456", "daily": "789012345678"}
         loader._pending_approval = {
             "daily": {"hash": "new_hash_here", "path": "/modules/daily"}

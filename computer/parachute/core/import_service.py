@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Optional
 from dataclasses import dataclass, field
 
-from ..db.database import Database
+from ..db.graph_sessions import GraphSessionStore
 from ..models.session import Session, SessionSource
 
 
@@ -51,9 +51,9 @@ class ImportResult:
 class ImportService:
     """Service for importing external chat exports."""
 
-    def __init__(self, vault_path: str, database: Database, module: str = "chat"):
+    def __init__(self, vault_path: str, session_store: GraphSessionStore, module: str = "chat"):
         self.vault_path = vault_path
-        self.database = database
+        self.database = session_store  # keep alias for compatibility
         self.module = module
         # Sessions are stored in ~/.claude/ (real home)
         self._sdk_projects_dir = Path.home() / ".claude" / "projects"

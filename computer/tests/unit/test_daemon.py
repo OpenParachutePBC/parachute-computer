@@ -72,7 +72,7 @@ class TestLaunchdDaemon:
         assert plist["KeepAlive"] is True
         assert "--port" in plist["ProgramArguments"]
         assert "3333" in plist["ProgramArguments"]
-        assert plist["EnvironmentVariables"]["VAULT_PATH"] == str(vault)
+        assert "VAULT_PATH" not in plist["EnvironmentVariables"]
         assert plist["EnvironmentVariables"]["PYTHONUNBUFFERED"] == "1"
 
     def test_build_plist_custom_port(self, vault):
@@ -118,7 +118,7 @@ class TestSystemdDaemon:
         unit = d._build_unit()
         assert "Description=Parachute AI Server" in unit
         assert f"--port {config['port']}" in unit
-        assert f"VAULT_PATH={vault}" in unit
+        assert "VAULT_PATH" not in unit
         assert "PYTHONUNBUFFERED=1" in unit
         assert "Restart=on-failure" in unit
         assert "WantedBy=default.target" in unit

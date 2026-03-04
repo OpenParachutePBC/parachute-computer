@@ -3,8 +3,12 @@ Configuration management for Parachute server.
 
 Precedence: env vars > .env file > config.yaml > defaults
 
-Config file: vault/.parachute/config.yaml
-Token file:  vault/.parachute/.token (separate for security)
+Config file: ~/.parachute/config.yaml
+Token file:  ~/.parachute/.token (separate for security)
+
+System directory: ~/.parachute/
+  - All server internals live here (graph DB, sessions, modules, etc.)
+  - No more ~/Parachute vault — the user's home dir is the filesystem root
 """
 
 import logging
@@ -18,63 +22,48 @@ from pydantic_settings import BaseSettings
 
 logger = logging.getLogger(__name__)
 
+# The Parachute system directory — always ~/.parachute/
+PARACHUTE_DIR = Path.home() / ".parachute"
+
 # Known config keys that can be set via `parachute config set`
 CONFIG_KEYS = {
-    "vault_path", "port", "host", "default_model", "log_level",
+    "port", "host", "default_model", "log_level",
     "cors_origins", "auth_mode", "debug",
 }
 
 
-def _resolve_vault_path() -> Path:
-    """Resolve vault path from env, .env, ~/Parachute config, or default."""
-    raw = os.environ.get("VAULT_PATH", "")
-    if raw:
-        return Path(raw).expanduser().resolve()
-    # Check .env in CWD for backward compat
-    env_file = Path.cwd() / ".env"
-    if env_file.exists():
-        for line in env_file.read_text().splitlines():
-            line = line.strip()
-            if line.startswith("VAULT_PATH="):
-                val = line.split("=", 1)[1].strip()
-                return Path(val).expanduser().resolve()
-    # Check ~/Parachute config.yaml (matches CLI resolution)
-    home_vault = Path.home() / "Parachute"
-    home_config = home_vault / ".parachute" / "config.yaml"
-    if home_config.exists():
-        try:
-            with open(home_config) as f:
-                data = yaml.safe_load(f) or {}
-            if isinstance(data, dict) and "vault_path" in data:
-                return Path(data["vault_path"]).expanduser().resolve()
-        except Exception:
-            pass
-        return home_vault.resolve()
-    return Path("./sample-vault").resolve()
-
-
-def _load_yaml_config(vault_path: Path) -> dict[str, Any]:
-    """Load config.yaml from vault/.parachute/config.yaml."""
-    config_file = vault_path / ".parachute" / "config.yaml"
+def _load_yaml_config(parachute_dir: Path) -> dict[str, Any]:
+    """Load config.yaml from ~/.parachute/config.yaml."""
+    config_file = parachute_dir / "config.yaml"
     if not config_file.exists():
-        return {}
+        # Fallback: check legacy location ~/Parachute/.parachute/config.yaml
+        legacy = Path.home() / "Parachute" / ".parachute" / "config.yaml"
+        if legacy.exists():
+            config_file = legacy
+        else:
+            return {}
     try:
         with open(config_file) as f:
             data = yaml.safe_load(f) or {}
         if not isinstance(data, dict):
             logger.warning(f"config.yaml is not a dict, ignoring: {config_file}")
             return {}
+        # Drop vault_path — no longer a valid config key
+        data.pop("vault_path", None)
         return data
     except Exception as e:
         logger.warning(f"Error loading config.yaml: {e}")
         return {}
 
 
-def _load_token(vault_path: Path) -> Optional[str]:
-    """Load Claude token from vault/.parachute/.token."""
-    token_file = vault_path / ".parachute" / ".token"
+def _load_token(parachute_dir: Path) -> Optional[str]:
+    """Load Claude token from ~/.parachute/.token."""
+    token_file = parachute_dir / ".token"
     if not token_file.exists():
-        return None
+        # Fallback: legacy location
+        token_file = Path.home() / "Parachute" / ".parachute" / ".token"
+        if not token_file.exists():
+            return None
     try:
         token = token_file.read_text().strip()
         return token if token else None
@@ -83,16 +72,16 @@ def _load_token(vault_path: Path) -> Optional[str]:
         return None
 
 
-def save_yaml_config(vault_path: Path, data: dict[str, Any]) -> Path:
-    """Write config values to vault/.parachute/config.yaml."""
-    config_file = vault_path / ".parachute" / "config.yaml"
+def save_yaml_config(parachute_dir: Path, data: dict[str, Any]) -> Path:
+    """Write config values to ~/.parachute/config.yaml."""
+    config_file = parachute_dir / "config.yaml"
     config_file.parent.mkdir(parents=True, exist_ok=True)
     with open(config_file, "w") as f:
         yaml.safe_dump(data, f, default_flow_style=False, sort_keys=False)
     return config_file
 
 
-def save_yaml_config_atomic(vault_path: Path, updates: dict[str, Any]) -> Path:
+def save_yaml_config_atomic(parachute_dir: Path, updates: dict[str, Any]) -> Path:
     """
     Atomically update config.yaml with file locking.
 
@@ -110,8 +99,8 @@ def save_yaml_config_atomic(vault_path: Path, updates: dict[str, Any]) -> Path:
     import fcntl
     import tempfile
 
-    config_file = vault_path / ".parachute" / "config.yaml"
-    lock_file = vault_path / ".parachute" / ".config.lock"
+    config_file = parachute_dir / "config.yaml"
+    lock_file = parachute_dir / ".config.lock"
 
     config_file.parent.mkdir(parents=True, exist_ok=True)
 
@@ -125,6 +114,10 @@ def save_yaml_config_atomic(vault_path: Path, updates: dict[str, Any]) -> Path:
             if config_file.exists():
                 with open(config_file) as f:
                     current = yaml.safe_load(f) or {}
+
+            # Drop vault_path if present (legacy)
+            updates.pop("vault_path", None)
+            current.pop("vault_path", None)
 
             # Merge updates
             current.update(updates)
@@ -152,28 +145,24 @@ def save_yaml_config_atomic(vault_path: Path, updates: dict[str, Any]) -> Path:
     return config_file
 
 
-def save_token(vault_path: Path, token: str) -> Path:
-    """Write token to vault/.parachute/.token with restricted permissions."""
-    token_file = vault_path / ".parachute" / ".token"
+def save_token(parachute_dir: Path, token: str) -> Path:
+    """Write token to ~/.parachute/.token with restricted permissions."""
+    token_file = parachute_dir / ".token"
     token_file.parent.mkdir(parents=True, exist_ok=True)
     token_file.write_text(token + "\n")
     token_file.chmod(0o600)
     return token_file
 
 
-def get_config_path(vault_path: Path) -> Path:
-    """Get the config.yaml path for a vault."""
-    return vault_path / ".parachute" / "config.yaml"
+def get_config_path(parachute_dir: Path) -> Path:
+    """Get the config.yaml path."""
+    return parachute_dir / "config.yaml"
 
 
 class Settings(BaseSettings):
     """Server configuration. Precedence: env vars > .env > config.yaml > defaults."""
 
-    # Core settings
-    vault_path: Path = Field(
-        default=Path("./sample-vault"),
-        description="Path to the Parachute vault directory",
-    )
+    # Core settings — parachute_dir is always ~/.parachute/, not configurable
     port: int = Field(default=3333, description="Server port")
     host: str = Field(default="0.0.0.0", description="Server bind address")
 
@@ -201,12 +190,6 @@ class Settings(BaseSettings):
     max_message_length: int = Field(
         default=102400,
         description="Maximum message length in bytes",
-    )
-
-    # Database
-    db_path: Optional[Path] = Field(
-        default=None,
-        description="Path to SQLite database (defaults to vault/Chat/sessions.db)",
     )
 
     # Logging
@@ -250,11 +233,8 @@ class Settings(BaseSettings):
         if not isinstance(data, dict):
             data = {}
 
-        # Resolve vault path to find config.yaml
-        vault_path = _resolve_vault_path()
-
-        # Load YAML config
-        yaml_config = _load_yaml_config(vault_path)
+        # Load YAML config from ~/.parachute/config.yaml
+        yaml_config = _load_yaml_config(PARACHUTE_DIR)
 
         # Inject YAML values only where not already set (env/explicit take priority)
         for key, value in yaml_config.items():
@@ -268,18 +248,36 @@ class Settings(BaseSettings):
         if not data.get("claude_code_oauth_token"):
             env_token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")
             if not env_token:
-                token = _load_token(vault_path)
+                token = _load_token(PARACHUTE_DIR)
                 if token:
                     data["claude_code_oauth_token"] = token
 
         return data
 
     @property
-    def database_path(self) -> Path:
-        """Get the database path, defaulting to vault/Chat/sessions.db"""
-        if self.db_path:
-            return self.db_path
-        return self.vault_path / "Chat" / "sessions.db"
+    def parachute_dir(self) -> Path:
+        """The Parachute system directory. Always ~/.parachute/."""
+        return PARACHUTE_DIR
+
+    @property
+    def graph_db_path(self) -> Path:
+        """Path to the Kuzu graph database."""
+        return PARACHUTE_DIR / "graph" / "parachute.kz"
+
+    @property
+    def sessions_dir(self) -> Path:
+        """Path to SDK JSONL transcript storage."""
+        return PARACHUTE_DIR / "sessions"
+
+    @property
+    def modules_dir(self) -> Path:
+        """Path to user-installed vault modules."""
+        return PARACHUTE_DIR / "modules"
+
+    @property
+    def sandbox_dir(self) -> Path:
+        """Path to Docker sandbox env homes."""
+        return PARACHUTE_DIR / "sandbox"
 
     @property
     def cors_origins_list(self) -> list[str] | None:
@@ -289,14 +287,9 @@ class Settings(BaseSettings):
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
     @property
-    def config_dir(self) -> Path:
-        """Get the .parachute config directory path."""
-        return self.vault_path / ".parachute"
-
-    @property
     def log_dir(self) -> Path:
         """Get the daemon log directory path."""
-        return self.config_dir / "logs"
+        return PARACHUTE_DIR / "logs"
 
 
 # Global settings instance (lazy-initialized so CLI can set env vars first)

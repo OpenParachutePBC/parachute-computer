@@ -23,12 +23,58 @@ def get_claude_projects_dir() -> Path:
 
 
 def decode_project_path(encoded_name: str) -> str:
-    """Decode a project directory name to a path."""
-    # Claude encodes paths by replacing / with -
-    # Handle leading - which represents root /
+    """Naive decode: replace dashes with slashes.
+
+    This is lossy when paths contain literal hyphens (e.g. 'parachute-computer'
+    becomes 'parachute/computer').  Prefer resolve_project_path() when you have
+    the project directory available — it reads the real cwd from session files.
+    """
+    if not encoded_name:
+        return ""
     if encoded_name.startswith("-"):
         return "/" + encoded_name[1:].replace("-", "/")
     return encoded_name.replace("-", "/")
+
+
+# Cache: encoded dir name → resolved path
+_project_path_cache: dict[str, str] = {}
+
+
+def resolve_project_path(project_dir: Path) -> str:
+    """Resolve the real filesystem path for a Claude Code project directory.
+
+    Reads the ``cwd`` field from the first JSONL session file, which is the
+    authoritative source.  Falls back to the naive dash→slash decode if no
+    session files contain a cwd.  Results are cached per directory name.
+    """
+    dir_name = project_dir.name
+    if dir_name in _project_path_cache:
+        return _project_path_cache[dir_name]
+
+    # Try to read cwd from the first available session file
+    try:
+        for session_file in project_dir.glob("*.jsonl"):
+            with open(session_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        event = json.loads(line)
+                        cwd = event.get("cwd")
+                        if cwd:
+                            _project_path_cache[dir_name] = cwd
+                            return cwd
+                    except (json.JSONDecodeError, KeyError):
+                        continue
+            break  # Only need to check one file
+    except OSError:
+        pass
+
+    # Fallback: naive decode
+    result = decode_project_path(dir_name)
+    _project_path_cache[dir_name] = result
+    return result
 
 
 def get_session_info(session_file: Path, project_path: str) -> Optional[dict[str, Any]]:
@@ -159,7 +205,7 @@ async def get_recent_sessions(
             if not project_dir.is_dir():
                 continue
 
-            project_path = decode_project_path(project_dir.name)
+            project_path = resolve_project_path(project_dir)
 
             # Find all session files
             for session_file in project_dir.glob("*.jsonl"):
@@ -201,7 +247,7 @@ async def get_projects(request: Request) -> dict[str, Any]:
             session_count = len(list(project_dir.glob("*.jsonl")))
 
             if session_count > 0:
-                project_path = decode_project_path(project_dir.name)
+                project_path = resolve_project_path(project_dir)
                 projects.append({
                     "encodedName": project_dir.name,
                     "path": project_path,
@@ -282,7 +328,7 @@ async def get_session_details(
                 candidate = project_dir / f"{session_id}.jsonl"
                 if candidate.exists():
                     session_file = candidate
-                    path = decode_project_path(project_dir.name)
+                    path = resolve_project_path(project_dir)
                     break
 
     if not session_file or not session_file.exists():
@@ -394,7 +440,7 @@ async def adopt_session(
                 candidate = project_dir / f"{session_id}.jsonl"
                 if candidate.exists():
                     session_file = candidate
-                    project_path = decode_project_path(project_dir.name)
+                    project_path = resolve_project_path(project_dir)
                     break
 
     if not session_file or not session_file.exists():

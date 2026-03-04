@@ -399,7 +399,7 @@ class BotConnector(ABC):
         message_text: str | None = None,
     ) -> str:
         """Handle message from unknown user — create pairing request + pending session."""
-        db = getattr(self.server, "database", None)
+        db = getattr(self.server, "session_store", None)
         if not db:
             return "Service unavailable."
 
@@ -470,7 +470,7 @@ class BotConnector(ABC):
                 return self._trust_overrides[cache_key]
 
             # Look up approved pairing request
-            db = getattr(self.server, "database", None)
+            db = getattr(self.server, "session_store", None)
             if db:
                 request = await db.get_pairing_request_for_user(self.platform, str(user_id))
                 if request and request.status == "approved" and request.approved_trust_level:
@@ -500,11 +500,9 @@ class BotConnector(ABC):
         user_id: str | None = None,
     ) -> Any:
         """Find existing session linked to this bot chat, or create a new one."""
-        from parachute.db.database import Database
-
-        db: Optional[Database] = getattr(self.server, "database", None)
+        db = getattr(self.server, "session_store", None)
         if not db:
-            logger.error("No database available for session lookup")
+            logger.error("No session_store available for session lookup")
             return None
 
         # Look up existing session
@@ -574,7 +572,7 @@ class BotConnector(ABC):
         Also resets the nudge counter for affected chat IDs so users can
         re-pair without hitting silence. Returns the number of requests expired.
         """
-        db = getattr(self.server, "database", None)
+        db = getattr(self.server, "session_store", None)
         if not db:
             return 0
 
@@ -671,7 +669,7 @@ class BotConnector(ABC):
 
     async def _shared_cmd_new(self, chat_id: str, sender: str, args: list[str]) -> str:
         """Archive current session and start fresh."""
-        db = getattr(self.server, "database", None)
+        db = getattr(self.server, "session_store", None)
         if db:
             session = await db.get_session_by_bot_link(self.platform, chat_id)
             if session:

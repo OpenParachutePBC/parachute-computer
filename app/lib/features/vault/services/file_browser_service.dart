@@ -144,9 +144,9 @@ class FileBrowserService {
   /// For folders, deletes recursively
   Future<void> deleteItem(String path) async {
     try {
-      // First check if it's within the vault
-      if (!await isWithinVault(path)) {
-        throw Exception('Cannot delete items outside the vault');
+      // First check if it's within the home directory
+      if (!await isWithinHome(path)) {
+        throw Exception('Cannot delete items outside the home directory');
       }
 
       final type = FileSystemEntity.typeSync(path);
@@ -167,10 +167,11 @@ class FileBrowserService {
     }
   }
 
-  /// Check if a path is within the vault
-  Future<bool> isWithinVault(String path) async {
-    final rootPath = await _fileSystem.getRootPath();
-    return path.startsWith(rootPath);
+  /// Check if a path is within the user's home directory
+  Future<bool> isWithinHome(String path) async {
+    final home = Platform.environment['HOME'] ?? '';
+    if (home.isEmpty) return true; // Non-POSIX platform — no restriction
+    return path.startsWith(home);
   }
 
   /// Read file contents as string (for markdown viewing)
@@ -182,12 +183,12 @@ class FileBrowserService {
         return null;
       }
 
-      // Security: Verify path doesn't escape vault via symlinks
+      // Security: Verify path doesn't escape home directory via symlinks
       final resolvedPath = await file.resolveSymbolicLinks();
-      final rootPath = await _fileSystem.getRootPath();
-      if (!resolvedPath.startsWith(rootPath)) {
-        debugPrint('[FileBrowserService] Security: Path escapes vault boundary: $resolvedPath');
-        throw Exception('Access denied: Path escapes vault boundary');
+      final home = Platform.environment['HOME'] ?? '';
+      if (home.isNotEmpty && !resolvedPath.startsWith(home)) {
+        debugPrint('[FileBrowserService] Security: Path escapes home boundary: $resolvedPath');
+        throw Exception('Access denied: Path escapes home directory boundary');
       }
 
       return await file.readAsString();
@@ -201,9 +202,9 @@ class FileBrowserService {
   /// Creates the file if it doesn't exist
   Future<void> writeFile(String path, String content) async {
     try {
-      // Safety check: must be within vault
-      if (!await isWithinVault(path)) {
-        throw Exception('Cannot write files outside the vault');
+      // Safety check: must be within home directory
+      if (!await isWithinHome(path)) {
+        throw Exception('Cannot write files outside the home directory');
       }
 
       final file = File(path);
@@ -219,9 +220,9 @@ class FileBrowserService {
   /// Returns the path of the created file
   Future<String> createFile(String directory, String filename, String content) async {
     try {
-      // Safety check: must be within vault
-      if (!await isWithinVault(directory)) {
-        throw Exception('Cannot create files outside the vault');
+      // Safety check: must be within home directory
+      if (!await isWithinHome(directory)) {
+        throw Exception('Cannot create files outside the home directory');
       }
 
       final path = '$directory/$filename';

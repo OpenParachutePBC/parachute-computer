@@ -19,7 +19,6 @@ import argparse
 import asyncio
 import json
 import logging
-import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -42,15 +41,17 @@ logger = logging.getLogger("CuratorMCP")
 # Database helpers (open-use-close pattern per call — no persistent connection)
 # ---------------------------------------------------------------------------
 
+_PARACHUTE_DIR = Path.home() / ".parachute"
 
-async def _open_db(vault_path: Path):
-    """Open a fresh database connection."""
-    from parachute.db.database import Database
 
-    db_path = vault_path / "Chat" / "sessions.db"
-    db = Database(db_path)
-    await db.connect()
-    return db
+async def _open_db():
+    """Open a fresh GraphSessionStore connection."""
+    from parachute.db.graph import GraphService
+    from parachute.db.graph_sessions import GraphSessionStore
+
+    graph = GraphService(db_path=str(_PARACHUTE_DIR / "graph" / "parachute.kz"))
+    await graph.connect()
+    return GraphSessionStore(graph)
 
 
 # ---------------------------------------------------------------------------
@@ -59,46 +60,39 @@ async def _open_db(vault_path: Path):
 
 
 async def handle_update_title(
-    session_id: str, vault_path: Path, title: str
+    session_id: str, title: str
 ) -> dict[str, Any]:
     """Update session title — respects user-set title protection."""
-    db = await _open_db(vault_path)
-    try:
-        session = await db.get_session(session_id)
-        if session is None:
-            return {"error": f"Session not found: {session_id}"}
+    db = await _open_db()
+    session = await db.get_session(session_id)
+    if session is None:
+        return {"error": f"Session not found: {session_id}"}
 
-        title_source = (session.metadata or {}).get("title_source")
-        if title_source == "user":
-            return {"status": "protected", "message": "Title set by user — not overwritten"}
+    title_source = (session.metadata or {}).get("title_source")
+    if title_source == "user":
+        return {"status": "protected", "message": "Title set by user — not overwritten"}
 
-        from parachute.models.session import SessionUpdate
+    from parachute.models.session import SessionUpdate
 
-        metadata = dict(session.metadata or {})
-        metadata["title_source"] = "ai"
-        await db.update_session(session_id, SessionUpdate(title=title, metadata=metadata))
-        return {"status": "ok", "title": title}
-    finally:
-        await db.close()
+    metadata = dict(session.metadata or {})
+    metadata["title_source"] = "ai"
+    await db.update_session(session_id, SessionUpdate(title=title, metadata=metadata))
+    return {"status": "ok", "title": title}
 
 
 async def handle_update_summary(
-    session_id: str, vault_path: Path, summary: str
+    session_id: str, summary: str
 ) -> dict[str, Any]:
     """Update session summary."""
-    db = await _open_db(vault_path)
-    try:
-        from parachute.models.session import SessionUpdate
+    db = await _open_db()
+    from parachute.models.session import SessionUpdate
 
-        await db.update_session(session_id, SessionUpdate(summary=summary))
-        return {"status": "ok"}
-    finally:
-        await db.close()
+    await db.update_session(session_id, SessionUpdate(summary=summary))
+    return {"status": "ok"}
 
 
 async def handle_log_activity(
     session_id: str,
-    vault_path: Path,
     summary: str,
     exchange_number: int = 0,
 ) -> dict[str, Any]:
@@ -107,17 +101,14 @@ async def handle_log_activity(
     session_title: Optional[str] = None
     agent_type: Optional[str] = None
 
-    db = await _open_db(vault_path)
-    try:
-        session = await db.get_session(session_id)
-        if session:
-            session_title = session.title
-            agent_type = session.get_agent_type() if hasattr(session, "get_agent_type") else None
-    finally:
-        await db.close()
+    db = await _open_db()
+    session = await db.get_session(session_id)
+    if session:
+        session_title = session.title
+        agent_type = session.get_agent_type() if hasattr(session, "get_agent_type") else None
 
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    log_dir = vault_path / "Daily" / ".activity"
+    log_dir = Path.home() / "Daily" / ".activity"
     log_dir.mkdir(parents=True, exist_ok=True)
     log_file = log_dir / f"{today}.jsonl"
 
@@ -140,7 +131,7 @@ async def handle_log_activity(
 # ---------------------------------------------------------------------------
 
 
-def build_server(session_id: str, vault_path: Path) -> Server:
+def build_server(session_id: str) -> Server:
     """Build and configure the curator MCP server."""
     server = Server("curator-mcp")
 
@@ -210,15 +201,14 @@ def build_server(session_id: str, vault_path: Path) -> Server:
     async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
         try:
             if name == "update_title":
-                result = await handle_update_title(session_id, vault_path, arguments["title"])
+                result = await handle_update_title(session_id, arguments["title"])
             elif name == "update_summary":
                 result = await handle_update_summary(
-                    session_id, vault_path, arguments["summary"]
+                    session_id, arguments["summary"]
                 )
             elif name == "log_activity":
                 result = await handle_log_activity(
                     session_id,
-                    vault_path,
                     arguments["summary"],
                     arguments.get("exchange_number", 0),
                 )
@@ -238,19 +228,9 @@ async def main() -> None:
     parser.add_argument(
         "--session-id", required=True, help="Chat session ID this curator run is for"
     )
-    parser.add_argument(
-        "--vault-path",
-        default=os.environ.get("VAULT_PATH", ""),
-        help="Vault root path (default: VAULT_PATH env var)",
-    )
     args = parser.parse_args()
 
-    vault_path = Path(args.vault_path)
-    if not vault_path.exists():
-        logger.error(f"Vault path does not exist: {vault_path}")
-        sys.exit(1)
-
-    server = build_server(args.session_id, vault_path)
+    server = build_server(args.session_id)
     async with stdio_server() as (read_stream, write_stream):
         await server.run(
             read_stream,

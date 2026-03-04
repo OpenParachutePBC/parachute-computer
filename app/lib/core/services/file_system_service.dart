@@ -214,6 +214,24 @@ class FileSystemService {
         }
       }
 
+      // Migration: ~/Parachute vault → home directory
+      // The old default was ~/Parachute; the new default is ~/
+      // Only migrate if the user never explicitly configured their vault path
+      // (i.e. this was the default, not a deliberate choice).
+      // Data stays in ~/Daily and ~/Chat — module folders are unchanged.
+      final wasUserConfigured = prefs.getBool(_userConfiguredKey) ?? false;
+      if (!wasUserConfigured && _vaultPath != null) {
+        final home = Platform.environment['HOME'] ?? '';
+        final oldDefault = home.isNotEmpty ? '$home/Parachute' : '';
+        if (oldDefault.isNotEmpty && _vaultPath == oldDefault) {
+          debugPrint('[FileSystemService:${_moduleType.name}] Migrating vault path from ~/Parachute to ~/');
+          _vaultPath = home;
+          _moduleFolderName = _defaultModuleFolderName;
+          await prefs.setString(_vaultPathKey, _vaultPath!);
+          await prefs.setString(_moduleFolderKey, _moduleFolderName!);
+        }
+      }
+
       // If still no vault path, use default
       if (_vaultPath == null) {
         _vaultPath = await _getDefaultVaultPath();

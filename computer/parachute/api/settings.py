@@ -2,6 +2,8 @@
 Settings endpoints — personal instructions and prompt visibility.
 """
 
+from pathlib import Path
+
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
@@ -14,24 +16,15 @@ class InstructionsUpdate(BaseModel):
     instructions: str
 
 
-def _get_vault_path(request: Request):
-    orchestrator = getattr(request.app.state, "orchestrator", None)
-    if not orchestrator:
-        raise HTTPException(status_code=503, detail="Server not ready")
-    return orchestrator.vault_path
-
-
 @router.get("/settings/prompts")
 async def get_prompts(request: Request) -> dict:
     """
     Return current bridge prompts and the user's personal vault instructions.
 
-    vaultInstructions is the contents of vault/CLAUDE.md — this file is
+    vaultInstructions is the contents of ~/CLAUDE.md — this file is
     injected into every main chat session automatically.
     """
-    vault_path = _get_vault_path(request)
-
-    vault_claude = vault_path / "CLAUDE.md"
+    vault_claude = Path.home() / "CLAUDE.md"
     instructions = ""
     if vault_claude.exists():
         try:
@@ -50,14 +43,12 @@ async def get_prompts(request: Request) -> dict:
 @router.put("/settings/instructions")
 async def save_instructions(body: InstructionsUpdate, request: Request) -> dict:
     """
-    Save personal instructions to vault/CLAUDE.md.
+    Save personal instructions to ~/CLAUDE.md.
 
     This file is automatically injected into every main chat session.
     Passing an empty string clears it.
     """
-    vault_path = _get_vault_path(request)
-
-    vault_claude = vault_path / "CLAUDE.md"
+    vault_claude = Path.home() / "CLAUDE.md"
     try:
         content = body.instructions.strip()
         if content:

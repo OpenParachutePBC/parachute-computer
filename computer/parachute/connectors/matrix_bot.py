@@ -267,7 +267,7 @@ class MatrixConnector(BotConnector):
         import uuid
         from parachute.models.session import SessionCreate
 
-        db = getattr(self.server, "database", None)
+        db = getattr(self.server, "session_store", None)
         if not db:
             return
 
@@ -336,7 +336,7 @@ class MatrixConnector(BotConnector):
 
         Returns (chat_type, is_authorized, session).
         """
-        db = getattr(self.server, "database", None)
+        db = getattr(self.server, "session_store", None)
         session = await db.get_session_by_bot_link("matrix", room_id) if db else None
         bridge_meta = (session.metadata or {}).get("bridge_metadata") if session else None
 

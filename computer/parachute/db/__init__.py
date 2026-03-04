@@ -2,7 +2,7 @@
 Database module for Parachute server.
 """
 
-from parachute.db.database import Database, get_database
 from parachute.db.graph import GraphService
+from parachute.db.graph_sessions import GraphSessionStore
 
-__all__ = ["Database", "get_database", "GraphService"]
+__all__ = ["GraphService", "GraphSessionStore"]

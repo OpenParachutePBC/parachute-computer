@@ -8,11 +8,11 @@ Schedule configuration is read from daily agent files:
 """
 
 import logging
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
-from parachute.config import get_settings
 from parachute.core.scheduler import (
     get_scheduler_status,
     reload_scheduler,
@@ -36,8 +36,7 @@ async def get_scheduler_info() -> dict[str, Any]:
     - agents: Configuration for all daily agents
     - config: Legacy field
     """
-    settings = get_settings()
-    return get_scheduler_status(settings.vault_path)
+    return get_scheduler_status(Path.home())
 
 
 @router.post("/scheduler/reload")
@@ -47,8 +46,7 @@ async def reload_scheduler_config() -> dict[str, Any]:
 
     Call this after editing Daily/.agents/*.md to apply schedule changes.
     """
-    settings = get_settings()
-    result = reload_scheduler(settings.vault_path)
+    result = reload_scheduler(Path.home())
 
     if not result.get("success"):
         raise HTTPException(status_code=500, detail=result.get("error", "Unknown error"))
@@ -67,11 +65,9 @@ async def trigger_agent(agent_name: str) -> dict[str, Any]:
     Note: daily_agent module is not yet available in modular architecture (Phase 3).
     This endpoint will return an error until then.
     """
-    settings = get_settings()
-
     result = await trigger_agent_now(
         agent_name=agent_name,
-        vault_path=settings.vault_path,
+        vault_path=Path.home(),
     )
 
     if result.get("status") == "error" or not result.get("success", True):

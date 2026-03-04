@@ -37,8 +37,8 @@ def _is_port_listening(port: int) -> bool:
 class DaemonManager(ABC):
     """Base class for platform-specific daemon management."""
 
-    def __init__(self, vault_path: Path, config: dict[str, Any]):
-        self.vault_path = vault_path
+    def __init__(self, parachute_dir: Path, config: dict[str, Any]):
+        self.parachute_dir = parachute_dir
         self.config = config
         self.port = config.get("port", 3333)
         self.host = config.get("host", "0.0.0.0")
@@ -97,8 +97,8 @@ class DaemonManager(ABC):
 class LaunchdDaemon(DaemonManager):
     """macOS launchd daemon management."""
 
-    def __init__(self, vault_path: Path, config: dict[str, Any], supervisor: bool = False):
-        super().__init__(vault_path, config)
+    def __init__(self, parachute_dir: Path, config: dict[str, Any], supervisor: bool = False):
+        super().__init__(parachute_dir, config)
         self.supervisor = supervisor
         label = SUPERVISOR_LAUNCHD_LABEL if supervisor else LAUNCHD_LABEL
         self.plist_path = Path.home() / "Library" / "LaunchAgents" / f"{label}.plist"
@@ -121,8 +121,7 @@ class LaunchdDaemon(DaemonManager):
                     "--port", "3334",
                 ],
                 "EnvironmentVariables": {
-                    "VAULT_PATH": str(self.vault_path),
-                    "PARACHUTE_CONFIG": str(self.vault_path / ".parachute" / "config.yaml"),
+                    "PARACHUTE_CONFIG": str(self.parachute_dir / "config.yaml"),
                     "PYTHONUNBUFFERED": "1",
                     "PATH": "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin",
                 },
@@ -144,8 +143,7 @@ class LaunchdDaemon(DaemonManager):
                     "--port", str(self.port),
                 ],
                 "EnvironmentVariables": {
-                    "VAULT_PATH": str(self.vault_path),
-                    "PARACHUTE_CONFIG": str(self.vault_path / ".parachute" / "config.yaml"),
+                    "PARACHUTE_CONFIG": str(self.parachute_dir / "config.yaml"),
                     "PYTHONUNBUFFERED": "1",
                     # launchd has minimal PATH — add standard locations for docker, git, etc.
                     "PATH": "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin",
@@ -284,8 +282,8 @@ class LaunchdDaemon(DaemonManager):
 class SystemdDaemon(DaemonManager):
     """Linux systemd user service management."""
 
-    def __init__(self, vault_path: Path, config: dict[str, Any], supervisor: bool = False):
-        super().__init__(vault_path, config)
+    def __init__(self, parachute_dir: Path, config: dict[str, Any], supervisor: bool = False):
+        super().__init__(parachute_dir, config)
         self.supervisor = supervisor
         self.unit_dir = Path.home() / ".config" / "systemd" / "user"
         unit_name = SUPERVISOR_SYSTEMD_UNIT if supervisor else SYSTEMD_UNIT
@@ -307,8 +305,7 @@ After=network.target
 Type=simple
 ExecStart={python} -m uvicorn parachute.supervisor:app --host 0.0.0.0 --port 3334
 WorkingDirectory={self._find_repo_dir()}
-Environment=VAULT_PATH={self.vault_path}
-Environment=PARACHUTE_CONFIG={self.vault_path / '.parachute' / 'config.yaml'}
+Environment=PARACHUTE_CONFIG={self.parachute_dir / 'config.yaml'}
 Environment=PYTHONUNBUFFERED=1
 Restart=on-failure
 RestartSec=5
@@ -327,8 +324,7 @@ After=network.target
 Type=simple
 ExecStart={python} -m uvicorn parachute.server:app --host {self.host} --port {self.port}
 WorkingDirectory={self._find_repo_dir()}
-Environment=VAULT_PATH={self.vault_path}
-Environment=PARACHUTE_CONFIG={self.vault_path / '.parachute' / 'config.yaml'}
+Environment=PARACHUTE_CONFIG={self.parachute_dir / 'config.yaml'}
 Environment=PYTHONUNBUFFERED=1
 Restart=on-failure
 RestartSec=5
@@ -431,18 +427,18 @@ WantedBy=default.target
 class PidDaemon(DaemonManager):
     """Fallback PID-file based daemon for systems without launchd/systemd."""
 
-    def __init__(self, vault_path: Path, config: dict[str, Any], supervisor: bool = False):
-        super().__init__(vault_path, config)
+    def __init__(self, parachute_dir: Path, config: dict[str, Any], supervisor: bool = False):
+        super().__init__(parachute_dir, config)
         self.supervisor = supervisor
         pid_name = "supervisor.pid" if supervisor else "server.pid"
-        self.pid_file = vault_path / ".parachute" / pid_name
+        self.pid_file = parachute_dir / pid_name
         # Use same location as systemd on Linux, macOS logs on macOS
         if sys.platform == "darwin":
             self.log_dir = Path.home() / "Library" / "Logs" / "Parachute"
         else:
             self.log_dir = Path.home() / ".local" / "state" / "parachute" / "logs"
         marker_name = ".supervisor_daemon_installed" if supervisor else ".daemon_installed"
-        self._installed_marker = vault_path / ".parachute" / marker_name
+        self._installed_marker = parachute_dir / marker_name
 
     def install(self) -> None:
         self.log_dir.mkdir(parents=True, exist_ok=True)
@@ -485,7 +481,6 @@ class PidDaemon(DaemonManager):
             port = self.port
 
         env = os.environ.copy()
-        env["VAULT_PATH"] = str(self.vault_path)
         env["PYTHONUNBUFFERED"] = "1"
 
         proc = subprocess.Popen(
@@ -555,25 +550,25 @@ def _process_alive(pid: int) -> bool:
         return False
 
 
-def get_daemon_manager(vault_path: Path, config: dict[str, Any]) -> DaemonManager:
+def get_daemon_manager(parachute_dir: Path, config: dict[str, Any]) -> DaemonManager:
     """Factory: detect platform and return appropriate daemon manager."""
     if sys.platform == "darwin":
-        return LaunchdDaemon(vault_path, config)
+        return LaunchdDaemon(parachute_dir, config)
     elif sys.platform == "linux":
         # Check if systemd is available
         if (Path.home() / ".config" / "systemd").exists() or Path("/run/systemd/system").exists():
-            return SystemdDaemon(vault_path, config)
+            return SystemdDaemon(parachute_dir, config)
     # Fallback
-    return PidDaemon(vault_path, config)
+    return PidDaemon(parachute_dir, config)
 
 
-def get_supervisor_daemon_manager(vault_path: Path, config: dict[str, Any]) -> DaemonManager:
+def get_supervisor_daemon_manager(parachute_dir: Path, config: dict[str, Any]) -> DaemonManager:
     """Factory: detect platform and return supervisor daemon manager."""
     if sys.platform == "darwin":
-        return LaunchdDaemon(vault_path, config, supervisor=True)
+        return LaunchdDaemon(parachute_dir, config, supervisor=True)
     elif sys.platform == "linux":
         # Check if systemd is available
         if (Path.home() / ".config" / "systemd").exists() or Path("/run/systemd/system").exists():
-            return SystemdDaemon(vault_path, config, supervisor=True)
+            return SystemdDaemon(parachute_dir, config, supervisor=True)
     # Fallback
-    return PidDaemon(vault_path, config, supervisor=True)
+    return PidDaemon(parachute_dir, config, supervisor=True)

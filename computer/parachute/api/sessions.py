@@ -3,6 +3,7 @@ Session management API endpoints.
 """
 
 import logging
+from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -179,7 +180,7 @@ async def activate_session(
     Clears pending_initialization, applies trust_level,
     and notifies the bot connector.
     """
-    db = request.app.state.database
+    db = request.app.state.session_store
     if not db:
         raise HTTPException(status_code=503, detail="Database not ready")
 
@@ -250,7 +251,7 @@ async def update_session_metadata(
     Called by the activity hook after each exchange. Respects user-set titles:
     if title_source == "user", the title field is silently ignored.
     """
-    db = request.app.state.database
+    db = request.app.state.session_store
     if not db:
         raise HTTPException(status_code=503, detail="Database not ready")
 
@@ -288,7 +289,7 @@ async def update_session_config(
     """
     Update session configuration (trust level, module).
     """
-    db = request.app.state.database
+    db = request.app.state.session_store
     if not db:
         raise HTTPException(status_code=503, detail="Database not ready")
 
@@ -509,7 +510,7 @@ async def trigger_bridge(request: Request, session_id: str) -> dict[str, Any]:
     """
     import asyncio
 
-    db = request.app.state.database
+    db = request.app.state.session_store
     if not db:
         raise HTTPException(status_code=503, detail="Database not ready")
 
@@ -534,8 +535,8 @@ async def trigger_bridge(request: Request, session_id: str) -> dict[str, Any]:
             exchange_number=exchange_number,
             session_title=session.title,
             title_source=session_metadata.get("title_source"),
-            database=db,
-            vault_path=orchestrator.vault_path,
+            session_store=db,
+            vault_path=Path.home(),
             claude_token=settings.claude_code_oauth_token if settings else None,
         )
     )
@@ -552,7 +553,7 @@ async def get_bridge_messages(request: Request, session_id: str) -> dict[str, An
     never stored in SQLite, so it won't appear in the chat list.
     Returns 404 if no bridge session exists yet.
     """
-    db = request.app.state.database
+    db = request.app.state.session_store
     if not db:
         raise HTTPException(status_code=503, detail="Database not ready")
 

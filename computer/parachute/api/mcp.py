@@ -39,7 +39,7 @@ def get_mcp_config_path() -> Path:
     MCP config is stored at {vault}/.mcp.json (same as Node.js server).
     """
     settings = get_settings()
-    return settings.vault_path / ".mcp.json"
+    return Path.home() / ".mcp.json"
 
 
 def load_mcp_config() -> dict[str, Any]:
@@ -142,7 +142,7 @@ async def list_mcp_servers_endpoint(request: Request) -> dict[str, Any]:
     Returns both built-in servers (like 'parachute') and user-configured ones.
     """
     settings = get_settings()
-    all_servers = await load_mcp_servers(settings.vault_path)
+    all_servers = await load_mcp_servers(Path.home())
     servers = []
 
     for name, server_config in all_servers.items():
@@ -157,7 +157,7 @@ async def get_mcp_server(request: Request, name: str) -> dict[str, Any]:
     Get a specific MCP server configuration.
     """
     settings = get_settings()
-    all_servers = await load_mcp_servers(settings.vault_path)
+    all_servers = await load_mcp_servers(Path.home())
     server_config = all_servers.get(name)
 
     if not server_config:
@@ -198,7 +198,7 @@ async def remove_mcp_server(request: Request, name: str) -> dict[str, Any]:
     Note: Cannot remove built-in servers, only user-configured ones.
     """
     settings = get_settings()
-    all_servers = await load_mcp_servers(settings.vault_path)
+    all_servers = await load_mcp_servers(Path.home())
 
     if name not in all_servers:
         raise HTTPException(status_code=404, detail=f"MCP server '{name}' not found")
@@ -319,7 +319,7 @@ async def test_mcp_server(request: Request, name: str) -> dict[str, Any]:
     import subprocess
 
     settings = get_settings()
-    all_servers = await load_mcp_servers(settings.vault_path)
+    all_servers = await load_mcp_servers(Path.home())
     server_config = all_servers.get(name)
 
     if not server_config:
@@ -611,7 +611,7 @@ async def get_mcp_server_tools(request: Request, name: str) -> dict[str, Any]:
     Connects to the server via JSON-RPC and calls tools/list.
     """
     settings = get_settings()
-    all_servers = await load_mcp_servers(settings.vault_path)
+    all_servers = await load_mcp_servers(Path.home())
     server_config = all_servers.get(name)
 
     if not server_config:

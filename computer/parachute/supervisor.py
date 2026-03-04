@@ -185,13 +185,13 @@ async def start_server() -> ServerActionResponse:
 
     def _start_sync():
         # Load config from vault
-        config_path = get_config_path(settings.vault_path)
+        config_path = get_config_path(settings.parachute_dir)
         config = {}
         if config_path.exists():
             with open(config_path) as f:
                 config = yaml.safe_load(f) or {}
 
-        daemon = get_daemon_manager(settings.vault_path, config)
+        daemon = get_daemon_manager(settings.parachute_dir, config)
         daemon.start()
 
     try:
@@ -213,13 +213,13 @@ async def stop_server() -> ServerActionResponse:
 
     def _stop_sync():
         # Load config from vault
-        config_path = get_config_path(settings.vault_path)
+        config_path = get_config_path(settings.parachute_dir)
         config = {}
         if config_path.exists():
             with open(config_path) as f:
                 config = yaml.safe_load(f) or {}
 
-        daemon = get_daemon_manager(settings.vault_path, config)
+        daemon = get_daemon_manager(settings.parachute_dir, config)
         daemon.stop()
 
     try:
@@ -241,13 +241,13 @@ async def restart_server() -> ServerActionResponse:
 
     def _restart_sync():
         # Load config from vault
-        config_path = get_config_path(settings.vault_path)
+        config_path = get_config_path(settings.parachute_dir)
         config = {}
         if config_path.exists():
             with open(config_path) as f:
                 config = yaml.safe_load(f) or {}
 
-        daemon = get_daemon_manager(settings.vault_path, config)
+        daemon = get_daemon_manager(settings.parachute_dir, config)
         daemon.restart()
 
     try:
@@ -324,7 +324,7 @@ async def get_config() -> dict:
 
     import yaml
 
-    config_file = settings.vault_path / ".parachute" / "config.yaml"
+    config_file = settings.parachute_dir / "config.yaml"
 
     def _read_config():
         if not config_file.exists():
@@ -366,7 +366,7 @@ async def update_config(body: ConfigUpdateRequest) -> ConfigUpdateResponse:
     try:
         from parachute.config import save_yaml_config_atomic
 
-        vault_path = settings.vault_path
+        vault_path = settings.parachute_dir
         await asyncio.to_thread(save_yaml_config_atomic, vault_path, body.values)
 
         restarted = False
