@@ -112,7 +112,11 @@ class PendingEntryQueue extends ChangeNotifier {
             continue;
           }
           // Upload succeeded — delete staged file and use server URL
-          try { await File(item.audioPath!).delete(); } catch (_) {}
+          try {
+            await File(item.audioPath!).delete();
+          } catch (e) {
+            debugPrint('[PendingEntryQueue] Failed to delete staged audio ${item.audioPath}: $e');
+          }
           resolvedAudioPath = serverPath;
         }
 

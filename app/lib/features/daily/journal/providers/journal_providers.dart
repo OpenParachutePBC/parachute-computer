@@ -76,15 +76,18 @@ class _TodayJournalNotifier extends AutoDisposeAsyncNotifier<JournalDay> {
   Future<JournalDay> build() async {
     ref.watch(journalRefreshTriggerProvider);
 
-    // Flush pending queue when connectivity restores (offline → online transition)
+    // Flush pending queue when connectivity restores (offline → online transition).
+    // Guard on previous == null to ignore the stream's initial emission on (re)start.
     ref.listen(periodicServerHealthProvider, (previous, next) async {
-      final wasHealthy = previous?.valueOrNull?.isHealthy ?? false;
+      if (previous == null) return;
+      final wasHealthy = previous.valueOrNull?.isHealthy ?? false;
       final isHealthy = next.valueOrNull?.isHealthy ?? false;
       if (!wasHealthy && isHealthy) {
         final api = ref.read(dailyApiServiceProvider);
         final queue = await ref.read(pendingQueueProvider.future);
         await queue.flush(api);
-        ref.read(journalRefreshTriggerProvider.notifier).state++;
+        // _loadJournal already calls flush on every build; no need to increment
+        // the refresh trigger here — that would cause a redundant rebuild cycle.
       }
     });
 

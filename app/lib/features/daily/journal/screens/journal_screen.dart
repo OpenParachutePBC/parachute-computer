@@ -464,6 +464,7 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
 
     // Try to upload audio to server first
     final serverPath = await api.uploadAudio(File(localAudioPath));
+    if (!mounted) return;
 
     if (serverPath != null) {
       // Online: create entry with server audio path
@@ -475,15 +476,32 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
           'duration_seconds': duration,
         },
       );
-      await _appendEntryToCache(
-        entry,
-        content: transcript,
-        type: JournalEntryType.voice,
-        audioPath: serverPath,
-        durationSeconds: duration,
-      );
-      // Delete staged file only after both upload AND entry creation succeeded
+      if (!mounted) return;
+
       if (entry != null) {
+        // Both upload and entry creation succeeded
+        await _appendEntryToCache(
+          entry,
+          content: transcript,
+          type: JournalEntryType.voice,
+          audioPath: serverPath,
+          durationSeconds: duration,
+        );
+        try {
+          await File(localAudioPath).delete();
+        } catch (e) {
+          debugPrint('[JournalScreen] Failed to delete staged audio: $e');
+        }
+      } else {
+        // Upload succeeded but entry creation failed — queue with server path so audio
+        // is not re-uploaded, then clean up the local staged file.
+        await _appendEntryToCache(
+          null,
+          content: transcript,
+          type: JournalEntryType.voice,
+          audioPath: serverPath,
+          durationSeconds: duration,
+        );
         try {
           await File(localAudioPath).delete();
         } catch (e) {
