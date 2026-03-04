@@ -556,7 +556,9 @@ class DailyModule:
 
         now = datetime.now(timezone.utc)
         entry_id = now.strftime("%Y-%m-%d-%H-%M-%S-%f")
-        date = entry_id[:10]
+        # Use local wall-clock date so entries group under the day the user
+        # experienced them (e.g. 8pm local = next UTC day in US timezones).
+        date = datetime.now().strftime("%Y-%m-%d")
         created_at = now.isoformat()
 
         meta = metadata or {}
