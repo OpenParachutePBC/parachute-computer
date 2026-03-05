@@ -68,6 +68,7 @@ class GraphSessionStore:
                 "continued_from": "STRING",
                 "agent_type": "STRING",
                 "trust_level": "STRING",
+                "mode": "STRING",
                 "linked_bot_platform": "STRING",
                 "linked_bot_chat_id": "STRING",
                 "linked_bot_chat_type": "STRING",
@@ -147,6 +148,7 @@ class GraphSessionStore:
             "continued_from": getattr(session, "continued_from", None),
             "agent_type": getattr(session, "agent_type", None),
             "trust_level": getattr(session, "trust_level", None),
+            "mode": getattr(session, "mode", None),
             "linked_bot_platform": getattr(session, "linked_bot_platform", None),
             "linked_bot_chat_id": getattr(session, "linked_bot_chat_id", None),
             "linked_bot_chat_type": getattr(session, "linked_bot_chat_type", None),
@@ -178,6 +180,7 @@ class GraphSessionStore:
                     continued_from: $continued_from,
                     agent_type: $agent_type,
                     trust_level: $trust_level,
+                    mode: $mode,
                     linked_bot_platform: $linked_bot_platform,
                     linked_bot_chat_id: $linked_bot_chat_id,
                     linked_bot_chat_type: $linked_bot_chat_type,
@@ -248,6 +251,10 @@ class GraphSessionStore:
         if update.trust_level is not None:
             set_parts.append("s.trust_level = $trust_level")
             params["trust_level"] = update.trust_level
+
+        if update.mode is not None:
+            set_parts.append("s.mode = $mode")
+            params["mode"] = update.mode
 
         if update.working_directory is not None:
             set_parts.append("s.working_directory = $working_directory")
@@ -944,6 +951,7 @@ class GraphSessionStore:
             continued_from=row.get("continued_from"),
             agent_type=row.get("agent_type"),
             trust_level=row.get("trust_level"),
+            mode=row.get("mode"),
             linked_bot_platform=row.get("linked_bot_platform"),
             linked_bot_chat_id=row.get("linked_bot_chat_id"),
             linked_bot_chat_type=row.get("linked_bot_chat_type"),

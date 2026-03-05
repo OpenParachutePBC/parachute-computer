@@ -51,6 +51,7 @@ async def preview_prompt(
     agent_path: Optional[str] = Query(None, alias="agentPath", description="Path to agent definition file"),
     contexts: Optional[str] = Query(None, description="Comma-separated list of context file paths"),
     custom_prompt: Optional[str] = Query(None, alias="customPrompt", description="Custom prompt to use instead of default"),
+    mode: str = Query("converse", description="Session mode: 'converse' or 'cocreate'"),
 ) -> PromptPreviewResponse:
     """
     Preview the system prompt that would be used for a chat.
@@ -93,6 +94,7 @@ async def preview_prompt(
             custom_prompt=custom_prompt,
             contexts=context_list,
             working_directory=working_directory,
+            mode=mode,
         )
 
         return PromptPreviewResponse(

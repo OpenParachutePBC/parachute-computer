@@ -84,7 +84,6 @@ def _make_caps(**overrides) -> CapabilityBundle:
     defaults = dict(
         resolved_mcps=None,
         plugin_dirs=[],
-        skill_names=[],
         agents_dict=None,
         effective_trust="direct",
         warnings=[],
@@ -208,18 +207,11 @@ class TestDiscoverCapabilities:
                 return_value={},
             ),
             patch("parachute.core.orchestrator.resolve_mcp_servers", return_value=None),
-            patch("parachute.core.orchestrator.discover_skills", return_value=[]),
-            patch(
-                "parachute.core.orchestrator.generate_runtime_plugin", return_value=None
-            ),
-            patch("parachute.core.orchestrator.discover_plugins", return_value=[]),
-            patch("parachute.core.orchestrator.get_plugin_dirs", return_value=[]),
         ):
             bundle = await self.orch._discover_capabilities(agent, session, None)
 
         assert isinstance(bundle, CapabilityBundle)
         assert bundle.effective_trust == TrustLevel.DIRECT.value
-        assert bundle.skill_names == []
         assert bundle.warnings == []
 
     @pytest.mark.asyncio
@@ -234,12 +226,6 @@ class TestDiscoverCapabilities:
                 new_callable=AsyncMock,
                 side_effect=RuntimeError("MCP boom"),
             ),
-            patch("parachute.core.orchestrator.discover_skills", return_value=[]),
-            patch(
-                "parachute.core.orchestrator.generate_runtime_plugin", return_value=None
-            ),
-            patch("parachute.core.orchestrator.discover_plugins", return_value=[]),
-            patch("parachute.core.orchestrator.get_plugin_dirs", return_value=[]),
         ):
             bundle = await self.orch._discover_capabilities(agent, session, None)
 
@@ -262,12 +248,6 @@ class TestDiscoverCapabilities:
                 return_value={},
             ),
             patch("parachute.core.orchestrator.resolve_mcp_servers", return_value=None),
-            patch("parachute.core.orchestrator.discover_skills", return_value=[]),
-            patch(
-                "parachute.core.orchestrator.generate_runtime_plugin", return_value=None
-            ),
-            patch("parachute.core.orchestrator.discover_plugins", return_value=[]),
-            patch("parachute.core.orchestrator.get_plugin_dirs", return_value=[]),
         ):
             bundle = await self.orch._discover_capabilities(agent, session, "sandboxed")
 

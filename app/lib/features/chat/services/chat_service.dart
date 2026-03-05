@@ -111,6 +111,7 @@ class ChatService {
     String? agentType,  // Agent type for new sessions (e.g., 'orchestrator')
     String? agentPath,  // Path to agent definition file (e.g., 'Daily/.agents/orchestrator.md')
     String? trustLevel,  // Trust level override (full, vault, sandboxed)
+    String? mode,  // Session mode: 'converse' or 'cocreate'
     String? model,  // Model override (e.g., 'claude-sonnet-4-5-20250929')
     String? containerId,  // Container env slug for sandboxed sessions
   }) async* {
@@ -154,6 +155,7 @@ class ChatService {
       if (agentType != null) 'agentType': agentType,
       if (agentPath != null) 'agentPath': agentPath,
       if (trustLevel != null) 'trustLevel': trustLevel,
+      if (mode != null) 'mode': mode,
       if (model != null) 'model': model,
       if (containerId != null) 'containerId': containerId,
     };

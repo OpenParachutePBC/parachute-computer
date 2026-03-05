@@ -91,6 +91,9 @@ class ChatMessagesState {
   /// Set from SSE session event so config sheet can display it immediately
   final String? trustLevel;
 
+  /// Session mode: 'converse' or 'cocreate'
+  final String? mode;
+
   const ChatMessagesState({
     this.messages = const [],
     this.isStreaming = false,
@@ -113,6 +116,7 @@ class ChatMessagesState {
     this.reloadClaudeMd = false,
     this.pendingUserQuestion,
     this.trustLevel,
+    this.mode,
   });
 
   /// Whether this session is continuing from another
@@ -149,6 +153,7 @@ class ChatMessagesState {
     bool? reloadClaudeMd,
     PendingUserQuestion? pendingUserQuestion,
     String? trustLevel,
+    String? mode,
     bool clearSessionUnavailable = false,
     bool clearWorkingDirectory = false,
     bool clearViewingSession = false,
@@ -176,6 +181,7 @@ class ChatMessagesState {
       reloadClaudeMd: reloadClaudeMd ?? this.reloadClaudeMd,
       pendingUserQuestion: clearPendingUserQuestion ? null : (pendingUserQuestion ?? this.pendingUserQuestion),
       trustLevel: trustLevel ?? this.trustLevel,
+      mode: mode ?? this.mode,
     );
   }
 }
@@ -476,6 +482,7 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
         selectedContexts: effectiveContexts, // Use persisted or current contexts
         contextsExplicitlySet: effectiveContextsExplicit, // Mark explicit if loaded from DB
         trustLevel: loadedSession.trustLevel, // Preserve trust level from server
+        mode: loadedSession.mode, // Preserve mode from server
       );
 
       // Restore pendingUserQuestion if server has an active pending question
@@ -1141,6 +1148,7 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
     String? agentType,
     String? agentPath,
     String? trustLevel,
+    String? mode,
     String? containerEnvId,
   }) async {
     if (state.isStreaming) {
@@ -1208,6 +1216,7 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
       sessionId: displaySessionId,
       error: null,
       trustLevel: trustLevel ?? state.trustLevel,
+      mode: mode ?? state.mode,
     );
 
     // Include prior conversation context if this is a continuation
@@ -1295,6 +1304,7 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
         agentType: agentType,
         agentPath: agentPath,
         trustLevel: trustLevel,
+        mode: mode ?? state.mode,
         model: modelApiValue,
         containerId: activeContainerEnv,
       );

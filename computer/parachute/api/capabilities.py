@@ -13,7 +13,6 @@ import yaml
 from fastapi import APIRouter, Request
 
 from parachute.config import get_settings
-from parachute.core.skills import discover_skills
 from parachute.lib.mcp_loader import load_mcp_servers, _get_server_type
 from parachute.models.agent import create_vault_agent
 
@@ -64,14 +63,16 @@ async def get_capabilities(request: Request) -> dict[str, Any]:
                 "source": "sdk",
             })
 
-    # Skills
+    # Skills: SDK discovers .claude/skills/ natively; enumerate for UI display only
     skill_items: list[dict[str, Any]] = []
-    for skill in discover_skills(vault_path):
-        skill_items.append({
-            "name": skill.name,
-            "description": skill.description,
-            "version": skill.version,
-        })
+    sdk_skills_dir = vault_path / ".claude" / "skills"
+    if sdk_skills_dir.exists():
+        for skill_file in sorted(sdk_skills_dir.glob("*.md")):
+            skill_items.append({
+                "name": skill_file.stem,
+                "description": "",
+                "version": "1.0.0",
+            })
 
     # MCP servers
     mcp_items: list[dict[str, Any]] = []

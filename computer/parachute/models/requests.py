@@ -142,6 +142,10 @@ class ChatRequest(BaseModel):
         pattern=r"^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$",
         description="Named container env slug to run this session in. NULL = private container.",
     )
+    mode: Optional[str] = Field(
+        default=None,
+        description="Session mode: 'converse' or 'cocreate'. Persisted on session creation.",
+    )
 
     # Legacy fields for compatibility
     agent_path: Optional[str] = Field(alias="agentPath", default=None)
