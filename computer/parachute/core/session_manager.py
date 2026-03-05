@@ -163,6 +163,7 @@ class SessionManager:
                         source=SessionSource.PARACHUTE,
                         working_directory=relative_wd,
                         continued_from=continued_from,
+                        mode=mode,
                     )
                 )
                 resume_info = ResumeInfo(

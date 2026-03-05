@@ -181,6 +181,7 @@ class _SandboxCallContext:
     captured_model: str | None
     agent_type: str | None
     effective_working_dir: str | None
+    mode: str = "converse"
 
 
 class Orchestrator:
@@ -569,6 +570,7 @@ class Orchestrator:
                         message=message,
                         agent_type=agent_type,
                         captured_model=None,
+                        mode=effective_mode,
                     ):
                         yield event
                 elif session.source in BOT_SOURCES:
@@ -1244,6 +1246,7 @@ class Orchestrator:
                         ctx.captured_model,
                         title=title,
                         agent_type=ctx.agent_type,
+                        mode=ctx.mode,
                     )
                     ctx.sbx["finalized"] = True
                     logger.info(
@@ -1279,6 +1282,7 @@ class Orchestrator:
         message: str,
         agent_type: Optional[str],
         captured_model: Optional[str],
+        mode: str = "converse",
     ) -> AsyncGenerator[dict, None]:
         """Run the sandboxed (Docker container) execution path.
 
@@ -1408,6 +1412,7 @@ class Orchestrator:
             captured_model=captured_model,
             agent_type=agent_type,
             effective_working_dir=effective_working_dir,
+            mode=mode,
         )
 
         # Process sandbox events; retry with history injection if resume fails
@@ -1627,7 +1632,7 @@ class Orchestrator:
             vault_claude = Path.home() / "CLAUDE.md"
             if vault_claude.exists():
                 try:
-                    content = vault_claude.read_text().strip()
+                    content = (await asyncio.to_thread(vault_claude.read_text)).strip()
                     if content:
                         append_parts.append(content)
                         metadata["claude_md_loaded"] = True
