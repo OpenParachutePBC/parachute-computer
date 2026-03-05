@@ -35,6 +35,12 @@ _NOW = datetime.now(timezone.utc)
 # ---------------------------------------------------------------------------
 
 
+async def _aiter(items):
+    """Module-level async iterator helper."""
+    for item in items:
+        yield item
+
+
 def _make_session(
     session_id: str = "test-session-001",
     source: SessionSource = SessionSource.PARACHUTE,
@@ -67,12 +73,30 @@ def _make_orchestrator(parachute_dir: Path) -> Orchestrator:
     settings.include_user_plugins = False
     settings.plugin_dirs = []
 
-    orch = Orchestrator(
+    return Orchestrator(
         parachute_dir=parachute_dir,
         session_store=session_store,
         settings=settings,
     )
-    return orch
+
+
+def _make_caps(**overrides) -> CapabilityBundle:
+    defaults = dict(
+        resolved_mcps=None,
+        plugin_dirs=[],
+        skill_names=[],
+        agents_dict=None,
+        effective_trust="direct",
+        warnings=[],
+    )
+    defaults.update(overrides)
+    return CapabilityBundle(**defaults)
+
+
+def _make_resume_info() -> MagicMock:
+    ri = MagicMock()
+    ri.model_dump.return_value = {}
+    return ri
 
 
 # ---------------------------------------------------------------------------
@@ -130,7 +154,9 @@ class TestSaveAttachments:
         assert failures == []
         assert "notes.txt" in block
 
-    def test_records_failure_on_bad_base64(self):
+    def test_records_failure_on_bad_base64(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
         block, failures = self.orch._save_attachments(
             [
                 {
@@ -253,28 +279,11 @@ class TestDiscoverCapabilities:
 # ---------------------------------------------------------------------------
 
 
-def _make_caps(**overrides) -> CapabilityBundle:
-    defaults = dict(
-        resolved_mcps=None,
-        plugin_dirs=[],
-        skill_names=[],
-        agents_dict=None,
-        effective_trust="direct",
-        warnings=[],
-    )
-    defaults.update(overrides)
-    return CapabilityBundle(**defaults)
-
-
-def _make_resume_info() -> MagicMock:
-    ri = MagicMock()
-    ri.model_dump.return_value = {}
-    return ri
-
-
 class TestRunTrusted:
     def setup_method(self):
         self.orch = _make_orchestrator(Path.home())
+        self._session = _make_session()
+        self._permission_handler = self._make_permission_handler(self._session)
 
     def _make_permission_handler(self, session):
         ph = MagicMock()
@@ -283,13 +292,34 @@ class TestRunTrusted:
         ph.get_pending.return_value = []
         return ph
 
+    def _call_run_trusted(self, **overrides):
+        """Build default _run_trusted kwargs and apply overrides."""
+        defaults = dict(
+            session=self._session,
+            caps=_make_caps(),
+            actual_message="test",
+            effective_prompt="",
+            is_full_prompt=False,
+            effective_cwd=Path.home(),
+            resume_id=None,
+            model=None,
+            claude_token="tok",
+            message_queue=asyncio.Queue(),
+            interrupt=MagicMock(is_interrupted=False),
+            permission_handler=self._permission_handler,
+            permission_denials=[],
+            is_new=False,
+            message="test",
+            working_directory=None,
+            agent_type=None,
+            resume_info=_make_resume_info(),
+            start_time=0.0,
+        )
+        defaults.update(overrides)
+        return self.orch._run_trusted(**defaults)
+
     @pytest.mark.asyncio
     async def test_yields_done_event_on_success(self):
-        session = _make_session()
-        caps = _make_caps()
-        permission_handler = self._make_permission_handler(session)
-
-        # Simulate SDK events: session_id, assistant text, result
         sdk_events = [
             {
                 "type": "assistant",
@@ -305,13 +335,13 @@ class TestRunTrusted:
         with (
             patch(
                 "parachute.core.orchestrator.query_streaming",
-                return_value=self._aiter(sdk_events),
+                return_value=_aiter(sdk_events),
             ),
             patch.object(
                 self.orch.session_manager,
                 "finalize_session",
                 new_callable=AsyncMock,
-                return_value=session,
+                return_value=self._session,
             ),
             patch.object(
                 self.orch.session_manager,
@@ -320,117 +350,36 @@ class TestRunTrusted:
             ),
         ):
             events = []
-            async for e in self.orch._run_trusted(
-                session=session,
-                caps=caps,
-                actual_message="test",
-                effective_prompt="",
-                is_full_prompt=False,
-                effective_cwd=Path.home(),
-                resume_id=None,
-                model=None,
-                claude_token="tok",
-                message_queue=asyncio.Queue(),
-                interrupt=MagicMock(is_interrupted=False),
-                permission_handler=permission_handler,
-                permission_denials=[],
-                is_new=True,
-                force_new=False,
-                message="test",
-                working_directory=None,
-                agent_type=None,
-                resume_info=_make_resume_info(),
-                start_time=0.0,
-            ):
+            async for e in self._call_run_trusted(is_new=True):
                 events.append(e)
 
-        types = [e["type"] for e in events]
-        assert "done" in types
+        assert "done" in [e["type"] for e in events]
 
     @pytest.mark.asyncio
     async def test_yields_typed_error_on_exception(self):
-        session = _make_session()
-        caps = _make_caps()
-        permission_handler = self._make_permission_handler(session)
-
         with patch(
             "parachute.core.orchestrator.query_streaming",
             side_effect=RuntimeError("boom"),
         ):
             events = []
-            async for e in self.orch._run_trusted(
-                session=session,
-                caps=caps,
-                actual_message="test",
-                effective_prompt="",
-                is_full_prompt=False,
-                effective_cwd=Path.home(),
-                resume_id=None,
-                model=None,
-                claude_token="tok",
-                message_queue=asyncio.Queue(),
-                interrupt=MagicMock(is_interrupted=False),
-                permission_handler=permission_handler,
-                permission_denials=[],
-                is_new=False,
-                force_new=False,
-                message="test",
-                working_directory=None,
-                agent_type=None,
-                resume_info=_make_resume_info(),
-                start_time=0.0,
-            ):
+            async for e in self._call_run_trusted():
                 events.append(e)
 
         types = [e["type"] for e in events]
         assert "error" in types or "typed_error" in types
 
     @pytest.mark.asyncio
-    async def test_yields_aborted_on_cancelled(self):
-        session = _make_session()
-        caps = _make_caps()
-        permission_handler = self._make_permission_handler(session)
-
-        async def raise_cancelled():
-            raise asyncio.CancelledError()
-            yield  # make it an async generator
-
+    async def test_yields_aborted_and_raises_on_cancelled(self):
         with patch(
             "parachute.core.orchestrator.query_streaming",
             side_effect=asyncio.CancelledError(),
         ):
             events = []
-            async for e in self.orch._run_trusted(
-                session=session,
-                caps=caps,
-                actual_message="test",
-                effective_prompt="",
-                is_full_prompt=False,
-                effective_cwd=Path.home(),
-                resume_id=None,
-                model=None,
-                claude_token="tok",
-                message_queue=asyncio.Queue(),
-                interrupt=MagicMock(is_interrupted=False),
-                permission_handler=permission_handler,
-                permission_denials=[],
-                is_new=False,
-                force_new=False,
-                message="test",
-                working_directory=None,
-                agent_type=None,
-                resume_info=_make_resume_info(),
-                start_time=0.0,
-            ):
-                events.append(e)
+            with pytest.raises(asyncio.CancelledError):
+                async for e in self._call_run_trusted():
+                    events.append(e)
 
-        types = [e["type"] for e in events]
-        assert "aborted" in types
-
-    @staticmethod
-    async def _aiter(items):
-        for item in items:
-            yield item
+        assert "aborted" in [e["type"] for e in events]
 
 
 # ---------------------------------------------------------------------------
@@ -451,7 +400,7 @@ class TestRunSandboxed:
         self.orch._sandbox.is_available = AsyncMock(return_value=True)
         self.orch._sandbox.image_exists = AsyncMock(return_value=True)
         self.orch._sandbox.run_session = MagicMock(
-            return_value=self._aiter(
+            return_value=_aiter(
                 [
                     {"type": "done", "sessionId": "sandbox-sid-1"},
                 ]
@@ -507,10 +456,4 @@ class TestRunSandboxed:
         ):
             events.append(e)
 
-        types = [e["type"] for e in events]
-        assert "error" in types
-
-    @staticmethod
-    async def _aiter(items):
-        for item in items:
-            yield item
+        assert "error" in [e["type"] for e in events]

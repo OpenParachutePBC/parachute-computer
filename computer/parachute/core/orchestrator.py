@@ -211,14 +211,12 @@ class CapabilityBundle:
 class _SandboxCallContext:
     """Per-call state for sandbox event processing (replaces 9-variable closure)."""
 
-    sbx: dict
+    sbx: dict  # mutable state bag — contains "message", "session", "had_text", etc.
     sandbox_sid: str
     effective_trust: str
     is_new: bool
     captured_model: str | None
-    message: str
     agent_type: str | None
-    session_id: str
     effective_working_dir: str | None
 
 
@@ -642,7 +640,6 @@ class Orchestrator:
                     permission_handler=permission_handler,
                     permission_denials=permission_denials,
                     is_new=is_new,
-                    force_new=force_new,
                     message=message,
                     working_directory=working_directory,
                     agent_type=agent_type,
@@ -652,11 +649,10 @@ class Orchestrator:
                     yield event
 
         except asyncio.CancelledError:
-            yield AbortedEvent(
-                message="Stream cancelled",
-                session_id=session.id,
-                partial_response=None,
-            ).model_dump(by_alias=True)
+            # Pre-stream cancellation (during capability discovery / setup).
+            # During-stream cancellation is handled by _run_trusted / _run_sandboxed
+            # which yield an AbortedEvent before re-raising here.
+            raise
 
         except Exception as e:
             logger.error(f"Streaming error: {e}", exc_info=True)
@@ -943,7 +939,6 @@ class Orchestrator:
         permission_handler: Any,
         permission_denials: list[dict[str, Any]],
         is_new: bool,
-        force_new: bool,
         message: str,
         working_directory: Optional[str],
         agent_type: Optional[str],
@@ -1210,7 +1205,7 @@ class Orchestrator:
 
                 exchange_number = session.message_count // 2 + 1
                 session_metadata = session.metadata or {}
-                asyncio.create_task(
+                _bridge_task = asyncio.create_task(
                     bridge_observe(
                         session_id=final_session_id,
                         message=message,
@@ -1223,6 +1218,11 @@ class Orchestrator:
                         vault_path=Path.home(),
                         claude_token=self.settings.claude_code_oauth_token,
                     )
+                )
+                _bridge_task.add_done_callback(
+                    lambda t: logger.warning(f"bridge_observe error: {t.exception()}")
+                    if not t.cancelled() and t.exception()
+                    else None
                 )
 
             duration_ms = int((time.time() - start_time) * 1000)
@@ -1244,6 +1244,7 @@ class Orchestrator:
                 session_id=captured_session_id or session.id,
                 partial_response=result_text if result_text else None,
             ).model_dump(by_alias=True)
+            raise
 
         except Exception as e:
             logger.error(f"Streaming error: {e}", exc_info=True)
@@ -1292,8 +1293,8 @@ class Orchestrator:
             if ctx.is_new and not ctx.sbx["finalized"]:
                 try:
                     title = (
-                        generate_title_from_message(ctx.message)
-                        if ctx.message.strip()
+                        generate_title_from_message(ctx.sbx["message"])
+                        if ctx.sbx["message"].strip()
                         else None
                     )
                     _set_title_source(ctx.sbx["session"], "default")
@@ -1465,9 +1466,7 @@ class Orchestrator:
             effective_trust=caps.effective_trust,
             is_new=is_new,
             captured_model=captured_model,
-            message=message,
             agent_type=agent_type,
-            session_id=session.id,
             effective_working_dir=effective_working_dir,
         )
 
