@@ -13,6 +13,7 @@ import asyncio
 import logging
 import time
 import uuid
+from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, AsyncGenerator, Optional
@@ -22,15 +23,19 @@ from parachute.core.claude_sdk import query_streaming, QueryInterrupt
 from parachute.core.permission_handler import PermissionHandler
 from parachute.core.plugins import discover_plugins, get_plugin_dirs
 from parachute.core.sandbox import DockerSandbox, AgentSandboxConfig
-from parachute.core.skills import generate_runtime_plugin, cleanup_runtime_plugin, discover_skills
+from parachute.core.skills import generate_runtime_plugin, discover_skills
 from parachute.core.session_manager import SessionManager
 from parachute.db.graph_sessions import GraphSessionStore
 from parachute.lib.context_loader import format_context_for_prompt, load_agent_context
 from parachute.lib.credentials import load_credentials
 from parachute.core.context_folders import ContextFolderService
 from parachute.core.capability_filter import filter_by_trust_level
-from parachute.lib.mcp_loader import load_mcp_servers, resolve_mcp_servers, validate_and_filter_servers
-from parachute.models.agent import AgentDefinition, AgentType, create_vault_agent
+from parachute.lib.mcp_loader import (
+    load_mcp_servers,
+    resolve_mcp_servers,
+    validate_and_filter_servers,
+)
+from parachute.models.agent import AgentDefinition, create_vault_agent
 from parachute.lib.typed_errors import ErrorCode, parse_error
 from parachute.models.events import (
     AbortedEvent,
@@ -38,8 +43,6 @@ from parachute.models.events import (
     ErrorEvent,
     InitEvent,
     ModelEvent,
-    PermissionDeniedEvent,
-    PermissionRequestEvent,
     PromptMetadataEvent,
     SessionEvent,
     SessionUnavailableEvent,
@@ -52,7 +55,13 @@ from parachute.models.events import (
     UserQuestionEvent,
     WarningEvent,
 )
-from parachute.models.session import BOT_SOURCES, ResumeInfo, Session, SessionSource, SessionUpdate, TrustLevel
+from parachute.models.session import (
+    BOT_SOURCES,
+    Session,
+    SessionSource,
+    SessionUpdate,
+    TrustLevel,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -64,13 +73,13 @@ def generate_title_from_message(message: str, max_length: int = 60) -> str:
     Takes the first line or sentence, truncates to max_length.
     """
     # Take first line
-    first_line = message.split('\n')[0].strip()
+    first_line = message.split("\n")[0].strip()
 
     # If too long, truncate at word boundary
     if len(first_line) > max_length:
         truncated = first_line[:max_length]
         # Try to break at last space
-        last_space = truncated.rfind(' ')
+        last_space = truncated.rfind(" ")
         if last_space > max_length // 2:
             truncated = truncated[:last_space]
         return truncated + "..."
@@ -186,6 +195,31 @@ class InjectResult(StrEnum):
     QUEUE_FULL = "queue_full"
 
 
+@dataclass
+class CapabilityBundle:
+    """Resolved capabilities for a run_streaming() call."""
+
+    resolved_mcps: dict | None
+    plugin_dirs: list[Path]
+    skill_names: list[str]
+    agents_dict: dict | None
+    effective_trust: str
+    warnings: list[dict] = field(default_factory=list)  # Serialized WarningEvent dicts
+
+
+@dataclass
+class _SandboxCallContext:
+    """Per-call state for sandbox event processing (replaces 9-variable closure)."""
+
+    sbx: dict  # mutable state bag — contains "message", "session", "had_text", etc.
+    sandbox_sid: str
+    effective_trust: str
+    is_new: bool
+    captured_model: str | None
+    agent_type: str | None
+    effective_working_dir: str | None
+
+
 class Orchestrator:
     """
     Central agent execution controller.
@@ -193,7 +227,9 @@ class Orchestrator:
     Manages the lifecycle of agent interactions with streaming support.
     """
 
-    def __init__(self, parachute_dir: Path, session_store: GraphSessionStore, settings: Settings):
+    def __init__(
+        self, parachute_dir: Path, session_store: GraphSessionStore, settings: Settings
+    ):
         """Initialize orchestrator."""
         self.parachute_dir = parachute_dir
         self.session_store = session_store
@@ -231,9 +267,13 @@ class Orchestrator:
         # Remove container_env DB records for envs where every session is empty
         # (message_count == 0) and the env is older than 5 minutes. These are
         # abandoned or failed sessions that never sent a message.
-        orphan_slugs = await self.session_store.list_orphan_container_env_slugs(min_age_minutes=5)
+        orphan_slugs = await self.session_store.list_orphan_container_env_slugs(
+            min_age_minutes=5
+        )
         if orphan_slugs:
-            logger.info(f"Pruning {len(orphan_slugs)} orphan container_env record(s): {orphan_slugs}")
+            logger.info(
+                f"Pruning {len(orphan_slugs)} orphan container_env record(s): {orphan_slugs}"
+            )
             for slug in orphan_slugs:
                 try:
                     await self.session_store.delete_container_env(slug)
@@ -266,7 +306,13 @@ class Orchestrator:
         """
         Run an agent with streaming response.
 
-        This is the main entry point for chat interactions.
+        This is the main entry point for chat interactions.  Thin coordinator
+        that delegates to four private phase methods:
+
+        1. ``_save_attachments()``   — save base64 attachments to vault
+        2. ``_discover_capabilities()`` — MCP / skills / plugin / trust resolution
+        3. ``_run_trusted()``        — direct SDK execution path
+        4. ``_run_sandboxed()``      — Docker container execution path
 
         Yields:
             SSE events as dictionaries
@@ -275,9 +321,13 @@ class Orchestrator:
 
         # Load agent — always use the built-in vault-agent.
         # Custom agents are discovered by the SDK via .claude/agents/ (setting_sources=["project"]).
-        logger.info(f"run_streaming: agent_path={agent_path!r}, agent_type={agent_type!r}")
+        logger.info(
+            f"run_streaming: agent_path={agent_path!r}, agent_type={agent_type!r}"
+        )
         if agent_path and agent_path != "vault-agent":
-            logger.info(f"Ignoring agent_path={agent_path!r} — SDK handles agent discovery natively")
+            logger.info(
+                f"Ignoring agent_path={agent_path!r} — SDK handles agent discovery natively"
+            )
         agent = create_vault_agent()
 
         # Get or create session (before building prompt so we can load prior conversation)
@@ -293,7 +343,11 @@ class Orchestrator:
         # - Claude Code sessions with existing JSONL: use SDK resume directly
         # - Other imports (Claude Web, ChatGPT): inject history as context
         effective_prior_conversation = prior_conversation
-        imported_sources = (SessionSource.CLAUDE_CODE, SessionSource.CLAUDE_WEB, SessionSource.CHATGPT)
+        imported_sources = (
+            SessionSource.CLAUDE_CODE,
+            SessionSource.CLAUDE_WEB,
+            SessionSource.CHATGPT,
+        )
         if not prior_conversation and session.source in imported_sources:
             # Check if SDK can resume this session directly
             sdk_can_resume = self.session_manager._check_sdk_session_exists(
@@ -302,27 +356,41 @@ class Orchestrator:
 
             if session.source == SessionSource.CLAUDE_CODE and sdk_can_resume:
                 # Claude Code session with existing JSONL - let SDK resume directly
-                logger.info(f"Claude Code session has JSONL, using SDK resume: {session.id[:8]}...")
+                logger.info(
+                    f"Claude Code session has JSONL, using SDK resume: {session.id[:8]}..."
+                )
                 # Don't inject prior conversation, don't force is_new
                 # SDK will load the full history automatically
             else:
                 # No SDK file or non-Claude-Code import - inject as context
-                loaded_prior = await self.session_manager.get_prior_conversation(session)
+                loaded_prior = await self.session_manager.get_prior_conversation(
+                    session
+                )
                 if loaded_prior:
                     effective_prior_conversation = loaded_prior
-                    logger.info(f"Loaded prior conversation for {session.source.value} session: {session.id[:8]}...")
+                    logger.info(
+                        f"Loaded prior conversation for {session.source.value} session: {session.id[:8]}..."
+                    )
                     # Force new SDK session since we're injecting context, not resuming
                     is_new = True
 
         # Extract config overrides from session metadata (set via PATCH /config endpoint)
-        config_overrides = (session.metadata or {}).get("config_overrides", {}) if hasattr(session, "metadata") else {}
+        config_overrides = (
+            (session.metadata or {}).get("config_overrides", {})
+            if hasattr(session, "metadata")
+            else {}
+        )
 
         # Determine working directory first (needed for prompt building)
         # Priority: explicit param > config_overrides > session's stored value > vault path
         # Note: working_directory is stored as RELATIVE to vault_path in the database
         override_working_dir = config_overrides.get("working_directory")
-        effective_working_dir: Optional[str] = working_directory or override_working_dir or session.working_directory
-        effective_cwd = self.session_manager.resolve_working_directory(effective_working_dir)
+        effective_working_dir: Optional[str] = (
+            working_directory or override_working_dir or session.working_directory
+        )
+        effective_cwd = self.session_manager.resolve_working_directory(
+            effective_working_dir
+        )
 
         # For existing sessions, always verify the transcript's cwd so the SDK
         # can locate the JSONL file via path encoding.  A session with
@@ -395,72 +463,16 @@ class Orchestrator:
             if not message.strip():
                 actual_message = initial_context
             else:
-                actual_message = f"## Context\n\n{initial_context}\n\n---\n\n## Request\n\n{message}"
+                actual_message = (
+                    f"## Context\n\n{initial_context}\n\n---\n\n## Request\n\n{message}"
+                )
 
-        # Handle attachments
-        # For now, we save attachments to the vault and reference them in the message
-        attachment_failures: list[str] = []
-        if attachments:
-            attachment_parts = []
-            for att in attachments:
-                att_type = att.get("type", "unknown")
-                file_name = att.get("fileName", "file")
-                base64_data = att.get("base64Data")
-                mime_type = att.get("mimeType", "application/octet-stream")
-
-                if base64_data:
-                    import base64
-                    from datetime import datetime
-
-                    # Save to Chat/assets/YYYY-MM-DD/ (date-based organization)
-                    now = datetime.now()
-                    date_folder = now.strftime("%Y-%m-%d")
-                    asset_dir = Path.home() / "Chat" / "assets" / date_folder
-                    asset_dir.mkdir(parents=True, exist_ok=True)
-
-                    # Generate unique filename (time-based, no date prefix since folder has date)
-                    timestamp = now.strftime("%H-%M-%S")
-                    ext = Path(file_name).suffix or ".bin"
-                    safe_name = Path(file_name).stem[:30]  # Truncate long names
-                    unique_name = f"{timestamp}_{safe_name}{ext}"
-                    file_path = asset_dir / unique_name
-
-                    # Decode and save
-                    try:
-                        file_bytes = base64.b64decode(base64_data)
-                        file_path.write_bytes(file_bytes)
-                        logger.info(f"Saved attachment: {file_path}")
-
-                        # Use vault-relative path for display (enables UI asset fetching)
-                        relative_path = f"Chat/assets/{date_folder}/{unique_name}"
-
-                        # Build reference for the message
-                        if att_type == "image":
-                            # For images, use markdown image syntax with relative path
-                            # Also include absolute path for Claude to read
-                            attachment_parts.append(f"![{file_name}]({relative_path})\n*(Absolute path for reading: {file_path})*")
-                        elif att_type in ("text", "code"):
-                            # For text/code files, save to disk and reference by path
-                            # Claude can use the Read tool to access the content
-                            # This keeps the message size manageable for large files
-                            file_size_kb = len(file_bytes) / 1024
-                            attachment_parts.append(
-                                f"**[{file_name}]({relative_path})** ({file_size_kb:.1f} KB)\n"
-                                f"*(Absolute path for reading: {file_path})*"
-                            )
-                        elif att_type == "pdf":
-                            # For PDFs, reference with both paths
-                            attachment_parts.append(f"**[{file_name}]({relative_path})**\n*(Absolute path for reading: {file_path})*")
-                        else:
-                            attachment_parts.append(f"[{file_name}]({relative_path})")
-                    except Exception as e:
-                        logger.error(f"Failed to save attachment {file_name}: {e}")
-                        attachment_parts.append(f"[Failed to attach: {file_name}]")
-                        attachment_failures.append(f"{file_name}: {e}")
-
-            if attachment_parts:
-                attachment_text = "\n\n".join(attachment_parts)
-                actual_message = f"{actual_message}\n\n## Attachments\n\n{attachment_text}"
+        # Phase 1b: Save attachments and append to message
+        attachment_block, attachment_failures = self._save_attachments(
+            attachments or []
+        )
+        if attachment_block:
+            actual_message = f"{actual_message}\n\n## Attachments\n\n{attachment_block}"
 
         # Emit user message event immediately so clients can display it
         # This ensures the user's message is visible even if they rejoin mid-stream
@@ -489,159 +501,20 @@ class Orchestrator:
         # Set up interrupt handler and message injection queue
         interrupt = QueryInterrupt()
         message_queue: asyncio.Queue[str] = asyncio.Queue(maxsize=20)
-        inject_count = 0
-        initial_user_echo_seen = False
         stream_session_id = session.id if session.id != "pending" else None
         if stream_session_id:
             self.active_streams[stream_session_id] = interrupt
             self.active_stream_queues[stream_session_id] = message_queue
 
-        # Track results
-        result_text = ""
-        text_blocks: list[str] = []
-        tool_calls: list[dict[str, Any]] = []
-        permission_denials: list[dict[str, Any]] = []
-        captured_session_id: Optional[str] = None
-        captured_model: Optional[str] = None
-        session_finalized = False  # Track if session has been saved to DB
+        # permission_handler is None until Phase 2 completes; safe for finally block
+        permission_handler = None
 
         try:
-            # Load MCP servers with OAuth tokens attached for HTTP servers
-            # Note: SDK supports both stdio and HTTP servers, but HTTP servers need `type: "http"`
-            # Wrap in try/catch for resilience - MCP misconfig shouldn't crash the server
-            resolved_mcps = None
-            mcp_warnings: list[str] = []
-            mcp_load_warning: WarningEvent | None = None
-            try:
-                global_mcps = await load_mcp_servers(Path.home())
-                resolved_mcps = resolve_mcp_servers(agent.mcp_servers, global_mcps)
+            # Phase 2: Capability discovery
+            caps = await self._discover_capabilities(agent, session, trust_level)
 
-                # Validate and filter out problematic MCP servers
-                if resolved_mcps:
-                    resolved_mcps, mcp_warnings = validate_and_filter_servers(resolved_mcps)
+            is_full_prompt = prompt_metadata.get("prompt_source") in ("custom", "agent")
 
-                    # Log any warnings but continue
-                    if mcp_warnings:
-                        logger.warning(
-                            f"MCP configuration issues (continuing with valid servers): "
-                            f"{'; '.join(mcp_warnings[:3])}"
-                            f"{'...' if len(mcp_warnings) > 3 else ''}"
-                        )
-            except Exception as e:
-                # MCP loading failed entirely - log and continue without MCP
-                logger.error(f"Failed to load MCP servers (continuing without MCP): {e}")
-                resolved_mcps = None
-                mcp_load_warning = WarningEvent(
-                    code=ErrorCode.MCP_LOAD_FAILED,
-                    title="MCP Tools Unavailable",
-                    message="MCP servers failed to load. Chat will continue without MCP tools.",
-                    details=[str(e)],
-                    session_id=session.id if session.id != "pending" else None,
-                )
-
-            # Discover skills and generate runtime plugin
-            plugin_dirs: list[Path] = []
-            discovered_skills = discover_skills(Path.home())
-            skill_names = [s.name for s in discovered_skills]
-            skills_plugin_dir = generate_runtime_plugin(Path.home(), skills=discovered_skills)
-            if skills_plugin_dir:
-                plugin_dirs.append(skills_plugin_dir)
-                logger.info(f"Generated skills plugin at {skills_plugin_dir}")
-
-            # Discover installed plugins (parachute-managed + user + CLI)
-            # Manifest-based plugins have content in vault standard locations already.
-            # Legacy/CLI plugins still need plugin_dirs for SDK discovery.
-            settings = get_settings()
-            installed_plugins = discover_plugins(
-                Path.home(),
-                include_user=settings.include_user_plugins,
-            )
-            legacy_plugin_dirs = get_plugin_dirs(installed_plugins)
-            plugin_dirs.extend(legacy_plugin_dirs)
-
-            # Merge MCPs from legacy/CLI plugins only (manifest-based plugins
-            # already have their MCPs copied into vault/.mcp.json at install time)
-            for plugin in installed_plugins:
-                # Skip manifest-based plugins (path ends in .json)
-                if Path(plugin.path).suffix == ".json":
-                    continue
-                if plugin.mcps and resolved_mcps is not None:
-                    for mcp_name, mcp_config in plugin.mcps.items():
-                        if mcp_name not in resolved_mcps:
-                            resolved_mcps[mcp_name] = mcp_config
-                            logger.info(f"Added MCP '{mcp_name}' from plugin '{plugin.slug}'")
-
-            if legacy_plugin_dirs:
-                logger.info(
-                    f"Discovered {len(installed_plugins)} plugins, "
-                    f"{len(legacy_plugin_dirs)} legacy plugin dirs"
-                )
-
-            # Load additional configured plugin directories
-            for dir_str in settings.plugin_dirs:
-                plugin_path = Path(dir_str).expanduser().resolve()
-                if plugin_path.is_dir():
-                    plugin_dirs.append(plugin_path)
-                    logger.info(f"Loaded configured plugin: {plugin_path}")
-                else:
-                    logger.warning(f"Plugin directory not found, skipping: {plugin_path}")
-
-            # Custom agents: SDK discovers .claude/agents/ natively via setting_sources=["project"]
-            agents_dict = None
-
-            # Determine effective trust level early (needed for capability filtering)
-            # Priority: client param > session stored > direct (default)
-            from parachute.core.trust import normalize_trust_level
-
-            logger.info(f"Trust resolution: client={trust_level}, session.trust_level={session.trust_level}")
-
-            if trust_level:
-                # Client explicitly set trust level — use it
-                try:
-                    session_trust = TrustLevel(normalize_trust_level(trust_level))
-                    logger.info(f"Using client trust: {trust_level} -> {session_trust.value}")
-                except ValueError:
-                    logger.warning(f"Invalid trust_level from client: {trust_level}")
-                    session_trust = session.get_trust_level()
-            elif session.trust_level:
-                # Session has stored trust level (resumed session)
-                session_trust = session.get_trust_level()
-            else:
-                # Default to direct (bare metal) — sandboxed requires explicit opt-in
-                # via client param, session config, or bot connector
-                session_trust = TrustLevel.DIRECT
-
-            effective_trust = session_trust.value
-
-            # Stage 1: Trust-level capability filtering
-            # MCPs with trust_level annotation are only available at that trust or above
-            if resolved_mcps:
-                pre_count = len(resolved_mcps)
-                resolved_mcps = filter_by_trust_level(resolved_mcps, effective_trust)
-                if len(resolved_mcps) < pre_count:
-                    logger.info(
-                        f"Trust filter ({effective_trust}): "
-                        f"{pre_count} → {len(resolved_mcps)} MCPs"
-                    )
-
-            # Inject session context into MCP server env vars
-            if resolved_mcps:
-                session_id = session.id
-                trust_level_str = effective_trust
-
-                for mcp_name, mcp_config in resolved_mcps.items():
-                    # Shallow copy to avoid cache pollution across sessions
-                    env = {**mcp_config.get("env", {})}
-                    # Direct assignment - orchestrator is authoritative source
-                    env["PARACHUTE_SESSION_ID"] = session_id
-                    env["PARACHUTE_TRUST_LEVEL"] = trust_level_str
-                    env["PARACHUTE_CONTAINER_ENV_ID"] = session.container_env_id or ""
-                    # Update config with new env dict
-                    resolved_mcps[mcp_name] = {**mcp_config, "env": env}
-
-                logger.info(f"Injected session context into {len(resolved_mcps)} MCP servers")
-
-            # Yield prompt metadata event (after capability discovery + filtering)
             yield PromptMetadataEvent(
                 prompt_source=prompt_metadata["prompt_source"],
                 prompt_source_path=prompt_metadata["prompt_source_path"],
@@ -649,36 +522,35 @@ class Orchestrator:
                 context_tokens=prompt_metadata["context_tokens"],
                 context_truncated=prompt_metadata["context_truncated"],
                 agent_name=prompt_metadata["agent_name"],
-                available_agents=list(agents_dict.keys()) if agents_dict else [],
-                available_skills=skill_names,
-                available_mcps=list(resolved_mcps.keys()) if resolved_mcps else [],
+                available_agents=list(caps.agents_dict.keys())
+                if caps.agents_dict
+                else [],
+                available_skills=caps.skill_names,
+                available_mcps=list(caps.resolved_mcps.keys())
+                if caps.resolved_mcps
+                else [],
                 base_prompt_tokens=prompt_metadata["base_prompt_tokens"],
                 total_prompt_tokens=prompt_metadata["total_prompt_tokens"],
                 trust_mode=(session.permissions.trust_level == TrustLevel.DIRECT),
-                working_directory_claude_md=prompt_metadata.get("working_directory_claude_md"),
+                working_directory_claude_md=prompt_metadata.get(
+                    "working_directory_claude_md"
+                ),
             ).model_dump(by_alias=True)
 
-            # Yield MCP warnings (after metadata so client knows about capabilities)
-            if mcp_load_warning:
-                yield mcp_load_warning.model_dump(by_alias=True)
-            if mcp_warnings:
-                yield WarningEvent(
-                    code=ErrorCode.MCP_CONNECTION_FAILED,
-                    title="MCP Configuration Issues",
-                    message=f"{len(mcp_warnings)} MCP server(s) skipped due to configuration issues.",
-                    details=mcp_warnings[:5],
-                    session_id=session.id if session.id != "pending" else None,
-                ).model_dump(by_alias=True)
+            # Yield MCP warnings returned by _discover_capabilities
+            for warning in caps.warnings:
+                yield warning
 
-            # Set up permission handler with event callbacks
+            # Phase 3: Set up permission handler
+            permission_denials: list[dict[str, Any]] = []
+
             def on_permission_denial(denial: dict) -> None:
-                """Track permission denials for reporting in done event."""
                 permission_denials.append(denial)
 
-            # Track pending user questions for SSE events
             def on_user_question(request) -> None:
-                """Handle AskUserQuestion - log when question is registered."""
-                logger.info(f"User question registered: {request.id} with {len(request.questions)} questions")
+                logger.info(
+                    f"User question registered: {request.id} with {len(request.questions)} questions"
+                )
 
             permission_handler = PermissionHandler(
                 session=session,
@@ -686,20 +558,13 @@ class Orchestrator:
                 on_denial=on_permission_denial,
                 on_user_question=on_user_question,
             )
-
-            # Store handler for potential API grant/deny calls
             self.pending_permissions[session.id] = permission_handler
 
             # Determine resume session ID
-            # Only resume if:
-            # 1. Session ID is not "pending" (i.e., we have an ID)
-            # 2. Not a new session (is_new=False means SDK has this session)
-            # 3. Not forcing a fresh start
-            # 4. SDK actually has a JSONL transcript for this session
+            # Only resume if: session exists in DB, not new, not forced fresh,
+            # and SDK actually has a JSONL transcript for this session.
             resume_id = None
             if session.id != "pending" and not is_new and not force_new:
-                # Verify SDK actually has a session file to resume
-                # Bot-created sessions have DB records but no SDK JSONL yet
                 if self.session_manager._check_sdk_session_exists(
                     session.id, session.working_directory
                 ):
@@ -711,362 +576,466 @@ class Orchestrator:
                     )
                     is_new = True
 
-            # Get Claude token from settings for SDK auth
             claude_token = get_settings().claude_code_oauth_token
-
-            logger.info(f"Resume decision: session.id={session.id}, is_new={is_new}, force_new={force_new}, resume_id={resume_id}")
-
-            # Run query
-            current_text = ""
-            # (CLI writes its own transcript — no host-side collection needed)
-
-            # Use session-based permission handler for tool access control
-            # Trust mode (default): Use bypassPermissions for backwards compatibility
-            # Restricted mode: Uses can_use_tool callback for interactive permission checks
-            trust_mode = session.permissions.trust_level == TrustLevel.DIRECT
-            logger.debug(f"Session trust_mode={trust_mode}: {session.id}")
-
-            # Create SDK callback for tool permission checks
-            # This enables interactive tools like AskUserQuestion to pause and wait for user input
-            sdk_can_use_tool = permission_handler.create_sdk_callback()
-
-            # effective_trust was determined earlier (before capability filtering)
-
-            # Determine if this is a full custom prompt or append content
-            # Custom agents and explicit custom_prompt return full prompts (override preset)
-            # vault-agent returns append content only (uses preset + CLAUDE.md hierarchy)
-            is_full_prompt = prompt_metadata.get("prompt_source") in ("custom", "agent")
-
-            if effective_trust == "sandboxed":
-                if await self._sandbox.is_available():
-                    # Use a real session ID for sandbox — "pending" would cause the SDK
-                    # inside the container to try resuming a nonexistent session
-                    sandbox_sid = session.id if session.id != "pending" else str(uuid.uuid4())
-                    # Convert working directory to container path (/home/sandbox/Parachute/...)
-                    sandbox_wd = None
-                    if effective_working_dir:
-                        wd = str(effective_working_dir)
-                        if wd.startswith("/home/sandbox/Parachute/"):
-                            sandbox_wd = wd
-                        elif wd.startswith("/vault/"):
-                            sandbox_wd = f"/home/sandbox/Parachute/{wd[len('/vault/'):]}"
-                        elif wd.startswith(str(Path.home())):
-                            relative = wd[len(str(Path.home())):].lstrip("/")
-                            sandbox_wd = f"/home/sandbox/Parachute/{relative}"
-                        else:
-                            # Relative path or unknown — treat as relative to vault
-                            sandbox_wd = f"/home/sandbox/Parachute/{wd.lstrip('/')}"
-
-                    sandbox_paths = list(session.permissions.allowed_paths)
-                    # Auto-add working directory to allowed_paths so it gets mounted
-                    if sandbox_wd and sandbox_wd not in sandbox_paths:
-                        sandbox_paths.append(sandbox_wd)
-
-                    logger.info(
-                        f"Running sandboxed execution for session {sandbox_sid[:8]} "
-                        f"wd={sandbox_wd} paths={sandbox_paths}"
-                    )
-
-                    # Resolve model for sandbox (same logic as trusted path)
-                    sandbox_model = model or self.settings.default_model
-
-                    # Pass system prompt to sandbox (same prompt as trusted path)
-                    sandbox_system_prompt = effective_prompt if not is_full_prompt and effective_prompt else None
-
-                    sandbox_config = AgentSandboxConfig(
-                        session_id=sandbox_sid,
-                        agent_type=agent.type.value if agent.type else "chat",
-                        allowed_paths=sandbox_paths,
-                        network_enabled=True,  # SDK needs network for Anthropic API
-                        mcp_servers=resolved_mcps,  # Pass filtered MCPs to container
-                        plugin_dirs=plugin_dirs,  # Pass filtered skill plugins
-                        agents=agents_dict,  # Pass filtered custom agents
-                        working_directory=sandbox_wd,
-                        model=sandbox_model,
-                        system_prompt=sandbox_system_prompt,
-                        session_source=session.source,  # For credential injection gating
-                    )
-                    # For continuing sandbox sessions, try SDK resume first
-                    # (full-fidelity), fall back to history injection (text-only).
-                    # The CLI rejects --session-id when a transcript already exists,
-                    # so we MUST use --resume for non-new sessions. If the transcript
-                    # is missing (e.g. container recreated), resume_failed → retry
-                    # with history injection handles it gracefully.
-                    sandbox_message = actual_message
-                    resume_session_id: str | None = None
-                    if not is_new:
-                        # All containers mount .claude/ from host, so always attempt resume.
-                        # The entrypoint's resume_failed handler provides the safety net.
-                        resume_session_id = sandbox_sid
-
-                        if resume_session_id:
-                            logger.info(
-                                f"Will resume sandbox session {sandbox_sid[:8]} "
-                                f"from SDK transcript"
-                            )
-
-                    if not resume_session_id and not is_new:
-                        # Fallback: inject prior messages as text context
-                        prior_messages = await self.session_manager._load_sdk_messages(session)
-                        if prior_messages:
-                            history_lines = []
-                            for msg in prior_messages:
-                                role = msg["role"].upper()
-                                history_lines.append(f"[{role}]: {msg['content']}")
-                            history_block = "\n".join(history_lines)
-                            sandbox_message = (
-                                f"<conversation_history>\n{history_block}\n"
-                                f"</conversation_history>\n\n{actual_message}"
-                            )
-                            logger.info(
-                                f"Injected {len(prior_messages)} prior messages "
-                                f"into sandbox prompt for session {sandbox_sid[:8]}"
-                            )
-
-                    # Ensure every sandboxed session has a container_env record.
-                    # Auto-create one on the first turn if none was assigned.
-                    if not session.container_env_id:
-                        auto_slug = str(uuid.uuid4()).replace("-", "")[:12]
-                        await self.session_store.create_container_env(
-                            slug=auto_slug,
-                            display_name=f"Session {sandbox_sid[:8]}",
-                        )
-                        await self.session_store.update_session(
-                            session.id,
-                            SessionUpdate(container_env_id=auto_slug),
-                        )
-                        session.container_env_id = auto_slug
-                        logger.info(
-                            f"Auto-created container env {auto_slug} for session {sandbox_sid[:8]}"
-                        )
-
-                    # Pre-check sandbox image before starting container
-                    if not await self._sandbox.image_exists():
-                        from parachute.core.sandbox import SANDBOX_IMAGE
-                        logger.error(f"Sandbox image '{SANDBOX_IMAGE}' not built")
-                        yield ErrorEvent(
-                            error=f"Sandbox image '{SANDBOX_IMAGE}' not found. "
-                                  "Build it from Settings or run: parachute doctor (for instructions).",
-                        ).model_dump(by_alias=True)
-                        return
-
-                    # Run session in its container env (auto-created above if needed)
-                    sandbox_stream = self._sandbox.run_session(
-                        session_id=sandbox_sid,
-                        config=sandbox_config,
-                        message=sandbox_message,
-                        resume_session_id=resume_session_id,
-                        container_env_slug=session.container_env_id,
-                    )
-
-                    # Mutable state container for sandbox event processing
-                    sbx = {
-                        "had_text": False,
-                        "response_text": "",
-                        "finalized": False,
-                        "session": session,
-                    }
-
-                    async def _process_sandbox_event(event: dict) -> AsyncGenerator[dict, None]:
-                        """Process a single sandbox event — shared by primary and retry streams."""
-                        event_type = event.get("type", "")
-                        if event_type == "error":
-                            sandbox_err = event.get("error") or "Unknown sandbox error"
-                            logger.error(f"Sandbox error: {sandbox_err}")
-                            yield ErrorEvent(
-                                error=f"Sandbox: {sandbox_err}",
-                            ).model_dump(by_alias=True)
-                            return
-
-                        # Rewrite session IDs to our canonical sandbox_sid
-                        if event_type in ("session", "done") and "sessionId" in event:
-                            event = {**event, "sessionId": sandbox_sid, "trustLevel": effective_trust}
-                        if event_type == "text":
-                            sbx["had_text"] = True
-                            sbx["response_text"] = event.get("content", sbx["response_text"])
-
-                        # Finalize BEFORE yielding "done" to prevent race condition
-                        if event_type == "done":
-                            if is_new and not sbx["finalized"]:
-                                try:
-                                    title = generate_title_from_message(message) if message.strip() else None
-                                    _set_title_source(sbx["session"], "default")
-                                    sbx["session"] = await self.session_manager.finalize_session(
-                                        sbx["session"], sandbox_sid, captured_model, title=title,
-                                        agent_type=agent_type,
-                                    )
-                                    sbx["finalized"] = True
-                                    logger.info(f"Finalized sandbox session: {sandbox_sid[:8]} trust={effective_trust}")
-                                except Exception as e:
-                                    logger.error(f"Failed to finalize sandbox session {sandbox_sid[:8]}: {e}")
-
-                            # Write synthetic transcript (fallback for host-side session search/list)
-                            if sbx["had_text"]:
-                                self.session_manager.write_sandbox_transcript(
-                                    sandbox_sid, actual_message, sbx["response_text"],
-                                    working_directory=effective_working_dir,
-                                )
-
-                        yield event
-
-                    # Process sandbox events. If resume fails, retry with
-                    # history injection (three-tier: resume → history → fresh).
-                    retry_with_history = False
-                    async for event in sandbox_stream:
-                        event_type = event.get("type", "")
-                        if event_type == "resume_failed":
-                            logger.warning(
-                                f"SDK resume failed for {sandbox_sid[:8]}: "
-                                f"{event.get('error', 'unknown')}, "
-                                f"will retry with history injection"
-                            )
-                            retry_with_history = True
-                        elif event_type == "done" and retry_with_history:
-                            pass  # Suppress done from failed resume stream
-                        else:
-                            async for yielded in _process_sandbox_event(event):
-                                yield yielded
-
-                    # Retry with history injection if resume failed
-                    if retry_with_history:
-                        retry_message = actual_message
-                        prior_messages = await self.session_manager._load_sdk_messages(sbx["session"])
-                        if prior_messages:
-                            history_lines = []
-                            for msg in prior_messages:
-                                role = msg["role"].upper()
-                                history_lines.append(f"[{role}]: {msg['content']}")
-                            history_block = "\n".join(history_lines)
-                            retry_message = (
-                                f"<conversation_history>\n{history_block}\n"
-                                f"</conversation_history>\n\n{actual_message}"
-                            )
-                        retry_stream = self._sandbox.run_session(
-                            session_id=sandbox_sid,
-                            config=sandbox_config,
-                            message=retry_message,
-                            container_env_slug=session.container_env_id,
-                        )
-                        async for event in retry_stream:
-                            async for yielded in _process_sandbox_event(event):
-                                yield yielded
-
-                    session = sbx["session"]
-                    session_finalized = sbx["finalized"]
-                    had_text = sbx["had_text"]
-                    sandbox_response_text = sbx["response_text"]
-
-                    if not had_text:
-                        logger.warning("Sandbox produced no text output")
-
-                    # Increment message count for sandbox sessions
-                    if had_text and sandbox_sid:
-                        try:
-                            await self.session_manager.increment_message_count(sandbox_sid, 2)
-                        except Exception as e:
-                            logger.warning(f"Failed to increment message count for {sandbox_sid[:8]}: {e}")
-                    return
-                else:
-                    # Docker unavailable — behavior differs by session source:
-                    # - External bot sessions (Telegram/Discord/Matrix): hard fail.
-                    #   We must not grant bare-metal access to untrusted external users.
-                    # - Local app sessions: fall through to direct execution with a warning.
-                    #   The sandbox is a protection layer; local users own the machine.
-                    if session.source in BOT_SOURCES:
-                        logger.error(
-                            f"Docker unavailable for bot session {session.id[:8]} "
-                            f"(source={session.source.value}) — hard failing"
-                        )
-                        yield ErrorEvent(
-                            error="Docker is required for external sessions but is not available. "
-                                  "Contact the server administrator.",
-                        ).model_dump(by_alias=True)
-                        return
-                    else:
-                        logger.warning(
-                            f"Docker unavailable for session {session.id[:8]} — "
-                            f"falling back to direct execution"
-                        )
-                        yield WarningEvent(
-                            code=ErrorCode.SERVICE_UNAVAILABLE,
-                            title="Running Without Sandbox",
-                            message="Docker is not available. Running in direct mode — no sandboxing active.",
-                            session_id=session.id if session.id != "pending" else None,
-                        ).model_dump(by_alias=True)
-                        # Fall through to direct execution below
-
             logger.info(
-                f"SDK launch: cwd={effective_cwd}, resume={resume_id}, "
-                f"is_new={is_new}, session={session.id[:8] if session.id else None}"
+                f"Resume decision: session.id={session.id}, is_new={is_new}, "
+                f"force_new={force_new}, resume_id={resume_id}"
             )
 
+            # Phase 4: Execute (sandboxed or trusted)
+            # Pre-check Docker availability so we can fall back to trusted for
+            # local sessions without requiring _run_sandboxed() to signal this.
+            run_trusted = caps.effective_trust != "sandboxed"
+            if caps.effective_trust == "sandboxed":
+                if await self._sandbox.is_available():
+                    async for event in self._run_sandboxed(
+                        session=session,
+                        caps=caps,
+                        actual_message=actual_message,
+                        effective_prompt=effective_prompt,
+                        is_full_prompt=is_full_prompt,
+                        effective_working_dir=effective_working_dir,
+                        is_new=is_new,
+                        model=model,
+                        message=message,
+                        agent_type=agent_type,
+                        captured_model=None,
+                    ):
+                        yield event
+                elif session.source in BOT_SOURCES:
+                    logger.error(
+                        f"Docker unavailable for bot session {session.id[:8]} "
+                        f"(source={session.source.value}) — hard failing"
+                    )
+                    yield ErrorEvent(
+                        error="Docker is required for external sessions but is not available. "
+                        "Contact the server administrator.",
+                    ).model_dump(by_alias=True)
+                else:
+                    logger.warning(
+                        f"Docker unavailable for session {session.id[:8]} — "
+                        f"falling back to direct execution"
+                    )
+                    yield WarningEvent(
+                        code=ErrorCode.SERVICE_UNAVAILABLE,
+                        title="Running Without Sandbox",
+                        message="Docker is not available. Running in direct mode — no sandboxing active.",
+                        session_id=session.id if session.id != "pending" else None,
+                    ).model_dump(by_alias=True)
+                    run_trusted = True
+
+            if run_trusted:
+                async for event in self._run_trusted(
+                    session=session,
+                    caps=caps,
+                    actual_message=actual_message,
+                    effective_prompt=effective_prompt,
+                    is_full_prompt=is_full_prompt,
+                    effective_cwd=effective_cwd,
+                    resume_id=resume_id,
+                    model=model,
+                    claude_token=claude_token,
+                    message_queue=message_queue,
+                    interrupt=interrupt,
+                    permission_handler=permission_handler,
+                    permission_denials=permission_denials,
+                    is_new=is_new,
+                    message=message,
+                    working_directory=working_directory,
+                    agent_type=agent_type,
+                    resume_info=resume_info,
+                    start_time=start_time,
+                ):
+                    yield event
+
+        except asyncio.CancelledError:
+            # Pre-stream cancellation (during capability discovery / setup).
+            # During-stream cancellation is handled by _run_trusted / _run_sandboxed
+            # which yield an AbortedEvent before re-raising here.
+            raise
+
+        except Exception as e:
+            logger.error(f"Streaming error: {e}", exc_info=True)
+            if "ENOENT" in str(e) or "not found" in str(e).lower():
+                yield SessionUnavailableEvent(
+                    reason="sdk_session_not_found",
+                    session_id=session.id,
+                    has_markdown_history=False,
+                    message_count=0,
+                    message="The conversation history could not be loaded.",
+                ).model_dump(by_alias=True)
+            else:
+                typed = parse_error(e)
+                yield TypedErrorEvent.from_typed_error(
+                    typed, session_id=session.id
+                ).model_dump(by_alias=True)
+
+        finally:
+            # Clean up active streams
+            if stream_session_id:
+                self.active_streams.pop(stream_session_id, None)
+                self.active_stream_queues.pop(stream_session_id, None)
+
+            # Clean up permission handler — find by object identity since
+            # _run_trusted may have moved it to a finalized session ID key.
+            if permission_handler:
+                for k in list(self.pending_permissions.keys()):
+                    if self.pending_permissions.get(k) is permission_handler:
+                        self.pending_permissions.pop(k)
+                permission_handler.cleanup()
+
+    # =========================================================================
+    # Private Phase Methods (extracted from run_streaming for readability)
+    # =========================================================================
+
+    def _save_attachments(
+        self, attachments: list[dict[str, Any]]
+    ) -> tuple[str, list[str]]:
+        """Save base64 attachments to vault and return (markdown_block, failure_descriptions).
+
+        Returns:
+            Tuple of (attachment_markdown_block, failure_descriptions).
+            attachment_markdown_block is empty string if no attachments were processed.
+        """
+        import base64
+        from datetime import datetime
+
+        attachment_parts: list[str] = []
+        failures: list[str] = []
+
+        for att in attachments:
+            att_type = att.get("type", "unknown")
+            file_name = att.get("fileName", "file")
+            base64_data = att.get("base64Data")
+
+            if not base64_data:
+                continue
+
+            now = datetime.now()
+            date_folder = now.strftime("%Y-%m-%d")
+            asset_dir = Path.home() / "Chat" / "assets" / date_folder
+            asset_dir.mkdir(parents=True, exist_ok=True)
+
+            timestamp = now.strftime("%H-%M-%S")
+            ext = Path(file_name).suffix or ".bin"
+            safe_name = Path(file_name).stem[:30]  # Truncate long names
+            unique_name = f"{timestamp}_{safe_name}{ext}"
+            file_path = asset_dir / unique_name
+
+            try:
+                file_bytes = base64.b64decode(base64_data)
+                file_path.write_bytes(file_bytes)
+                logger.info(f"Saved attachment: {file_path}")
+
+                # Use vault-relative path for display (enables UI asset fetching)
+                relative_path = f"Chat/assets/{date_folder}/{unique_name}"
+
+                if att_type == "image":
+                    # For images, use markdown image syntax with relative path
+                    # Also include absolute path for Claude to read
+                    attachment_parts.append(
+                        f"![{file_name}]({relative_path})\n"
+                        f"*(Absolute path for reading: {file_path})*"
+                    )
+                elif att_type in ("text", "code"):
+                    # For text/code files, save to disk and reference by path
+                    # Claude can use the Read tool to access the content
+                    file_size_kb = len(file_bytes) / 1024
+                    attachment_parts.append(
+                        f"**[{file_name}]({relative_path})** ({file_size_kb:.1f} KB)\n"
+                        f"*(Absolute path for reading: {file_path})*"
+                    )
+                elif att_type == "pdf":
+                    attachment_parts.append(
+                        f"**[{file_name}]({relative_path})**\n"
+                        f"*(Absolute path for reading: {file_path})*"
+                    )
+                else:
+                    attachment_parts.append(f"[{file_name}]({relative_path})")
+
+            except Exception as e:
+                logger.error(f"Failed to save attachment {file_name}: {e}")
+                attachment_parts.append(f"[Failed to attach: {file_name}]")
+                failures.append(f"{file_name}: {e}")
+
+        return "\n\n".join(attachment_parts), failures
+
+    async def _discover_capabilities(
+        self,
+        agent: Any,
+        session: Any,
+        trust_level: Optional[str],
+    ) -> CapabilityBundle:
+        """Discover and filter all capabilities (MCPs, skills, plugins, trust level).
+
+        Handles MCP loading, skill/plugin discovery, trust resolution, and
+        capability filtering.  Warning events are returned in the bundle's
+        ``warnings`` list so the caller can yield them at the appropriate time.
+
+        Returns:
+            CapabilityBundle with all resolved capabilities and any warnings.
+        """
+        from parachute.core.trust import normalize_trust_level
+
+        warnings: list[dict] = []
+
+        # --- MCP loading -------------------------------------------------
+        resolved_mcps = None
+        mcp_warnings: list[str] = []
+        mcp_load_warning: WarningEvent | None = None
+        try:
+            global_mcps = await load_mcp_servers(Path.home())
+            resolved_mcps = resolve_mcp_servers(agent.mcp_servers, global_mcps)
+
+            if resolved_mcps:
+                resolved_mcps, mcp_warnings = validate_and_filter_servers(resolved_mcps)
+                if mcp_warnings:
+                    logger.warning(
+                        f"MCP configuration issues (continuing with valid servers): "
+                        f"{'; '.join(mcp_warnings[:3])}"
+                        f"{'...' if len(mcp_warnings) > 3 else ''}"
+                    )
+        except Exception as e:
+            logger.error(f"Failed to load MCP servers (continuing without MCP): {e}")
+            resolved_mcps = None
+            mcp_load_warning = WarningEvent(
+                code=ErrorCode.MCP_LOAD_FAILED,
+                title="MCP Tools Unavailable",
+                message="MCP servers failed to load. Chat will continue without MCP tools.",
+                details=[str(e)],
+                session_id=session.id if session.id != "pending" else None,
+            )
+
+        # --- Skill and plugin discovery -----------------------------------
+        plugin_dirs: list[Path] = []
+        discovered_skills = discover_skills(Path.home())
+        skill_names = [s.name for s in discovered_skills]
+        skills_plugin_dir = generate_runtime_plugin(
+            Path.home(), skills=discovered_skills
+        )
+        if skills_plugin_dir:
+            plugin_dirs.append(skills_plugin_dir)
+            logger.info(f"Generated skills plugin at {skills_plugin_dir}")
+
+        settings = get_settings()
+        installed_plugins = discover_plugins(
+            Path.home(),
+            include_user=settings.include_user_plugins,
+        )
+        legacy_plugin_dirs = get_plugin_dirs(installed_plugins)
+        plugin_dirs.extend(legacy_plugin_dirs)
+
+        # Merge MCPs from legacy/CLI plugins (manifest-based plugins already
+        # have their MCPs copied into vault/.mcp.json at install time)
+        for plugin in installed_plugins:
+            if Path(plugin.path).suffix == ".json":
+                continue
+            if plugin.mcps and resolved_mcps is not None:
+                for mcp_name, mcp_config in plugin.mcps.items():
+                    if mcp_name not in resolved_mcps:
+                        resolved_mcps[mcp_name] = mcp_config
+                        logger.info(
+                            f"Added MCP '{mcp_name}' from plugin '{plugin.slug}'"
+                        )
+
+        if legacy_plugin_dirs:
+            logger.info(
+                f"Discovered {len(installed_plugins)} plugins, "
+                f"{len(legacy_plugin_dirs)} legacy plugin dirs"
+            )
+
+        # Load additional configured plugin directories
+        for dir_str in settings.plugin_dirs:
+            plugin_path = Path(dir_str).expanduser().resolve()
+            if plugin_path.is_dir():
+                plugin_dirs.append(plugin_path)
+                logger.info(f"Loaded configured plugin: {plugin_path}")
+            else:
+                logger.warning(f"Plugin directory not found, skipping: {plugin_path}")
+
+        # Custom agents: SDK discovers .claude/agents/ natively
+        agents_dict = None
+
+        # --- Trust level resolution ---------------------------------------
+        # Priority: client param > session stored > direct (default)
+        logger.info(
+            f"Trust resolution: client={trust_level}, session.trust_level={session.trust_level}"
+        )
+        if trust_level:
+            try:
+                session_trust = TrustLevel(normalize_trust_level(trust_level))
+                logger.info(
+                    f"Using client trust: {trust_level} -> {session_trust.value}"
+                )
+            except ValueError:
+                logger.warning(f"Invalid trust_level from client: {trust_level}")
+                session_trust = session.get_trust_level()
+        elif session.trust_level:
+            session_trust = session.get_trust_level()
+        else:
+            session_trust = TrustLevel.DIRECT
+
+        effective_trust = session_trust.value
+
+        # --- Stage 1: Trust-level capability filtering --------------------
+        if resolved_mcps:
+            pre_count = len(resolved_mcps)
+            resolved_mcps = filter_by_trust_level(resolved_mcps, effective_trust)
+            if len(resolved_mcps) < pre_count:
+                logger.info(
+                    f"Trust filter ({effective_trust}): "
+                    f"{pre_count} → {len(resolved_mcps)} MCPs"
+                )
+
+        # --- Inject session context into MCP server env vars --------------
+        if resolved_mcps:
+            trust_level_str = effective_trust
+            for mcp_name, mcp_config in resolved_mcps.items():
+                env = {**mcp_config.get("env", {})}
+                env["PARACHUTE_SESSION_ID"] = session.id
+                env["PARACHUTE_TRUST_LEVEL"] = trust_level_str
+                env["PARACHUTE_CONTAINER_ENV_ID"] = session.container_env_id or ""
+                resolved_mcps[mcp_name] = {**mcp_config, "env": env}
+            logger.info(
+                f"Injected session context into {len(resolved_mcps)} MCP servers"
+            )
+
+        # --- Collect warning events to yield after PromptMetadataEvent ---
+        if mcp_load_warning:
+            warnings.append(mcp_load_warning.model_dump(by_alias=True))
+        if mcp_warnings:
+            warnings.append(
+                WarningEvent(
+                    code=ErrorCode.MCP_CONNECTION_FAILED,
+                    title="MCP Configuration Issues",
+                    message=f"{len(mcp_warnings)} MCP server(s) skipped due to configuration issues.",
+                    details=mcp_warnings[:5],
+                    session_id=session.id if session.id != "pending" else None,
+                ).model_dump(by_alias=True)
+            )
+
+        return CapabilityBundle(
+            resolved_mcps=resolved_mcps,
+            plugin_dirs=plugin_dirs,
+            skill_names=skill_names,
+            agents_dict=agents_dict,
+            effective_trust=effective_trust,
+            warnings=warnings,
+        )
+
+    async def _run_trusted(
+        self,
+        session: Any,
+        caps: CapabilityBundle,
+        actual_message: str,
+        effective_prompt: str,
+        is_full_prompt: bool,
+        effective_cwd: Path,
+        resume_id: Optional[str],
+        model: Optional[str],
+        claude_token: Optional[str],
+        message_queue: asyncio.Queue,
+        interrupt: Any,
+        permission_handler: Any,
+        permission_denials: list[dict[str, Any]],
+        is_new: bool,
+        message: str,
+        working_directory: Optional[str],
+        agent_type: Optional[str],
+        resume_info: Any,
+        start_time: float,
+    ) -> AsyncGenerator[dict, None]:
+        """Run the trusted (direct/bare-metal) execution path.
+
+        Async generator that yields all SSE events for the trusted path,
+        including session finalization, bridge observation, and the DoneEvent.
+        Handles its own CancelledError and Exception cases by yielding the
+        appropriate error events, so callers can treat the generator as safe.
+        """
+        result_text = ""
+        text_blocks: list[str] = []
+        tool_calls: list[dict[str, Any]] = []
+        captured_session_id: Optional[str] = None
+        captured_model: Optional[str] = None
+        session_finalized = False
+        current_text = ""
+        inject_count = 0
+        initial_user_echo_seen = False
+
+        sdk_can_use_tool = permission_handler.create_sdk_callback()
+
+        logger.info(
+            f"SDK launch: cwd={effective_cwd}, resume={resume_id}, "
+            f"is_new={is_new}, session={session.id[:8] if session.id else None}"
+        )
+
+        try:
             async for event in query_streaming(
                 prompt=actual_message,
-                # Full prompt overrides preset, append content adds to it
                 system_prompt=effective_prompt if is_full_prompt else None,
-                system_prompt_append=effective_prompt if not is_full_prompt and effective_prompt else None,
-                use_claude_code_preset=not is_full_prompt,  # Use preset unless custom/agent
-                # Let SDK discover project-level .claude/ (commands, skills, agents, CLAUDE.md)
+                system_prompt_append=effective_prompt
+                if not is_full_prompt and effective_prompt
+                else None,
+                use_claude_code_preset=not is_full_prompt,
                 setting_sources=["project"],
                 cwd=effective_cwd,
                 resume=resume_id,
-                tools=agent.tools if agent.tools else None,
-                mcp_servers=resolved_mcps,
-                # Use "default" mode so the CLI calls can_use_tool for every tool.
-                # bypassPermissions skips can_use_tool entirely, which prevents
-                # AskUserQuestion from being intercepted for interactive user input.
-                # Our callback approves all tools instantly (mimicking bypass) except
-                # AskUserQuestion which blocks until the user answers.
+                tools=None,
+                mcp_servers=caps.resolved_mcps,
                 permission_mode="default",
                 can_use_tool=sdk_can_use_tool,
-                plugin_dirs=plugin_dirs if plugin_dirs else None,
-                agents=agents_dict,
+                plugin_dirs=caps.plugin_dirs if caps.plugin_dirs else None,
+                agents=caps.agents_dict,
                 claude_token=claude_token,
                 message_queue=message_queue,
-                **({"model": model or self.settings.default_model} if (model or self.settings.default_model) else {}),
+                **(
+                    {"model": model or self.settings.default_model}
+                    if (model or self.settings.default_model)
+                    else {}
+                ),
             ):
-                # Check for interrupt
                 if interrupt.is_interrupted:
                     break
 
                 event_type = event.get("type")
                 logger.debug(f"SDK Event: type={event_type} keys={list(event.keys())}")
 
-                # (CLI writes its own transcript — no event collection needed)
-
                 # Capture session ID and immediately save to database
                 if event.get("session_id"):
                     captured_session_id = event["session_id"]
-                    if stream_session_id is None:
-                        stream_session_id = captured_session_id
-                        self.active_streams[stream_session_id] = interrupt
-                        self.active_stream_queues[stream_session_id] = message_queue
 
-                    # Immediately finalize new sessions so they appear in the chat list
-                    # even if the user navigates away before the response completes
                     if is_new and not session_finalized and captured_session_id:
-                        title = generate_title_from_message(message) if message.strip() else None
+                        title = (
+                            generate_title_from_message(message)
+                            if message.strip()
+                            else None
+                        )
                         _set_title_source(session, "default")
                         session = await self.session_manager.finalize_session(
-                            session, captured_session_id, captured_model, title=title,
+                            session,
+                            captured_session_id,
+                            captured_model,
+                            title=title,
                             agent_type=agent_type,
                         )
                         session_finalized = True
-                        logger.info(f"Early finalized session: {captured_session_id[:8]}...")
+                        logger.info(
+                            f"Early finalized session: {captured_session_id[:8]}..."
+                        )
 
-                        # Update permission handler with finalized session so request_ids match
+                        # Update permission handler with finalized session
                         permission_handler.session = session
-                        # Also update the pending_permissions key to use the real session ID
                         self.pending_permissions.pop("pending", None)
-                        self.pending_permissions[captured_session_id] = permission_handler
+                        self.pending_permissions[captured_session_id] = (
+                            permission_handler
+                        )
 
-                        # Yield a second session event now that we have the real ID
-                        # This allows the client to update its session list immediately
+                        # Second session event now that we have the real ID
                         yield SessionEvent(
                             session_id=captured_session_id,
                             working_directory=working_directory,
                             resume_info=resume_info.model_dump(),
-                            trust_level=trust_level,
+                            trust_level=caps.effective_trust,
                         ).model_dump(by_alias=True)
 
                 # Handle different event types
@@ -1080,12 +1049,10 @@ class Orchestrator:
                     message_content = event.get("message", {})
                     content_blocks = message_content.get("content", [])
 
-                    # Capture model
                     if not captured_model and message_content.get("model"):
                         captured_model = message_content["model"]
                         yield ModelEvent(model=captured_model).model_dump(by_alias=True)
 
-                    # Process content blocks
                     for block in content_blocks:
                         block_type = block.get("type")
 
@@ -1097,13 +1064,12 @@ class Orchestrator:
                         elif block_type == "text":
                             new_text = block.get("text", "")
                             if new_text != current_text:
-                                delta = new_text[len(current_text):]
+                                delta = new_text[len(current_text) :]
                                 yield TextEvent(
                                     content=new_text,
                                     delta=delta,
                                 ).model_dump(by_alias=True)
                                 current_text = new_text
-                                # Update result
                                 if not text_blocks or text_blocks[-1] != new_text:
                                     if text_blocks:
                                         text_blocks[-1] = new_text
@@ -1120,34 +1086,30 @@ class Orchestrator:
                             tool_calls.append(tool_call)
                             yield ToolUseEvent(tool=tool_call).model_dump(by_alias=True)
 
-                            # Emit user_question event for AskUserQuestion tool calls.
-                            # Note: this fires when the assistant message arrives, before
-                            # can_use_tool registers the question. The answer endpoint
-                            # polls for registration to handle this race.
+                            # Emit user_question event for AskUserQuestion
                             if block.get("name") == "AskUserQuestion":
                                 questions = block.get("input", {}).get("questions", [])
                                 if questions and captured_session_id:
                                     tool_use_id = block.get("id", "")
-                                    request_id = f"{captured_session_id}-q-{tool_use_id}"
-                                    # Store the tool_use_id so the permission handler
-                                    # uses the same request_id (the SDK doesn't expose
-                                    # tool_use_id in the can_use_tool callback context).
-                                    permission_handler.next_question_tool_use_id = tool_use_id
+                                    request_id = (
+                                        f"{captured_session_id}-q-{tool_use_id}"
+                                    )
+                                    permission_handler.next_question_tool_use_id = (
+                                        tool_use_id
+                                    )
                                     yield UserQuestionEvent(
                                         request_id=request_id,
                                         session_id=captured_session_id,
                                         questions=questions,
                                     ).model_dump(by_alias=True)
-                                    logger.info(f"Emitted user_question event: {request_id}")
+                                    logger.info(
+                                        f"Emitted user_question event: {request_id}"
+                                    )
 
-                            # Reset for next text block
                             current_text = ""
 
                 elif event_type == "user":
                     msg_content = event.get("message", {}).get("content", "")
-                    # Injected user messages arrive as plain text content.
-                    # The SDK echoes the initial prompt back as the first user
-                    # event with string content — skip that echo.
                     if isinstance(msg_content, str) and msg_content:
                         if not initial_user_echo_seen:
                             initial_user_echo_seen = True
@@ -1157,8 +1119,9 @@ class Orchestrator:
                                 content=msg_content,
                             ).model_dump(by_alias=True)
                     else:
-                        # Tool results come in user messages as list of blocks
-                        for block in (msg_content if isinstance(msg_content, list) else []):
+                        for block in (
+                            msg_content if isinstance(msg_content, list) else []
+                        ):
                             if block.get("type") == "tool_result":
                                 content = block.get("content", "")
                                 if isinstance(content, list):
@@ -1176,17 +1139,15 @@ class Orchestrator:
                         result_text = event["result"]
                         yield TextEvent(
                             content=result_text,
-                            delta=result_text[len(current_text):],
+                            delta=result_text[len(current_text) :],
                         ).model_dump(by_alias=True)
                     if event.get("session_id"):
                         captured_session_id = event["session_id"]
 
                 elif event_type == "error":
-                    # SDK emitted an error event - handle it properly
                     error_msg = event.get("error", "Unknown SDK error")
                     logger.error(f"SDK error event received: {error_msg}")
 
-                    # Check if this is a session/directory issue that's recoverable
                     error_lower = error_msg.lower()
                     is_session_issue = (
                         "not found" in error_lower
@@ -1208,43 +1169,43 @@ class Orchestrator:
                             typed, session_id=captured_session_id or session.id
                         ).model_dump(by_alias=True)
 
-                    # Stop processing - don't continue to done event
                     return
 
             # Finalize session (if not already done early)
             if is_new and captured_session_id and not session_finalized:
-                # Generate title from the user's first message
-                title = generate_title_from_message(message) if message.strip() else None
+                title = (
+                    generate_title_from_message(message) if message.strip() else None
+                )
                 _set_title_source(session, "default")
                 session = await self.session_manager.finalize_session(
-                    session, captured_session_id, captured_model, title=title,
+                    session,
+                    captured_session_id,
+                    captured_model,
+                    title=title,
                     agent_type=agent_type,
                 )
                 session_finalized = True
                 logger.info(f"Finalized session: {captured_session_id[:8]}...")
 
-            # Update message count - use captured_session_id for new sessions
-            # (session.id is "pending" for new sessions until finalized)
-            # Count: 1 (initial user) + inject_count (mid-stream) + 1 (assistant)
+            # Update message count
             final_session_id = captured_session_id or session.id
             if final_session_id and final_session_id != "pending":
-                await self.session_manager.increment_message_count(final_session_id, 2 + inject_count)
+                await self.session_manager.increment_message_count(
+                    final_session_id, 2 + inject_count
+                )
 
-            # NOTE: The CLI writes its own transcript entries in SDK pipe mode.
-            # Do NOT call write_sdk_transcript here — it creates disconnected
-            # duplicate entries (parentUuid: None) that break the CLI's resume
-            # chain, causing the model to lose prior assistant responses.
-
-            duration_ms = int((time.time() - start_time) * 1000)
-
-            # Bridge agent post-turn observe: handles session metadata (title,
-            # summary, activity log) in a fire-and-forget task.
-            # Uses session.message_count (pre-increment) to compute exchange number.
-            if final_session_id and final_session_id != "pending" and message and result_text:
+            # Bridge agent post-turn observe (fire-and-forget)
+            if (
+                final_session_id
+                and final_session_id != "pending"
+                and message
+                and result_text
+            ):
                 from parachute.core.bridge_agent import observe as bridge_observe
+
                 exchange_number = session.message_count // 2 + 1
                 session_metadata = session.metadata or {}
-                asyncio.create_task(
+                _bridge_task = asyncio.create_task(
                     bridge_observe(
                         session_id=final_session_id,
                         message=message,
@@ -1258,8 +1219,13 @@ class Orchestrator:
                         claude_token=self.settings.claude_code_oauth_token,
                     )
                 )
+                _bridge_task.add_done_callback(
+                    lambda t: logger.warning(f"bridge_observe error: {t.exception()}")
+                    if not t.cancelled() and t.exception()
+                    else None
+                )
 
-            # Yield done event
+            duration_ms = int((time.time() - start_time) * 1000)
             yield DoneEvent(
                 response=result_text,
                 session_id=captured_session_id or session.id,
@@ -1278,11 +1244,10 @@ class Orchestrator:
                 session_id=captured_session_id or session.id,
                 partial_response=result_text if result_text else None,
             ).model_dump(by_alias=True)
+            raise
 
         except Exception as e:
             logger.error(f"Streaming error: {e}", exc_info=True)
-
-            # Check if SDK session not found
             if "ENOENT" in str(e) or "not found" in str(e).lower():
                 yield SessionUnavailableEvent(
                     reason="sdk_session_not_found",
@@ -1297,22 +1262,269 @@ class Orchestrator:
                     typed, session_id=captured_session_id or session.id
                 ).model_dump(by_alias=True)
 
-        finally:
-            # Clean up active streams
-            if stream_session_id:
-                self.active_streams.pop(stream_session_id, None)
-                self.active_stream_queues.pop(stream_session_id, None)
+    async def _process_sandbox_event(
+        self,
+        event: dict,
+        ctx: _SandboxCallContext,
+    ) -> AsyncGenerator[dict, None]:
+        """Process a single sandbox event — shared by primary and retry streams."""
+        event_type = event.get("type", "")
+        if event_type == "error":
+            sandbox_err = event.get("error") or "Unknown sandbox error"
+            logger.error(f"Sandbox error: {sandbox_err}")
+            yield ErrorEvent(
+                error=f"Sandbox: {sandbox_err}",
+            ).model_dump(by_alias=True)
+            return
 
-            # Clean up permission handler — try both possible keys defensively
-            handler = self.pending_permissions.pop(session.id, None)
-            if captured_session_id and captured_session_id != session.id:
-                alt_handler = self.pending_permissions.pop(captured_session_id, None)
-                if alt_handler and not handler:
-                    handler = alt_handler
-                elif alt_handler and alt_handler is not handler:
-                    alt_handler.cleanup()
-            if handler:
-                handler.cleanup()
+        # Rewrite session IDs to our canonical sandbox_sid
+        if event_type in ("session", "done") and "sessionId" in event:
+            event = {
+                **event,
+                "sessionId": ctx.sandbox_sid,
+                "trustLevel": ctx.effective_trust,
+            }
+        if event_type == "text":
+            ctx.sbx["had_text"] = True
+            ctx.sbx["response_text"] = event.get("content", ctx.sbx["response_text"])
+
+        # Finalize BEFORE yielding "done" to prevent race condition
+        if event_type == "done":
+            if ctx.is_new and not ctx.sbx["finalized"]:
+                try:
+                    title = (
+                        generate_title_from_message(ctx.sbx["message"])
+                        if ctx.sbx["message"].strip()
+                        else None
+                    )
+                    _set_title_source(ctx.sbx["session"], "default")
+                    ctx.sbx["session"] = await self.session_manager.finalize_session(
+                        ctx.sbx["session"],
+                        ctx.sandbox_sid,
+                        ctx.captured_model,
+                        title=title,
+                        agent_type=ctx.agent_type,
+                    )
+                    ctx.sbx["finalized"] = True
+                    logger.info(
+                        f"Finalized sandbox session: {ctx.sandbox_sid[:8]} "
+                        f"trust={ctx.effective_trust}"
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"Failed to finalize sandbox session {ctx.sandbox_sid[:8]}: {e}"
+                    )
+
+            # Write synthetic transcript (fallback for host-side session search/list)
+            if ctx.sbx["had_text"]:
+                self.session_manager.write_sandbox_transcript(
+                    ctx.sandbox_sid,
+                    ctx.sbx["message"],
+                    ctx.sbx["response_text"],
+                    working_directory=ctx.effective_working_dir,
+                )
+
+        yield event
+
+    async def _run_sandboxed(
+        self,
+        session: Any,
+        caps: CapabilityBundle,
+        actual_message: str,
+        effective_prompt: str,
+        is_full_prompt: bool,
+        effective_working_dir: Optional[str],
+        is_new: bool,
+        model: Optional[str],
+        message: str,
+        agent_type: Optional[str],
+        captured_model: Optional[str],
+    ) -> AsyncGenerator[dict, None]:
+        """Run the sandboxed (Docker container) execution path.
+
+        Async generator that yields all SSE events for the sandboxed path.
+        Called by ``run_streaming()`` only after confirming Docker is available.
+        """
+        # Use a real session ID — "pending" would cause SDK inside the container
+        # to try resuming a nonexistent session
+        sandbox_sid = session.id if session.id != "pending" else str(uuid.uuid4())
+
+        # Convert working directory to container path (/home/sandbox/Parachute/...)
+        sandbox_wd = None
+        if effective_working_dir:
+            wd = str(effective_working_dir)
+            if wd.startswith("/home/sandbox/Parachute/"):
+                sandbox_wd = wd
+            elif wd.startswith("/vault/"):
+                sandbox_wd = f"/home/sandbox/Parachute/{wd[len('/vault/') :]}"
+            elif wd.startswith(str(Path.home())):
+                relative = wd[len(str(Path.home())) :].lstrip("/")
+                sandbox_wd = f"/home/sandbox/Parachute/{relative}"
+            else:
+                sandbox_wd = f"/home/sandbox/Parachute/{wd.lstrip('/')}"
+
+        sandbox_paths = list(session.permissions.allowed_paths)
+        if sandbox_wd and sandbox_wd not in sandbox_paths:
+            sandbox_paths.append(sandbox_wd)
+
+        logger.info(
+            f"Running sandboxed execution for session {sandbox_sid[:8]} "
+            f"wd={sandbox_wd} paths={sandbox_paths}"
+        )
+
+        sandbox_model = model or self.settings.default_model
+        sandbox_system_prompt = (
+            effective_prompt if not is_full_prompt and effective_prompt else None
+        )
+
+        sandbox_config = AgentSandboxConfig(
+            session_id=sandbox_sid,
+            agent_type=agent_type or "chat",
+            allowed_paths=sandbox_paths,
+            network_enabled=True,
+            mcp_servers=caps.resolved_mcps,
+            plugin_dirs=caps.plugin_dirs,
+            agents=caps.agents_dict,
+            working_directory=sandbox_wd,
+            model=sandbox_model,
+            system_prompt=sandbox_system_prompt,
+            session_source=session.source,
+        )
+
+        # Three-tier resume strategy: SDK resume → history injection → fresh start
+        sandbox_message = actual_message
+        resume_session_id: str | None = None
+        if not is_new:
+            resume_session_id = sandbox_sid
+            if resume_session_id:
+                logger.info(
+                    f"Will resume sandbox session {sandbox_sid[:8]} from SDK transcript"
+                )
+
+        if not resume_session_id and not is_new:
+            prior_messages = await self.session_manager._load_sdk_messages(session)
+            if prior_messages:
+                history_lines = []
+                for msg in prior_messages:
+                    role = msg["role"].upper()
+                    history_lines.append(f"[{role}]: {msg['content']}")
+                history_block = "\n".join(history_lines)
+                sandbox_message = (
+                    f"<conversation_history>\n{history_block}\n"
+                    f"</conversation_history>\n\n{actual_message}"
+                )
+                logger.info(
+                    f"Injected {len(prior_messages)} prior messages "
+                    f"into sandbox prompt for session {sandbox_sid[:8]}"
+                )
+
+        # Ensure every sandboxed session has a container_env record
+        if not session.container_env_id:
+            auto_slug = str(uuid.uuid4()).replace("-", "")[:12]
+            await self.session_store.create_container_env(
+                slug=auto_slug,
+                display_name=f"Session {sandbox_sid[:8]}",
+            )
+            await self.session_store.update_session(
+                session.id,
+                SessionUpdate(container_env_id=auto_slug),
+            )
+            session.container_env_id = auto_slug
+            logger.info(
+                f"Auto-created container env {auto_slug} for session {sandbox_sid[:8]}"
+            )
+
+        # Pre-check sandbox image
+        if not await self._sandbox.image_exists():
+            from parachute.core.sandbox import SANDBOX_IMAGE
+
+            logger.error(f"Sandbox image '{SANDBOX_IMAGE}' not built")
+            yield ErrorEvent(
+                error=f"Sandbox image '{SANDBOX_IMAGE}' not found. "
+                "Build it from Settings or run: parachute doctor (for instructions).",
+            ).model_dump(by_alias=True)
+            return
+
+        sandbox_stream = self._sandbox.run_session(
+            session_id=sandbox_sid,
+            config=sandbox_config,
+            message=sandbox_message,
+            resume_session_id=resume_session_id,
+            container_env_slug=session.container_env_id,
+        )
+
+        sbx = {
+            "had_text": False,
+            "response_text": "",
+            "finalized": False,
+            "session": session,
+            "message": message,
+        }
+        ctx = _SandboxCallContext(
+            sbx=sbx,
+            sandbox_sid=sandbox_sid,
+            effective_trust=caps.effective_trust,
+            is_new=is_new,
+            captured_model=captured_model,
+            agent_type=agent_type,
+            effective_working_dir=effective_working_dir,
+        )
+
+        # Process sandbox events; retry with history injection if resume fails
+        retry_with_history = False
+        async for event in sandbox_stream:
+            event_type = event.get("type", "")
+            if event_type == "resume_failed":
+                logger.warning(
+                    f"SDK resume failed for {sandbox_sid[:8]}: "
+                    f"{event.get('error', 'unknown')}, "
+                    f"will retry with history injection"
+                )
+                retry_with_history = True
+            elif event_type == "done" and retry_with_history:
+                pass  # Suppress done from failed resume stream
+            else:
+                async for yielded in self._process_sandbox_event(event, ctx):
+                    yield yielded
+
+        if retry_with_history:
+            retry_message = actual_message
+            prior_messages = await self.session_manager._load_sdk_messages(
+                sbx["session"]
+            )
+            if prior_messages:
+                history_lines = []
+                for msg in prior_messages:
+                    role = msg["role"].upper()
+                    history_lines.append(f"[{role}]: {msg['content']}")
+                history_block = "\n".join(history_lines)
+                retry_message = (
+                    f"<conversation_history>\n{history_block}\n"
+                    f"</conversation_history>\n\n{actual_message}"
+                )
+            retry_stream = self._sandbox.run_session(
+                session_id=sandbox_sid,
+                config=sandbox_config,
+                message=retry_message,
+                container_env_slug=session.container_env_id,
+            )
+            async for event in retry_stream:
+                async for yielded in self._process_sandbox_event(event, ctx):
+                    yield yielded
+
+        session = sbx["session"]
+
+        if not sbx["had_text"]:
+            logger.warning("Sandbox produced no text output")
+
+        # Increment message count for sandbox sessions
+        if sbx["had_text"] and sandbox_sid:
+            try:
+                await self.session_manager.increment_message_count(sandbox_sid, 2)
+            except Exception as e:
+                logger.warning(
+                    f"Failed to increment message count for {sandbox_sid[:8]}: {e}"
+                )
 
     async def abort_stream(self, session_id: str) -> bool:
         """Abort an active streaming session."""
@@ -1511,14 +1723,20 @@ class Orchestrator:
             # Load folder-based context (explicit selections only)
             if folder_paths:
                 try:
-                    chain = context_folder_service.build_chain(folder_paths, max_tokens=40000)
+                    chain = context_folder_service.build_chain(
+                        folder_paths, max_tokens=40000
+                    )
                     if chain.files:
-                        folder_context = context_folder_service.format_chain_for_prompt(chain, working_directory=working_directory)
+                        folder_context = context_folder_service.format_chain_for_prompt(
+                            chain, working_directory=working_directory
+                        )
                         append_parts.append(folder_context)
                         metadata["context_files"].extend(chain.file_paths)
                         metadata["context_tokens"] += chain.total_tokens
                         metadata["context_truncated"] = chain.truncated
-                        logger.info(f"Loaded {len(chain.files)} explicit context files ({chain.total_tokens} tokens)")
+                        logger.info(
+                            f"Loaded {len(chain.files)} explicit context files ({chain.total_tokens} tokens)"
+                        )
                 except Exception as e:
                     logger.warning(f"Failed to load folder context: {e}")
 
@@ -1531,9 +1749,15 @@ class Orchestrator:
                     )
                     if context_result.get("content"):
                         append_parts.append(format_context_for_prompt(context_result))
-                        metadata["context_files"].extend(context_result.get("files", []))
-                        metadata["context_tokens"] += context_result.get("totalTokens", 0)
-                        metadata["context_truncated"] = metadata["context_truncated"] or context_result.get("truncated", False)
+                        metadata["context_files"].extend(
+                            context_result.get("files", [])
+                        )
+                        metadata["context_tokens"] += context_result.get(
+                            "totalTokens", 0
+                        )
+                        metadata["context_truncated"] = metadata[
+                            "context_truncated"
+                        ] or context_result.get("truncated", False)
                 except Exception as e:
                     logger.warning(f"Failed to load file context: {e}")
 
@@ -1636,12 +1860,18 @@ The user is now continuing this conversation with you. Respond naturally as if y
             # Atomic check-and-delete prevents double-remove when two sessions
             # sharing the same env are deleted concurrently.
             try:
-                deleted = await self.session_store.delete_container_env_if_unreferenced(container_env_id)
+                deleted = await self.session_store.delete_container_env_if_unreferenced(
+                    container_env_id
+                )
                 if deleted:
                     await self._sandbox.delete_container(container_env_id)
-                    logger.info(f"Removed container env {container_env_id} with session {session_id[:8]}")
+                    logger.info(
+                        f"Removed container env {container_env_id} with session {session_id[:8]}"
+                    )
             except Exception as e:
-                logger.warning(f"Failed to clean up container env {container_env_id}: {e}")
+                logger.warning(
+                    f"Failed to clean up container env {container_env_id}: {e}"
+                )
 
         return result
 
@@ -1717,7 +1947,9 @@ The user is now continuing this conversation with you. Respond naturally as if y
                         candidate = project_dir / f"{session_id}.jsonl"
                         if candidate.exists():
                             session_file = candidate
-                            logger.debug(f"Found transcript in legacy vault location: {candidate}")
+                            logger.debug(
+                                f"Found transcript in legacy vault location: {candidate}"
+                            )
                             break
 
         if not session_file:
@@ -1757,11 +1989,11 @@ The user is now continuing this conversation with you. Respond naturally as if y
         if after_compact and segments:
             # Return only events from the last segment (after last compact)
             last_segment = segments[-1]
-            events = all_events[last_segment["start_index"]:last_segment["end_index"]]
+            events = all_events[last_segment["start_index"] : last_segment["end_index"]]
         elif segment_index is not None and 0 <= segment_index < len(segments):
             # Return events for a specific segment
             segment = segments[segment_index]
-            events = all_events[segment["start_index"]:segment["end_index"]]
+            events = all_events[segment["start_index"] : segment["end_index"]]
         else:
             # Return all events
             events = all_events
@@ -1780,27 +2012,31 @@ The user is now continuing this conversation with you. Respond naturally as if y
             segment_metadata = []
             for i, seg in enumerate(segments):
                 is_loaded = (
-                    (not after_compact and segment_index is None) or  # Full load
-                    (after_compact and i == len(segments) - 1) or     # Last segment
-                    (segment_index == i)                               # Specific segment
+                    (not after_compact and segment_index is None)  # Full load
+                    or (after_compact and i == len(segments) - 1)  # Last segment
+                    or (segment_index == i)  # Specific segment
                 )
-                segment_metadata.append({
-                    "index": i,
-                    "isCompacted": seg["is_compacted"],
-                    "messageCount": seg["message_count"],
-                    "eventCount": seg["event_count"],
-                    "startTime": seg["start_time"],
-                    "endTime": seg["end_time"],
-                    "preview": seg["preview"],
-                    "loaded": is_loaded,
-                })
+                segment_metadata.append(
+                    {
+                        "index": i,
+                        "isCompacted": seg["is_compacted"],
+                        "messageCount": seg["message_count"],
+                        "eventCount": seg["event_count"],
+                        "startTime": seg["start_time"],
+                        "endTime": seg["end_time"],
+                        "preview": seg["preview"],
+                        "loaded": is_loaded,
+                    }
+                )
 
             result["segments"] = segment_metadata
             result["segmentCount"] = len(segments)
             result["loadedSegmentIndex"] = (
-                len(segments) - 1 if after_compact else
-                segment_index if segment_index is not None else
-                None  # All loaded
+                len(segments) - 1
+                if after_compact
+                else segment_index
+                if segment_index is not None
+                else None  # All loaded
             )
 
         return result
@@ -1840,7 +2076,9 @@ The user is now continuing this conversation with you. Respond naturally as if y
                 # Only count actual user messages, not tool results
                 if content and isinstance(content, (str, list)):
                     has_text = isinstance(content, str) or any(
-                        block.get("type") == "text" for block in content if isinstance(block, dict)
+                        block.get("type") == "text"
+                        for block in content
+                        if isinstance(block, dict)
                     )
                     if has_text:
                         current_messages += 1
@@ -1851,16 +2089,18 @@ The user is now continuing this conversation with you. Respond naturally as if y
             if event_type == "system" and subtype == "compact_boundary":
                 # End current segment
                 if current_start < i:
-                    segments.append({
-                        "start_index": current_start,
-                        "end_index": i,  # Exclusive, doesn't include the boundary
-                        "is_compacted": True,
-                        "message_count": current_messages,
-                        "event_count": i - current_start,
-                        "start_time": current_start_time,
-                        "end_time": current_end_time,
-                        "preview": current_first_user_message or "",
-                    })
+                    segments.append(
+                        {
+                            "start_index": current_start,
+                            "end_index": i,  # Exclusive, doesn't include the boundary
+                            "is_compacted": True,
+                            "message_count": current_messages,
+                            "event_count": i - current_start,
+                            "start_time": current_start_time,
+                            "end_time": current_end_time,
+                            "preview": current_first_user_message or "",
+                        }
+                    )
 
                 # Start new segment after the boundary
                 current_start = i + 1
@@ -1871,16 +2111,18 @@ The user is now continuing this conversation with you. Respond naturally as if y
 
         # Add final segment (everything after last compact or all events if no compact)
         if current_start < len(events):
-            segments.append({
-                "start_index": current_start,
-                "end_index": len(events),
-                "is_compacted": False,  # Current segment, not yet compacted
-                "message_count": current_messages,
-                "event_count": len(events) - current_start,
-                "start_time": current_start_time,
-                "end_time": current_end_time,
-                "preview": current_first_user_message or "",
-            })
+            segments.append(
+                {
+                    "start_index": current_start,
+                    "end_index": len(events),
+                    "is_compacted": False,  # Current segment, not yet compacted
+                    "message_count": current_messages,
+                    "event_count": len(events) - current_start,
+                    "start_time": current_start_time,
+                    "end_time": current_end_time,
+                    "preview": current_first_user_message or "",
+                }
+            )
 
         return segments
 
@@ -1901,7 +2143,7 @@ The user is now continuing this conversation with you. Respond naturally as if y
         # Clean and truncate
         text = " ".join(text.split())  # Normalize whitespace
         if len(text) > max_length:
-            return text[:max_length - 3] + "..."
+            return text[: max_length - 3] + "..."
         return text
 
     # Note: Vault migration is now handled by the standalone script:
