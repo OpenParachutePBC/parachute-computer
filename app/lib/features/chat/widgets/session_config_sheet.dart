@@ -7,8 +7,8 @@ import 'package:parachute/core/providers/app_state_provider.dart' show apiKeyPro
 import 'package:parachute/core/providers/feature_flags_provider.dart';
 import '../models/chat_session.dart';
 import '../providers/chat_session_providers.dart';
-import '../models/container_env.dart';
-import '../providers/container_env_providers.dart';
+import '../models/project.dart';
+import '../providers/project_providers.dart';
 import '../services/chat_service.dart';
 import '../../settings/models/trust_level.dart';
 
@@ -42,7 +42,7 @@ class _SessionConfigSheetState extends ConsumerState<SessionConfigSheet> {
   late String _trustLevel;
   late String _responseMode;
   late TextEditingController _mentionPatternController;
-  String? _containerEnvId;
+  String? _projectId;
   bool _isSaving = false;
   String? _error;
 
@@ -55,7 +55,7 @@ class _SessionConfigSheetState extends ConsumerState<SessionConfigSheet> {
   void initState() {
     super.initState();
     _trustLevel = TrustLevel.fromString(widget.session.trustLevel).name;
-    _containerEnvId = widget.session.containerEnvId;
+    _projectId = widget.session.projectId;
     // Default response mode: DMs get all_messages, groups get mention_only
     final isDm = widget.session.linkedBotChatType == 'dm';
     _responseMode = widget.session.responseMode ?? (isDm ? 'all_messages' : 'mention_only');
@@ -113,7 +113,7 @@ class _SessionConfigSheetState extends ConsumerState<SessionConfigSheet> {
       final body = <String, dynamic>{
         'trustLevel': _trustLevel,
         // Send empty string to clear, or the slug to set
-        'containerEnvId': _containerEnvId ?? '',
+        'projectId': _projectId ?? '',
       };
 
       // Include response settings for bot sessions
@@ -166,7 +166,7 @@ class _SessionConfigSheetState extends ConsumerState<SessionConfigSheet> {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final session = widget.session;
-    final containerEnvsAsync = ref.watch(containerEnvsProvider);
+    final containerEnvsAsync = ref.watch(projectsProvider);
 
     return ConstrainedBox(
       constraints: BoxConstraints(
@@ -330,7 +330,7 @@ class _SessionConfigSheetState extends ConsumerState<SessionConfigSheet> {
 
           // Container env picker
           SizedBox(height: Spacing.md),
-          _buildContainerEnvPicker(isDark, containerEnvsAsync),
+          _buildProjectPicker(isDark, containerEnvsAsync),
 
           // Sandbox info for sandboxed sessions
           if (_trustLevel == 'sandboxed') ...[
@@ -483,7 +483,7 @@ class _SessionConfigSheetState extends ConsumerState<SessionConfigSheet> {
     );
   }
 
-  Widget _buildContainerEnvPicker(bool isDark, AsyncValue<List<ContainerEnv>> containerEnvsAsync) {
+  Widget _buildProjectPicker(bool isDark, AsyncValue<List<Project>> containerEnvsAsync) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -516,7 +516,7 @@ class _SessionConfigSheetState extends ConsumerState<SessionConfigSheet> {
                 ),
               ),
               child: DropdownButton<String>(
-                value: _containerEnvId,
+                value: _projectId,
                 isExpanded: true,
                 underline: const SizedBox.shrink(),
                 dropdownColor: isDark ? BrandColors.nightSurfaceElevated : Colors.white,
@@ -541,7 +541,7 @@ class _SessionConfigSheetState extends ConsumerState<SessionConfigSheet> {
                   )),
                 ],
                 onChanged: (value) {
-                  setState(() => _containerEnvId = value);
+                  setState(() => _projectId = value);
                 },
               ),
             );

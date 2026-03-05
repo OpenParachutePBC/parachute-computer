@@ -48,13 +48,13 @@ class GraphService {
     return json.decode(response.body) as Map<String, dynamic>;
   }
 
-  Future<Map<String, dynamic>> getContainerEnvs({int limit = 30}) async {
-    final uri = Uri.parse('$baseUrl/api/graph/container_envs').replace(
+  Future<Map<String, dynamic>> getProjects({int limit = 30}) async {
+    final uri = Uri.parse('$baseUrl/api/graph/projects').replace(
       queryParameters: {'limit': limit.toString()},
     );
     final response = await _client.get(uri, headers: _headers).timeout(_timeout);
     if (response.statusCode != 200) {
-      throw Exception('getContainerEnvs failed: ${response.statusCode}');
+      throw Exception('getProjects failed: ${response.statusCode}');
     }
     return json.decode(response.body) as Map<String, dynamic>;
   }

@@ -125,7 +125,7 @@ class ChatSession {
   final String? linkedBotChatType;
 
   /// Container env slug this session belongs to
-  final String? containerEnvId;
+  final String? projectId;
 
   /// SDK session ID of this session's bridge background agent
   final String? bridgeSessionId;
@@ -178,7 +178,7 @@ class ChatSession {
     this.linkedBotPlatform,
     this.linkedBotChatId,
     this.linkedBotChatType,
-    this.containerEnvId,
+    this.projectId,
     this.bridgeSessionId,
     this.metadata,
   });
@@ -219,7 +219,7 @@ class ChatSession {
       linkedBotPlatform: json['linkedBotPlatform'] as String? ?? json['linked_bot_platform'] as String?,
       linkedBotChatId: json['linkedBotChatId'] as String? ?? json['linked_bot_chat_id'] as String?,
       linkedBotChatType: json['linkedBotChatType'] as String? ?? json['linked_bot_chat_type'] as String?,
-      containerEnvId: json['containerEnvId'] as String?,
+      projectId: json['projectId'] as String?,
       bridgeSessionId: json['bridgeSessionId'] as String?,
       metadata: json['metadata'] as Map<String, dynamic>?,
     );
@@ -245,7 +245,7 @@ class ChatSession {
       if (linkedBotPlatform != null) 'linkedBotPlatform': linkedBotPlatform,
       if (linkedBotChatId != null) 'linkedBotChatId': linkedBotChatId,
       if (linkedBotChatType != null) 'linkedBotChatType': linkedBotChatType,
-      if (containerEnvId != null) 'containerEnvId': containerEnvId,
+      if (projectId != null) 'projectId': projectId,
       if (metadata != null) 'metadata': metadata,
     };
   }
@@ -301,7 +301,7 @@ class ChatSession {
     String? linkedBotPlatform,
     String? linkedBotChatId,
     String? linkedBotChatType,
-    String? containerEnvId,
+    String? projectId,
     Map<String, dynamic>? metadata,
   }) {
     return ChatSession(
@@ -324,7 +324,7 @@ class ChatSession {
       linkedBotPlatform: linkedBotPlatform ?? this.linkedBotPlatform,
       linkedBotChatId: linkedBotChatId ?? this.linkedBotChatId,
       linkedBotChatType: linkedBotChatType ?? this.linkedBotChatType,
-      containerEnvId: containerEnvId ?? this.containerEnvId,
+      projectId: projectId ?? this.projectId,
       metadata: metadata ?? this.metadata,
     );
   }

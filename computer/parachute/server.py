@@ -69,7 +69,7 @@ async def lifespan(app: FastAPI):
     logger.info(f"Claude token: {'configured' if settings.claude_code_oauth_token else 'not set (run `claude setup-token`)'}")
 
     # Initialize shared graph database (must come before orchestrator — sessions live here)
-    from parachute.core.migration import migrate_if_needed, migrate_sqlite_to_graph
+    from parachute.core.migration import migrate_if_needed, migrate_sqlite_to_graph, migrate_schema_v2
     await migrate_if_needed(settings.parachute_dir)
 
     graph = GraphService(db_path=settings.graph_db_path)
@@ -85,6 +85,9 @@ async def lifespan(app: FastAPI):
     get_registry().publish("SessionStore", session_store)
     await graph.start_checkpoint_loop()
     logger.info(f"GraphDB initialized: {settings.graph_db_path}")
+
+    # Run graph schema v2 migration if needed (Parachute_Session→Conversation etc.)
+    await migrate_schema_v2(graph)
 
     # Run SQLite migration if needed (one-time)
     old_db = Path.home() / "Parachute" / "Chat" / "sessions.db"

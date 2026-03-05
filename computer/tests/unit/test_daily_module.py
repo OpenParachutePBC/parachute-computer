@@ -59,7 +59,7 @@ async def module(tmp_vault, graph, monkeypatch):
 
 class TestSchema:
     async def test_journal_entry_table_created(self, module, graph):
-        cols = await graph.get_table_columns("Journal_Entry")
+        cols = await graph.get_table_columns("Note")
         assert "entry_id" in cols
         assert "content" in cols
         assert "title" in cols
@@ -68,9 +68,6 @@ class TestSchema:
         assert "metadata_json" in cols
         assert "brain_links_json" in cols
 
-    async def test_day_table_created(self, module, graph):
-        cols = await graph.get_table_columns("Day")
-        assert "date" in cols
 
     async def test_on_load_idempotent(self, module):
         """Calling on_load() a second time should not error."""
@@ -314,7 +311,7 @@ class TestMarkdownMigration:
         await mod.on_load()  # second load should skip
 
         rows = await graph.execute_cypher(
-            "MATCH (e:Journal_Entry {entry_id: $entry_id}) RETURN e.entry_id AS entry_id",
+            "MATCH (e:Note {entry_id: $entry_id}) RETURN e.entry_id AS entry_id",
             {"entry_id": entry_id},
         )
         assert len(rows) == 1  # not duplicated

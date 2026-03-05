@@ -14,7 +14,7 @@ import 'container_file_viewer_screen.dart';
 /// Full-screen file browser for a container env's home directory.
 ///
 /// Provides listing, navigation, upload, download/share, mkdir, and delete.
-/// Entry point: pushed from [ChatScreen] when the active session has a [containerEnvId].
+/// Entry point: pushed from [ChatScreen] when the active session has a [projectId].
 class ContainerFileBrowserScreen extends ConsumerStatefulWidget {
   final String slug;
   final String displayName;

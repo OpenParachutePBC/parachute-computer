@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
 import '../providers/chat_layout_provider.dart';
-import '../models/container_env.dart';
-import '../providers/container_env_providers.dart';
+import '../models/project.dart';
+import '../providers/project_providers.dart';
 import '../widgets/session_list_panel.dart';
 import '../widgets/chat_content_panel.dart';
 
@@ -108,7 +108,7 @@ class _DesktopLayout extends StatelessWidget {
         // Container env sidebar
         SizedBox(
           width: 220,
-          child: _ContainerEnvSidebar(isDark: isDark),
+          child: _ProjectSidebar(isDark: isDark),
         ),
         // Session list
         SizedBox(
@@ -134,15 +134,15 @@ class _DesktopLayout extends StatelessWidget {
 }
 
 /// Container env sidebar showing app header, env list, and create button.
-class _ContainerEnvSidebar extends ConsumerWidget {
+class _ProjectSidebar extends ConsumerWidget {
   final bool isDark;
 
-  const _ContainerEnvSidebar({required this.isDark});
+  const _ProjectSidebar({required this.isDark});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final containerEnvsAsync = ref.watch(containerEnvsProvider);
-    final activeSlug = ref.watch(activeContainerEnvProvider).valueOrNull;
+    final containerEnvsAsync = ref.watch(projectsProvider);
+    final activeSlug = ref.watch(activeProjectProvider).valueOrNull;
 
     return Container(
       color: isDark ? BrandColors.nightSurfaceElevated : BrandColors.softWhite,
@@ -201,7 +201,7 @@ class _ContainerEnvSidebar extends ConsumerWidget {
             isActive: activeSlug == null,
             isDark: isDark,
             onTap: () =>
-                ref.read(activeContainerEnvProvider.notifier).setContainerEnv(null),
+                ref.read(activeProjectProvider.notifier).setProject(null),
           ),
 
           // Container env list
@@ -233,19 +233,19 @@ class _ContainerEnvSidebar extends ConsumerWidget {
                       isActive: activeSlug == env.slug,
                       isDark: isDark,
                       onTap: () => ref
-                          .read(activeContainerEnvProvider.notifier)
-                          .setContainerEnv(env.slug),
+                          .read(activeProjectProvider.notifier)
+                          .setProject(env.slug),
                       onDelete: () async {
                         final confirmed = await _confirmDeleteEnv(context, env.displayName);
                         if (!confirmed) return;
                         try {
-                          final service = ref.read(containerEnvServiceProvider);
-                          await service.deleteContainerEnv(env.slug);
-                          ref.invalidate(containerEnvsProvider);
+                          final service = ref.read(projectServiceProvider);
+                          await service.deleteProject(env.slug);
+                          ref.invalidate(projectsProvider);
                           if (activeSlug == env.slug) {
                             ref
-                                .read(activeContainerEnvProvider.notifier)
-                                .setContainerEnv(null);
+                                .read(activeProjectProvider.notifier)
+                                .setProject(null);
                           }
                         } catch (e) {
                           if (context.mounted) {
@@ -373,14 +373,14 @@ class _ContainerEnvSidebar extends ConsumerWidget {
               if (name.isEmpty) return;
               Navigator.pop(dialogContext);
               try {
-                final service = ref.read(containerEnvServiceProvider);
-                final created = await service.createContainerEnv(
-                  ContainerEnvCreate(displayName: name),
+                final service = ref.read(projectServiceProvider);
+                final created = await service.createProject(
+                  ProjectCreate(displayName: name),
                 );
-                ref.invalidate(containerEnvsProvider);
+                ref.invalidate(projectsProvider);
                 ref
-                    .read(activeContainerEnvProvider.notifier)
-                    .setContainerEnv(created.slug);
+                    .read(activeProjectProvider.notifier)
+                    .setProject(created.slug);
               } catch (e) {
                 if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(

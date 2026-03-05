@@ -270,3 +270,254 @@ async def migrate_sqlite_to_graph(old_db_path: Path, session_store) -> int:
 
     logger.info(f"Migrated {count} sessions from SQLite to Kuzu ({skipped} skipped)")
     return count
+
+
+# ---------------------------------------------------------------------------
+# Schema v2: rename tables to new ontology (Projects / Conversations / Exchange / Note)
+# ---------------------------------------------------------------------------
+
+
+async def migrate_schema_v2(graph) -> bool:
+    """
+    One-time migration renaming tables to match the v2 ontology:
+      Parachute_Session    → Conversation  (container_env_id → project_id)
+      Parachute_ContainerEnv → Project     (+ core_memory field added)
+      Chat_Session         → dropped       (Conversation is authoritative)
+      Chat_Exchange        → Exchange
+      Journal_Entry        → Note          (+ note_type, aliases, status, created_by)
+      Day                  → dropped       (query by date field directly)
+
+    Runs once, detected by presence of old table names.
+    Returns True if migration ran.
+    """
+    old_cols = await graph.get_table_columns("Parachute_Session")
+    if not old_cols:
+        return False  # Already migrated
+
+    logger.info("Schema v2 migration: renaming tables to new ontology ...")
+
+    # 1. Migrate Parachute_ContainerEnv → Project
+    env_cols = await graph.get_table_columns("Parachute_ContainerEnv")
+    if env_cols:
+        env_rows = await graph.execute_cypher(
+            "MATCH (e:Parachute_ContainerEnv) RETURN e"
+        )
+        for row in env_rows:
+            try:
+                await graph._execute(
+                    "MERGE (:Project {slug: $slug, display_name: $display_name, "
+                    "core_memory: $core_memory, created_at: $created_at})",
+                    {
+                        "slug": row["slug"],
+                        "display_name": row.get("display_name", ""),
+                        "core_memory": None,
+                        "created_at": row.get("created_at", ""),
+                    },
+                )
+            except Exception as e:
+                logger.warning(f"  Project migration failed for {row.get('slug')}: {e}")
+        await graph._execute("MATCH (e:Parachute_ContainerEnv) DETACH DELETE e")
+        try:
+            await graph._execute("DROP TABLE Parachute_ContainerEnv")
+        except Exception:
+            pass
+        logger.info(f"  Migrated {len(env_rows)} Project nodes")
+
+    # 2. Migrate Parachute_Session → Conversation
+    session_rows = await graph.execute_cypher(
+        "MATCH (s:Parachute_Session) RETURN s"
+    )
+    for row in session_rows:
+        try:
+            await graph._execute(
+                """
+                MERGE (c:Conversation {session_id: $session_id})
+                ON CREATE SET
+                    c.title = $title,
+                    c.module = $module,
+                    c.source = $source,
+                    c.working_directory = $working_directory,
+                    c.model = $model,
+                    c.message_count = $message_count,
+                    c.archived = $archived,
+                    c.created_at = $created_at,
+                    c.last_accessed = $last_accessed,
+                    c.continued_from = $continued_from,
+                    c.agent_type = $agent_type,
+                    c.trust_level = $trust_level,
+                    c.mode = $mode,
+                    c.linked_bot_platform = $linked_bot_platform,
+                    c.linked_bot_chat_id = $linked_bot_chat_id,
+                    c.linked_bot_chat_type = $linked_bot_chat_type,
+                    c.parent_session_id = $parent_session_id,
+                    c.created_by = $created_by,
+                    c.summary = $summary,
+                    c.bridge_session_id = $bridge_session_id,
+                    c.bridge_context_log = $bridge_context_log,
+                    c.project_id = $project_id,
+                    c.metadata_json = $metadata_json,
+                    c.tags_json = $tags_json,
+                    c.contexts_json = $contexts_json
+                """,
+                {
+                    "session_id": row["session_id"],
+                    "title": row.get("title"),
+                    "module": row.get("module", "chat"),
+                    "source": row.get("source", "parachute"),
+                    "working_directory": row.get("working_directory"),
+                    "model": row.get("model"),
+                    "message_count": row.get("message_count", 0) or 0,
+                    "archived": bool(row.get("archived", False)),
+                    "created_at": row.get("created_at", ""),
+                    "last_accessed": row.get("last_accessed", ""),
+                    "continued_from": row.get("continued_from"),
+                    "agent_type": row.get("agent_type"),
+                    "trust_level": row.get("trust_level"),
+                    "mode": row.get("mode"),
+                    "linked_bot_platform": row.get("linked_bot_platform"),
+                    "linked_bot_chat_id": row.get("linked_bot_chat_id"),
+                    "linked_bot_chat_type": row.get("linked_bot_chat_type"),
+                    "parent_session_id": row.get("parent_session_id"),
+                    "created_by": row.get("created_by") or "user",
+                    "summary": row.get("summary"),
+                    "bridge_session_id": row.get("bridge_session_id"),
+                    "bridge_context_log": row.get("bridge_context_log"),
+                    # container_env_id → project_id
+                    "project_id": row.get("container_env_id"),
+                    "metadata_json": row.get("metadata_json"),
+                    "tags_json": row.get("tags_json") or "[]",
+                    "contexts_json": row.get("contexts_json") or "[]",
+                },
+            )
+        except Exception as e:
+            logger.warning(f"  Conversation migration failed for {row.get('session_id')}: {e}")
+
+    await graph._execute("MATCH (s:Parachute_Session) DETACH DELETE s")
+    try:
+        await graph._execute("DROP TABLE Parachute_Session")
+    except Exception:
+        pass
+    logger.info(f"  Migrated {len(session_rows)} Conversation nodes")
+
+    # 3. Migrate Chat_Exchange → Exchange
+    exchange_cols = await graph.get_table_columns("Chat_Exchange")
+    if exchange_cols:
+        exchange_rows = await graph.execute_cypher(
+            "MATCH (e:Chat_Exchange) RETURN e"
+        )
+        for row in exchange_rows:
+            try:
+                await graph._execute(
+                    """
+                    MERGE (e:Exchange {exchange_id: $exchange_id})
+                    ON CREATE SET
+                        e.session_id = $session_id,
+                        e.exchange_number = $exchange_number,
+                        e.description = $description,
+                        e.user_message = $user_message,
+                        e.ai_response = $ai_response,
+                        e.context = $context,
+                        e.session_title = $session_title,
+                        e.tools_used = $tools_used,
+                        e.created_at = $created_at
+                    """,
+                    {
+                        "exchange_id": row["exchange_id"],
+                        "session_id": row.get("session_id"),
+                        "exchange_number": row.get("exchange_number"),
+                        "description": row.get("description"),
+                        "user_message": row.get("user_message"),
+                        "ai_response": row.get("ai_response"),
+                        "context": row.get("context"),
+                        "session_title": row.get("session_title"),
+                        "tools_used": row.get("tools_used"),
+                        "created_at": row.get("created_at", ""),
+                    },
+                )
+            except Exception as e:
+                logger.warning(f"  Exchange migration failed for {row.get('exchange_id')}: {e}")
+
+        # Recreate HAS_EXCHANGE rels (Conversation → Exchange)
+        try:
+            await graph._execute(
+                "MATCH (c:Conversation), (e:Exchange) "
+                "WHERE c.session_id = e.session_id "
+                "MERGE (c)-[:HAS_EXCHANGE]->(e)"
+            )
+        except Exception as e:
+            logger.warning(f"  HAS_EXCHANGE rel recreation failed: {e}")
+
+        await graph._execute("MATCH (e:Chat_Exchange) DETACH DELETE e")
+        try:
+            await graph._execute("DROP TABLE Chat_Exchange")
+        except Exception:
+            pass
+        # Drop old Chat_Session shadow table
+        chat_session_cols = await graph.get_table_columns("Chat_Session")
+        if chat_session_cols:
+            await graph._execute("MATCH (s:Chat_Session) DETACH DELETE s")
+            try:
+                await graph._execute("DROP TABLE Chat_Session")
+            except Exception:
+                pass
+        logger.info(f"  Migrated {len(exchange_rows)} Exchange nodes")
+
+    # 4. Migrate Journal_Entry → Note
+    journal_cols = await graph.get_table_columns("Journal_Entry")
+    if journal_cols:
+        journal_rows = await graph.execute_cypher(
+            "MATCH (e:Journal_Entry) RETURN e"
+        )
+        for row in journal_rows:
+            try:
+                await graph._execute(
+                    """
+                    MERGE (n:Note {entry_id: $entry_id})
+                    ON CREATE SET
+                        n.note_type = $note_type,
+                        n.date = $date,
+                        n.content = $content,
+                        n.title = $title,
+                        n.audio_path = $audio_path,
+                        n.aliases = $aliases,
+                        n.status = $status,
+                        n.created_by = $created_by,
+                        n.extra_meta = $extra_meta,
+                        n.created_at = $created_at
+                    """,
+                    {
+                        "entry_id": row["entry_id"],
+                        "note_type": row.get("entry_type") or "journal",
+                        "date": row.get("date"),
+                        "content": row.get("content"),
+                        "title": row.get("title"),
+                        "audio_path": row.get("audio_path"),
+                        "aliases": "[]",
+                        "status": "active",
+                        "created_by": "user",
+                        "extra_meta": row.get("extra_meta"),
+                        "created_at": row.get("created_at", ""),
+                    },
+                )
+            except Exception as e:
+                logger.warning(f"  Note migration failed for {row.get('entry_id')}: {e}")
+
+        await graph._execute("MATCH (e:Journal_Entry) DETACH DELETE e")
+        try:
+            await graph._execute("DROP TABLE Journal_Entry")
+        except Exception:
+            pass
+
+        # Drop Day nodes and rels (no longer needed)
+        day_cols = await graph.get_table_columns("Day")
+        if day_cols:
+            await graph._execute("MATCH (d:Day) DETACH DELETE d")
+            try:
+                await graph._execute("DROP TABLE Day")
+            except Exception:
+                pass
+
+        logger.info(f"  Migrated {len(journal_rows)} Note nodes")
+
+    logger.info("Schema v2 migration complete.")
+    return True

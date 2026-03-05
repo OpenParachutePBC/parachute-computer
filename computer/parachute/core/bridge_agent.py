@@ -279,7 +279,7 @@ async def _store_exchange(
     session_title: Optional[str] = None,
     session_meta: Optional[dict] = None,
 ) -> None:
-    """Write this exchange to the graph (Chat_Exchange table).
+    """Write this exchange to the graph (Exchange table).
 
     Stores full user message and AI response (no truncation — voice transcripts
     can be 7000+ chars and contain high-fidelity information).
@@ -291,7 +291,7 @@ async def _store_exchange(
     The context field captures the session summary at time of exchange, giving
     each exchange a "what was happening when this was said" anchor.
 
-    If session_meta is provided, lazily upserts a Chat_Session node and creates
+    If session_meta is provided, lazily upserts a Conversation node and creates
     a HAS_EXCHANGE relationship from session to exchange.
 
     Skips trivial exchanges (very short user message AND very short AI response).
@@ -320,10 +320,10 @@ async def _store_exchange(
     tools_summary = _summarize_tool_calls(tool_calls)
 
     async with graph.write_lock:
-        # 1. Lazy-upsert Chat_Session node
+        # 1. Lazy-upsert Conversation node
         if session_meta:
             await graph.execute_cypher(
-                "MERGE (s:Chat_Session {session_id: $session_id}) "
+                "MERGE (s:Conversation {session_id: $session_id}) "
                 "ON CREATE SET s.title = $title, s.module = $module, "
                 "s.source = $source, s.agent_type = $agent_type, "
                 "s.created_at = $created_at",
@@ -337,9 +337,9 @@ async def _store_exchange(
                 },
             )
 
-        # 2. Upsert Chat_Exchange node (ON CREATE SET protects the original timestamp)
+        # 2. Upsert Exchange node (ON CREATE SET protects the original timestamp)
         await graph.execute_cypher(
-            "MERGE (e:Chat_Exchange {exchange_id: $exchange_id}) "
+            "MERGE (e:Exchange {exchange_id: $exchange_id}) "
             "ON CREATE SET e.created_at = $created_at "
             "SET e.session_id = $session_id, "
             "e.exchange_number = $exchange_number, "
@@ -363,11 +363,11 @@ async def _store_exchange(
             },
         )
 
-        # 3. HAS_EXCHANGE relationship (requires Chat_Session node to exist)
+        # 3. HAS_EXCHANGE relationship (requires Conversation node to exist)
         if session_meta:
             await graph.execute_cypher(
-                "MATCH (s:Chat_Session {session_id: $sid}), "
-                "(e:Chat_Exchange {exchange_id: $eid}) "
+                "MATCH (s:Conversation {session_id: $sid}), "
+                "(e:Exchange {exchange_id: $eid}) "
                 "MERGE (s)-[:HAS_EXCHANGE]->(e)",
                 {"sid": session_id, "eid": exchange_id},
             )
@@ -540,7 +540,7 @@ async def observe(
             f"exchange={exchange_number}, actions={actions}"
         )
 
-        # 4. Store exchange in the graph (Chat_Exchange table)
+        # 4. Store exchange in the graph (Exchange table)
         try:
             await _store_exchange(
                 session_id=session_id,

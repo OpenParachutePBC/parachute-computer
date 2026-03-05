@@ -576,22 +576,22 @@ class DockerSandbox:
         config: AgentSandboxConfig,
         message: str,
         resume_session_id: str | None = None,
-        container_env_slug: str | None = None,
+        project_slug: str | None = None,
     ) -> AsyncGenerator[dict, None]:
         """Run an agent session in a container, yielding streaming events.
 
-        container_env_slug must be set by the caller. The orchestrator auto-creates
-        a container_env record before calling this method, so it is always set for
+        project_slug must be set by the caller. The orchestrator auto-creates
+        a project record before calling this method, so it is always set for
         sandboxed sessions.
         """
-        if not container_env_slug:
+        if not project_slug:
             raise ValueError(
-                f"container_env_slug is required for run_session (session {session_id[:8]}). "
-                "The orchestrator must create a container_env record before calling run_session."
+                f"project_slug is required for run_session (session {session_id[:8]}). "
+                "The orchestrator must create a project record before calling run_session."
             )
         await self._validate_docker_ready()
 
-        target = await self.ensure_container(container_env_slug, config)
+        target = await self.ensure_container(project_slug, config)
 
         async for event in self._run_in_container(
             target, config, message, resume_session_id, "sandbox"
@@ -928,7 +928,7 @@ class DockerSandbox:
         Actions:
         - Create parachute-tools volume if absent
         - Remove all legacy parachute-ws-*, parachute-default, parachute-session-* immediately
-        - Remove orphaned parachute-env-* containers (no matching container_env record)
+        - Remove orphaned parachute-env-* containers (no matching project record)
         - Log active parachute-env-* containers
 
         Args:
@@ -972,7 +972,7 @@ class DockerSandbox:
                     containers_to_remove.append(name)
                     continue
 
-                # Env containers — remove orphans (no matching container_env record)
+                # Env containers — remove orphans (no matching project record)
                 if name.startswith("parachute-env-"):
                     slug = name[len("parachute-env-"):]
                     if active_slugs is not None and slug not in active_slugs:

@@ -325,7 +325,7 @@ class _TablePanel extends ConsumerWidget {
   }
 
   List<Map<String, dynamic>> _extractRows(Map<String, dynamic> data) {
-    for (final key in ['sessions', 'container_envs', 'entries', 'rows']) {
+    for (final key in ['sessions', 'projects', 'entries', 'rows']) {
       if (data.containsKey(key)) {
         return (data[key] as List? ?? []).cast<Map<String, dynamic>>();
       }
@@ -507,7 +507,7 @@ class _RowsView extends StatelessWidget {
 
   (String, String?) _previewKeys(String table) => switch (table) {
         'Parachute_Session' => ('title', 'session_id'),
-        'Parachute_ContainerEnv' => ('display_name', 'slug'),
+        'Project' => ('display_name', 'slug'),
         'Journal_Entry' => ('snippet', 'date'),
         _ => ('name', null),
       };

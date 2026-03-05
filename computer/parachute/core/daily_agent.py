@@ -371,7 +371,7 @@ async def run_daily_agent(
         graph_for_check = _get_graph()
         if graph_for_check is not None:
             rows = await graph_for_check.execute_cypher(
-                "MATCH (e:Journal_Entry) WHERE e.date = $date RETURN count(e) AS cnt",
+                "MATCH (e:Note) WHERE e.date = $date RETURN count(e) AS cnt",
                 {"date": date},
             )
             has_journal = rows and rows[0].get("cnt", 0) > 0

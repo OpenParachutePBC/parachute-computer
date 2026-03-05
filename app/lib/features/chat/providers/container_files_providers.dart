@@ -9,7 +9,7 @@ import 'chat_session_providers.dart' show chatSessionsProvider, currentSessionId
 
 /// Singleton service provider for the container file browser.
 ///
-/// Mirrors [containerEnvServiceProvider] — recreated when server URL or API key changes.
+/// Mirrors [projectServiceProvider] — recreated when server URL or API key changes.
 final containerFilesServiceProvider = Provider<ContainerFilesService>((ref) {
   final urlAsync = ref.watch(aiServerUrlProvider);
   final baseUrl = urlAsync.valueOrNull ?? 'http://localhost:3333';
@@ -34,13 +34,13 @@ final containerFilesPathProvider =
 ///
 /// Returns null if there is no active session or it has no container env.
 /// Used by [ChatScreen] to decide whether to show the Files toolbar button.
-final currentSessionContainerEnvIdProvider = Provider.autoDispose<String?>((ref) {
+final currentSessionProjectIdProvider = Provider.autoDispose<String?>((ref) {
   final sessionId = ref.watch(currentSessionIdProvider);
   if (sessionId == null) return null;
   final sessionsAsync = ref.watch(chatSessionsProvider);
   return sessionsAsync.valueOrNull
       ?.firstWhereOrNull((s) => s.id == sessionId)
-      ?.containerEnvId;
+      ?.projectId;
 });
 
 /// Directory listing for [slug] at the current browse path.

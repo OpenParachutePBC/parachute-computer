@@ -16,7 +16,7 @@ import 'package:parachute/core/providers/core_service_providers.dart';
 import 'package:parachute/core/providers/supervisor_providers.dart' show supervisorConfigProvider;
 import 'chat_session_actions.dart' show newChatModeProvider;
 import 'chat_session_providers.dart';
-import 'container_env_providers.dart' show activeContainerEnvProvider;
+import 'project_providers.dart' show activeProjectProvider;
 
 // ============================================================
 // Chat State Management
@@ -1149,7 +1149,7 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
     String? agentPath,
     String? trustLevel,
     String? mode,
-    String? containerEnvId,
+    String? projectId,
   }) async {
     if (state.isStreaming) {
       // Defer: don't show the user message until the current stream finishes.
@@ -1281,7 +1281,7 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
       final modelApiValue = _ref.read(supervisorConfigProvider).valueOrNull?['default_model'] as String?;
 
       // Read active container env - prefer explicit param, fall back to sidebar filter
-      final activeContainerEnv = containerEnvId ?? _ref.read(activeContainerEnvProvider).valueOrNull;
+      final activeProject = projectId ?? _ref.read(activeProjectProvider).valueOrNull;
 
       // Create stream context to hold mutable state across callbacks
       final ctx = _SendStreamContext(
@@ -1306,7 +1306,7 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
         trustLevel: trustLevel,
         mode: mode ?? state.mode,
         model: modelApiValue,
-        containerId: activeContainerEnv,
+        containerId: activeProject,
       );
 
       // Register with BackgroundStreamManager — this keeps the HTTP
