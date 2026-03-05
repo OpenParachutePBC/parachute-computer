@@ -15,13 +15,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+from ..lib.constants import CHARS_PER_TOKEN
+
 logger = logging.getLogger(__name__)
 
 # File names we look for (in priority order)
 CONTEXT_FILE_NAMES = ["AGENTS.md", "CLAUDE.md"]
-
-# Rough estimate: 4 chars per token
-CHARS_PER_TOKEN = 4
 
 
 @dataclass

@@ -344,7 +344,7 @@ async def list_context_files(request: Request) -> ContextFilesResponse:
         total_history += len(ctx.history)
 
         file_list.append({
-            "path": str(ctx.path.relative_to(vault_path)),
+            "path": str(ctx.path.relative_to(Path.home())),
             "name": ctx.name,
             "description": ctx.description,
             "facts_count": len(ctx.facts),

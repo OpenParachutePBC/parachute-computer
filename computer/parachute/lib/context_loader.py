@@ -10,10 +10,9 @@ from typing import Any, Optional
 
 import frontmatter
 
-logger = logging.getLogger(__name__)
+from .constants import CHARS_PER_TOKEN
 
-# Rough estimate: 4 chars per token
-CHARS_PER_TOKEN = 4
+logger = logging.getLogger(__name__)
 
 
 async def load_agent_context(

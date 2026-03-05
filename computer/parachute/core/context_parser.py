@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class ContextFile:
+class ParsedContextFile:
     """Parsed representation of a context file."""
 
     path: Path
@@ -49,10 +49,10 @@ class ContextParser:
         self.vault_path = vault_path
         self.contexts_dir = vault_path / "Chat" / "contexts"
 
-    def parse_file(self, file_path: Path) -> ContextFile:
+    def parse_file(self, file_path: Path) -> ParsedContextFile:
         """Parse a context file into structured representation."""
         if not file_path.exists():
-            return ContextFile(path=file_path, name=file_path.stem)
+            return ParsedContextFile(path=file_path, name=file_path.stem)
 
         content = file_path.read_text(encoding="utf-8")
 
@@ -74,7 +74,7 @@ class ContextParser:
         except Exception:
             last_modified = None
 
-        return ContextFile(
+        return ParsedContextFile(
             path=file_path,
             name=name,
             description=description,
@@ -110,7 +110,7 @@ class ContextParser:
                     bullets.append(bullet_text)
         return bullets
 
-    def list_context_files(self) -> list[ContextFile]:
+    def list_context_files(self) -> list[ParsedContextFile]:
         """List all context files with basic info."""
         files = []
 
