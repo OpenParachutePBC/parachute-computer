@@ -1,14 +1,9 @@
 """
-Integration tests for skills through the API.
+Integration tests for chat API and server health.
 
-Tests verify:
-- Skills are discovered and included in system prompt
-- Runtime plugin generation works in server context
-- System prompt includes skill documentation
-
-Note: Custom agent discovery was removed in the agentic ecosystem
-consolidation (Feb 2026). The SDK now discovers agents natively
-from .claude/agents/ via setting_sources=["project"].
+Note: Vault-level skills pipeline was removed (March 2026). Skills
+live in .claude/skills/ and are discovered natively by the SDK via
+setting_sources=["project"]. Custom agents are also SDK-native.
 """
 
 import asyncio
@@ -62,19 +57,12 @@ class TestServerHealth:
 class TestSkillsAPI:
     """Test skills-related API endpoints."""
 
-    def test_skills_endpoint_exists(self, server_url):
-        """Test skills list endpoint."""
-        response = httpx.get(f"{server_url}/api/skills")
-        # Endpoint should exist (even if returns empty list)
-        assert response.status_code in (200, 404)  # 404 if not implemented yet
-
-    def test_vault_has_skills(self, test_vault):
-        """Verify test vault has skills."""
-        skills_dir = test_vault / ".skills"
-        assert skills_dir.exists()
-
-        skills = list(skills_dir.iterdir())
-        assert len(skills) >= 3  # summarizer, code-explainer, brainstorm
+    def test_capabilities_endpoint_exists(self, server_url):
+        """Test capabilities list endpoint."""
+        response = httpx.get(f"{server_url}/api/capabilities")
+        assert response.status_code == 200
+        data = response.json()
+        assert "skills" in data
 
 
 class TestChatWithSkillsAndAgents:
@@ -135,20 +123,6 @@ class TestChatWithSkillsAndAgents:
             assert session_id is not None
 
 
-class TestRuntimePluginGeneration:
-    """Test runtime plugin is generated correctly."""
-
-    def test_plugin_generated_on_server_start(self, test_vault):
-        """Test plugin is generated when server processes requests."""
-        # After a request, plugin should exist
-        plugin_dir = test_vault / ".parachute" / "runtime" / "skills-plugin"
-
-        # May not exist until first request, but check structure if it does
-        if plugin_dir.exists():
-            assert (plugin_dir / ".claude-plugin" / "plugin.json").exists()
-            assert (plugin_dir / "skills").exists()
-
-
 class TestSystemPromptInclusion:
     """Test that skills/agents are included in system prompts."""
 
@@ -182,59 +156,3 @@ class TestSystemPromptInclusion:
             assert "promptSource" in prompt_metadata
 
 
-class TestSkillDiscoveryFromAPI:
-    """Test skill discovery via direct module imports."""
-
-    def test_skills_discovered_from_vault(self, test_vault):
-        """Test skills module discovers skills from test vault."""
-        from parachute.core.skills import discover_skills
-
-        skills = discover_skills(test_vault)
-
-        assert len(skills) == 3
-        skill_names = {s.name for s in skills}
-        assert "Summarizer" in skill_names
-        assert "Code Explainer" in skill_names
-        assert "Brainstorm" in skill_names
-
-class TestCLIIntegration:
-    """Test CLI flags are constructed correctly."""
-
-    def test_plugin_dir_flag_format(self, test_vault):
-        """Test plugin directory path is valid for CLI."""
-        from parachute.core.skills import generate_runtime_plugin
-
-        plugin_dir = generate_runtime_plugin(test_vault)
-
-        assert plugin_dir is not None
-        assert plugin_dir.is_absolute()
-        assert plugin_dir.exists()
-
-        # Path should not contain spaces or special chars that need escaping
-        path_str = str(plugin_dir)
-        # Basic check - path should be usable in CLI
-        assert " " not in path_str or path_str.startswith("/tmp")
-
-
-class TestEdgeCases:
-    """Edge case tests for skills."""
-
-    def test_skill_with_special_name(self, test_vault):
-        """Test skill with special characters in name."""
-        from parachute.core.skills import discover_skills
-
-        # Our test vault has "Code Explainer" with a space
-        skills = discover_skills(test_vault)
-        code_explainer = next(s for s in skills if "Explainer" in s.name)
-
-        assert code_explainer.name == "Code Explainer"
-
-    def test_vault_without_skills_graceful(self, tmp_path):
-        """Test server handles vault without skills gracefully."""
-        from parachute.core.skills import discover_skills, generate_runtime_plugin
-
-        skills = discover_skills(tmp_path)
-        assert skills == []
-
-        plugin = generate_runtime_plugin(tmp_path)
-        assert plugin is None

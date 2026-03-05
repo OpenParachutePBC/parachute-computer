@@ -190,6 +190,10 @@ class Session(BaseModel):
         serialization_alias="trustLevel",
         description="Trust level: trusted or untrusted (NULL = trusted for backward compat)",
     )
+    mode: Optional[str] = Field(
+        default=None,
+        description="Session mode: 'converse' or 'cocreate' (NULL = converse for backward compat)",
+    )
     linked_bot_platform: Optional[str] = Field(
         default=None,
         alias="linkedBotPlatform",
@@ -330,6 +334,7 @@ class SessionCreate(BaseModel):
     continued_from: Optional[str] = None
     agent_type: Optional[str] = None
     trust_level: Optional[str] = None
+    mode: Optional[str] = None
     linked_bot_platform: Optional[str] = None
     linked_bot_chat_id: Optional[str] = None
     linked_bot_chat_type: Optional[str] = None
@@ -350,6 +355,7 @@ class SessionUpdate(BaseModel):
     agent_type: Optional[str] = None
     metadata: Optional[dict[str, Any]] = None
     trust_level: Optional[str] = None
+    mode: Optional[str] = None
     working_directory: Optional[str] = None
     bridge_session_id: Optional[str] = None
     bridge_context_log: Optional[str] = None

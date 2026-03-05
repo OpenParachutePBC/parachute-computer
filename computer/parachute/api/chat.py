@@ -87,6 +87,7 @@ async def event_generator(request: Request, chat_request: ChatRequest):
             attachments=attachments_data,
             agent_type=chat_request.agent_type,
             trust_level=chat_request.trust_level,
+            mode=chat_request.mode,
             model=chat_request.model,
             container_id=chat_request.container_id,
         ):

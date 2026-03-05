@@ -112,6 +112,9 @@ class ChatSession {
   /// Trust level for this session (full, vault, sandboxed)
   final String? trustLevel;
 
+  /// Session mode: 'converse' (thinking partner) or 'cocreate' (agentic)
+  final String? mode;
+
   /// Bot platform this session is linked to (telegram, discord)
   final String? linkedBotPlatform;
 
@@ -171,6 +174,7 @@ class ChatSession {
     this.originalId,
     this.workingDirectory,
     this.trustLevel,
+    this.mode,
     this.linkedBotPlatform,
     this.linkedBotChatId,
     this.linkedBotChatType,
@@ -211,6 +215,7 @@ class ChatSession {
       originalId: json['originalId'] as String?,
       workingDirectory: json['workingDirectory'] as String?,
       trustLevel: json['trustLevel'] as String? ?? json['trust_level'] as String?,
+      mode: json['mode'] as String?,
       linkedBotPlatform: json['linkedBotPlatform'] as String? ?? json['linked_bot_platform'] as String?,
       linkedBotChatId: json['linkedBotChatId'] as String? ?? json['linked_bot_chat_id'] as String?,
       linkedBotChatType: json['linkedBotChatType'] as String? ?? json['linked_bot_chat_type'] as String?,
@@ -236,6 +241,7 @@ class ChatSession {
       if (originalId != null) 'originalId': originalId,
       if (workingDirectory != null) 'workingDirectory': workingDirectory,
       if (trustLevel != null) 'trustLevel': trustLevel,
+      if (mode != null) 'mode': mode,
       if (linkedBotPlatform != null) 'linkedBotPlatform': linkedBotPlatform,
       if (linkedBotChatId != null) 'linkedBotChatId': linkedBotChatId,
       if (linkedBotChatType != null) 'linkedBotChatType': linkedBotChatType,
@@ -291,6 +297,7 @@ class ChatSession {
     String? originalId,
     String? workingDirectory,
     String? trustLevel,
+    String? mode,
     String? linkedBotPlatform,
     String? linkedBotChatId,
     String? linkedBotChatType,
@@ -313,6 +320,7 @@ class ChatSession {
       originalId: originalId ?? this.originalId,
       workingDirectory: workingDirectory ?? this.workingDirectory,
       trustLevel: trustLevel ?? this.trustLevel,
+      mode: mode ?? this.mode,
       linkedBotPlatform: linkedBotPlatform ?? this.linkedBotPlatform,
       linkedBotChatId: linkedBotChatId ?? this.linkedBotChatId,
       linkedBotChatType: linkedBotChatType ?? this.linkedBotChatType,

@@ -21,9 +21,7 @@ from typing import Any, AsyncGenerator, Optional
 from parachute.config import Settings, get_settings
 from parachute.core.claude_sdk import query_streaming, QueryInterrupt
 from parachute.core.permission_handler import PermissionHandler
-from parachute.core.plugins import discover_plugins, get_plugin_dirs
 from parachute.core.sandbox import DockerSandbox, AgentSandboxConfig
-from parachute.core.skills import generate_runtime_plugin, discover_skills
 from parachute.core.session_manager import SessionManager
 from parachute.db.graph_sessions import GraphSessionStore
 from parachute.lib.context_loader import format_context_for_prompt, load_agent_context
@@ -94,96 +92,62 @@ def _set_title_source(session: Session, source: str) -> None:
     session.metadata["title_source"] = source
 
 
-# Default system prompt for vault agent
-DEFAULT_VAULT_PROMPT = """# Parachute Agent
+# System prompt for converse mode — full replacement, no Claude Code preset
+CONVERSE_PROMPT = """# Parachute
 
-You are an AI companion in Parachute - an open, local-first tool for connected thinking.
+You are Parachute, a thinking partner and memory extension.
 
 ## Your Role
+Help the user think clearly, explore ideas, remember context, and make connections.
+This is a collaborative thinking relationship — not a task queue.
 
-You are a **thinking partner and memory extension**. Help the user:
-- Think through ideas and problems
-- Remember context from past conversations
-- Explore topics and make connections
-- Find information when they need it
+## How to Engage
+- Think alongside, not just for — ask questions that help develop their thinking
+- Be direct: skip flattery, no filler phrases, respond to what's actually being asked
+- Make connections between what you know about their projects, interests, and past thinking
+- One question at a time — pick the best one, not all of them
 
-## How to Help
+## Vault Context
+Search the vault when the user asks about their own thoughts, projects, or history,
+or when personalized context would improve your response.
 
-- **Be conversational** - This is a thinking partnership, not a formal assistant relationship
-- **Ask good questions** - Help the user think through problems, don't just answer
-- **Be direct** - Skip flattery and respond directly to what they're asking
-- **Personalize responses** - Search the vault for context when the user asks personal questions
-
-## When to Search
-
-**Search the vault FIRST when:**
-- User asks for personalized recommendations ("what should I...")
-- User references past conversations or projects
-- User asks about their own thoughts, ideas, or decisions
-- You need context about the user's preferences or history
-
-**Use web search when:**
-- User needs current/external information (news, docs, research)
-- The question is about something outside the vault
-- You need to look up facts, not personal context
-
-## Available Tools
-
-### Vault Search (mcp__parachute__*)
-Your primary tools for understanding the user's context:
-
-- **mcp__parachute__search_sessions** - Search past conversations by keyword
-- **mcp__parachute__list_recent_sessions** - See recent chat sessions
-- **mcp__parachute__get_session** - Read a specific conversation
-- **mcp__parachute__search_journals** - Search Daily voice journal entries
-- **mcp__parachute__list_recent_journals** - See recent journal dates
-- **mcp__parachute__get_journal** - Read a specific day's journal
+### Vault Tools (mcp__parachute__*)
+- **mcp__parachute__search_sessions** — search past conversations
+- **mcp__parachute__list_recent_sessions** — recent chat sessions
+- **mcp__parachute__get_session** — read a specific conversation
+- **mcp__parachute__search_journals** — search Daily voice journal entries
+- **mcp__parachute__list_recent_journals** — recent journal dates
+- **mcp__parachute__get_journal** — read a specific day's journal
 
 ### Web Tools
-- **WebSearch** - Look up current information online
-- **WebFetch** - Read content from URLs
+- **WebSearch** — current information, news, research
+- **WebFetch** — read a specific URL
 
 ## Handling Attachments
+- **Images**: Use the Read tool to view and describe them — don't just acknowledge
+- **PDFs / text files**: Read and engage with the content directly
 
-When the user attaches files to their message:
-- **Images**: ALWAYS use the Read tool to view the image and describe/analyze what you see. Don't just acknowledge the attachment - actually look at it!
-- **PDFs**: Use the Read tool to read the PDF content
-- **Code/Text files**: The content is included inline, so you can read it directly from the message
+## Skills
+Skills in `.claude/skills/` extend your capabilities for specific tasks.
+When a task seems to call for one, invoke it with the Skill tool.
+"""
 
-The user expects you to engage with their attachments, not just confirm they were received.
+# Append content for cocreate mode — added on top of Claude Code preset
+COCREATE_PROMPT_APPEND = """## Parachute Context
 
-### Other MCP Tools
-Additional tools may be available depending on which modules are connected.
-Check the tool list for mcp__* tools from other servers.
+You are running as Parachute in cocreate mode — an agentic partner for building,
+writing, coding, and creating. The project's CLAUDE.md or AGENTS.md defines
+conventions and orientation for this specific context.
 
-## Skills System
+## Vault Tools Available (mcp__parachute__*)
+The same vault tools from converse mode are available for personal context:
+search_sessions, search_journals, get_journal, list_recent_sessions, etc.
 
-Skills are reusable AI capabilities that can be invoked via the `/skill` command or Skill tool.
-Skills are stored in `.skills/` and may include:
-- Creative workflows (image/video generation)
-- Code analysis patterns
-- Research methodologies
-- Custom prompts and personas
-
-When a skill is relevant, invoke it with the Skill tool. Skills have specialized prompts and tool access configured for their purpose.
-
-## Creating Skills
-
-Users can create skills in their vault at `.skills/skill-name/SKILL.md`:
-
-```markdown
----
-name: My Skill
-description: What this skill does
-allowed-tools: [Read, Write, Bash]
----
-
-# Skill Instructions
-
-Your prompt/instructions here...
-```
-
-Skills can also be single files at `.skills/skill-name.md`.
+## Working Style
+- For multi-step tasks, use TodoWrite to track progress visibly
+- Clarify ambiguous requests before executing — simple-sounding tasks are often
+  underspecified; asking once upfront prevents wasted effort
+- Loop in the user at natural checkpoints, especially before irreversible actions
 """
 
 
@@ -201,7 +165,6 @@ class CapabilityBundle:
 
     resolved_mcps: dict | None
     plugin_dirs: list[Path]
-    skill_names: list[str]
     agents_dict: dict | None
     effective_trust: str
     warnings: list[dict] = field(default_factory=list)  # Serialized WarningEvent dicts
@@ -300,6 +263,7 @@ class Orchestrator:
         attachments: Optional[list[dict[str, Any]]] = None,
         agent_type: Optional[str] = None,
         trust_level: Optional[str] = None,
+        mode: Optional[str] = None,
         model: Optional[str] = None,
         container_id: Optional[str] = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
@@ -336,6 +300,7 @@ class Orchestrator:
             module=module,
             working_directory=working_directory,
             trust_level=trust_level,
+            mode=mode,
             container_env_id=container_id,
         )
 
@@ -424,6 +389,9 @@ class Orchestrator:
         override_system_prompt = config_overrides.get("system_prompt")
         effective_custom_prompt = system_prompt or override_system_prompt
 
+        # Resolve effective mode: request > session > default ("converse")
+        effective_mode = mode or getattr(session, "mode", None) or "converse"
+
         # Build system prompt (after loading prior conversation, with working dir)
         # Only surface credential discoverability for non-bot sessions — bot sessions
         # receive empty credentials, so advertising pre-authenticated tools would mislead the agent.
@@ -439,6 +407,7 @@ class Orchestrator:
             prior_conversation=effective_prior_conversation,
             working_directory=effective_working_dir,
             credential_keys=prompt_cred_keys,
+            mode=effective_mode,
         )
 
         logger.info(
@@ -513,7 +482,8 @@ class Orchestrator:
             # Phase 2: Capability discovery
             caps = await self._discover_capabilities(agent, session, trust_level)
 
-            is_full_prompt = prompt_metadata.get("prompt_source") in ("custom", "agent")
+            # converse mode always uses a full replacement prompt (no Claude Code preset)
+            is_full_prompt = prompt_metadata.get("prompt_source") in ("custom", "agent", "converse")
 
             yield PromptMetadataEvent(
                 prompt_source=prompt_metadata["prompt_source"],
@@ -525,7 +495,6 @@ class Orchestrator:
                 available_agents=list(caps.agents_dict.keys())
                 if caps.agents_dict
                 else [],
-                available_skills=caps.skill_names,
                 available_mcps=list(caps.resolved_mcps.keys())
                 if caps.resolved_mcps
                 else [],
@@ -645,6 +614,7 @@ class Orchestrator:
                     agent_type=agent_type,
                     resume_info=resume_info,
                     start_time=start_time,
+                    mode=effective_mode,
                 ):
                     yield event
 
@@ -806,45 +776,13 @@ class Orchestrator:
                 session_id=session.id if session.id != "pending" else None,
             )
 
-        # --- Skill and plugin discovery -----------------------------------
-        plugin_dirs: list[Path] = []
-        discovered_skills = discover_skills(Path.home())
-        skill_names = [s.name for s in discovered_skills]
-        skills_plugin_dir = generate_runtime_plugin(
-            Path.home(), skills=discovered_skills
-        )
-        if skills_plugin_dir:
-            plugin_dirs.append(skills_plugin_dir)
-            logger.info(f"Generated skills plugin at {skills_plugin_dir}")
-
+        # --- Plugin directory resolution -----------------------------------
+        # Skills in .claude/skills/ and agents in .claude/agents/ are discovered
+        # natively by the SDK via setting_sources=["project"]. No manual discovery needed.
         settings = get_settings()
-        installed_plugins = discover_plugins(
-            Path.home(),
-            include_user=settings.include_user_plugins,
-        )
-        legacy_plugin_dirs = get_plugin_dirs(installed_plugins)
-        plugin_dirs.extend(legacy_plugin_dirs)
+        plugin_dirs: list[Path] = []
 
-        # Merge MCPs from legacy/CLI plugins (manifest-based plugins already
-        # have their MCPs copied into vault/.mcp.json at install time)
-        for plugin in installed_plugins:
-            if Path(plugin.path).suffix == ".json":
-                continue
-            if plugin.mcps and resolved_mcps is not None:
-                for mcp_name, mcp_config in plugin.mcps.items():
-                    if mcp_name not in resolved_mcps:
-                        resolved_mcps[mcp_name] = mcp_config
-                        logger.info(
-                            f"Added MCP '{mcp_name}' from plugin '{plugin.slug}'"
-                        )
-
-        if legacy_plugin_dirs:
-            logger.info(
-                f"Discovered {len(installed_plugins)} plugins, "
-                f"{len(legacy_plugin_dirs)} legacy plugin dirs"
-            )
-
-        # Load additional configured plugin directories
+        # Load additional configured plugin directories (from settings.plugin_dirs)
         for dir_str in settings.plugin_dirs:
             plugin_path = Path(dir_str).expanduser().resolve()
             if plugin_path.is_dir():
@@ -917,7 +855,6 @@ class Orchestrator:
         return CapabilityBundle(
             resolved_mcps=resolved_mcps,
             plugin_dirs=plugin_dirs,
-            skill_names=skill_names,
             agents_dict=agents_dict,
             effective_trust=effective_trust,
             warnings=warnings,
@@ -944,6 +881,7 @@ class Orchestrator:
         agent_type: Optional[str],
         resume_info: Any,
         start_time: float,
+        mode: str = "converse",
     ) -> AsyncGenerator[dict, None]:
         """Run the trusted (direct/bare-metal) execution path.
 
@@ -1017,6 +955,7 @@ class Orchestrator:
                             captured_model,
                             title=title,
                             agent_type=agent_type,
+                            mode=mode,
                         )
                         session_finalized = True
                         logger.info(
@@ -1183,6 +1122,7 @@ class Orchestrator:
                     captured_model,
                     title=title,
                     agent_type=agent_type,
+                    mode=mode,
                 )
                 session_finalized = True
                 logger.info(f"Finalized session: {captured_session_id[:8]}...")
@@ -1625,6 +1565,7 @@ class Orchestrator:
         prior_conversation: Optional[str] = None,
         working_directory: Optional[str] = None,
         credential_keys: Optional[set[str]] = None,
+        mode: str = "converse",
     ) -> tuple[str, dict[str, Any]]:
         """
         Build the system prompt additions.
@@ -1635,12 +1576,15 @@ class Orchestrator:
         - Prior conversation history (runtime only)
         - Explicitly selected context files
 
+        For converse mode: returns CONVERSE_PROMPT as a full replacement (no preset).
+        For cocreate mode: returns COCREATE_PROMPT_APPEND appended to Claude Code preset.
+
         Returns:
-            Tuple of (append_string, metadata_dict) for transparency
+            Tuple of (prompt_string, metadata_dict) for transparency
         """
         # Track metadata for transparency
         metadata: dict[str, Any] = {
-            "prompt_source": "claude_code_preset",  # Using SDK preset
+            "prompt_source": "converse" if mode == "converse" else "claude_code_preset",
             "prompt_source_path": None,
             "context_files": [],
             "context_tokens": 0,
@@ -1671,18 +1615,25 @@ class Orchestrator:
             # Agent has custom prompt - return it for full override
             return agent.system_prompt, metadata
 
-        # For vault-agent: SDK handles project-level CLAUDE.md via setting_sources=["project"].
-        # We only load vault-level CLAUDE.md here (outside the project root).
-        vault_claude = Path.home() / "CLAUDE.md"
-        if vault_claude.exists():
-            try:
-                content = vault_claude.read_text().strip()
-                if content:
-                    append_parts.append(content)
-                    metadata["claude_md_loaded"] = True
-                    metadata["prompt_source_path"] = "CLAUDE.md"
-            except OSError as e:
-                logger.warning(f"Failed to read vault CLAUDE.md: {e}")
+        # Converse mode: full replacement prompt (no Claude Code preset)
+        # Cocreate mode: append to Claude Code preset
+        if mode == "converse":
+            append_parts.append(CONVERSE_PROMPT)
+        else:
+            # Cocreate: start with our append framing, then add vault CLAUDE.md below
+            append_parts.append(COCREATE_PROMPT_APPEND)
+            # SDK handles project-level CLAUDE.md via setting_sources=["project"].
+            # We only load vault-level CLAUDE.md here (outside the project root).
+            vault_claude = Path.home() / "CLAUDE.md"
+            if vault_claude.exists():
+                try:
+                    content = vault_claude.read_text().strip()
+                    if content:
+                        append_parts.append(content)
+                        metadata["claude_md_loaded"] = True
+                        metadata["prompt_source_path"] = "CLAUDE.md"
+                except OSError as e:
+                    logger.warning(f"Failed to read vault CLAUDE.md: {e}")
 
         # Working directory framing — tell the AI where it's operating
         # (SDK loads the actual CLAUDE.md via setting_sources=["project"] + cwd)

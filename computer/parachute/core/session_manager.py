@@ -115,6 +115,7 @@ class SessionManager:
         working_directory: Optional[str] = None,
         continued_from: Optional[str] = None,
         trust_level: Optional[str] = None,
+        mode: Optional[str] = None,
         container_env_id: str | None = None,
     ) -> tuple[Session, ResumeInfo, bool]:
         """
@@ -183,6 +184,7 @@ class SessionManager:
                 working_directory=working_directory,
                 continued_from=continued_from,
                 trust_level=trust_level,
+                mode=mode,
                 container_env_id=container_env_id,
                 created_at=datetime.now(timezone.utc),
                 last_accessed=datetime.now(timezone.utc),
@@ -204,6 +206,7 @@ class SessionManager:
             working_directory=working_directory,
             continued_from=continued_from,
             trust_level=trust_level,
+            mode=mode,
             container_env_id=container_env_id,
             created_at=datetime.now(timezone.utc),
             last_accessed=datetime.now(timezone.utc),
@@ -223,6 +226,7 @@ class SessionManager:
         model: Optional[str] = None,
         title: Optional[str] = None,
         agent_type: Optional[str] = None,
+        mode: Optional[str] = None,
     ) -> Session:
         """
         Finalize a new session with the SDK-provided session ID.
@@ -236,11 +240,12 @@ class SessionManager:
         # Use provided agent_type, or fall back to placeholder's agent_type
         final_agent_type = agent_type or placeholder.get_agent_type()
 
-        # Carry forward bot-linked fields from placeholder
+        # Carry forward fields from placeholder
         linked_bot_platform = getattr(placeholder, 'linked_bot_platform', None)
         linked_bot_chat_id = getattr(placeholder, 'linked_bot_chat_id', None)
         linked_bot_chat_type = getattr(placeholder, 'linked_bot_chat_type', None)
         trust_level = getattr(placeholder, 'trust_level', None)
+        final_mode = mode or getattr(placeholder, 'mode', None)
         metadata = getattr(placeholder, 'metadata', None)
         final_container_env_id = getattr(placeholder, 'container_env_id', None)
 
@@ -252,6 +257,7 @@ class SessionManager:
                 model=model,
                 agent_type=final_agent_type,
                 working_directory=relative_wd,
+                mode=final_mode,
             )
             session = await self.db.update_session(sdk_session_id, update)
             logger.debug(f"Updated existing session {sdk_session_id[:8]} with finalization fields")
@@ -267,6 +273,7 @@ class SessionManager:
                     continued_from=placeholder.continued_from,
                     agent_type=final_agent_type,
                     trust_level=trust_level,
+                    mode=final_mode,
                     linked_bot_platform=linked_bot_platform,
                     linked_bot_chat_id=linked_bot_chat_id,
                     linked_bot_chat_type=linked_bot_chat_type,
