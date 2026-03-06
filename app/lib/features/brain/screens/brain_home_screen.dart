@@ -1,8 +1,53 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
+import 'package:parachute/core/providers/app_state_provider.dart'
+    show currentTabIndexProvider, visibleTabsProvider, AppTab;
+import 'package:parachute/features/chat/providers/chat_session_actions.dart'
+    show switchSessionProvider;
+import 'package:parachute/features/daily/journal/providers/journal_providers.dart'
+    show selectedJournalDateProvider;
 import '../providers/brain_providers.dart';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Value object — typed memory item
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum MemoryKind { session, note }
+
+class MemoryItem {
+  final MemoryKind kind;
+  final String id;
+  final String title;
+  final String ts;
+  final String module;
+  final String date; // note only
+
+  const MemoryItem({
+    required this.kind,
+    required this.id,
+    required this.title,
+    required this.ts,
+    required this.module,
+    required this.date,
+  });
+
+  factory MemoryItem.fromJson(Map<String, dynamic> json) {
+    final kind = json['kind'] == 'note' ? MemoryKind.note : MemoryKind.session;
+    return MemoryItem(
+      kind: kind,
+      id: json['id'] as String? ?? '',
+      title: json['title'] as String? ?? '',
+      ts: json['ts'] as String? ?? '',
+      module: json['module'] as String? ?? 'chat',
+      date: json['date'] as String? ?? '',
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Screen
+// ─────────────────────────────────────────────────────────────────────────────
 
 /// Brain — your extended mind.
 ///
@@ -85,8 +130,7 @@ class _BrainHomeScreenState extends ConsumerState<BrainHomeScreen> {
                     selected: filter == 'all',
                     isDark: isDark,
                     onTap: () =>
-                        ref.read(brainMemoryFilterProvider.notifier).state =
-                            'all',
+                        ref.read(brainMemoryFilterProvider.notifier).state = 'all',
                   ),
                   const SizedBox(width: 8),
                   _FilterChip(
@@ -103,8 +147,7 @@ class _BrainHomeScreenState extends ConsumerState<BrainHomeScreen> {
                     selected: filter == 'notes',
                     isDark: isDark,
                     onTap: () =>
-                        ref.read(brainMemoryFilterProvider.notifier).state =
-                            'notes',
+                        ref.read(brainMemoryFilterProvider.notifier).state = 'notes',
                   ),
                 ],
               ),
@@ -142,8 +185,9 @@ class _BrainHomeScreenState extends ConsumerState<BrainHomeScreen> {
                   ),
                 ),
                 data: (data) {
-                  final items = (data['items'] as List? ?? [])
+                  final rawItems = (data['items'] as List? ?? [])
                       .cast<Map<String, dynamic>>();
+                  final items = rawItems.map(MemoryItem.fromJson).toList();
                   if (items.isEmpty) {
                     return Center(
                       child: Text(
@@ -184,11 +228,9 @@ class _FilterChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final selectedBg =
-        isDark ? BrandColors.nightForest : BrandColors.forest;
-    final unselectedBg =
-        isDark ? BrandColors.nightSurface : BrandColors.softWhite;
-    final selectedText = Colors.white;
+    final selectedBg = isDark ? BrandColors.nightForest : BrandColors.forest;
+    final unselectedBg = isDark ? BrandColors.nightSurface : BrandColors.softWhite;
+    const selectedText = Colors.white;
     final unselectedText =
         isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood;
 
@@ -214,44 +256,53 @@ class _FilterChip extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Memory feed — grouped by date
+// Memory feed — date-grouped, truly lazy
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Lightweight discriminated union for the flat list.
+sealed class _FeedRow {}
+
+class _HeaderRow extends _FeedRow {
+  final String label;
+  _HeaderRow(this.label);
+}
+
+class _ItemRow extends _FeedRow {
+  final MemoryItem item;
+  _ItemRow(this.item);
+}
+
 class _MemoryFeed extends StatelessWidget {
-  final List<Map<String, dynamic>> items;
+  final List<MemoryItem> items;
   final bool isDark;
 
   const _MemoryFeed({required this.items, required this.isDark});
 
   @override
   Widget build(BuildContext context) {
-    // Group items by date label
-    final groups = <String, List<Map<String, dynamic>>>{};
-    final groupOrder = <String>[];
+    // Build a flat list of lightweight value objects — no widgets here.
+    final rows = <_FeedRow>[];
+    String? currentLabel;
     final now = DateTime.now();
 
     for (final item in items) {
-      final label = _dateLabel(item['ts'] as String? ?? '', now);
-      if (!groups.containsKey(label)) {
-        groups[label] = [];
-        groupOrder.add(label);
+      final label = _dateLabel(item.ts, now);
+      if (label != currentLabel) {
+        rows.add(_HeaderRow(label));
+        currentLabel = label;
       }
-      groups[label]!.add(item);
-    }
-
-    // Build flat list with section headers
-    final widgets = <Widget>[];
-    for (final label in groupOrder) {
-      widgets.add(_DateHeader(label: label, isDark: isDark));
-      for (final item in groups[label]!) {
-        widgets.add(_MemoryItem(item: item, isDark: isDark));
-      }
+      rows.add(_ItemRow(item));
     }
 
     return ListView.builder(
       padding: const EdgeInsets.only(bottom: 24),
-      itemCount: widgets.length,
-      itemBuilder: (_, i) => widgets[i],
+      itemCount: rows.length,
+      itemBuilder: (context, i) {
+        return switch (rows[i]) {
+          _HeaderRow r => _DateHeader(label: r.label, isDark: isDark),
+          _ItemRow r => _MemoryItemTile(item: r.item, isDark: isDark),
+        };
+      },
     );
   }
 
@@ -260,7 +311,7 @@ class _MemoryFeed extends StatelessWidget {
     try {
       final dt = DateTime.parse(ts).toLocal();
       final diff = now.difference(dt);
-      if (diff.inDays == 0) return 'Today';
+if (diff.inDays == 0) return 'Today';
       if (diff.inDays == 1) return 'Yesterday';
       if (diff.inDays < 7) return 'This Week';
       if (diff.inDays < 30) return 'This Month';
@@ -295,33 +346,30 @@ class _DateHeader extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Single memory item
+// Single memory item tile
 // ─────────────────────────────────────────────────────────────────────────────
 
-class _MemoryItem extends ConsumerWidget {
-  final Map<String, dynamic> item;
+class _MemoryItemTile extends ConsumerWidget {
+  final MemoryItem item;
   final bool isDark;
 
-  const _MemoryItem({required this.item, required this.isDark});
+  const _MemoryItemTile({required this.item, required this.isDark});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final kind = item['kind'] as String? ?? 'session';
-    final title = item['title'] as String? ?? '';
-    final ts = item['ts'] as String? ?? '';
-    final isSession = kind == 'session';
+    final isSession = item.kind == MemoryKind.session;
 
     final textColor = isDark ? BrandColors.nightText : BrandColors.charcoal;
-    final subColor =
-        isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood;
+    final subColor = isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood;
     final divColor = isDark
         ? BrandColors.nightTextSecondary.withValues(alpha: 0.1)
         : BrandColors.charcoal.withValues(alpha: 0.07);
 
-    final subtitle = _relativeTime(ts);
+    // Notes use the same forest palette as sessions but slightly muted
+    final noteColor = isDark ? BrandColors.nightForest : BrandColors.forest;
 
     return InkWell(
-      onTap: () => _navigate(context, item),
+      onTap: () => _navigate(ref),
       child: Column(
         children: [
           Padding(
@@ -338,9 +386,7 @@ class _MemoryItem extends ConsumerWidget {
                         ? (isDark
                             ? BrandColors.nightForest.withValues(alpha: 0.15)
                             : BrandColors.forest.withValues(alpha: 0.08))
-                        : (isDark
-                            ? Colors.blue.withValues(alpha: 0.15)
-                            : Colors.blue.withValues(alpha: 0.08)),
+                        : noteColor.withValues(alpha: 0.12),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Icon(
@@ -348,17 +394,17 @@ class _MemoryItem extends ConsumerWidget {
                     size: 16,
                     color: isSession
                         ? (isDark ? BrandColors.nightForest : BrandColors.forest)
-                        : Colors.blue.shade400,
+                        : noteColor.withValues(alpha: 0.7),
                   ),
                 ),
                 const SizedBox(width: 12),
-                // Title + subtitle
+                // Title + relative time
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        title,
+                        item.title,
                         style: TextStyle(
                           fontSize: 14,
                           fontWeight: FontWeight.w500,
@@ -369,7 +415,7 @@ class _MemoryItem extends ConsumerWidget {
                       ),
                       const SizedBox(height: 1),
                       Text(
-                        subtitle,
+                        _relativeTime(item.ts),
                         style: TextStyle(fontSize: 12, color: subColor),
                       ),
                     ],
@@ -385,18 +431,31 @@ class _MemoryItem extends ConsumerWidget {
     );
   }
 
-  void _navigate(BuildContext context, Map<String, dynamic> item) {
-    final kind = item['kind'] as String? ?? 'session';
-    if (kind == 'session') {
-      final id = item['id'] as String? ?? '';
-      if (id.isNotEmpty) context.go('/chat/$id');
-    } else {
-      final date = item['date'] as String? ?? '';
-      if (date.isNotEmpty) {
-        context.go('/daily?date=$date');
-      } else {
-        context.go('/daily');
-      }
+  /// Navigate to the item using provider-based tab switching.
+  /// No GoRouter — switches tabs and sets session/date state directly.
+  void _navigate(WidgetRef ref) {
+    final visibleTabs = ref.read(visibleTabsProvider);
+
+    if (item.kind == MemoryKind.session && item.id.isNotEmpty) {
+      final chatIndex = visibleTabs.indexOf(AppTab.chat);
+      if (chatIndex < 0) return;
+      ref.read(switchSessionProvider)(item.id);
+      ref.read(currentTabIndexProvider.notifier).state = chatIndex;
+    } else if (item.kind == MemoryKind.note && item.date.isNotEmpty) {
+      final dailyIndex = visibleTabs.indexOf(AppTab.daily);
+      if (dailyIndex < 0) return;
+      try {
+        final parts = item.date.split('-');
+        if (parts.length == 3) {
+          final date = DateTime(
+            int.parse(parts[0]),
+            int.parse(parts[1]),
+            int.parse(parts[2]),
+          );
+          ref.read(selectedJournalDateProvider.notifier).state = date;
+        }
+      } catch (_) {}
+      ref.read(currentTabIndexProvider.notifier).state = dailyIndex;
     }
   }
 

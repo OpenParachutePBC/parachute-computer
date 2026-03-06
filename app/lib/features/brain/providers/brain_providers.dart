@@ -14,41 +14,15 @@ final brainServiceProvider = Provider<BrainService>((ref) {
   return service;
 });
 
-/// Schema from /api/brain/schema.
-/// Returns {node_tables: [...], rel_tables: [...]}
-final brainSchemaProvider = FutureProvider<Map<String, dynamic>>((ref) async {
-  return ref.watch(brainServiceProvider).getSchema();
-});
-
-/// Selected table name for the schema inspector (dev/debug view).
-final brainSelectedTableProvider = StateProvider<String?>((ref) => null);
-
-/// Data for a specific table — keyed by table name.
-/// Only fetches for tables with a known endpoint.
-final brainTableDataProvider = FutureProvider.autoDispose.family<Map<String, dynamic>, String>(
-  (ref, tableName) async {
-    final service = ref.watch(brainServiceProvider);
-    switch (tableName) {
-      case 'Chat':
-        return service.getSessions(limit: 50);
-      case 'Project':
-        return service.getProjects(limit: 50);
-      case 'Note':
-        return service.getDailyEntries(limit: 50);
-      default:
-        return {'rows': [], 'count': 0, 'note': 'No data endpoint for $tableName'};
-    }
-  },
-);
-
 /// Memory feed filter — 'all', 'sessions', or 'notes'.
-final brainMemoryFilterProvider = StateProvider<String>((ref) => 'all');
+/// autoDispose: filter/search are ephemeral UI state, reset on nav.
+final brainMemoryFilterProvider = StateProvider.autoDispose<String>((ref) => 'all');
 
 /// Search query for the memory feed.
-final brainMemorySearchProvider = StateProvider<String>((ref) => '');
+final brainMemorySearchProvider = StateProvider.autoDispose<String>((ref) => '');
 
 /// Unified memory feed — sessions + notes, chronological.
-/// Keyed by (filter, search) encoded as a record.
+/// Keyed by (filter, search) as a record.
 final brainMemoryProvider =
     FutureProvider.autoDispose.family<Map<String, dynamic>, (String, String)>(
   (ref, key) async {

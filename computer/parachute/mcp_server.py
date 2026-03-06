@@ -114,7 +114,7 @@ async def get_db():
     if _db is None:
         from parachute.db.brain import BrainService
         from parachute.db.brain_sessions import BrainSessionStore
-        brain = BrainService(db_path=str(_PARACHUTE_DIR / "graph" / "parachute.kz"))
+        brain = BrainService(db_path=_PARACHUTE_DIR / "graph" / "parachute.kz")
         await brain.connect()
         _db = BrainSessionStore(brain)
         await _db.ensure_schema()
@@ -1092,28 +1092,35 @@ async def handle_tool_call(name: str, arguments: dict[str, Any]) -> str:
             qs = ("?" + urllib.parse.urlencode(params)) if params else ""
             result = await _brain_call(f"/daily/entries{qs}")
         elif name == "brain_query":
-            from parachute.core.interfaces import get_registry
-            brain = get_registry().get("BrainDB")
-            if brain is None:
-                result = {"error": "BrainDB not available"}
+            # Require non-sandboxed trust level — raw Cypher can read all journal data
+            if _session_context and _session_context.trust_level == "sandboxed":
+                result = {"error": "brain_query requires vault or full trust level"}
             else:
-                rows = await brain.execute_cypher(
-                    arguments["query"],
-                    arguments.get("params") or None,
-                )
-                result = {"rows": rows, "count": len(rows)}
-        elif name == "brain_execute":
-            from parachute.core.interfaces import get_registry
-            brain = get_registry().get("BrainDB")
-            if brain is None:
-                result = {"error": "BrainDB not available"}
-            else:
-                async with brain.write_lock:
+                from parachute.core.interfaces import get_registry
+                brain = get_registry().get("BrainDB")
+                if brain is None:
+                    result = {"error": "BrainDB not available"}
+                else:
                     rows = await brain.execute_cypher(
                         arguments["query"],
                         arguments.get("params") or None,
                     )
-                result = {"ok": True, "rows": rows, "count": len(rows)}
+                    result = {"rows": rows, "count": len(rows)}
+        elif name == "brain_execute":
+            # Require full trust level — arbitrary writes can corrupt or destroy the graph
+            if _session_context and _session_context.trust_level != "full":
+                result = {"error": "brain_execute requires full trust level"}
+            else:
+                from parachute.core.interfaces import get_registry
+                brain = get_registry().get("BrainDB")
+                if brain is None:
+                    result = {"error": "BrainDB not available"}
+                else:
+                    rows = await brain.execute_cypher_write(
+                        arguments["query"],
+                        arguments.get("params") or None,
+                    )
+                    result = {"ok": True, "rows": rows, "count": len(rows)}
         else:
             return json.dumps({"error": f"Unknown tool: {name}"})
 

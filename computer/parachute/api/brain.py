@@ -15,7 +15,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/brain")
+router = APIRouter(prefix="/brain", tags=["brain"])
 
 
 def _get_graph():
@@ -176,14 +176,14 @@ async def list_daily_entries(
 @router.get("/memory")
 async def get_memory(
     limit: int = Query(50, ge=1, le=200),
-    offset: int = Query(0, ge=0),
     search: str | None = Query(None, description="Search query across titles and content"),
     type: str | None = Query(None, description="Filter by type: sessions, notes"),
 ):
     """Unified memory feed — sessions and notes merged, sorted by time descending.
 
     Returns a chronological mix of conversation sessions and journal entries,
-    giving a single view of everything in the brain.
+    giving a single view of everything in the brain. Fetches `limit` records
+    from each type, merges, and returns the top `limit` by timestamp.
     """
     brain = _get_graph()
     items: list[dict] = []
@@ -200,7 +200,7 @@ async def get_memory(
             session_params["search"] = search
         s_where = f"WHERE {' AND '.join(session_where_clauses)}"
         session_rows = await brain.execute_cypher(
-            f"MATCH (s:Chat) {s_where} RETURN s ORDER BY s.last_accessed DESC LIMIT 500",
+            f"MATCH (s:Chat) {s_where} RETURN s ORDER BY s.last_accessed DESC LIMIT {limit}",
             session_params if session_params else None,
         )
         for s in session_rows:
@@ -221,7 +221,7 @@ async def get_memory(
             note_params["search"] = search
         n_where = f"WHERE {' AND '.join(note_where_clauses)}" if note_where_clauses else ""
         note_rows = await brain.execute_cypher(
-            f"MATCH (e:Note) {n_where} RETURN e ORDER BY e.created_at DESC LIMIT 500",
+            f"MATCH (e:Note) {n_where} RETURN e ORDER BY e.created_at DESC LIMIT {limit}",
             note_params if note_params else None,
         )
         for e in note_rows:
@@ -233,9 +233,6 @@ async def get_memory(
                 "date": e.get("date", ""),
             })
 
-    # Sort all items by ts descending, then paginate
+    # Merge and return top `limit` by timestamp descending
     items.sort(key=lambda x: x.get("ts") or "", reverse=True)
-    total = len(items)
-    page = items[offset: offset + limit]
-
-    return {"items": page, "total": total, "offset": offset, "limit": limit}
+    return {"items": items[:limit]}

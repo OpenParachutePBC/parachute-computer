@@ -246,6 +246,7 @@ class BrainService:
         """
         Execute a Cypher query and return results as a list of dicts.
         Single-column node returns are cleaned of internal fields.
+        Read path — does not acquire write_lock.
         """
         self._ensure_connected()
         result = await self._conn.execute(query, params or None)
@@ -258,3 +259,15 @@ class BrainService:
             else:
                 rows.append(dict(zip(col_names, row)))
         return rows
+
+    async def execute_cypher_write(
+        self,
+        query: str,
+        params: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
+        """
+        Execute a write Cypher mutation (MERGE, CREATE, SET, DELETE).
+        Acquires write_lock to serialize mutations — same contract as BrainSessionStore.
+        """
+        async with self.write_lock:
+            return await self.execute_cypher(query, params)
