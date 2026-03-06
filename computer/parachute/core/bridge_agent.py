@@ -301,9 +301,9 @@ async def _store_exchange(
         return
 
     from parachute.core.interfaces import get_registry
-    graph = get_registry().get("GraphDB")
+    graph = get_registry().get("BrainDB")
     if graph is None:
-        logger.debug("Bridge: GraphDB not in registry, skipping exchange storage")
+        logger.debug("Bridge: BrainDB not in registry, skipping exchange storage")
         return
 
     exchange_id = f"{session_id[:8]}:ex:{exchange_number}"

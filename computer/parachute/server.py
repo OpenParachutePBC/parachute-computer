@@ -31,8 +31,8 @@ from parachute.config import get_settings, Settings
 from parachute.core.module_loader import ModuleLoader
 from parachute.core.orchestrator import Orchestrator
 from parachute.core.scheduler import init_scheduler, stop_scheduler
-from parachute.db.graph_sessions import GraphSessionStore
-from parachute.db.graph import GraphService
+from parachute.db.brain_sessions import BrainSessionStore
+from parachute.db.brain import BrainService
 from parachute.lib.logger import setup_logging, get_logger
 from parachute.lib.server_config import (
     init_server_config,
@@ -68,20 +68,20 @@ async def lifespan(app: FastAPI):
     logger.info(f"API keys configured: {len(server_config.security.api_keys)}")
     logger.info(f"Claude token: {'configured' if settings.claude_code_oauth_token else 'not set (run `claude setup-token`)'}")
 
-    # Initialize shared graph database (must come before orchestrator — sessions live here)
-    graph = GraphService(db_path=settings.graph_db_path)
-    await graph.connect()
+    # Initialize brain database (Kuzu/LadybugDB) (must come before orchestrator — sessions live here)
+    brain = BrainService(db_path=settings.brain_db_path)
+    await brain.connect()
 
-    # Initialize graph-backed session store and register schema
-    session_store = GraphSessionStore(graph)
+    # Initialize brain-backed session store and register schema
+    session_store = BrainSessionStore(brain)
     await session_store.ensure_schema()
-    app.state.graph = graph
+    app.state.brain = brain
     app.state.session_store = session_store
     from parachute.core.interfaces import get_registry
-    get_registry().publish("GraphDB", graph)
+    get_registry().publish("BrainDB", brain)
     get_registry().publish("SessionStore", session_store)
-    await graph.start_checkpoint_loop()
-    logger.info(f"GraphDB initialized: {settings.graph_db_path}")
+    await brain.start_checkpoint_loop()
+    logger.info(f"BrainDB initialized: {settings.brain_db_path}")
 
     # Initialize orchestrator and store in app.state
     orchestrator = Orchestrator(
@@ -104,7 +104,7 @@ async def lifespan(app: FastAPI):
 
     # Initialize scheduler after modules so Caller nodes are migrated first
     from parachute.core.interfaces import get_registry
-    graph = get_registry().get("GraphDB")
+    graph = get_registry().get("BrainDB")
     scheduler = await init_scheduler(settings.parachute_dir, graph=graph)
     app.state.scheduler = scheduler
     logger.info("Scheduler initialized")
@@ -202,9 +202,9 @@ async def lifespan(app: FastAPI):
         app.state.orchestrator.pending_permissions.clear()
 
     await stop_scheduler()
-    if hasattr(app.state, "graph") and app.state.graph:
-        await app.state.graph.close()
-        app.state.graph = None
+    if hasattr(app.state, "brain") and app.state.brain:
+        await app.state.brain.close()
+        app.state.brain = None
     app.state.orchestrator = None
     app.state.sandbox = None
     app.state.session_store = None

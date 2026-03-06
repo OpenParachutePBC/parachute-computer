@@ -23,7 +23,7 @@ from parachute.core.claude_sdk import query_streaming, QueryInterrupt
 from parachute.core.permission_handler import PermissionHandler
 from parachute.core.sandbox import DockerSandbox, AgentSandboxConfig
 from parachute.core.session_manager import SessionManager
-from parachute.db.graph_sessions import GraphSessionStore
+from parachute.db.brain_sessions import BrainSessionStore
 from parachute.lib.context_loader import format_context_for_prompt, load_agent_context
 from parachute.lib.credentials import load_credentials
 from parachute.core.context_folders import ContextFolderService
@@ -192,7 +192,7 @@ class Orchestrator:
     """
 
     def __init__(
-        self, parachute_dir: Path, session_store: GraphSessionStore, settings: Settings
+        self, parachute_dir: Path, session_store: BrainSessionStore, settings: Settings
     ):
         """Initialize orchestrator."""
         self.parachute_dir = parachute_dir

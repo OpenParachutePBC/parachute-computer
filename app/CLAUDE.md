@@ -26,7 +26,7 @@ Four-tab layout with persistent bottom navigation:
 - **Chat** (left) - Server-powered AI conversations
 - **Daily** (center-left) - Voice journaling, works offline
 - **Vault** (center-right) - Browse knowledge vault
-- **Brain** (right) - Knowledge graph search and entity viewer
+- **Brain** (right) - Memory navigator — unified timeline of conversations and journal entries
 
 Each tab has its own Navigator for independent navigation stacks.
 
@@ -65,12 +65,10 @@ lib/
     │   ├── capture/                 # Photo/handwriting input
     │   └── search/                  # Journal search
     ├── vault/                       # Knowledge browser (requires server)
-    ├── brain/                       # Brain module UI (requires server)
-    │   ├── models/                  # BrainEntity, BrainSearchResult
-    │   ├── providers/               # Search, service, entity providers
-    │   ├── screens/                 # BrainScreen, BrainEntityScreen
-    │   ├── services/                # BrainService
-    │   └── widgets/                 # BrainEntityCard, BrainTagChip
+    ├── brain/                       # Brain: memory navigator (requires server)
+    │   ├── providers/               # brainServiceProvider, brainMemoryProvider
+    │   ├── screens/                 # BrainHomeScreen (memory feed)
+    │   └── services/                # BrainService → /api/brain/ endpoints
     ├── settings/                    # App settings
     │   ├── screens/
     │   ├── models/                  # TrustLevel

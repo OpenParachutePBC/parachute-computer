@@ -18,11 +18,13 @@ Daily Journal Tools:
 - get_journal: Get a specific day's journal entries
 
 Graph Query Tools:
-- get_graph_schema: Returns all node and relationship tables with columns
-- list_conversations: List conversation sessions from the graph
-- get_conversation: Get a single session by ID from the graph
-- list_projects: List named project environments (container envs)
-- list_entries: List Daily journal entries from the graph
+- brain_schema: Returns all node and relationship tables in the brain (Kuzu graph)
+- brain_list_sessions: List conversation sessions from the brain
+- brain_get_session: Get a single session by ID from the brain
+- brain_list_projects: List named project environments (container envs)
+- brain_list_entries: List Daily journal entries from the brain
+- brain_query: Execute a read-only Cypher query against the brain
+- brain_execute: Execute a write Cypher query against the brain
 
 Run with:
     python -m parachute.mcp_server /path/to/vault
@@ -58,7 +60,7 @@ logger = logging.getLogger("ParachuteMCP")
 
 # Global session_store connection
 _db = None
-_graph_base_url: str = ""
+_brain_base_url: str = ""
 _PARACHUTE_DIR = Path.home() / ".parachute"
 
 
@@ -107,17 +109,23 @@ _session_context: SessionContext | None = None
 
 
 async def get_db():
-    """Get or create GraphSessionStore connection."""
+    """Get or create BrainSessionStore connection."""
     global _db
     if _db is None:
-        from parachute.db.graph import GraphService
-        from parachute.db.graph_sessions import GraphSessionStore
-        graph = GraphService(db_path=str(_PARACHUTE_DIR / "graph" / "parachute.kz"))
-        await graph.connect()
-        _db = GraphSessionStore(graph)
+        from parachute.db.brain import BrainService
+        from parachute.db.brain_sessions import BrainSessionStore
+        brain = BrainService(db_path=_PARACHUTE_DIR / "graph" / "parachute.kz")
+        await brain.connect()
+        _db = BrainSessionStore(brain)
         await _db.ensure_schema()
-        logger.info(f"Connected to graph DB: {_PARACHUTE_DIR / 'graph' / 'parachute.kz'}")
+        logger.info(f"Connected to brain DB: {_PARACHUTE_DIR / 'graph' / 'parachute.kz'}")
     return _db
+
+
+def _get_brain():
+    """Return the live BrainService from the registry, or None if unavailable."""
+    from parachute.core.interfaces import get_registry
+    return get_registry().get("BrainDB")
 
 
 def _validate_message_content(
@@ -372,18 +380,18 @@ TOOLS = [
             "required": ["date"],
         },
     ),
-    # Graph Query Tools
+    # Brain Tools
     Tool(
-        name="get_graph_schema",
+        name="brain_schema",
         description=(
-            "Returns all node and relationship tables in the graph database with their "
-            "column names and types. Call this first to understand what data is queryable."
+            "Returns all node and relationship tables in the Parachute brain (Kuzu graph) "
+            "with their column names and types. Call this first to understand what memory is queryable."
         ),
         inputSchema={"type": "object", "properties": {}},
     ),
     Tool(
-        name="list_conversations",
-        description="List conversation sessions from the graph.",
+        name="brain_list_sessions",
+        description="List conversation sessions from the brain (your memory of past conversations).",
         inputSchema={
             "type": "object",
             "properties": {
@@ -394,8 +402,8 @@ TOOLS = [
         },
     ),
     Tool(
-        name="get_conversation",
-        description="Get a single conversation session by ID.",
+        name="brain_get_session",
+        description="Get a single conversation session by ID, including its exchanges.",
         inputSchema={
             "type": "object",
             "properties": {"session_id": {"type": "string"}},
@@ -403,7 +411,7 @@ TOOLS = [
         },
     ),
     Tool(
-        name="list_projects",
+        name="brain_list_projects",
         description="List named project environments (shared containers).",
         inputSchema={
             "type": "object",
@@ -411,8 +419,8 @@ TOOLS = [
         },
     ),
     Tool(
-        name="list_entries",
-        description="List Daily journal entries.",
+        name="brain_list_entries",
+        description="List Daily journal entries from the brain.",
         inputSchema={
             "type": "object",
             "properties": {
@@ -420,6 +428,37 @@ TOOLS = [
                 "date_to": {"type": "string", "description": "YYYY-MM-DD"},
                 "limit": {"type": "integer", "description": "Max results (default 20)"},
             },
+        },
+    ),
+    Tool(
+        name="brain_query",
+        description=(
+            "Execute a read-only Cypher query against the Parachute brain (Kuzu graph). "
+            "Use for MATCH/RETURN queries to explore memory. "
+            "Call brain_schema first to discover available tables and columns."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Cypher MATCH/RETURN query"},
+                "params": {"type": "object", "description": "Optional $param bindings"},
+            },
+            "required": ["query"],
+        },
+    ),
+    Tool(
+        name="brain_execute",
+        description=(
+            "Execute a write Cypher query against the Parachute brain (Kuzu graph). "
+            "Use for MERGE, CREATE, SET, DELETE. Use brain_query for reads."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Cypher write query"},
+                "params": {"type": "object", "description": "Optional $param bindings"},
+            },
+            "required": ["query"],
         },
     ),
 ]
@@ -949,14 +988,21 @@ async def get_journal(date: str) -> Optional[dict[str, Any]]:
         return {"date": date, "error": str(e)}
 
 
-async def _graph_call(path: str) -> dict[str, Any]:
-    """Make a GET request to the local graph API."""
-    if not _graph_base_url:
-        return {"error": "Graph API not available"}
-    url = f"{_graph_base_url}{path}"
+async def _brain_call(
+    path: str,
+    method: str = "GET",
+    body: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Make a GET or POST request to the local brain API."""
+    if not _brain_base_url:
+        return {"error": "Brain API not available"}
+    url = f"{_brain_base_url}{path}"
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.get(url)
+            if method == "POST":
+                response = await client.post(url, json=body or {})
+            else:
+                response = await client.get(url)
             if response.status_code >= 400:
                 try:
                     detail = response.json().get("detail", response.text)
@@ -965,9 +1011,9 @@ async def _graph_call(path: str) -> dict[str, Any]:
                 return {"error": detail, "status_code": response.status_code}
             return response.json()
     except httpx.ConnectError:
-        return {"error": "Graph API unavailable — is the server running?"}
+        return {"error": "Brain API unavailable — is the server running?"}
     except Exception as e:
-        logger.error(f"Graph API call failed (GET {path}): {e}")
+        logger.error(f"Brain API call failed ({method} {path}): {e}")
         return {"error": str(e)}
 
 
@@ -1039,25 +1085,49 @@ async def handle_tool_call(name: str, arguments: dict[str, Any]) -> str:
             result = await get_journal(date=arguments["date"])
             if result is None:
                 return json.dumps({"error": f"Journal not found for date: {arguments['date']}"})
-        # Graph Query Tools
-        elif name == "get_graph_schema":
-            result = await _graph_call("/schema")
-        elif name == "list_conversations":
+        # Brain Tools
+        elif name == "brain_schema":
+            result = await _brain_call("/schema")
+        elif name == "brain_list_sessions":
             params = {k: arguments[k] for k in ("module", "limit") if k in arguments}
             if "archived" in arguments:
                 params["archived"] = "true" if arguments["archived"] else "false"
             qs = ("?" + urllib.parse.urlencode(params)) if params else ""
-            result = await _graph_call(f"/sessions{qs}")
-        elif name == "get_conversation":
+            result = await _brain_call(f"/sessions{qs}")
+        elif name == "brain_get_session":
             sid = urllib.parse.quote(arguments["session_id"], safe="")
-            result = await _graph_call(f"/sessions/{sid}")
-        elif name == "list_projects":
+            result = await _brain_call(f"/sessions/{sid}")
+        elif name == "brain_list_projects":
             qs = f"?limit={arguments['limit']}" if "limit" in arguments else ""
-            result = await _graph_call(f"/projects{qs}")
-        elif name == "list_entries":
+            result = await _brain_call(f"/projects{qs}")
+        elif name == "brain_list_entries":
             params = {k: arguments[k] for k in ("date_from", "date_to", "limit") if k in arguments}
             qs = ("?" + urllib.parse.urlencode(params)) if params else ""
-            result = await _graph_call(f"/daily/entries{qs}")
+            result = await _brain_call(f"/daily/entries{qs}")
+        elif name == "brain_query":
+            # Require vault/direct trust — raw Cypher reads all journal data.
+            # Fail-closed: deny if context is absent (standalone/legacy mode).
+            trust = _session_context.trust_level if _session_context else None
+            if trust != "direct":
+                result = {"error": "brain_query requires vault or full trust level"}
+            else:
+                result = await _brain_call(
+                    "/query",
+                    method="POST",
+                    body={"query": arguments["query"], "params": arguments.get("params")},
+                )
+        elif name == "brain_execute":
+            # Require full (direct) trust — arbitrary writes can corrupt or destroy the graph.
+            # Fail-closed: deny if context is absent (standalone/legacy mode).
+            trust = _session_context.trust_level if _session_context else None
+            if trust != "direct":
+                result = {"error": "brain_execute requires full trust level"}
+            else:
+                result = await _brain_call(
+                    "/execute",
+                    method="POST",
+                    body={"query": arguments["query"], "params": arguments.get("params")},
+                )
         else:
             return json.dumps({"error": f"Unknown tool: {name}"})
 
@@ -1070,9 +1140,9 @@ async def handle_tool_call(name: str, arguments: dict[str, Any]) -> str:
 
 async def run_server():
     """Run the MCP server."""
-    global _graph_base_url
+    global _brain_base_url
     port = os.environ.get("PARACHUTE_SERVER_PORT", "3333")
-    _graph_base_url = f"http://localhost:{port}/api/graph"
+    _brain_base_url = f"http://localhost:{port}/api/brain"
 
     logger.info(f"Starting Parachute MCP server (parachute_dir: {_PARACHUTE_DIR})")
 

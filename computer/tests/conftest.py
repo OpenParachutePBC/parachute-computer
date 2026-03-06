@@ -66,13 +66,13 @@ def test_vault_path(test_vault: Path) -> str:
 @pytest_asyncio.fixture
 async def test_database(tmp_path: Path):
     """Create a test graph session store."""
-    from parachute.db.graph import GraphService
-    from parachute.db.graph_sessions import GraphSessionStore
+    from parachute.db.brain import BrainService
+    from parachute.db.brain_sessions import BrainSessionStore
 
     db_path = tmp_path / "test-graph" / "parachute.kz"
-    graph = GraphService(db_path=db_path)
+    graph = BrainService(db_path=db_path)
     await graph.connect()
-    store = GraphSessionStore(graph)
+    store = BrainSessionStore(graph)
     await store.ensure_schema()
 
     yield store

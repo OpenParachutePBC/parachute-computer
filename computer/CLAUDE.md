@@ -11,11 +11,11 @@ AI orchestration server with modular architecture. The unified Parachute app req
 ```
 Router → Orchestrator → Claude Agent SDK → AI
               ↓                    ↑
-         SessionManager      ModuleLoader
+         BrainSessionStore    ModuleLoader
               ↓                    ↓
-         SQLite DB          vault/.modules/
-                                   ↓
-                            brain | chat | daily
+         BrainService         vault/.modules/
+       (Kuzu/LadybugDB)            ↓
+                              chat | daily
 ```
 
 **Core:**
@@ -34,13 +34,19 @@ Router → Orchestrator → Claude Agent SDK → AI
 - `parachute/connectors/config.py` - Bot config from `vault/.parachute/bots.yaml`
 
 **Data storage:**
-- Session metadata: `Chat/sessions.db` (SQLite)
+- All session metadata + journal entries: Kuzu graph DB at `~/.parachute/graph/parachute.kz`
 - Message transcripts: JSONL files (Claude SDK managed)
 - Module hashes: `vault/.parachute/module_hashes.json`
 - Bot config: `vault/.parachute/bots.yaml`
 - Server config: `vault/.parachute/config.yaml`
 - Claude token: `vault/.parachute/.token`
 - Daemon logs: `vault/.parachute/logs/`
+
+**Brain (the extended mind):**
+- `parachute/db/brain.py` — `BrainService`: Kuzu/LadybugDB connection, schema management, Cypher
+- `parachute/db/brain_sessions.py` — `BrainSessionStore`: session/project CRUD on top of BrainService
+- `parachute/api/brain.py` — `/api/brain/` REST endpoints (schema, sessions, projects, notes, memory feed)
+- Brain = your whole extended mind: conversations (Chat) + journal entries (Note) in one unified graph
 
 ---
 
@@ -93,7 +99,7 @@ Trust level is stored per-session in the database and persists across messages.
 ### Project structure
 ```
 parachute/
-├── api/           # FastAPI route handlers
+├── api/           # FastAPI route handlers (brain, chat, daily, sessions, ...)
 ├── connectors/    # Bot connectors (Telegram, Discord)
 ├── core/          # Business logic
 │   ├── hooks/     # Event hook system
@@ -101,7 +107,7 @@ parachute/
 │   ├── session_manager.py
 │   ├── module_loader.py
 │   └── sandbox.py
-├── db/            # SQLite database layer
+├── db/            # Kuzu/LadybugDB layer (brain.py, brain_sessions.py)
 ├── docker/        # Sandbox Dockerfile + entrypoint
 ├── lib/           # Utilities
 ├── models/        # Pydantic models
@@ -110,7 +116,7 @@ parachute/
 ├── daemon.py      # Daemon management (launchd/systemd/PID)
 └── server.py      # FastAPI application
 
-modules/           # Bundled modules (brain, chat, daily)
+modules/           # Bundled modules (chat, daily)
 ```
 
 ### Patterns

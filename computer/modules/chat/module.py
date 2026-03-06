@@ -31,9 +31,9 @@ class ChatModule:
     async def on_load(self) -> None:
         """Register Chat schema tables in the shared graph."""
         from parachute.core.interfaces import get_registry
-        graph = get_registry().get("GraphDB")
+        graph = get_registry().get("BrainDB")
         if graph is None:
-            logger.warning("Chat: GraphDB not in registry, schema registration skipped")
+            logger.warning("Chat: BrainDB not in registry, schema registration skipped")
             return
         await graph.ensure_node_table(
             "Exchange",

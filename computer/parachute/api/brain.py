@@ -1,28 +1,33 @@
 """
-Graph query API — read-only access to the shared Kuzu graph.
+Brain query API — read-only access to the shared Kuzu graph.
 
 Endpoints:
-  GET /api/graph/schema            — all tables with column types
-  GET /api/graph/sessions          — conversation sessions (Chat)
-  GET /api/graph/sessions/{id}     — single session by ID
-  GET /api/graph/projects          — named projects
-  GET /api/graph/daily/entries     — Daily journal notes
+  GET  /api/brain/schema            — all tables with column types
+  GET  /api/brain/sessions          — conversation sessions (Chat)
+  GET  /api/brain/sessions/{id}     — single session by ID
+  GET  /api/brain/projects          — named projects
+  GET  /api/brain/daily/entries     — Daily journal notes
+  GET  /api/brain/memory            — unified memory feed
+  POST /api/brain/query             — read-only Cypher passthrough
+  POST /api/brain/execute           — write Cypher passthrough (auth required)
 """
 
 import logging
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/graph")
+router = APIRouter(prefix="/brain", tags=["brain"])
 
 
 def _get_graph():
     from parachute.core.interfaces import get_registry
-    graph = get_registry().get("GraphDB")
+    graph = get_registry().get("BrainDB")
     if graph is None:
-        raise HTTPException(status_code=503, detail="GraphDB not available")
+        raise HTTPException(status_code=503, detail="BrainDB not available")
     return graph
 
 
@@ -51,7 +56,7 @@ async def get_schema():
                 is_pk = c.get("is primary key", False)
                 columns.append({"name": col_name, "type": col_type, "primary_key": bool(is_pk)})
         except Exception as e:
-            logger.warning(f"graph/schema: could not introspect {name}: {e}")
+            logger.warning(f"brain/schema: could not introspect {name}: {e}")
             columns = []
 
         entry = {"name": name, "columns": columns}
@@ -171,3 +176,100 @@ async def list_daily_entries(
 
     rows = await graph.execute_cypher(query, params if params else None)
     return {"entries": rows, "count": len(rows)}
+
+
+@router.get("/memory")
+async def get_memory(
+    limit: int = Query(50, ge=1, le=200),
+    search: str | None = Query(None, description="Search query across titles and content"),
+    type: Literal["sessions", "notes"] | None = Query(None, description="Filter by type: sessions, notes"),
+):
+    """Unified memory feed — sessions and notes merged, sorted by time descending.
+
+    Returns a chronological mix of conversation sessions and journal entries,
+    giving a single view of everything in the brain. Fetches `limit` records
+    from each type, merges, and returns the top `limit` by timestamp.
+    """
+    brain = _get_graph()
+    items: list[dict] = []
+
+    if type != "notes":
+        # Fetch sessions
+        session_where_clauses = [
+            "(s.archived IS NULL OR s.archived = false)",
+            "(s.source = 'parachute' AND (s.agent_type IS NULL OR s.agent_type = 'orchestrator'))",
+        ]
+        session_params: dict = {}
+        if search:
+            session_where_clauses.append("s.title CONTAINS $search")
+            session_params["search"] = search
+        s_where = f"WHERE {' AND '.join(session_where_clauses)}"
+        session_rows = await brain.execute_cypher(
+            f"MATCH (s:Chat) {s_where} RETURN s ORDER BY s.last_accessed DESC LIMIT {limit}",
+            session_params or None,
+        )
+        for s in session_rows:
+            items.append({
+                "kind": "session",
+                "id": s.get("session_id", ""),
+                "title": s.get("title") or "Untitled conversation",
+                "ts": s.get("last_accessed") or s.get("created_at") or "",
+                "module": s.get("module", "chat"),
+            })
+
+    if type != "sessions":
+        # Fetch notes
+        note_where_clauses = []
+        note_params: dict = {}
+        if search:
+            note_where_clauses.append("(e.content CONTAINS $search OR e.title CONTAINS $search)")
+            note_params["search"] = search
+        n_where = f"WHERE {' AND '.join(note_where_clauses)}" if note_where_clauses else ""
+        note_rows = await brain.execute_cypher(
+            f"MATCH (e:Note) {n_where} RETURN e ORDER BY e.created_at DESC LIMIT {limit}",
+            note_params or None,
+        )
+        for e in note_rows:
+            items.append({
+                "kind": "note",
+                "id": e.get("id", ""),
+                "title": e.get("title") or e.get("snippet") or "Journal entry",
+                "ts": e.get("created_at") or "",
+                "date": e.get("date") or None,
+            })
+
+    # Merge and return top `limit` by timestamp descending
+    items.sort(key=lambda x: x.get("ts") or "", reverse=True)
+    return {"items": items[:limit]}
+
+
+# ── Cypher passthrough ────────────────────────────────────────────────────────
+
+class CypherRequest(BaseModel):
+    query: str
+    params: dict[str, Any] | None = None
+
+
+@router.post("/query")
+async def cypher_query(body: CypherRequest):
+    """Execute a read-only Cypher query against the brain (MATCH/RETURN).
+
+    Intended for agents with vault/direct trust. Write queries are not blocked
+    here — trust enforcement is done by the MCP server before calling this endpoint.
+    """
+    brain = _get_graph()
+    rows = await brain.execute_cypher(body.query, body.params or None)
+    return {"rows": rows, "count": len(rows)}
+
+
+@router.post("/execute")
+async def cypher_execute(body: CypherRequest):
+    """Execute a write Cypher mutation against the brain (MERGE/CREATE/SET/DELETE).
+
+    Acquires write_lock to serialize mutations. Trust enforcement is done by
+    the MCP server before calling this endpoint.
+    """
+    brain = _get_graph()
+    async with brain.write_lock:
+        rows = await brain.execute_cypher(body.query, body.params or None)
+    return {"ok": True, "rows": rows, "count": len(rows)}
