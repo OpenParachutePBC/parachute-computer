@@ -1053,7 +1053,7 @@ async def handle_tool_call(name: str, arguments: dict[str, Any]) -> str:
             result = await _graph_call(f"/sessions/{sid}")
         elif name == "list_projects":
             qs = f"?limit={arguments['limit']}" if "limit" in arguments else ""
-            result = await _graph_call(f"/container_envs{qs}")
+            result = await _graph_call(f"/projects{qs}")
         elif name == "list_entries":
             params = {k: arguments[k] for k in ("date_from", "date_to", "limit") if k in arguments}
             qs = ("?" + urllib.parse.urlencode(params)) if params else ""

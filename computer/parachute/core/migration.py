@@ -304,19 +304,22 @@ async def migrate_schema_v2(graph) -> bool:
         )
         for row in env_rows:
             try:
-                await graph._execute(
-                    "MERGE (:Project {slug: $slug, display_name: $display_name, "
-                    "core_memory: $core_memory, created_at: $created_at})",
-                    {
-                        "slug": row["slug"],
-                        "display_name": row.get("display_name", ""),
-                        "core_memory": None,
-                        "created_at": row.get("created_at", ""),
-                    },
-                )
+                async with graph.write_lock:
+                    await graph._execute(
+                        "MERGE (p:Project {slug: $slug}) "
+                        "ON CREATE SET p.display_name = $display_name, "
+                        "p.core_memory = $core_memory, p.created_at = $created_at",
+                        {
+                            "slug": row["slug"],
+                            "display_name": row.get("display_name", ""),
+                            "core_memory": None,
+                            "created_at": row.get("created_at", ""),
+                        },
+                    )
             except Exception as e:
                 logger.warning(f"  Project migration failed for {row.get('slug')}: {e}")
-        await graph._execute("MATCH (e:Parachute_ContainerEnv) DETACH DELETE e")
+        async with graph.write_lock:
+            await graph._execute("MATCH (e:Parachute_ContainerEnv) DETACH DELETE e")
         try:
             await graph._execute("DROP TABLE Parachute_ContainerEnv")
         except Exception:
@@ -329,7 +332,8 @@ async def migrate_schema_v2(graph) -> bool:
     )
     for row in session_rows:
         try:
-            await graph._execute(
+            async with graph.write_lock:
+                await graph._execute(
                 """
                 MERGE (c:Chat {session_id: $session_id})
                 ON CREATE SET
@@ -392,7 +396,15 @@ async def migrate_schema_v2(graph) -> bool:
         except Exception as e:
             logger.warning(f"  Chat migration failed for {row.get('session_id')}: {e}")
 
-    await graph._execute("MATCH (s:Parachute_Session) DETACH DELETE s")
+    async with graph.write_lock:
+        await graph._execute("MATCH (s:Parachute_Session) DETACH DELETE s")
+    # Drop old HAS_EXCHANGE rel table (Chat_Session→Chat_Exchange) before dropping node table
+    old_has_exchange = await graph.get_table_columns("HAS_EXCHANGE")
+    if old_has_exchange:
+        try:
+            await graph._execute("DROP TABLE HAS_EXCHANGE")
+        except Exception:
+            pass
     try:
         await graph._execute("DROP TABLE Parachute_Session")
     except Exception:
@@ -402,52 +414,74 @@ async def migrate_schema_v2(graph) -> bool:
     # 3. Migrate Chat_Exchange → Exchange
     exchange_cols = await graph.get_table_columns("Chat_Exchange")
     if exchange_cols:
+        # Create Exchange table and HAS_EXCHANGE rel NOW — modules haven't loaded yet
+        await graph.ensure_node_table(
+            "Exchange",
+            {
+                "exchange_id": "STRING",
+                "session_id": "STRING",
+                "exchange_number": "STRING",
+                "description": "STRING",
+                "user_message": "STRING",
+                "ai_response": "STRING",
+                "context": "STRING",
+                "session_title": "STRING",
+                "tools_used": "STRING",
+                "created_at": "STRING",
+            },
+            primary_key="exchange_id",
+        )
+        await graph.ensure_rel_table("HAS_EXCHANGE", "Chat", "Exchange")
+
         exchange_rows = await graph.execute_cypher(
             "MATCH (e:Chat_Exchange) RETURN e"
         )
         for row in exchange_rows:
             try:
-                await graph._execute(
-                    """
-                    MERGE (e:Exchange {exchange_id: $exchange_id})
-                    ON CREATE SET
-                        e.session_id = $session_id,
-                        e.exchange_number = $exchange_number,
-                        e.description = $description,
-                        e.user_message = $user_message,
-                        e.ai_response = $ai_response,
-                        e.context = $context,
-                        e.session_title = $session_title,
-                        e.tools_used = $tools_used,
-                        e.created_at = $created_at
-                    """,
-                    {
-                        "exchange_id": row["exchange_id"],
-                        "session_id": row.get("session_id"),
-                        "exchange_number": row.get("exchange_number"),
-                        "description": row.get("description"),
-                        "user_message": row.get("user_message"),
-                        "ai_response": row.get("ai_response"),
-                        "context": row.get("context"),
-                        "session_title": row.get("session_title"),
-                        "tools_used": row.get("tools_used"),
-                        "created_at": row.get("created_at", ""),
-                    },
-                )
+                async with graph.write_lock:
+                    await graph._execute(
+                        """
+                        MERGE (e:Exchange {exchange_id: $exchange_id})
+                        ON CREATE SET
+                            e.session_id = $session_id,
+                            e.exchange_number = $exchange_number,
+                            e.description = $description,
+                            e.user_message = $user_message,
+                            e.ai_response = $ai_response,
+                            e.context = $context,
+                            e.session_title = $session_title,
+                            e.tools_used = $tools_used,
+                            e.created_at = $created_at
+                        """,
+                        {
+                            "exchange_id": row["exchange_id"],
+                            "session_id": row.get("session_id"),
+                            "exchange_number": row.get("exchange_number"),
+                            "description": row.get("description"),
+                            "user_message": row.get("user_message"),
+                            "ai_response": row.get("ai_response"),
+                            "context": row.get("context"),
+                            "session_title": row.get("session_title"),
+                            "tools_used": row.get("tools_used"),
+                            "created_at": row.get("created_at", ""),
+                        },
+                    )
             except Exception as e:
                 logger.warning(f"  Exchange migration failed for {row.get('exchange_id')}: {e}")
 
         # Recreate HAS_EXCHANGE rels (Chat → Exchange)
         try:
-            await graph._execute(
-                "MATCH (c:Chat), (e:Exchange) "
-                "WHERE c.session_id = e.session_id "
-                "MERGE (c)-[:HAS_EXCHANGE]->(e)"
-            )
+            async with graph.write_lock:
+                await graph._execute(
+                    "MATCH (c:Chat), (e:Exchange) "
+                    "WHERE c.session_id = e.session_id "
+                    "MERGE (c)-[:HAS_EXCHANGE]->(e)"
+                )
         except Exception as e:
             logger.warning(f"  HAS_EXCHANGE rel recreation failed: {e}")
 
-        await graph._execute("MATCH (e:Chat_Exchange) DETACH DELETE e")
+        async with graph.write_lock:
+            await graph._execute("MATCH (e:Chat_Exchange) DETACH DELETE e")
         try:
             await graph._execute("DROP TABLE Chat_Exchange")
         except Exception:
@@ -455,7 +489,8 @@ async def migrate_schema_v2(graph) -> bool:
         # Drop old Chat_Session shadow table
         chat_session_cols = await graph.get_table_columns("Chat_Session")
         if chat_session_cols:
-            await graph._execute("MATCH (s:Chat_Session) DETACH DELETE s")
+            async with graph.write_lock:
+                await graph._execute("MATCH (s:Chat_Session) DETACH DELETE s")
             try:
                 await graph._execute("DROP TABLE Chat_Session")
             except Exception:
@@ -470,48 +505,65 @@ async def migrate_schema_v2(graph) -> bool:
         )
         for row in journal_rows:
             try:
-                await graph._execute(
-                    """
-                    MERGE (n:Note {entry_id: $entry_id})
-                    ON CREATE SET
-                        n.note_type = $note_type,
-                        n.date = $date,
-                        n.content = $content,
-                        n.title = $title,
-                        n.audio_path = $audio_path,
-                        n.aliases = $aliases,
-                        n.status = $status,
-                        n.created_by = $created_by,
-                        n.extra_meta = $extra_meta,
-                        n.created_at = $created_at
-                    """,
-                    {
-                        "entry_id": row["entry_id"],
-                        "note_type": row.get("entry_type") or "journal",
-                        "date": row.get("date"),
-                        "content": row.get("content"),
-                        "title": row.get("title"),
-                        "audio_path": row.get("audio_path"),
-                        "aliases": "[]",
-                        "status": "active",
-                        "created_by": "user",
-                        "extra_meta": row.get("extra_meta"),
-                        "created_at": row.get("created_at", ""),
-                    },
-                )
+                async with graph.write_lock:
+                    await graph._execute(
+                        """
+                        MERGE (n:Note {entry_id: $entry_id})
+                        ON CREATE SET
+                            n.note_type = $note_type,
+                            n.date = $date,
+                            n.content = $content,
+                            n.snippet = $snippet,
+                            n.title = $title,
+                            n.entry_type = $entry_type,
+                            n.audio_path = $audio_path,
+                            n.aliases = $aliases,
+                            n.status = $status,
+                            n.created_by = $created_by,
+                            n.brain_links_json = $brain_links_json,
+                            n.metadata_json = $metadata_json,
+                            n.created_at = $created_at
+                        """,
+                        {
+                            "entry_id": row["entry_id"],
+                            "note_type": row.get("entry_type") or "journal",
+                            "date": row.get("date"),
+                            "content": row.get("content"),
+                            "snippet": row.get("snippet"),
+                            "title": row.get("title"),
+                            "entry_type": row.get("entry_type"),
+                            "audio_path": row.get("audio_path"),
+                            "aliases": "[]",
+                            "status": "active",
+                            "created_by": "user",
+                            "brain_links_json": row.get("brain_links_json"),
+                            "metadata_json": row.get("metadata_json"),
+                            "created_at": row.get("created_at", ""),
+                        },
+                    )
             except Exception as e:
                 logger.warning(f"  Note migration failed for {row.get('entry_id')}: {e}")
 
-        await graph._execute("MATCH (e:Journal_Entry) DETACH DELETE e")
+        # Drop rel tables before node tables (Kuzu requirement)
+        for rel_table in ("HAS_ENTRY", "HAS_CARD"):
+            if await graph.get_table_columns(rel_table):
+                try:
+                    await graph._execute(f"DROP TABLE {rel_table}")
+                except Exception:
+                    pass
+
+        async with graph.write_lock:
+            await graph._execute("MATCH (e:Journal_Entry) DETACH DELETE e")
         try:
             await graph._execute("DROP TABLE Journal_Entry")
         except Exception:
             pass
 
-        # Drop Day nodes and rels (no longer needed)
+        # Drop Day nodes and rel tables (no longer needed)
         day_cols = await graph.get_table_columns("Day")
         if day_cols:
-            await graph._execute("MATCH (d:Day) DETACH DELETE d")
+            async with graph.write_lock:
+                await graph._execute("MATCH (d:Day) DETACH DELETE d")
             try:
                 await graph._execute("DROP TABLE Day")
             except Exception:

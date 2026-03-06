@@ -297,9 +297,10 @@ class Project(BaseModel):
     )
     core_memory: Optional[str] = Field(
         default=None,
+        max_length=4000,
         alias="coreMemory",
         serialization_alias="coreMemory",
-        description="Markdown context injected into system prompt for all conversations in this project (max 4000 chars)",
+        description="Markdown context injected into system prompt for all conversations in this project",
     )
     created_at: datetime = Field(
         alias="createdAt",
@@ -315,10 +316,6 @@ class Project(BaseModel):
         return f"parachute-env-{self.slug}"
 
 
-# Backward-compat alias — remove after all call sites are updated
-ContainerEnv = Project
-
-
 class ProjectCreate(BaseModel):
     """Data for creating a new project."""
 
@@ -331,12 +328,10 @@ class ProjectCreate(BaseModel):
     )
     core_memory: Optional[str] = Field(
         default=None,
-        description="Initial core memory content (max 4000 chars)",
+        max_length=4000,
+        description="Initial core memory content",
     )
 
-
-# Backward-compat alias
-ContainerEnvCreate = ProjectCreate
 
 
 class SessionCreate(BaseModel):

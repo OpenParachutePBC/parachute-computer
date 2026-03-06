@@ -506,9 +506,9 @@ class _RowsView extends StatelessWidget {
   }
 
   (String, String?) _previewKeys(String table) => switch (table) {
-        'Parachute_Session' => ('title', 'session_id'),
+        'Chat' => ('title', 'session_id'),
         'Project' => ('display_name', 'slug'),
-        'Journal_Entry' => ('snippet', 'date'),
+        'Note' => ('snippet', 'date'),
         _ => ('name', null),
       };
 

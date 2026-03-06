@@ -5,7 +5,7 @@ Replaces database.py (SQLite/aiosqlite). All session metadata is stored in
 the shared Kuzu graph database alongside Brain, Chat, and Daily data.
 
 Schema:
-  - Conversation: core session metadata
+  - Chat: core session metadata
   - Project: named container environments
   - Parachute_PairingRequest: bot pairing requests
   - Parachute_KV: key-value metadata store

@@ -3,7 +3,7 @@ Graph query API — read-only access to the shared Kuzu graph.
 
 Endpoints:
   GET /api/graph/schema            — all tables with column types
-  GET /api/graph/sessions          — conversation sessions (Conversation)
+  GET /api/graph/sessions          — conversation sessions (Chat)
   GET /api/graph/sessions/{id}     — single session by ID
   GET /api/graph/projects          — named projects
   GET /api/graph/daily/entries     — Daily journal notes
