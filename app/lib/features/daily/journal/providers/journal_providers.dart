@@ -163,6 +163,9 @@ Future<JournalDay> _loadJournal(
     } else {
       // UPSERT preserves pending_delete/pending_edit states (see putEntries docs).
       cache.putEntries(dateStr, serverEntries);
+      // Prune synced entries the server no longer returns — handles the case
+      // where entries were deleted server-side but still exist in local cache.
+      cache.removeStaleEntries(dateStr, serverEntries.map((e) => e.id).toSet());
     }
   }
 

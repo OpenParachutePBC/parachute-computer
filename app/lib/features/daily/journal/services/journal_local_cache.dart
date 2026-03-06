@@ -123,6 +123,32 @@ debugPrint('[JournalLocalCache] getPendingDeletes error: $e');
 
   // ── Write ──────────────────────────────────────────────────────────────────
 
+  /// Remove [synced] entries for [date] whose IDs are not in [serverIds].
+  ///
+  /// Called after a successful non-empty server fetch to prune entries that
+  /// were deleted server-side but are still sitting in the local cache.
+  /// Only removes [synced] entries — [pending_delete] and [pending_edit] are
+  /// left alone since they represent unsynced local changes.
+  void removeStaleEntries(String date, Set<String> serverIds) {
+    try {
+      final rows = _db.select(
+        "SELECT entry_id FROM journal_entries "
+        "WHERE date = ? AND COALESCE(sync_state, 'synced') = 'synced'",
+        [date],
+      );
+      for (final row in rows) {
+        final id = row['entry_id'] as String;
+        if (!serverIds.contains(id)) {
+          _db.execute('DELETE FROM journal_entries WHERE entry_id = ?', [id]);
+          debugPrint('[JournalLocalCache] pruned stale entry: $id');
+        }
+      }
+    } catch (e) {
+      debugPrint('[JournalLocalCache] removeStaleEntries error: $e');
+    }
+  }
+
+
   /// Batch-upsert [entries] from server into the cache.
   ///
   /// Uses SQLite UPSERT (ON CONFLICT … DO UPDATE) to preserve locally-pending
