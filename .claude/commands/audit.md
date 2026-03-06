@@ -1,14 +1,16 @@
 ---
 name: para-audit
-description: Quick codebase health check — plan/issue sync, lifecycle gaps, module drift, and open issue health
+description: Project health check — plan/issue sync, brainstorm lifecycle, module drift, and open issue health
 argument-hint: ""
 ---
 
-# Codebase Health Audit
+# Project Health Audit
 
 **Note: The current year is 2026.**
 
-A fast local health check for development coherence. No agents, no external research — just `gh` CLI, grep, and find. Run this periodically to catch drift before it becomes a problem. Similar to `/next` (which finds work), this finds what's out of sync.
+A fast project management health check. No agents, no external research — just `gh` CLI, grep, and find. Run this periodically to catch drift before it becomes a problem. Similar to `/next` (which finds work), this finds what's out of sync.
+
+> **Scope**: This checks project hygiene (issue tracking, brainstorm lifecycle, module docs). It is not a code quality check (dead code, test coverage, etc.).
 
 ## Checks
 
@@ -23,17 +25,27 @@ For each plan in `docs/plans/*.md` that has `issue: NN` in its YAML frontmatter,
 grep -rl "^issue: " docs/plans/ 2>/dev/null
 ```
 
-For each plan found, extract the issue number and fetch the GitHub issue:
+For each plan found, extract the issue number and check its state:
 
 ```bash
+gh issue view NN --json state,title,labels
+```
+
+- **Issue closed** — Expected (work is done). Mark as ✅ DONE, skip content comparison.
+- **Issue open** — Check if the plan body is in sync with the GitHub issue body. Content drift on open issues means someone edited one but not the other.
+- **Issue not found** — Flag as ❌ ORPHANED (deleted or wrong number in frontmatter)
+
+Only fetch and compare bodies for **open issues**. Comparing closed issues is expensive and low-signal — the work is done.
+
+```bash
+# Only for open issues: compare content
 gh issue view NN --json body,state,title,labels
 ```
 
-Compare local vs GitHub:
-- **In sync** — First 500 chars roughly match (whitespace/frontmatter differences are ok)
-- **Out of sync** — Content differs meaningfully → flag with the fix command
-- **Issue closed, PR merged** — Expected, mark as DONE (not a problem)
-- **Issue not found** — Flag as ORPHANED (issue was deleted or wrong number)
+Compare open plan vs GitHub:
+- **In sync** — First 500 chars roughly match (whitespace/frontmatter differences are ok) → ✅
+- **Out of sync** — Content differs meaningfully → ❌ flag with the fix command:
+  `gh issue edit NN --body-file docs/plans/FILENAME.md`
 
 ### 2. Brainstorm Lifecycle
 
@@ -46,9 +58,18 @@ grep -rL "\*\*Issue:\*\* #" docs/brainstorms/ 2>/dev/null
 ```
 
 For each brainstorm file:
-1. **Has `**Issue:** #NN`?** — If not → flag as UNTRACKED (never filed as GitHub issue)
-2. **Has a corresponding plan?** — Scan `docs/plans/*.md` for `issue: NN` in frontmatter. If not found → flag as NO PLAN. Note how many days old it is.
-3. **GitHub issue still has `brainstorm` label after 7+ days?** — Stale, should have progressed to plan
+1. **Has `**Issue:** #NN`?** — Extract the issue number if present.
+2. **Has a corresponding plan?** — Scan `docs/plans/*.md` for `issue: NN` in frontmatter. A plan existing means the brainstorm progressed, regardless of whether the back-link was written.
+3. **Classify each brainstorm:**
+   - Has issue + plan → ✅ progressed (if issue is closed, all done)
+   - Has issue, no plan, issue open < 7 days → ✅ recently filed, fine
+   - Has issue, no plan, issue open > 7 days → ⚠️ stale, needs a plan
+   - No issue, but a plan file exists with a matching name stem → ⚠️ cosmetic drift (back-link missing), low priority
+   - No issue, no plan, < 7 days old → ✅ fresh brainstorm, fine
+   - No issue, no plan, > 7 days old → ⚠️ ABANDONED — file an issue or delete it
+4. **GitHub issue still has `brainstorm` label after 7+ days?** — Stale, should have progressed to plan
+
+**Important**: Do not flag "UNTRACKED" for brainstorms that clearly have plans. The `**Issue:** #NN` back-link is a convenience marker, not the source of truth. Cross-reference plan file names before flagging.
 
 ```bash
 # Check GitHub for open brainstorm issues
