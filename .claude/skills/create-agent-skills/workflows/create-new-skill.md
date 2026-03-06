@@ -18,36 +18,19 @@
 **If user just invoked skill without context:**
 → Ask what they want to build
 
-### Using AskUserQuestion
+### Gathering Requirements
 
-Ask 2-4 domain-specific questions based on actual gaps. Each question should:
-- Have specific options with descriptions
-- Focus on scope, complexity, outputs, boundaries
-- NOT ask things obvious from context
+Ask 2-4 targeted questions in natural prose, one at a time, based on genuine gaps. Don't ask what's obvious from context. Share your read of the situation first, then invite correction.
 
 Example questions:
-- "What specific operations should this skill handle?" (with options based on domain)
-- "Should this also handle [related thing] or stay focused on [core thing]?"
-- "What should the user see when successful?"
+- "I'm guessing this should handle X but not Y — is that right, or is there more scope here?"
+- "What should the user see when it succeeds?"
 
-### Decision Gate
-
-After initial questions, ask:
-"Ready to proceed with building, or would you like me to ask more questions?"
-
-Options:
-1. **Proceed to building** - I have enough context
-2. **Ask more questions** - There are more details to clarify
-3. **Let me add details** - I want to provide additional context
+When you have enough to proceed, say so and move on — you don't need explicit permission.
 
 ## Step 2: Research Trigger (If External API)
 
-**When external service detected**, ask using AskUserQuestion:
-"This involves [service name] API. Would you like me to research current endpoints and patterns before building?"
-
-Options:
-1. **Yes, research first** - Fetch current documentation for accurate implementation
-2. **No, proceed with general patterns** - Use common patterns without specific API research
+**When external service detected**, mention it and say you'd recommend researching the current API before building — then ask if they want that or if they'd rather move ahead with general patterns.
 
 If research requested:
 - Use Context7 MCP to fetch current library documentation

@@ -25,7 +25,7 @@ If empty, ask: "What would you like to plan?"
 
 ### 0b. Idea Refinement (if no issue/brainstorm)
 
-Use AskUserQuestion to understand: purpose, constraints, success criteria. Ask one question at a time. Stop when clear or user says "proceed."
+Ask in natural prose, one question at a time, to understand: purpose, constraints, success criteria. Stop when clear or user says "proceed."
 
 ## Main Tasks
 

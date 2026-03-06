@@ -56,14 +56,7 @@ Then recommend the single best issue to pick up, with a brief rationale (1-2 sen
 
 ## Step 5: Offer Next Steps
 
-Use **AskUserQuestion tool** to ask:
-
-**Question:** "Which issue would you like to pick up?"
-
-**Options:**
-1. **#[recommended]** - Start with the recommended issue
-2. **Pick a different one** - Specify an issue number
-3. **Just browsing** - No action needed
+Share your recommendation and briefly explain why it's the best pick. Invite the user to confirm or tell you if they'd prefer a different issue.
 
 If the user picks an issue, check its labels to determine the right next step:
 

@@ -33,7 +33,7 @@ Evaluate whether brainstorming is needed based on the feature description.
 - Constrained, well-defined scope
 
 **If requirements are already clear:**
-Use **AskUserQuestion tool** to suggest: "Your requirements seem detailed enough to proceed directly to planning. Should I run `/plan` instead, or would you like to explore the idea further?"
+Tell the user their requirements seem detailed enough to skip brainstorming, and suggest running `/plan` instead — but invite them to keep exploring if they want to think it through first.
 
 ### Phase 1: Understand the Idea
 
@@ -47,10 +47,10 @@ Focus on: similar features, established patterns, CLAUDE.md guidance.
 
 #### 1.2 Collaborative Dialogue
 
-Use the **AskUserQuestion tool** to ask questions **one at a time**.
+Ask questions **one at a time** in natural prose.
 
 **Guidelines (see `brainstorming` skill for detailed techniques):**
-- Prefer multiple choice when natural options exist
+- Share your perspective or assumption first, then ask if it's right
 - Start broad (purpose, users) then narrow (constraints, edge cases)
 - Validate assumptions explicitly
 - Ask about success criteria
@@ -68,7 +68,7 @@ For each approach, provide:
 
 Lead with your recommendation and explain why. Apply YAGNI—prefer simpler solutions.
 
-Use **AskUserQuestion tool** to ask which approach the user prefers.
+Share which approach you'd recommend and why, then invite the user to share their thinking or any adjustments.
 
 ### Phase 3: Capture the Design
 
@@ -106,14 +106,7 @@ gh issue create \
 
 ### Phase 5: Handoff
 
-Use **AskUserQuestion tool** to present next steps:
-
-**Question:** "Brainstorm filed as GitHub issue. What would you like to do next?"
-
-**Options:**
-1. **Proceed to planning** - Run `/plan #NN` to create an implementation plan from this brainstorm
-2. **Refine design further** - Continue exploring before planning
-3. **Done for now** - Issue is tracked, return later
+Tell the user the brainstorm is filed as GitHub issue #NN. Suggest the natural next step — running `/plan #NN` — and let them know the issue is tracked if they'd rather return to it later. Keep it conversational; they'll say what they want to do.
 
 ## Output Summary
 

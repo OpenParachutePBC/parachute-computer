@@ -47,9 +47,9 @@ Ask questions **one at a time** to understand the user's intent. Avoid overwhelm
 
 **Question Techniques:**
 
-1. **Prefer multiple choice when natural options exist**
-   - Good: "Should the notification be: (a) email only, (b) in-app only, or (c) both?"
-   - Avoid: "How should users be notified?"
+1. **Share your perspective first, then ask open-endedly**
+   - Good: "My instinct is in-app notifications since you're already building that surface — does that feel right, or were you thinking email too?"
+   - Avoid: Presenting a labeled list of options for the user to pick from — that strips the nuance out of the conversation
 
 2. **Start broad, then narrow**
    - First: What is the core purpose?
@@ -138,11 +138,7 @@ topic: <kebab-case-topic>
 
 ### Phase 4: Handoff
 
-Present clear options for what to do next:
-
-1. **Proceed to planning** → Run `/plan`
-2. **Refine further** → Continue exploring the design
-3. **Done for now** → User will return later
+Suggest the natural next step — usually `/plan` — and let the user respond. Don't present a menu; just tell them what you'd recommend and invite them to say what they want.
 
 ## YAGNI Principles
 
