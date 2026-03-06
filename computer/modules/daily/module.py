@@ -187,9 +187,9 @@ class DailyModule:
     async def on_load(self) -> None:
         """Register Daily schema in shared graph."""
         from parachute.core.interfaces import get_registry
-        graph = get_registry().get("GraphDB")
+        graph = get_registry().get("BrainDB")
         if graph is None:
-            logger.warning("Daily: GraphDB not in registry — module will not function")
+            logger.warning("Daily: BrainDB not in registry — module will not function")
             return
 
         # Ensure schema tables exist
@@ -619,9 +619,9 @@ class DailyModule:
     # ── Graph helpers ─────────────────────────────────────────────────────────
 
     def _get_graph(self):
-        """Return GraphDB from registry, or None if unavailable."""
+        """Return BrainDB from registry, or None if unavailable."""
         from parachute.core.interfaces import get_registry
-        return get_registry().get("GraphDB")
+        return get_registry().get("BrainDB")
 
     async def _write_to_graph(
         self,
@@ -720,7 +720,7 @@ class DailyModule:
         """Create a new daily entry in the graph. Returns {id, created_at}."""
         graph = self._get_graph()
         if graph is None:
-            raise RuntimeError("GraphDB unavailable — cannot create entry")
+            raise RuntimeError("BrainDB unavailable — cannot create entry")
 
         now = datetime.now(timezone.utc)
         entry_id = now.strftime("%Y-%m-%d-%H-%M-%S-%f")
@@ -768,7 +768,7 @@ class DailyModule:
         """
         graph = self._get_graph()
         if graph is None:
-            raise RuntimeError("GraphDB unavailable — cannot update entry")
+            raise RuntimeError("BrainDB unavailable — cannot update entry")
 
         # Check existence
         rows = await graph.execute_cypher(
@@ -831,7 +831,7 @@ class DailyModule:
         """Delete an entry node and all its edges. Returns True on success (including 404)."""
         graph = self._get_graph()
         if graph is None:
-            raise RuntimeError("GraphDB unavailable — cannot delete entry")
+            raise RuntimeError("BrainDB unavailable — cannot delete entry")
 
         rows = await graph.execute_cypher(
             "MATCH (e:Note {entry_id: $entry_id}) RETURN e.entry_id AS entry_id",
@@ -1269,7 +1269,7 @@ class DailyModule:
             if graph is None:
                 return JSONResponse(
                     status_code=503,
-                    content={"error": "GraphDB not available"},
+                    content={"error": "BrainDB not available"},
                 )
             rows = await graph.execute_cypher(
                 "MATCH (e:Note) RETURN count(e) AS n"
@@ -1328,7 +1328,7 @@ class DailyModule:
             if graph is None:
                 return JSONResponse(
                     status_code=503,
-                    content={"error": "GraphDB not available"},
+                    content={"error": "BrainDB not available"},
                 )
             md_files = self._find_legacy_md_files()
             if not md_files:
@@ -1356,7 +1356,7 @@ class DailyModule:
             """Format-aware journal importer. Accepts Parachute, Obsidian, Logseq, or plain files."""
             graph = self._get_graph()
             if graph is None:
-                return JSONResponse(status_code=503, content={"error": "GraphDB not available"})
+                return JSONResponse(status_code=503, content={"error": "BrainDB not available"})
 
             source = Path(body.source_dir).expanduser()
             if not source.is_dir():
@@ -1381,7 +1381,7 @@ class DailyModule:
             """Fetch all Card nodes, optionally filtered by date."""
             graph = self._get_graph()
             if graph is None:
-                return JSONResponse(status_code=503, content={"error": "GraphDB not available"})
+                return JSONResponse(status_code=503, content={"error": "BrainDB not available"})
             if date:
                 if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
                     return JSONResponse(status_code=400, content={"error": "invalid date"})
@@ -1401,7 +1401,7 @@ class DailyModule:
             """Get a specific agent's card, optionally filtered to a specific date."""
             graph = self._get_graph()
             if graph is None:
-                return JSONResponse(status_code=503, content={"error": "GraphDB not available"})
+                return JSONResponse(status_code=503, content={"error": "BrainDB not available"})
             if date:
                 if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
                     return JSONResponse(status_code=400, content={"error": "invalid date"})
@@ -1441,7 +1441,7 @@ class DailyModule:
             """List all Caller nodes from the graph."""
             graph = self._get_graph()
             if graph is None:
-                return JSONResponse(status_code=503, content={"error": "GraphDB not available"})
+                return JSONResponse(status_code=503, content={"error": "BrainDB not available"})
             rows = await graph.execute_cypher(
                 "MATCH (c:Caller) RETURN c ORDER BY c.name"
             )
@@ -1452,7 +1452,7 @@ class DailyModule:
             """Get a specific Caller node."""
             graph = self._get_graph()
             if graph is None:
-                return JSONResponse(status_code=503, content={"error": "GraphDB not available"})
+                return JSONResponse(status_code=503, content={"error": "BrainDB not available"})
             rows = await graph.execute_cypher(
                 "MATCH (c:Caller {name: $name}) RETURN c",
                 {"name": name},
@@ -1466,7 +1466,7 @@ class DailyModule:
             """Create or update a Caller node (MERGE on name)."""
             graph = self._get_graph()
             if graph is None:
-                return JSONResponse(status_code=503, content={"error": "GraphDB not available"})
+                return JSONResponse(status_code=503, content={"error": "BrainDB not available"})
             name = body.get("name", "").strip()
             if not name:
                 return JSONResponse(status_code=400, content={"error": "name required"})
@@ -1501,7 +1501,7 @@ class DailyModule:
             """Update fields on an existing Caller node."""
             graph = self._get_graph()
             if graph is None:
-                return JSONResponse(status_code=503, content={"error": "GraphDB not available"})
+                return JSONResponse(status_code=503, content={"error": "BrainDB not available"})
             now = datetime.now(timezone.utc).isoformat()
             # Fetch existing
             rows = await graph.execute_cypher(
@@ -1540,7 +1540,7 @@ class DailyModule:
             """Delete a Caller node."""
             graph = self._get_graph()
             if graph is None:
-                return JSONResponse(status_code=503, content={"error": "GraphDB not available"})
+                return JSONResponse(status_code=503, content={"error": "BrainDB not available"})
             await graph.execute_cypher(
                 "MATCH (c:Caller {name: $name}) DELETE c", {"name": name}
             )

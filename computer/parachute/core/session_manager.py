@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from parachute.db.graph_sessions import GraphSessionStore
+from parachute.db.brain_sessions import BrainSessionStore
 from parachute.models.session import (
     ResumeInfo,
     Session,
@@ -39,7 +39,7 @@ class SessionManager:
     - Empty/null working_directory means user's home directory
     """
 
-    def __init__(self, parachute_dir: Path, session_store: GraphSessionStore):
+    def __init__(self, parachute_dir: Path, session_store: BrainSessionStore):
         """Initialize session manager."""
         self.parachute_dir = parachute_dir
         self.session_store = session_store

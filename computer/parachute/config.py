@@ -260,8 +260,8 @@ class Settings(BaseSettings):
         return PARACHUTE_DIR
 
     @property
-    def graph_db_path(self) -> Path:
-        """Path to the Kuzu graph database."""
+    def brain_db_path(self) -> Path:
+        """Path to the Kuzu brain database."""
         return PARACHUTE_DIR / "graph" / "parachute.kz"
 
     @property

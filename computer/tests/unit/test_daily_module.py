@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from modules.daily.module import DailyModule
-from parachute.db.graph import GraphService
+from parachute.db.brain import BrainService
 
 
 # ---------------------------------------------------------------------------
@@ -32,7 +32,7 @@ async def tmp_vault(tmp_path):
 async def graph(tmp_path):
     """Live temporary Kuzu database for testing."""
     db_path = tmp_path / "graph.db"
-    svc = GraphService(db_path)
+    svc = BrainService(db_path)
     await svc.connect()
     yield svc
     await svc.close()
@@ -45,7 +45,7 @@ async def module(tmp_vault, graph, monkeypatch):
     from parachute.core import interfaces as iface
 
     registry = {}
-    registry["GraphDB"] = graph
+    registry["BrainDB"] = graph
     monkeypatch.setattr(iface, "_registry", registry)
 
     mod = DailyModule(vault_path=tmp_vault)
@@ -265,7 +265,7 @@ class TestMarkdownMigration:
         import frontmatter
 
         from parachute.core import interfaces as iface
-        registry = {"GraphDB": graph}
+        registry = {"BrainDB": graph}
         monkeypatch.setattr(iface, "_registry", registry)
 
         # Write a .md file before module loads
@@ -293,7 +293,7 @@ class TestMarkdownMigration:
         import frontmatter
 
         from parachute.core import interfaces as iface
-        registry = {"GraphDB": graph}
+        registry = {"BrainDB": graph}
         monkeypatch.setattr(iface, "_registry", registry)
 
         entries_dir = tmp_vault / "Daily" / "entries"

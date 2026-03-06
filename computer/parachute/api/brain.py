@@ -1,12 +1,12 @@
 """
-Graph query API — read-only access to the shared Kuzu graph.
+Brain query API — read-only access to the shared Kuzu graph.
 
 Endpoints:
-  GET /api/graph/schema            — all tables with column types
-  GET /api/graph/sessions          — conversation sessions (Chat)
-  GET /api/graph/sessions/{id}     — single session by ID
-  GET /api/graph/projects          — named projects
-  GET /api/graph/daily/entries     — Daily journal notes
+  GET /api/brain/schema            — all tables with column types
+  GET /api/brain/sessions          — conversation sessions (Chat)
+  GET /api/brain/sessions/{id}     — single session by ID
+  GET /api/brain/projects          — named projects
+  GET /api/brain/daily/entries     — Daily journal notes
 """
 
 import logging
@@ -15,14 +15,14 @@ from fastapi import APIRouter, HTTPException, Query
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/graph")
+router = APIRouter(prefix="/brain")
 
 
 def _get_graph():
     from parachute.core.interfaces import get_registry
-    graph = get_registry().get("GraphDB")
+    graph = get_registry().get("BrainDB")
     if graph is None:
-        raise HTTPException(status_code=503, detail="GraphDB not available")
+        raise HTTPException(status_code=503, detail="BrainDB not available")
     return graph
 
 
@@ -51,7 +51,7 @@ async def get_schema():
                 is_pk = c.get("is primary key", False)
                 columns.append({"name": col_name, "type": col_type, "primary_key": bool(is_pk)})
         except Exception as e:
-            logger.warning(f"graph/schema: could not introspect {name}: {e}")
+            logger.warning(f"brain/schema: could not introspect {name}: {e}")
             columns = []
 
         entry = {"name": name, "columns": columns}

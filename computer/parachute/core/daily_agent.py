@@ -205,10 +205,10 @@ class DailyAgentConfig:
 
 
 def _get_graph():
-    """Get GraphDB from the service registry, or None if unavailable."""
+    """Get BrainDB from the service registry, or None if unavailable."""
     try:
         from parachute.core.interfaces import get_registry
-        return get_registry().get("GraphDB")
+        return get_registry().get("BrainDB")
     except Exception:
         return None
 

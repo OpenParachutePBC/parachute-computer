@@ -58,7 +58,7 @@ logger = logging.getLogger("ParachuteMCP")
 
 # Global session_store connection
 _db = None
-_graph_base_url: str = ""
+_brain_base_url: str = ""
 _PARACHUTE_DIR = Path.home() / ".parachute"
 
 
@@ -107,16 +107,16 @@ _session_context: SessionContext | None = None
 
 
 async def get_db():
-    """Get or create GraphSessionStore connection."""
+    """Get or create BrainSessionStore connection."""
     global _db
     if _db is None:
-        from parachute.db.graph import GraphService
-        from parachute.db.graph_sessions import GraphSessionStore
-        graph = GraphService(db_path=str(_PARACHUTE_DIR / "graph" / "parachute.kz"))
-        await graph.connect()
-        _db = GraphSessionStore(graph)
+        from parachute.db.brain import BrainService
+        from parachute.db.brain_sessions import BrainSessionStore
+        brain = BrainService(db_path=str(_PARACHUTE_DIR / "graph" / "parachute.kz"))
+        await brain.connect()
+        _db = BrainSessionStore(brain)
         await _db.ensure_schema()
-        logger.info(f"Connected to graph DB: {_PARACHUTE_DIR / 'graph' / 'parachute.kz'}")
+        logger.info(f"Connected to brain DB: {_PARACHUTE_DIR / 'graph' / 'parachute.kz'}")
     return _db
 
 
@@ -372,7 +372,7 @@ TOOLS = [
             "required": ["date"],
         },
     ),
-    # Graph Query Tools
+    # Brain Query Tools
     Tool(
         name="get_graph_schema",
         description=(
@@ -949,11 +949,11 @@ async def get_journal(date: str) -> Optional[dict[str, Any]]:
         return {"date": date, "error": str(e)}
 
 
-async def _graph_call(path: str) -> dict[str, Any]:
-    """Make a GET request to the local graph API."""
-    if not _graph_base_url:
-        return {"error": "Graph API not available"}
-    url = f"{_graph_base_url}{path}"
+async def _brain_call(path: str) -> dict[str, Any]:
+    """Make a GET request to the local brain API."""
+    if not _brain_base_url:
+        return {"error": "Brain API not available"}
+    url = f"{_brain_base_url}{path}"
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.get(url)
@@ -965,9 +965,9 @@ async def _graph_call(path: str) -> dict[str, Any]:
                 return {"error": detail, "status_code": response.status_code}
             return response.json()
     except httpx.ConnectError:
-        return {"error": "Graph API unavailable — is the server running?"}
+        return {"error": "Brain API unavailable — is the server running?"}
     except Exception as e:
-        logger.error(f"Graph API call failed (GET {path}): {e}")
+        logger.error(f"Brain API call failed (GET {path}): {e}")
         return {"error": str(e)}
 
 
@@ -1039,25 +1039,25 @@ async def handle_tool_call(name: str, arguments: dict[str, Any]) -> str:
             result = await get_journal(date=arguments["date"])
             if result is None:
                 return json.dumps({"error": f"Journal not found for date: {arguments['date']}"})
-        # Graph Query Tools
+        # Brain Query Tools
         elif name == "get_graph_schema":
-            result = await _graph_call("/schema")
+            result = await _brain_call("/schema")
         elif name == "list_conversations":
             params = {k: arguments[k] for k in ("module", "limit") if k in arguments}
             if "archived" in arguments:
                 params["archived"] = "true" if arguments["archived"] else "false"
             qs = ("?" + urllib.parse.urlencode(params)) if params else ""
-            result = await _graph_call(f"/sessions{qs}")
+            result = await _brain_call(f"/sessions{qs}")
         elif name == "get_conversation":
             sid = urllib.parse.quote(arguments["session_id"], safe="")
-            result = await _graph_call(f"/sessions/{sid}")
+            result = await _brain_call(f"/sessions/{sid}")
         elif name == "list_projects":
             qs = f"?limit={arguments['limit']}" if "limit" in arguments else ""
-            result = await _graph_call(f"/projects{qs}")
+            result = await _brain_call(f"/projects{qs}")
         elif name == "list_entries":
             params = {k: arguments[k] for k in ("date_from", "date_to", "limit") if k in arguments}
             qs = ("?" + urllib.parse.urlencode(params)) if params else ""
-            result = await _graph_call(f"/daily/entries{qs}")
+            result = await _brain_call(f"/daily/entries{qs}")
         else:
             return json.dumps({"error": f"Unknown tool: {name}"})
 
@@ -1070,9 +1070,9 @@ async def handle_tool_call(name: str, arguments: dict[str, Any]) -> str:
 
 async def run_server():
     """Run the MCP server."""
-    global _graph_base_url
+    global _brain_base_url
     port = os.environ.get("PARACHUTE_SERVER_PORT", "3333")
-    _graph_base_url = f"http://localhost:{port}/api/graph"
+    _brain_base_url = f"http://localhost:{port}/api/brain"
 
     logger.info(f"Starting Parachute MCP server (parachute_dir: {_PARACHUTE_DIR})")
 

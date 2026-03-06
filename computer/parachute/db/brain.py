@@ -1,5 +1,5 @@
 """
-GraphService — Core graph database infrastructure.
+BrainService — Core graph database infrastructure.
 
 Shared Kuzu/LadybugDB connection for all modules. Each module registers its
 own schema segment via ensure_node_table() / ensure_rel_table() on load.
@@ -36,7 +36,7 @@ def _clean_node(node: dict) -> dict:
     return {k: v for k, v in node.items() if k not in _INTERNAL_FIELDS}
 
 
-class GraphService:
+class BrainService:
     """
     Core graph database service. Shared infrastructure for all modules.
 
@@ -65,7 +65,7 @@ class GraphService:
 
     def _ensure_connected(self) -> None:
         if not self._connected or self._conn is None:
-            raise RuntimeError("GraphService not connected. Call connect() first.")
+            raise RuntimeError("BrainService not connected. Call connect() first.")
 
     async def connect(self) -> None:
         """Open the database. Idempotent.
@@ -85,7 +85,7 @@ class GraphService:
                     bak = wal_path.with_suffix(".wal.corrupt")
                     wal_path.rename(bak)
                     logger.warning(
-                        f"GraphService: corrupt WAL detected, backed up to {bak.name} and retrying"
+                        f"BrainService: corrupt WAL detected, backed up to {bak.name} and retrying"
                     )
                     self._db = lb.Database(str(self.db_path))
                 else:
@@ -94,7 +94,7 @@ class GraphService:
                 raise
         self._conn = lb.AsyncConnection(self._db)
         self._connected = True
-        logger.info(f"GraphService connected: {self.db_path}")
+        logger.info(f"BrainService connected: {self.db_path}")
 
     async def checkpoint(self) -> None:
         """Flush the WAL to the main database file. Idempotent, never raises."""
@@ -103,9 +103,9 @@ class GraphService:
         try:
             async with self._write_lock:
                 await self._conn.execute("CHECKPOINT")
-            logger.debug("GraphService: WAL checkpointed")
+            logger.debug("BrainService: WAL checkpointed")
         except Exception as e:
-            logger.warning(f"GraphService: checkpoint failed: {e}")
+            logger.warning(f"BrainService: checkpoint failed: {e}")
 
     async def start_checkpoint_loop(self, interval_seconds: int = _CHECKPOINT_INTERVAL) -> None:
         """Start a background task that checkpoints the WAL periodically.
@@ -119,10 +119,10 @@ class GraphService:
             while True:
                 await asyncio.sleep(interval_seconds)
                 await self.checkpoint()
-                logger.info("GraphService: periodic WAL checkpoint complete")
+                logger.info("BrainService: periodic WAL checkpoint complete")
 
         self._checkpoint_task = asyncio.create_task(_loop(), name="graph-checkpoint")
-        logger.info(f"GraphService: checkpoint loop started (every {interval_seconds}s)")
+        logger.info(f"BrainService: checkpoint loop started (every {interval_seconds}s)")
 
     async def stop_checkpoint_loop(self) -> None:
         """Cancel the periodic checkpoint task, if running."""
@@ -142,7 +142,7 @@ class GraphService:
             try:
                 self._conn.close()
             except Exception as e:
-                logger.warning(f"GraphService: error closing connection: {e}")
+                logger.warning(f"BrainService: error closing connection: {e}")
         self._connected = False
         self._conn = None
         self._db = None
@@ -176,7 +176,7 @@ class GraphService:
         )
         async with self._write_lock:
             await self._conn.execute(ddl)
-        logger.debug(f"GraphService: ensured node table {name!r}")
+        logger.debug(f"BrainService: ensured node table {name!r}")
 
     async def ensure_rel_table(
         self,
@@ -204,7 +204,7 @@ class GraphService:
         )
         async with self._write_lock:
             await self._conn.execute(ddl)
-        logger.debug(f"GraphService: ensured rel table {name!r}")
+        logger.debug(f"BrainService: ensured rel table {name!r}")
 
     async def get_table_columns(self, table_name: str) -> set[str]:
         """Return existing column names for a table via CALL table_info()."""
@@ -221,7 +221,7 @@ class GraphService:
                     cols.add(row[1])
             return cols
         except Exception as e:
-            logger.warning(f"GraphService: could not get columns for {table_name}: {e}")
+            logger.warning(f"BrainService: could not get columns for {table_name}: {e}")
             return set()
 
     # ── Query execution ───────────────────────────────────────────────────────

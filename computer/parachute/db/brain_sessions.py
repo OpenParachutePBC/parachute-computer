@@ -1,5 +1,5 @@
 """
-GraphSessionStore — Kuzu-backed session metadata store.
+BrainSessionStore — Kuzu-backed session metadata store.
 
 Replaces database.py (SQLite/aiosqlite). All session metadata is stored in
 the shared Kuzu graph database alongside Brain, Chat, and Daily data.
@@ -19,7 +19,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional, Union
 
-from parachute.db.graph import GraphService
+from parachute.db.brain import BrainService
 from parachute.models.session import (
     Project,
     PairingRequest,
@@ -37,15 +37,15 @@ def _now() -> str:
 
 
 
-class GraphSessionStore:
+class BrainSessionStore:
     """
     Kuzu-backed session metadata store.
 
-    Drop-in replacement for Database (SQLite/aiosqlite). Uses GraphService for
-    all Kuzu access. The GraphService write_lock serializes writes.
+    Drop-in replacement for Database (SQLite/aiosqlite). Uses BrainService for
+    all Kuzu access. The BrainService write_lock serializes writes.
     """
 
-    def __init__(self, graph: GraphService):
+    def __init__(self, graph: BrainService):
         self.graph = graph
 
     # ── Schema ────────────────────────────────────────────────────────────────
@@ -110,7 +110,7 @@ class GraphSessionStore:
             },
             primary_key="request_id",
         )
-        logger.info("GraphSessionStore: schema ready")
+        logger.info("BrainSessionStore: schema ready")
 
     # ── Session CRUD ──────────────────────────────────────────────────────────
 
