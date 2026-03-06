@@ -988,14 +988,21 @@ async def get_journal(date: str) -> Optional[dict[str, Any]]:
         return {"date": date, "error": str(e)}
 
 
-async def _brain_call(path: str) -> dict[str, Any]:
-    """Make a GET request to the local brain API."""
+async def _brain_call(
+    path: str,
+    method: str = "GET",
+    body: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Make a GET or POST request to the local brain API."""
     if not _brain_base_url:
         return {"error": "Brain API not available"}
     url = f"{_brain_base_url}{path}"
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.get(url)
+            if method == "POST":
+                response = await client.post(url, json=body or {})
+            else:
+                response = await client.get(url)
             if response.status_code >= 400:
                 try:
                     detail = response.json().get("detail", response.text)
@@ -1006,7 +1013,7 @@ async def _brain_call(path: str) -> dict[str, Any]:
     except httpx.ConnectError:
         return {"error": "Brain API unavailable — is the server running?"}
     except Exception as e:
-        logger.error(f"Brain API call failed (GET {path}): {e}")
+        logger.error(f"Brain API call failed ({method} {path}): {e}")
         return {"error": str(e)}
 
 
@@ -1104,15 +1111,11 @@ async def handle_tool_call(name: str, arguments: dict[str, Any]) -> str:
             if trust != "direct":
                 result = {"error": "brain_query requires vault or full trust level"}
             else:
-                brain = _get_brain()
-                if brain is None:
-                    result = {"error": "BrainDB not available"}
-                else:
-                    rows = await brain.execute_cypher(
-                        arguments["query"],
-                        arguments.get("params") or None,
-                    )
-                    result = {"rows": rows, "count": len(rows)}
+                result = await _brain_call(
+                    "/query",
+                    method="POST",
+                    body={"query": arguments["query"], "params": arguments.get("params")},
+                )
         elif name == "brain_execute":
             # Require full (direct) trust — arbitrary writes can corrupt or destroy the graph.
             # Fail-closed: deny if context is absent (standalone/legacy mode).
@@ -1120,16 +1123,11 @@ async def handle_tool_call(name: str, arguments: dict[str, Any]) -> str:
             if trust != "direct":
                 result = {"error": "brain_execute requires full trust level"}
             else:
-                brain = _get_brain()
-                if brain is None:
-                    result = {"error": "BrainDB not available"}
-                else:
-                    async with brain.write_lock:
-                        rows = await brain.execute_cypher(
-                            arguments["query"],
-                            arguments.get("params") or None,
-                        )
-                    result = {"ok": True, "rows": rows, "count": len(rows)}
+                result = await _brain_call(
+                    "/execute",
+                    method="POST",
+                    body={"query": arguments["query"], "params": arguments.get("params")},
+                )
         else:
             return json.dumps({"error": f"Unknown tool: {name}"})
 

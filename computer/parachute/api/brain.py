@@ -2,17 +2,21 @@
 Brain query API — read-only access to the shared Kuzu graph.
 
 Endpoints:
-  GET /api/brain/schema            — all tables with column types
-  GET /api/brain/sessions          — conversation sessions (Chat)
-  GET /api/brain/sessions/{id}     — single session by ID
-  GET /api/brain/projects          — named projects
-  GET /api/brain/daily/entries     — Daily journal notes
+  GET  /api/brain/schema            — all tables with column types
+  GET  /api/brain/sessions          — conversation sessions (Chat)
+  GET  /api/brain/sessions/{id}     — single session by ID
+  GET  /api/brain/projects          — named projects
+  GET  /api/brain/daily/entries     — Daily journal notes
+  GET  /api/brain/memory            — unified memory feed
+  POST /api/brain/query             — read-only Cypher passthrough
+  POST /api/brain/execute           — write Cypher passthrough (auth required)
 """
 
 import logging
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
@@ -237,3 +241,35 @@ async def get_memory(
     # Merge and return top `limit` by timestamp descending
     items.sort(key=lambda x: x.get("ts") or "", reverse=True)
     return {"items": items[:limit]}
+
+
+# ── Cypher passthrough ────────────────────────────────────────────────────────
+
+class CypherRequest(BaseModel):
+    query: str
+    params: dict[str, Any] | None = None
+
+
+@router.post("/query")
+async def cypher_query(body: CypherRequest):
+    """Execute a read-only Cypher query against the brain (MATCH/RETURN).
+
+    Intended for agents with vault/direct trust. Write queries are not blocked
+    here — trust enforcement is done by the MCP server before calling this endpoint.
+    """
+    brain = _get_graph()
+    rows = await brain.execute_cypher(body.query, body.params or None)
+    return {"rows": rows, "count": len(rows)}
+
+
+@router.post("/execute")
+async def cypher_execute(body: CypherRequest):
+    """Execute a write Cypher mutation against the brain (MERGE/CREATE/SET/DELETE).
+
+    Acquires write_lock to serialize mutations. Trust enforcement is done by
+    the MCP server before calling this endpoint.
+    """
+    brain = _get_graph()
+    async with brain.write_lock:
+        rows = await brain.execute_cypher(body.query, body.params or None)
+    return {"ok": True, "rows": rows, "count": len(rows)}
