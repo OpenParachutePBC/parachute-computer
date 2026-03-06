@@ -3,10 +3,10 @@ Graph query API — read-only access to the shared Kuzu graph.
 
 Endpoints:
   GET /api/graph/schema            — all tables with column types
-  GET /api/graph/sessions          — conversation sessions (Parachute_Session)
+  GET /api/graph/sessions          — conversation sessions (Chat)
   GET /api/graph/sessions/{id}     — single session by ID
-  GET /api/graph/container_envs    — named project environments
-  GET /api/graph/daily/entries     — Daily journal entries
+  GET /api/graph/projects          — named projects
+  GET /api/graph/daily/entries     — Daily journal notes
 """
 
 import logging
@@ -71,8 +71,13 @@ async def list_sessions(
     module: str | None = Query(None, description="Filter by module: chat, daily"),
     limit: int = Query(20, ge=1, le=200),
     archived: bool = Query(False),
+    all: bool = Query(False, description="Show all sessions (including agent runs). Default: human-initiated only."),
 ):
-    """List conversation sessions from the graph."""
+    """List conversation sessions from the graph.
+
+    By default filters to human-initiated sessions (source=parachute, non-bridge agents).
+    Pass ?all=true to see all sessions including agent runs and bot sessions.
+    """
     graph = _get_graph()
 
     where_clauses = []
@@ -83,10 +88,15 @@ async def list_sessions(
     if module:
         where_clauses.append("s.module = $module")
         params["module"] = module
+    if not all:
+        # Default: human-initiated sessions only
+        where_clauses.append(
+            "(s.source = 'parachute' AND (s.agent_type IS NULL OR s.agent_type = 'orchestrator'))"
+        )
 
     where = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
     query = (
-        f"MATCH (s:Parachute_Session) {where} "
+        f"MATCH (s:Chat) {where} "
         f"RETURN s ORDER BY s.last_accessed DESC LIMIT {limit}"
     )
 
@@ -100,7 +110,7 @@ async def get_session(session_id: str):
     graph = _get_graph()
 
     rows = await graph.execute_cypher(
-        "MATCH (s:Parachute_Session {session_id: $session_id}) RETURN s",
+        "MATCH (s:Chat {session_id: $session_id}) RETURN s",
         {"session_id": session_id},
     )
     if not rows:
@@ -111,7 +121,7 @@ async def get_session(session_id: str):
     # Fetch exchanges if this session has them
     try:
         exchanges = await graph.execute_cypher(
-            "MATCH (s:Chat_Session {session_id: $session_id})-[:HAS_EXCHANGE]->(e:Chat_Exchange) "
+            "MATCH (s:Chat {session_id: $session_id})-[:HAS_EXCHANGE]->(e:Exchange) "
             "RETURN e ORDER BY e.exchange_number",
             {"session_id": session_id},
         )
@@ -121,17 +131,17 @@ async def get_session(session_id: str):
     return {"session": session, "exchanges": exchanges}
 
 
-@router.get("/container_envs")
-async def list_container_envs(
+@router.get("/projects")
+async def list_projects(
     limit: int = Query(20, ge=1, le=200),
 ):
-    """List named project environments (container envs)."""
+    """List named projects."""
     graph = _get_graph()
 
     rows = await graph.execute_cypher(
-        f"MATCH (e:Parachute_ContainerEnv) RETURN e ORDER BY e.created_at DESC LIMIT {limit}"
+        f"MATCH (p:Project) RETURN p ORDER BY p.created_at DESC LIMIT {limit}"
     )
-    return {"container_envs": rows, "count": len(rows)}
+    return {"projects": rows, "count": len(rows)}
 
 
 @router.get("/daily/entries")
@@ -140,7 +150,7 @@ async def list_daily_entries(
     date_to: str | None = Query(None, description="YYYY-MM-DD"),
     limit: int = Query(20, ge=1, le=200),
 ):
-    """List Daily journal entries from the graph."""
+    """List daily journal notes from the graph."""
     graph = _get_graph()
 
     where_clauses = []
@@ -155,7 +165,7 @@ async def list_daily_entries(
 
     where = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
     query = (
-        f"MATCH (e:Journal_Entry) {where} "
+        f"MATCH (e:Note) {where} "
         f"RETURN e ORDER BY e.created_at DESC LIMIT {limit}"
     )
 

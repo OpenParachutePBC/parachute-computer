@@ -64,7 +64,7 @@ def create_daily_agent_tools(
 
         try:
             rows = await graph.execute_cypher(
-                "MATCH (e:Journal_Entry) WHERE e.date = $date "
+                "MATCH (e:Note) WHERE e.date = $date "
                 "RETURN e.content AS content, e.created_at AS created_at "
                 "ORDER BY e.created_at ASC",
                 {"date": date_str}
@@ -147,7 +147,7 @@ def create_daily_agent_tools(
 
             try:
                 rows = await graph.execute_cypher(
-                    "MATCH (e:Journal_Entry) WHERE e.date = $date "
+                    "MATCH (e:Note) WHERE e.date = $date "
                     "RETURN e.content AS content ORDER BY e.created_at ASC",
                     {"date": date_str}
                 )

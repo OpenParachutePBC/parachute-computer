@@ -36,19 +36,7 @@ class ChatModule:
             logger.warning("Chat: GraphDB not in registry, schema registration skipped")
             return
         await graph.ensure_node_table(
-            "Chat_Session",
-            {
-                "session_id": "STRING",
-                "title": "STRING",
-                "module": "STRING",
-                "source": "STRING",
-                "agent_type": "STRING",
-                "created_at": "STRING",
-            },
-            primary_key="session_id",
-        )
-        await graph.ensure_node_table(
-            "Chat_Exchange",
+            "Exchange",
             {
                 "exchange_id": "STRING",
                 "session_id": "STRING",
@@ -63,8 +51,8 @@ class ChatModule:
             },
             primary_key="exchange_id",
         )
-        await graph.ensure_rel_table("HAS_EXCHANGE", "Chat_Session", "Chat_Exchange")
-        logger.info("Chat: graph schema registered (Chat_Session, Chat_Exchange, HAS_EXCHANGE)")
+        await graph.ensure_rel_table("HAS_EXCHANGE", "Chat", "Exchange")
+        logger.info("Chat: graph schema registered (Exchange, HAS_EXCHANGE)")
 
     def _ensure_claude_dir(self):
         """Ensure vault/.claude/ directory exists for SDK session storage."""

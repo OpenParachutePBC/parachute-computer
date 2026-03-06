@@ -29,11 +29,11 @@ final graphTableDataProvider = FutureProvider.autoDispose.family<Map<String, dyn
   (ref, tableName) async {
     final service = ref.watch(graphServiceProvider);
     switch (tableName) {
-      case 'Parachute_Session':
+      case 'Chat':
         return service.getSessions(limit: 50);
-      case 'Parachute_ContainerEnv':
-        return service.getContainerEnvs(limit: 50);
-      case 'Journal_Entry':
+      case 'Project':
+        return service.getProjects(limit: 50);
+      case 'Note':
         return service.getDailyEntries(limit: 50);
       default:
         // No data endpoint for this table — return empty rows

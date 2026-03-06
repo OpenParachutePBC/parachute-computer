@@ -104,7 +104,7 @@ def mock_app(home_dir):
     mock_env.slug = "test-env"
 
     store = AsyncMock()
-    store.get_container_env = AsyncMock(return_value=mock_env)
+    store.get_project = AsyncMock(return_value=mock_env)
     app.state.session_store = store
     return app
 
@@ -166,7 +166,7 @@ class TestListFiles:
     async def test_slug_not_found(self, mock_request, home_dir):
         from parachute.api.container_files import list_files
 
-        mock_request.app.state.session_store.get_container_env = AsyncMock(return_value=None)
+        mock_request.app.state.session_store.get_project = AsyncMock(return_value=None)
         with pytest.raises(HTTPException) as exc_info:
             await list_files(mock_request, "bad-slug", path=None, includeHidden=False)
         assert exc_info.value.status_code == 404

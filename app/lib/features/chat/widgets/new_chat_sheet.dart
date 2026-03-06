@@ -4,14 +4,14 @@ import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/features/settings/models/trust_level.dart';
 import '../models/agent_info.dart';
 import '../providers/agent_providers.dart';
-import '../models/container_env.dart';
-import '../providers/container_env_providers.dart';
+import '../models/project.dart';
+import '../providers/project_providers.dart';
 import 'directory_picker.dart';
 
 /// Result from the new chat sheet
 class NewChatConfig {
   /// Container env slug to associate with this chat (null = private)
-  final String? containerEnvId;
+  final String? projectId;
 
   /// Optional working directory for file operations
   final String? workingDirectory;
@@ -26,7 +26,7 @@ class NewChatConfig {
   final TrustLevel? trustLevel;
 
   const NewChatConfig({
-    this.containerEnvId,
+    this.projectId,
     this.workingDirectory,
     this.agentType,
     this.agentPath,
@@ -60,7 +60,7 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
   String? _workingDirectory;
   String? _selectedAgentId; // null = default
   TrustLevel? _selectedTrustLevel; // null = module default
-  String? _selectedContainerEnvId; // null = private (no named env)
+  String? _selectedProjectId; // null = private (no named env)
   bool _initialized = false;
 
   @override
@@ -68,16 +68,16 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     final hasDirectory = _workingDirectory != null && _workingDirectory!.isNotEmpty;
-    final containerEnvsAsync = ref.watch(containerEnvsProvider);
+    final containerEnvsAsync = ref.watch(projectsProvider);
 
     // Pre-populate from active sidebar container env on first build
     if (!_initialized) {
       _initialized = true;
-      final activeSlug = ref.read(activeContainerEnvProvider).valueOrNull;
+      final activeSlug = ref.read(activeProjectProvider).valueOrNull;
       if (activeSlug != null) {
         // Use addPostFrameCallback to avoid setState during build
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) setState(() => _selectedContainerEnvId = activeSlug);
+          if (mounted) setState(() => _selectedProjectId = activeSlug);
         });
       }
     }
@@ -152,7 +152,7 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                 // ── Environment (first section) ──
-                _buildContainerEnvSection(isDark, containerEnvsAsync),
+                _buildProjectSection(isDark, containerEnvsAsync),
 
                 const SizedBox(height: Spacing.lg),
 
@@ -313,7 +313,7 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
                     Navigator.pop(
                       context,
                       NewChatConfig(
-                        containerEnvId: _selectedContainerEnvId,
+                        projectId: _selectedProjectId,
                         workingDirectory: _workingDirectory,
                         agentType: selected?.isBuiltin == true ? null : selected?.name,
                         agentPath: selected?.path,
@@ -520,7 +520,7 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
     );
   }
 
-  Widget _buildContainerEnvSection(bool isDark, AsyncValue<List<ContainerEnv>> containerEnvsAsync) {
+  Widget _buildProjectSection(bool isDark, AsyncValue<List<Project>> containerEnvsAsync) {
     return containerEnvsAsync.when(
       data: (envs) {
         if (envs.isEmpty) return const SizedBox.shrink();
@@ -561,11 +561,11 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
   }
 
   Widget _buildEnvChip(String? slug, String label, IconData icon, bool isDark) {
-    final isSelected = _selectedContainerEnvId == slug;
+    final isSelected = _selectedProjectId == slug;
     final color = isDark ? BrandColors.nightForest : BrandColors.forest;
 
     return GestureDetector(
-      onTap: () => setState(() => _selectedContainerEnvId = slug),
+      onTap: () => setState(() => _selectedProjectId = slug),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         decoration: BoxDecoration(

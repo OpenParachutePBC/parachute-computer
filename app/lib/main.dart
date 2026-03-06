@@ -34,6 +34,7 @@ import 'features/daily/journal/providers/journal_providers.dart';
 import 'features/brain/screens/brain_home_screen.dart';
 import 'features/settings/screens/settings_screen.dart';
 import 'features/onboarding/screens/onboarding_screen.dart';
+import 'features/vault/screens/remote_files_screen.dart' show remoteCurrentPathProvider;
 
 void main() async {
   if (kDebugMode) {

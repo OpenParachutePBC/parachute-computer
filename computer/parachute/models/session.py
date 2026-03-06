@@ -239,11 +239,11 @@ class Session(BaseModel):
         serialization_alias="bridgeContextLog",
         description="JSON: list of {query, type, turn_number} — bridge agent context loaded/stored",
     )
-    container_env_id: Optional[str] = Field(
+    project_id: Optional[str] = Field(
         default=None,
-        alias="containerEnvId",
-        serialization_alias="containerEnvId",
-        description="Named container env slug this session runs in (NULL = private container)",
+        alias="projectId",
+        serialization_alias="projectId",
+        description="Named project (container env) slug this session runs in (NULL = private container)",
     )
     metadata: Optional[dict[str, Any]] = Field(
         default=None, description="Additional metadata"
@@ -286,14 +286,21 @@ class Session(BaseModel):
 
 
 
-class ContainerEnv(BaseModel):
-    """A named container environment that can be shared across sessions."""
+class Project(BaseModel):
+    """A named project — shared container environment with core memory."""
 
     slug: str = Field(description="Unique slug (also the Docker container name suffix)")
     display_name: str = Field(
         alias="displayName",
         serialization_alias="displayName",
         description="Human-readable name",
+    )
+    core_memory: Optional[str] = Field(
+        default=None,
+        max_length=4000,
+        alias="coreMemory",
+        serialization_alias="coreMemory",
+        description="Markdown context injected into system prompt for all conversations in this project",
     )
     created_at: datetime = Field(
         alias="createdAt",
@@ -305,12 +312,12 @@ class ContainerEnv(BaseModel):
 
     @property
     def docker_name(self) -> str:
-        """Docker container name for this named env."""
+        """Docker container name for this project."""
         return f"parachute-env-{self.slug}"
 
 
-class ContainerEnvCreate(BaseModel):
-    """Data for creating a named container environment."""
+class ProjectCreate(BaseModel):
+    """Data for creating a new project."""
 
     display_name: str = Field(min_length=1, max_length=100, description="Human-readable name")
     slug: str | None = Field(
@@ -319,6 +326,12 @@ class ContainerEnvCreate(BaseModel):
         max_length=50,
         description="URL-safe slug (auto-generated if omitted)",
     )
+    core_memory: Optional[str] = Field(
+        default=None,
+        max_length=4000,
+        description="Initial core memory content",
+    )
+
 
 
 class SessionCreate(BaseModel):
@@ -340,7 +353,7 @@ class SessionCreate(BaseModel):
     linked_bot_chat_type: Optional[str] = None
     parent_session_id: Optional[str] = None
     created_by: str = "user"
-    container_env_id: Optional[str] = None
+    project_id: Optional[str] = None
     metadata: Optional[dict[str, Any]] = None
 
 
@@ -359,7 +372,7 @@ class SessionUpdate(BaseModel):
     working_directory: Optional[str] = None
     bridge_session_id: Optional[str] = None
     bridge_context_log: Optional[str] = None
-    container_env_id: Optional[str] = None
+    project_id: Optional[str] = None
 
 
 class PairingRequest(BaseModel):

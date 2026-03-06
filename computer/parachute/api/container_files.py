@@ -20,7 +20,7 @@ from parachute.core.sandbox import SANDBOX_DATA_DIR
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/containers", tags=["container-files"])
+router = APIRouter(prefix="/projects", tags=["project-files"])
 
 # 50 MB upload limit
 MAX_UPLOAD_SIZE = 50 * 1024 * 1024
@@ -67,7 +67,7 @@ def _get_home_dir(slug: str) -> Path:
 async def _validate_slug(request: Request, slug: str) -> Path:
     """Validate that the container env exists in the DB. Returns its home dir."""
     db = request.app.state.session_store
-    env = await db.get_container_env(slug)
+    env = await db.get_project(slug)
     if not env:
         raise HTTPException(status_code=404, detail=f"Container env '{slug}' not found")
     return _get_home_dir(slug)

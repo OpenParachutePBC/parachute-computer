@@ -194,27 +194,25 @@ class DailyModule:
 
         # Ensure schema tables exist
         await graph.ensure_node_table(
-            "Journal_Entry",
+            "Note",
             {
                 "entry_id": "STRING",
+                "note_type": "STRING",   # "journal", "meeting", "reference", etc.
                 "date": "STRING",
                 "content": "STRING",
                 "snippet": "STRING",
                 "created_at": "STRING",
                 "title": "STRING",
-                "entry_type": "STRING",
+                "entry_type": "STRING",  # kept for audio-type compat ("text", "audio")
                 "audio_path": "STRING",
+                "aliases": "STRING",     # JSON array
+                "status": "STRING",      # "active", "archived", etc.
+                "created_by": "STRING",  # "user", "agent", "import"
                 "metadata_json": "STRING",
                 "brain_links_json": "STRING",
             },
             primary_key="entry_id",
         )
-        await graph.ensure_node_table(
-            "Day",
-            {"date": "STRING", "created_at": "STRING"},
-            primary_key="date",
-        )
-        await graph.ensure_rel_table("HAS_ENTRY", "Day", "Journal_Entry")
         await graph.ensure_node_table(
             "Card",
             {
@@ -228,7 +226,7 @@ class DailyModule:
             },
             primary_key="card_id",
         )
-        await graph.ensure_rel_table("HAS_CARD", "Day", "Card")
+        # No Day table or HAS_ENTRY/HAS_CARD rels — query Note/Card by date field directly
         await graph.ensure_node_table(
             "Caller",
             {
@@ -264,11 +262,15 @@ class DailyModule:
 
     async def _ensure_new_columns(self, graph) -> None:
         """Add columns introduced in the Kuzu-primary migration to existing databases."""
-        existing = await graph.get_table_columns("Journal_Entry")
+        existing = await graph.get_table_columns("Note")
         new_cols = {
             "title": "STRING",
             "entry_type": "STRING",
             "audio_path": "STRING",
+            "note_type": "STRING",
+            "aliases": "STRING",
+            "status": "STRING",
+            "created_by": "STRING",
             "metadata_json": "STRING",
             "brain_links_json": "STRING",
         }
@@ -278,9 +280,9 @@ class DailyModule:
         async with graph.write_lock:
             for col, typ in missing.items():
                 await graph.execute_cypher(
-                    f"ALTER TABLE Journal_Entry ADD {col} {typ} DEFAULT NULL"
+                    f"ALTER TABLE Note ADD {col} {typ} DEFAULT NULL"
                 )
-                logger.info(f"Daily: added column Journal_Entry.{col}")
+                logger.info(f"Daily: added column Note.{col}")
 
     async def _migrate_audio_paths_to_absolute(self, graph) -> None:
         """One-time: convert relative audio_path values in graph to absolute.
@@ -289,7 +291,7 @@ class DailyModule:
         legacy roots in order; logs entries where no file is found.
         """
         rows = await graph.execute_cypher(
-            "MATCH (e:Journal_Entry) "
+            "MATCH (e:Note) "
             "WHERE e.audio_path IS NOT NULL AND e.audio_path <> '' "
             "AND NOT e.audio_path STARTS WITH '/' "
             "RETURN e.entry_id AS entry_id, e.audio_path AS audio_path"
@@ -317,7 +319,7 @@ class DailyModule:
             if resolved:
                 async with graph.write_lock:
                     await graph.execute_cypher(
-                        "MATCH (e:Journal_Entry {entry_id: $id}) SET e.audio_path = $path",
+                        "MATCH (e:Note {entry_id: $id}) SET e.audio_path = $path",
                         {"id": eid, "path": resolved},
                     )
                 migrated += 1
@@ -350,7 +352,7 @@ class DailyModule:
         try:
             for rec in records:
                 rows = await graph.execute_cypher(
-                    "MATCH (e:Journal_Entry {entry_id: $entry_id}) RETURN e.entry_id AS entry_id",
+                    "MATCH (e:Note {entry_id: $entry_id}) RETURN e.entry_id AS entry_id",
                     {"entry_id": rec["entry_id"]},
                 )
                 if rows:
@@ -537,14 +539,14 @@ class DailyModule:
 
         For multi-section files that were previously imported as a single blob
         (entry_id == file stem), the blob is deleted and replaced with proper
-        per-section entries so each para_id becomes its own Journal_Entry node.
+        per-section entries so each para_id becomes its own Note node.
         """
         md_files = self._find_legacy_md_files()
         if not md_files:
             return
 
         rows = await graph.execute_cypher(
-            "MATCH (e:Journal_Entry) RETURN e.entry_id AS entry_id"
+            "MATCH (e:Note) RETURN e.entry_id AS entry_id"
         )
         existing_ids = {r["entry_id"] for r in rows}
 
@@ -574,7 +576,7 @@ class DailyModule:
                 if not any_section_in_graph:
                     async with graph.write_lock:
                         await graph.execute_cypher(
-                            "MATCH (e:Journal_Entry {entry_id: $id}) DETACH DELETE e",
+                            "MATCH (e:Note {entry_id: $id}) DETACH DELETE e",
                             {"id": stem},
                         )
                     existing_ids.discard(stem)
@@ -591,7 +593,7 @@ class DailyModule:
                         try:
                             async with graph.write_lock:
                                 await graph.execute_cypher(
-                                    "MATCH (e:Journal_Entry {entry_id: $id}) "
+                                    "MATCH (e:Note {entry_id: $id}) "
                                     "WHERE e.title IS NULL OR e.title = '' "
                                     "SET e.title = $title",
                                     {"id": eid, "title": entry["title"]},
@@ -634,21 +636,18 @@ class DailyModule:
         audio_path: str = "",
         extra_meta: dict | None = None,
     ) -> None:
-        """Write (MERGE) a Journal_Entry node + Day node + HAS_ENTRY edge."""
+        """Write (MERGE) a Note node. Date-based grouping via note.date field (no Day node)."""
         snippet = content[:200]
         brain_links_json = json.dumps([])
         metadata_json = json.dumps(extra_meta or {})
 
         async with graph.write_lock:
-            # 1. Lazy-upsert Day node
+            # MERGE Note — ON CREATE SET protects original timestamp
             await graph.execute_cypher(
-                "MERGE (d:Day {date: $date}) ON CREATE SET d.created_at = $created_at",
-                {"date": date, "created_at": created_at},
-            )
-            # 2. MERGE Journal_Entry — ON CREATE SET protects original timestamp
-            await graph.execute_cypher(
-                "MERGE (e:Journal_Entry {entry_id: $entry_id}) "
-                "ON CREATE SET e.created_at = $created_at "
+                "MERGE (e:Note {entry_id: $entry_id}) "
+                "ON CREATE SET e.created_at = $created_at, "
+                "    e.note_type = $note_type, e.aliases = $aliases, "
+                "    e.status = $status, e.created_by = $created_by "
                 "SET e.date = $date, e.content = $content, e.snippet = $snippet, "
                 "    e.title = $title, e.entry_type = $entry_type, "
                 "    e.audio_path = $audio_path, "
@@ -663,19 +662,17 @@ class DailyModule:
                     "title": title,
                     "entry_type": entry_type,
                     "audio_path": audio_path,
+                    "note_type": "journal",
+                    "aliases": "[]",
+                    "status": "active",
+                    "created_by": "user",
                     "metadata_json": metadata_json,
                     "brain_links_json": brain_links_json,
                 },
             )
-            # 3. HAS_ENTRY relationship
-            await graph.execute_cypher(
-                "MATCH (d:Day {date: $date}), (e:Journal_Entry {entry_id: $entry_id}) "
-                "MERGE (d)-[:HAS_ENTRY]->(e)",
-                {"date": date, "entry_id": entry_id},
-            )
 
     def _row_to_entry(self, row: dict) -> dict:
-        """Convert a Kuzu Journal_Entry node dict to the API response shape."""
+        """Convert a Kuzu Note node dict to the API response shape."""
         entry_id = row.get("entry_id", "")
         content = row.get("content", "")
         title = row.get("title") or ""
@@ -775,7 +772,7 @@ class DailyModule:
 
         # Check existence
         rows = await graph.execute_cypher(
-            "MATCH (e:Journal_Entry {entry_id: $entry_id}) RETURN e",
+            "MATCH (e:Note {entry_id: $entry_id}) RETURN e",
             {"entry_id": entry_id},
         )
         if not rows:
@@ -810,7 +807,7 @@ class DailyModule:
 
         async with graph.write_lock:
             await graph.execute_cypher(
-                "MATCH (e:Journal_Entry {entry_id: $entry_id}) "
+                "MATCH (e:Note {entry_id: $entry_id}) "
                 "SET e.content = $content, e.snippet = $snippet, "
                 "    e.title = $title, e.entry_type = $entry_type, "
                 "    e.audio_path = $audio_path, e.metadata_json = $metadata_json",
@@ -837,7 +834,7 @@ class DailyModule:
             raise RuntimeError("GraphDB unavailable — cannot delete entry")
 
         rows = await graph.execute_cypher(
-            "MATCH (e:Journal_Entry {entry_id: $entry_id}) RETURN e.entry_id AS entry_id",
+            "MATCH (e:Note {entry_id: $entry_id}) RETURN e.entry_id AS entry_id",
             {"entry_id": entry_id},
         )
         if not rows:
@@ -846,7 +843,7 @@ class DailyModule:
         try:
             async with graph.write_lock:
                 await graph.execute_cypher(
-                    "MATCH (e:Journal_Entry {entry_id: $entry_id}) DETACH DELETE e",
+                    "MATCH (e:Note {entry_id: $entry_id}) DETACH DELETE e",
                     {"entry_id": entry_id},
                 )
             logger.info(f"Daily: deleted entry {entry_id}")
@@ -863,13 +860,13 @@ class DailyModule:
 
         if date:
             rows = await graph.execute_cypher(
-                "MATCH (e:Journal_Entry) WHERE e.date = $date "
+                "MATCH (e:Note) WHERE e.date = $date "
                 "RETURN e ORDER BY e.created_at ASC",
                 {"date": date},
             )
         else:
             rows = await graph.execute_cypher(
-                "MATCH (e:Journal_Entry) RETURN e ORDER BY e.created_at DESC"
+                "MATCH (e:Note) RETURN e ORDER BY e.created_at DESC"
             )
 
         return [self._row_to_entry(r) for r in rows[offset: offset + limit]]
@@ -881,7 +878,7 @@ class DailyModule:
             return None
 
         rows = await graph.execute_cypher(
-            "MATCH (e:Journal_Entry {entry_id: $entry_id}) RETURN e",
+            "MATCH (e:Note {entry_id: $entry_id}) RETURN e",
             {"entry_id": entry_id},
         )
         if not rows:
@@ -903,7 +900,7 @@ class DailyModule:
             return []
 
         all_rows = await graph.execute_cypher(
-            "MATCH (e:Journal_Entry) RETURN e ORDER BY e.created_at DESC"
+            "MATCH (e:Note) RETURN e ORDER BY e.created_at DESC"
         )
 
         results = []
@@ -1096,7 +1093,7 @@ class DailyModule:
         files_found = len(md_files)
 
         rows = await graph.execute_cypher(
-            "MATCH (e:Journal_Entry) RETURN e.entry_id AS entry_id"
+            "MATCH (e:Note) RETURN e.entry_id AS entry_id"
         )
         existing_ids = {r["entry_id"] for r in rows}
 
@@ -1250,7 +1247,7 @@ class DailyModule:
                     "search_dirs": search_dirs,
                 }
             rows = await graph.execute_cypher(
-                "MATCH (e:Journal_Entry) RETURN e.entry_id AS entry_id"
+                "MATCH (e:Note) RETURN e.entry_id AS entry_id"
             )
             existing_ids = {r["entry_id"] for r in rows}
             total_sections, imported_sections = _section_counts(md_files, existing_ids)
@@ -1264,7 +1261,7 @@ class DailyModule:
 
         @router.delete("/import/all", status_code=200)
         async def clear_all_entries():
-            """Delete ALL Journal_Entry and Day nodes from the graph.
+            """Delete ALL Note nodes from the graph.
 
             Safe to call before a fresh re-import. Does NOT touch any markdown files.
             """
@@ -1275,21 +1272,15 @@ class DailyModule:
                     content={"error": "GraphDB not available"},
                 )
             rows = await graph.execute_cypher(
-                "MATCH (e:Journal_Entry) RETURN count(e) AS n"
+                "MATCH (e:Note) RETURN count(e) AS n"
             )
             entry_count = rows[0]["n"] if rows else 0
-            rows = await graph.execute_cypher(
-                "MATCH (d:Day) RETURN count(d) AS n"
-            )
-            day_count = rows[0]["n"] if rows else 0
             async with graph.write_lock:
-                await graph.execute_cypher("MATCH (e:Journal_Entry) DETACH DELETE e")
-                await graph.execute_cypher("MATCH (d:Day) DETACH DELETE d")
-            logger.info(f"Daily: cleared {entry_count} entries and {day_count} day nodes")
+                await graph.execute_cypher("MATCH (e:Note) DETACH DELETE e")
+            logger.info(f"Daily: cleared {entry_count} Note nodes")
             return {
                 "deleted_entries": entry_count,
-                "deleted_days": day_count,
-                "message": f"Cleared {entry_count} entries and {day_count} day nodes. Markdown files are untouched.",
+                "message": f"Cleared {entry_count} entries. Markdown files are untouched.",
             }
 
         # ── Assets ───────────────────────────────────────────────────────────
@@ -1343,12 +1334,12 @@ class DailyModule:
             if not md_files:
                 return {"imported": 0, "pending": 0, "message": "No markdown files found"}
             rows = await graph.execute_cypher(
-                "MATCH (e:Journal_Entry) RETURN e.entry_id AS entry_id"
+                "MATCH (e:Note) RETURN e.entry_id AS entry_id"
             )
             existing_ids_before = {r["entry_id"] for r in rows}
             await self._migrate_from_markdown(graph)
             rows_after = await graph.execute_cypher(
-                "MATCH (e:Journal_Entry) RETURN e.entry_id AS entry_id"
+                "MATCH (e:Note) RETURN e.entry_id AS entry_id"
             )
             existing_after = {r["entry_id"] for r in rows_after}
             total_sections, imported_sections = _section_counts(md_files, existing_after)

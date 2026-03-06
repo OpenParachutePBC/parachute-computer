@@ -45,7 +45,7 @@ def _make_session(
     session_id: str = "test-session-001",
     source: SessionSource = SessionSource.PARACHUTE,
     trust_level: TrustLevel | None = None,
-    container_env_id: str | None = None,
+    project_id: str | None = None,
 ) -> Session:
     """Return a minimal Session for testing."""
     perms = SessionPermissions(
@@ -58,7 +58,7 @@ def _make_session(
         source=source,
         permissions=perms,
         trust_level=trust_level,
-        container_env_id=container_env_id,
+        project_id=project_id,
         created_at=_NOW,
         last_accessed=_NOW,
     )
