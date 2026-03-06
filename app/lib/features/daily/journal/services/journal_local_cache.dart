@@ -9,6 +9,11 @@ import '../models/journal_entry.dart';
 /// Server (Kuzu graph) is the source of truth. This cache is populated on every
 /// successful server fetch and read when the server is unavailable.
 ///
+/// [sync_state] column tracks offline mutations:
+///   - `synced`         — matches server (default)
+///   - `pending_delete` — deleted locally, server delete queued
+///   - `pending_edit`   — edited locally, server update queued
+///
 /// Uses [sqlite3] (synchronous) so reads are instant — no async overhead.
 class JournalLocalCache {
   final Database _db;
@@ -46,22 +51,41 @@ class JournalLocalCache {
         image_path       TEXT,
         linked_file_path TEXT,
         duration_secs    INTEGER,
-        created_at       TEXT NOT NULL
+        created_at       TEXT NOT NULL,
+        sync_state       TEXT DEFAULT 'synced'
       )
     ''');
-    // Composite index covers all date-filtered queries; subsumes a single-column date index.
+    // Composite index covers all date-filtered queries.
     _db.execute(
       'CREATE INDEX IF NOT EXISTS idx_jc_created ON journal_entries(date, created_at)',
+    );
+    // Migration: add sync_state to databases created before this column existed.
+    try {
+      _db.execute(
+        "ALTER TABLE journal_entries ADD COLUMN sync_state TEXT DEFAULT 'synced'",
+      );
+    } catch (_) {
+      // Column already exists — ignore
+    }
+    // Safety net: NULL sync_state → treat as synced
+    _db.execute(
+      "UPDATE journal_entries SET sync_state = 'synced' WHERE sync_state IS NULL",
     );
   }
 
   // ── Read ───────────────────────────────────────────────────────────────────
 
-  /// Return all cached entries for [date] (YYYY-MM-DD), oldest first.
+  /// Return all visible entries for [date] (YYYY-MM-DD), oldest first.
+  ///
+  /// Excludes [pending_delete] entries — they are hidden from the UI while
+  /// their server-side delete is queued. Includes [pending_edit] entries with
+  /// the locally-modified content so edits are visible while offline.
   List<JournalEntry> getEntries(String date) {
     try {
       final rows = _db.select(
-        'SELECT * FROM journal_entries WHERE date = ? ORDER BY created_at ASC',
+        "SELECT * FROM journal_entries "
+        "WHERE date = ? AND COALESCE(sync_state, 'synced') != 'pending_delete' "
+        "ORDER BY created_at ASC",
         [date],
       );
       return rows.map(_rowToEntry).toList();
@@ -71,16 +95,62 @@ class JournalLocalCache {
     }
   }
 
+  /// Return all entries whose server delete is pending.
+  List<String> getPendingDeletes() {
+    try {
+      final rows = _db.select(
+        "SELECT entry_id FROM journal_entries WHERE sync_state = 'pending_delete'",
+      );
+      return rows.map((r) => r['entry_id'] as String).toList();
+    } catch (e) {
+debugPrint('[JournalLocalCache] getPendingDeletes error: $e');
+      return [];
+    }
+  }
+
+  /// Return all entries whose server update is pending (locally-edited content).
+  List<JournalEntry> getPendingEdits() {
+    try {
+      final rows = _db.select(
+        "SELECT * FROM journal_entries WHERE sync_state = 'pending_edit'",
+      );
+      return rows.map(_rowToEntry).toList();
+    } catch (e) {
+      debugPrint('[JournalLocalCache] getPendingEdits error: $e');
+      return [];
+    }
+  }
+
   // ── Write ──────────────────────────────────────────────────────────────────
 
-  /// Batch-upsert [entries] into the cache. Replaces existing rows by entry_id.
+  /// Batch-upsert [entries] from server into the cache.
+  ///
+  /// Uses SQLite UPSERT (ON CONFLICT … DO UPDATE) to preserve locally-pending
+  /// mutations. Specifically:
+  /// - [pending_delete] rows keep their sync_state — the server still has the
+  ///   entry (delete not yet flushed), so we don't want to clear the flag.
+  /// - [pending_edit] rows keep their content/title/sync_state — the server
+  ///   still has the old version (edit not yet flushed).
+  /// All other rows are updated normally and reset to `synced`.
   void putEntries(String date, List<JournalEntry> entries) {
     if (entries.isEmpty) return;
     try {
       final stmt = _db.prepare(
-        'INSERT OR REPLACE INTO journal_entries '
-        '(entry_id, date, content, title, entry_type, audio_path, image_path, linked_file_path, duration_secs, created_at) '
-        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO journal_entries '
+        '(entry_id, date, content, title, entry_type, audio_path, image_path, '
+        ' linked_file_path, duration_secs, created_at, sync_state) '
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'synced') "
+        'ON CONFLICT(entry_id) DO UPDATE SET '
+        '  date             = excluded.date, '
+        '  content          = CASE WHEN sync_state = \'pending_edit\' THEN content          ELSE excluded.content          END, '
+        '  title            = CASE WHEN sync_state = \'pending_edit\' THEN title            ELSE excluded.title            END, '
+        '  entry_type       = excluded.entry_type, '
+        '  audio_path       = excluded.audio_path, '
+        '  image_path       = excluded.image_path, '
+        '  linked_file_path = excluded.linked_file_path, '
+        '  duration_secs    = excluded.duration_secs, '
+        '  created_at       = excluded.created_at, '
+        "  sync_state       = CASE WHEN sync_state IN ('pending_delete', 'pending_edit') THEN sync_state ELSE 'synced' END",
       );
       for (final e in entries) {
         stmt.execute([
@@ -99,6 +169,60 @@ class JournalLocalCache {
       stmt.dispose();
     } catch (e) {
       debugPrint('[JournalLocalCache] putEntries error: $e');
+    }
+  }
+
+  // ── Sync-state mutations ───────────────────────────────────────────────────
+
+  /// Mark an entry as pending deletion.
+  ///
+  /// The entry will be hidden from [getEntries] until it is either flushed
+  /// (then [removeEntry] clears it) or overridden by a server fetch.
+  void markForDelete(String entryId) {
+    try {
+      _db.execute(
+        "UPDATE journal_entries SET sync_state = 'pending_delete' WHERE entry_id = ?",
+        [entryId],
+      );
+    } catch (e) {
+      debugPrint('[JournalLocalCache] markForDelete error: $e');
+    }
+  }
+
+  /// Mark an entry as having a locally-pending edit.
+  ///
+  /// Updates the cached [content] and [title] immediately so the user sees
+  /// the change. The server will be updated on the next flush.
+  void markForEdit(String entryId, {required String content, required String title}) {
+    try {
+      _db.execute(
+        "UPDATE journal_entries SET content = ?, title = ?, sync_state = 'pending_edit' WHERE entry_id = ?",
+        [content, title, entryId],
+      );
+    } catch (e) {
+      debugPrint('[JournalLocalCache] markForEdit error: $e');
+    }
+  }
+
+  /// Mark an entry as synced (clears any pending state).
+  ///
+  /// Optionally update [content] and [title] with the authoritative server
+  /// values returned after a successful flush.
+  void markSynced(String entryId, {String? content, String? title}) {
+    try {
+      if (content != null || title != null) {
+        _db.execute(
+          "UPDATE journal_entries SET content = ?, title = ?, sync_state = 'synced' WHERE entry_id = ?",
+          [content ?? '', title ?? '', entryId],
+        );
+      } else {
+        _db.execute(
+          "UPDATE journal_entries SET sync_state = 'synced' WHERE entry_id = ?",
+          [entryId],
+        );
+      }
+    } catch (e) {
+      debugPrint('[JournalLocalCache] markSynced error: $e');
     }
   }
 

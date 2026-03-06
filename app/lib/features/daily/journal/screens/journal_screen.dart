@@ -700,16 +700,22 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
       return;
     }
 
-    try {
-      final api = ref.read(dailyApiServiceProvider);
-      final updated = await api.updateEntry(
-        entryId,
-        content: newContent,
-        metadata: newTitle != null ? {'title': newTitle} : null,
-      );
-      if (updated == null) throw Exception('Server unreachable');
-      debugPrint('[JournalScreen] Saved edit for entry $entryId');
+    final date = ref.read(selectedJournalDateProvider);
+    final dateStr = '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+    final cache = await ref.read(journalLocalCacheProvider.future);
 
+    // Persist the edit locally first (marks as pending_edit if server fails).
+    // This ensures the user always sees their edit, even if offline.
+    final api = ref.read(dailyApiServiceProvider);
+    final updated = await api.updateEntry(
+      entryId,
+      content: newContent,
+      metadata: newTitle != null ? {'title': newTitle} : null,
+    );
+
+    if (updated != null) {
+      // Server confirmed — cache the authoritative response and clear draft.
+      debugPrint('[JournalScreen] Saved edit for entry $entryId');
       await _clearDraft(entryId);
 
       if (mounted && _cachedJournal != null) {
@@ -717,11 +723,7 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
           _cachedJournal = _cachedJournal!.updateEntry(updated);
         });
       }
-
-      // Update SQLite cache immediately so Phase 1 sees the edited content.
-      final date = ref.read(selectedJournalDateProvider);
-      final dateStr = '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
-      final cache = await ref.read(journalLocalCacheProvider.future);
+      // Update SQLite with server's authoritative version (sync_state = synced).
       final existing = cache.getEntries(dateStr);
       cache.putEntries(dateStr, existing.map((e) => e.id == entryId ? updated : e).toList());
 
@@ -745,14 +747,30 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
       }
 
       ref.invalidate(selectedJournalProvider);
-    } catch (e) {
-      debugPrint('[JournalScreen] Error saving edit: $e');
+    } else {
+      // Server unreachable — queue the edit locally for retry on reconnect.
+      debugPrint('[JournalScreen] Edit queued for retry (offline or server error)');
+      cache.markForEdit(
+        entryId,
+        content: newContent ?? '',
+        title: newTitle ?? (_cachedJournal?.getEntry(entryId)?.title ?? ''),
+      );
+      // Keep the optimistic UI update already applied above — user sees their edit.
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Failed to save: $e'),
-            backgroundColor: BrandColors.error,
+            content: Row(
+              children: [
+                Icon(Icons.cloud_upload_outlined, color: Colors.white, size: 18),
+                const SizedBox(width: 8),
+                const Text('Saved locally — will sync when online'),
+              ],
+            ),
+            backgroundColor: BrandColors.turquoise,
             duration: const Duration(seconds: 2),
+            behavior: SnackBarBehavior.floating,
+            margin: const EdgeInsets.all(16),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
           ),
         );
       }
@@ -1039,11 +1057,20 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
         audioPlayer: entry.hasAudio ? _buildAudioPlayer(context, entry, isDark) : null,
         onSave: (updatedEntry) async {
           final api = ref.read(dailyApiServiceProvider);
-          await api.updateEntry(
+          final serverUpdated = await api.updateEntry(
             updatedEntry.id,
             content: updatedEntry.content,
             metadata: {'title': updatedEntry.title},
           );
+          if (serverUpdated == null) {
+            // Server unreachable — queue the edit for retry.
+            final cache = await ref.read(journalLocalCacheProvider.future);
+            cache.markForEdit(
+              updatedEntry.id,
+              content: updatedEntry.content,
+              title: updatedEntry.title,
+            );
+          }
           ref.invalidate(selectedJournalProvider);
         },
       ),
@@ -1196,30 +1223,33 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
     );
 
     if (confirmed == true) {
-      debugPrint('[JournalScreen] Deleting entry...');
+      debugPrint('[JournalScreen] Deleting entry ${entry.id}...');
 
-      try {
-        final api = ref.read(dailyApiServiceProvider);
-        final ok = await api.deleteEntry(entry.id);
-        if (!ok) throw Exception('Delete failed');
-        debugPrint('[JournalScreen] Entry deleted successfully');
+      // Mark as pending_delete immediately — removes from cache and hides from UI.
+      // This makes deletion feel instant whether we're online or offline.
+      final cache = await ref.read(journalLocalCacheProvider.future);
+      cache.markForDelete(entry.id);
 
-        // Remove from SQLite cache immediately so Phase 1 doesn't re-add the entry.
-        final cache = await ref.read(journalLocalCacheProvider.future);
-        cache.removeEntry(entry.id);
-
-        if (mounted && _cachedJournal != null) {
-          setState(() {
-            _cachedJournal = _cachedJournal!.removeEntry(entry.id);
-          });
-        }
-
-        ref.invalidate(selectedJournalProvider);
-        ref.read(journalRefreshTriggerProvider.notifier).state++;
-      } catch (e, st) {
-        debugPrint('[JournalScreen] Error deleting entry: $e\n$st');
-        _showErrorSnackbar('Failed to delete entry');
+      if (mounted && _cachedJournal != null) {
+        setState(() {
+          _cachedJournal = _cachedJournal!.removeEntry(entry.id);
+        });
       }
+
+      // Attempt the server delete now. If it succeeds, fully remove the local
+      // row. If it fails (offline, server error), the pending_delete flag stays
+      // and _flushPendingOps will retry on the next journal load or reconnect.
+      final api = ref.read(dailyApiServiceProvider);
+      final ok = await api.deleteEntry(entry.id);
+      if (ok) {
+        cache.removeEntry(entry.id);
+        debugPrint('[JournalScreen] Entry deleted from server');
+      } else {
+        debugPrint('[JournalScreen] Delete queued for retry (offline or server error)');
+      }
+
+      ref.invalidate(selectedJournalProvider);
+      ref.read(journalRefreshTriggerProvider.notifier).state++;
     }
   }
 }

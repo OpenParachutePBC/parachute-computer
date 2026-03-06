@@ -65,8 +65,11 @@ class DailyApiService {
 
   /// Fetch entries for a specific date (YYYY-MM-DD).
   ///
-  /// Returns an empty list on network error so callers can show pending-only UI.
-  Future<List<JournalEntry>> getEntries({required String date}) async {
+  /// Returns `null` on network error — callers should fall back to their local
+  /// cache when null, not treat it as an authoritative empty response.
+  /// Returns `[]` when the server responds HTTP 200 with no entries — this IS
+  /// authoritative: the date genuinely has nothing and the cache should be cleared.
+  Future<List<JournalEntry>?> getEntries({required String date}) async {
     final uri = Uri.parse('$baseUrl/api/daily/entries').replace(
       queryParameters: {'date': date, 'limit': '100'},
     );
@@ -78,7 +81,7 @@ class DailyApiService {
 
       if (response.statusCode < 200 || response.statusCode >= 300) {
         debugPrint('[DailyApiService] GET entries ${response.statusCode}');
-        return [];
+        return null;
       }
 
       final decoded = jsonDecode(response.body) as Map<String, dynamic>;
@@ -87,8 +90,8 @@ class DailyApiService {
           .map((json) => JournalEntry.fromServerJson(json as Map<String, dynamic>))
           .toList();
     } catch (e) {
-      debugPrint('[DailyApiService] getEntries error: $e');
-      return [];
+      debugPrint('[DailyApiService] getEntries error (offline?): $e');
+      return null;
     }
   }
 

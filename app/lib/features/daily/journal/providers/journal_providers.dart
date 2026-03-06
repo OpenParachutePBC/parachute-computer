@@ -86,6 +86,9 @@ class _TodayJournalNotifier extends AutoDisposeAsyncNotifier<JournalDay> {
         final api = ref.read(dailyApiServiceProvider);
         final queue = await ref.read(pendingQueueProvider.future);
         await queue.flush(api);
+        // Also flush pending deletes/edits that queued while offline.
+        final cache = await ref.read(journalLocalCacheProvider.future);
+        await _flushPendingOps(api, cache);
         // _loadJournal already calls flush on every build; no need to increment
         // the refresh trigger here — that would cause a redundant rebuild cycle.
       }
@@ -118,8 +121,9 @@ class _SelectedJournalNotifier extends AutoDisposeAsyncNotifier<JournalDay> {
 ///
 /// Cache strategy:
 /// - Phase 1: read SQLite cache → call [onCacheHit] if entries found.
-/// - Phase 2: flush pending queue → fetch server → update cache.
-/// - If server returns empty (offline/error): Phase 1 data stays visible.
+/// - Phase 2: flush pending ops → fetch server → update cache.
+/// - If server is unreachable (null): Phase 1 data stays visible.
+/// - If server returns HTTP 200 empty: cache is cleared (authoritative empty).
 /// - Server is always authoritative when reachable.
 Future<JournalDay> _loadJournal(
   Ref ref,
@@ -136,24 +140,70 @@ Future<JournalDay> _loadJournal(
   // provider is ever invalidated (e.g., in tests or after vault change).
   final cache = await ref.watch(journalLocalCacheProvider.future);
 
-  // Phase 1 — serve from cache immediately.
+  // Phase 1 — serve from cache immediately (excludes pending_delete entries).
   final cached = cache.getEntries(dateStr);
   if (cached.isNotEmpty) {
     final pendingForDate = _pendingForDate(pendingQueue, dateStr);
     onCacheHit(JournalDay.fromEntries(date, [...cached, ...pendingForDate]));
   }
 
-  // Phase 2 — flush pending creates, then fetch from server.
+  // Phase 2 — flush all pending ops, then fetch from server.
   await pendingQueue.flush(api);
+  await _flushPendingOps(api, cache);
+
+  // getEntries returns null on network error, [] on authoritative empty.
   final serverEntries = await api.getEntries(date: dateStr);
 
-  if (serverEntries.isNotEmpty) {
-    cache.putEntries(dateStr, serverEntries);
+  if (serverEntries != null) {
+    // Server was reachable — it's authoritative.
+    if (serverEntries.isEmpty) {
+      // HTTP 200 with no entries: this date is genuinely empty.
+      // Clear stale cache (removes any leftover entries from deleted sessions etc.).
+      cache.clearDate(dateStr);
+    } else {
+      // UPSERT preserves pending_delete/pending_edit states (see putEntries docs).
+      cache.putEntries(dateStr, serverEntries);
+    }
   }
 
-  final sourceEntries = serverEntries.isNotEmpty ? serverEntries : cached;
+  // Re-read cache: now reflects the merged truth — server entries minus
+  // pending_delete, plus pending_edit's locally-modified content, or the
+  // previous cached snapshot when the server was unreachable.
+  final freshCached = cache.getEntries(dateStr);
   final pendingForDate = _pendingForDate(pendingQueue, dateStr);
-  return JournalDay.fromEntries(date, [...sourceEntries, ...pendingForDate]);
+  return JournalDay.fromEntries(date, [...freshCached, ...pendingForDate]);
+}
+
+/// Flush pending delete and edit operations for all dates.
+///
+/// Called during Phase 2 of every journal load and on network reconnect.
+/// Safe to call concurrently — SQLite ops are synchronous and idempotent.
+Future<void> _flushPendingOps(DailyApiService api, JournalLocalCache cache) async {
+  // Flush pending deletes
+  final deleteIds = cache.getPendingDeletes();
+  for (final id in deleteIds) {
+    final ok = await api.deleteEntry(id);
+    if (ok) {
+      // 204 or 404 both treated as success — entry is gone from server.
+      cache.removeEntry(id);
+    }
+    // If ok == false (server error), leave as pending_delete for next flush.
+  }
+
+  // Flush pending edits
+  final editEntries = cache.getPendingEdits();
+  for (final entry in editEntries) {
+    final updated = await api.updateEntry(
+      entry.id,
+      content: entry.content,
+      metadata: entry.title.isNotEmpty ? {'title': entry.title} : null,
+    );
+    if (updated != null) {
+      // Update cache with the server's authoritative response and clear the flag.
+      cache.markSynced(entry.id, content: updated.content, title: updated.title);
+    }
+    // If null (offline or server error), leave as pending_edit for next flush.
+  }
 }
 
 List<JournalEntry> _pendingForDate(PendingEntryQueue queue, String dateStr) =>
