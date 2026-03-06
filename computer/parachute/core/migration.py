@@ -273,16 +273,16 @@ async def migrate_sqlite_to_graph(old_db_path: Path, session_store) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Schema v2: rename tables to new ontology (Projects / Conversations / Exchange / Note)
+# Schema v2: rename tables to new ontology (Projects / Chats / Exchange / Note)
 # ---------------------------------------------------------------------------
 
 
 async def migrate_schema_v2(graph) -> bool:
     """
     One-time migration renaming tables to match the v2 ontology:
-      Parachute_Session    → Conversation  (container_env_id → project_id)
+      Parachute_Session    → Chat  (container_env_id → project_id)
       Parachute_ContainerEnv → Project     (+ core_memory field added)
-      Chat_Session         → dropped       (Conversation is authoritative)
+      Chat_Session         → dropped       (Chat is authoritative)
       Chat_Exchange        → Exchange
       Journal_Entry        → Note          (+ note_type, aliases, status, created_by)
       Day                  → dropped       (query by date field directly)
@@ -323,7 +323,7 @@ async def migrate_schema_v2(graph) -> bool:
             pass
         logger.info(f"  Migrated {len(env_rows)} Project nodes")
 
-    # 2. Migrate Parachute_Session → Conversation
+    # 2. Migrate Parachute_Session → Chat
     session_rows = await graph.execute_cypher(
         "MATCH (s:Parachute_Session) RETURN s"
     )
@@ -331,7 +331,7 @@ async def migrate_schema_v2(graph) -> bool:
         try:
             await graph._execute(
                 """
-                MERGE (c:Conversation {session_id: $session_id})
+                MERGE (c:Chat {session_id: $session_id})
                 ON CREATE SET
                     c.title = $title,
                     c.module = $module,
@@ -390,14 +390,14 @@ async def migrate_schema_v2(graph) -> bool:
                 },
             )
         except Exception as e:
-            logger.warning(f"  Conversation migration failed for {row.get('session_id')}: {e}")
+            logger.warning(f"  Chat migration failed for {row.get('session_id')}: {e}")
 
     await graph._execute("MATCH (s:Parachute_Session) DETACH DELETE s")
     try:
         await graph._execute("DROP TABLE Parachute_Session")
     except Exception:
         pass
-    logger.info(f"  Migrated {len(session_rows)} Conversation nodes")
+    logger.info(f"  Migrated {len(session_rows)} Chat nodes")
 
     # 3. Migrate Chat_Exchange → Exchange
     exchange_cols = await graph.get_table_columns("Chat_Exchange")
@@ -437,10 +437,10 @@ async def migrate_schema_v2(graph) -> bool:
             except Exception as e:
                 logger.warning(f"  Exchange migration failed for {row.get('exchange_id')}: {e}")
 
-        # Recreate HAS_EXCHANGE rels (Conversation → Exchange)
+        # Recreate HAS_EXCHANGE rels (Chat → Exchange)
         try:
             await graph._execute(
-                "MATCH (c:Conversation), (e:Exchange) "
+                "MATCH (c:Chat), (e:Exchange) "
                 "WHERE c.session_id = e.session_id "
                 "MERGE (c)-[:HAS_EXCHANGE]->(e)"
             )

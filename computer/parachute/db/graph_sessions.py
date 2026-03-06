@@ -53,7 +53,7 @@ class GraphSessionStore:
     async def ensure_schema(self) -> None:
         """Create node tables if they don't exist. Idempotent."""
         await self.graph.ensure_node_table(
-            "Conversation",
+            "Chat",
             {
                 "session_id": "STRING",
                 "title": "STRING",
@@ -167,7 +167,7 @@ class GraphSessionStore:
         async with self.graph.write_lock:
             await self.graph._execute(
                 """
-                CREATE (:Conversation {
+                CREATE (:Chat {
                     session_id: $session_id,
                     title: $title,
                     module: $module,
@@ -207,7 +207,7 @@ class GraphSessionStore:
     async def get_session(self, session_id: str) -> Optional[Session]:
         """Get a session by ID."""
         rows = await self.graph.execute_cypher(
-            "MATCH (s:Conversation {session_id: $session_id}) RETURN s",
+            "MATCH (s:Chat {session_id: $session_id}) RETURN s",
             {"session_id": session_id},
         )
         if rows:
@@ -281,7 +281,7 @@ class GraphSessionStore:
 
         async with self.graph.write_lock:
             await self.graph._execute(
-                f"MATCH (s:Conversation {{session_id: $session_id}}) "
+                f"MATCH (s:Chat {{session_id: $session_id}}) "
                 f"SET {', '.join(set_parts)}",
                 params,
             )
@@ -295,7 +295,7 @@ class GraphSessionStore:
             return False
         async with self.graph.write_lock:
             await self.graph._execute(
-                "MATCH (s:Conversation {session_id: $session_id}) DETACH DELETE s",
+                "MATCH (s:Chat {session_id: $session_id}) DETACH DELETE s",
                 {"session_id": session_id},
             )
         return True
@@ -339,7 +339,7 @@ class GraphSessionStore:
         where_clause = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
         skip_clause = f" SKIP {offset}" if offset > 0 else ""
         query = (
-            f"MATCH (s:Conversation) {where_clause} "
+            f"MATCH (s:Chat) {where_clause} "
             f"RETURN s ORDER BY s.last_accessed DESC "
             f"LIMIT {limit}{skip_clause}"
         )
@@ -359,7 +359,7 @@ class GraphSessionStore:
         """Update last_accessed timestamp."""
         async with self.graph.write_lock:
             await self.graph._execute(
-                "MATCH (s:Conversation {session_id: $session_id}) "
+                "MATCH (s:Chat {session_id: $session_id}) "
                 "SET s.last_accessed = $last_accessed",
                 {"session_id": session_id, "last_accessed": _now()},
             )
@@ -371,7 +371,7 @@ class GraphSessionStore:
         # Read and write inside the same lock to prevent concurrent-update races
         async with self.graph.write_lock:
             rows = await self.graph.execute_cypher(
-                "MATCH (s:Conversation {session_id: $session_id}) RETURN s.message_count",
+                "MATCH (s:Chat {session_id: $session_id}) RETURN s.message_count",
                 {"session_id": session_id},
             )
             if not rows:
@@ -379,7 +379,7 @@ class GraphSessionStore:
             current = rows[0].get("s.message_count", 0) or 0
             new_count = current + increment
             await self.graph._execute(
-                "MATCH (s:Conversation {session_id: $session_id}) "
+                "MATCH (s:Chat {session_id: $session_id}) "
                 "SET s.message_count = $count, s.last_accessed = $last_accessed",
                 {
                     "session_id": session_id,
@@ -407,7 +407,7 @@ class GraphSessionStore:
 
         where_clause = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
         rows = await self.graph.execute_cypher(
-            f"MATCH (s:Conversation) {where_clause} RETURN count(s) AS cnt",
+            f"MATCH (s:Chat) {where_clause} RETURN count(s) AS cnt",
             params or None,
         )
         return rows[0]["cnt"] if rows else 0
@@ -434,7 +434,7 @@ class GraphSessionStore:
         if set_parts:
             async with self.graph.write_lock:
                 await self.graph._execute(
-                    f"MATCH (s:Conversation {{session_id: $session_id}}) "
+                    f"MATCH (s:Chat {{session_id: $session_id}}) "
                     f"SET {', '.join(set_parts)}",
                     params,
                 )
@@ -453,7 +453,7 @@ class GraphSessionStore:
             params["last_accessed"] = _now()
             async with self.graph.write_lock:
                 await self.graph._execute(
-                    f"MATCH (s:Conversation {{session_id: $session_id}}) "
+                    f"MATCH (s:Chat {{session_id: $session_id}}) "
                     f"SET {', '.join(set_parts)}",
                     params,
                 )
@@ -464,7 +464,7 @@ class GraphSessionStore:
         """Add a tag to a session."""
         tag = tag.lower().strip()
         rows = await self.graph.execute_cypher(
-            "MATCH (s:Conversation {session_id: $session_id}) RETURN s.tags_json",
+            "MATCH (s:Chat {session_id: $session_id}) RETURN s.tags_json",
             {"session_id": session_id},
         )
         if not rows:
@@ -474,7 +474,7 @@ class GraphSessionStore:
             tags.append(tag)
             async with self.graph.write_lock:
                 await self.graph._execute(
-                    "MATCH (s:Conversation {session_id: $session_id}) "
+                    "MATCH (s:Chat {session_id: $session_id}) "
                     "SET s.tags_json = $tags_json",
                     {"session_id": session_id, "tags_json": json.dumps(tags)},
                 )
@@ -483,7 +483,7 @@ class GraphSessionStore:
         """Remove a tag from a session."""
         tag = tag.lower().strip()
         rows = await self.graph.execute_cypher(
-            "MATCH (s:Conversation {session_id: $session_id}) RETURN s.tags_json",
+            "MATCH (s:Chat {session_id: $session_id}) RETURN s.tags_json",
             {"session_id": session_id},
         )
         if not rows:
@@ -492,7 +492,7 @@ class GraphSessionStore:
         tags = [t for t in tags if t != tag]
         async with self.graph.write_lock:
             await self.graph._execute(
-                "MATCH (s:Conversation {session_id: $session_id}) "
+                "MATCH (s:Chat {session_id: $session_id}) "
                 "SET s.tags_json = $tags_json",
                 {"session_id": session_id, "tags_json": json.dumps(tags)},
             )
@@ -500,7 +500,7 @@ class GraphSessionStore:
     async def get_session_tags(self, session_id: str) -> list[str]:
         """Get all tags for a session."""
         rows = await self.graph.execute_cypher(
-            "MATCH (s:Conversation {session_id: $session_id}) RETURN s.tags_json",
+            "MATCH (s:Chat {session_id: $session_id}) RETURN s.tags_json",
             {"session_id": session_id},
         )
         if not rows:
@@ -513,7 +513,7 @@ class GraphSessionStore:
         """Get all sessions with a specific tag."""
         tag = tag.lower().strip()
         all_sessions = await self.graph.execute_cypher(
-            "MATCH (s:Conversation) RETURN s ORDER BY s.last_accessed DESC"
+            "MATCH (s:Chat) RETURN s ORDER BY s.last_accessed DESC"
         )
         result = []
         for row in all_sessions:
@@ -527,7 +527,7 @@ class GraphSessionStore:
     async def list_all_tags(self) -> list[tuple[str, int]]:
         """List all tags with their usage counts."""
         all_sessions = await self.graph.execute_cypher(
-            "MATCH (s:Conversation) RETURN s.tags_json"
+            "MATCH (s:Chat) RETURN s.tags_json"
         )
         counts: dict[str, int] = {}
         for row in all_sessions:
@@ -544,7 +544,7 @@ class GraphSessionStore:
         """Set context folders for a session (replaces existing)."""
         async with self.graph.write_lock:
             await self.graph._execute(
-                "MATCH (s:Conversation {session_id: $session_id}) "
+                "MATCH (s:Chat {session_id: $session_id}) "
                 "SET s.contexts_json = $contexts_json",
                 {
                     "session_id": session_id,
@@ -557,7 +557,7 @@ class GraphSessionStore:
     ) -> None:
         """Add a context folder to a session."""
         rows = await self.graph.execute_cypher(
-            "MATCH (s:Conversation {session_id: $session_id}) RETURN s.contexts_json",
+            "MATCH (s:Chat {session_id: $session_id}) RETURN s.contexts_json",
             {"session_id": session_id},
         )
         if not rows:
@@ -567,7 +567,7 @@ class GraphSessionStore:
             contexts.append(folder_path)
             async with self.graph.write_lock:
                 await self.graph._execute(
-                    "MATCH (s:Conversation {session_id: $session_id}) "
+                    "MATCH (s:Chat {session_id: $session_id}) "
                     "SET s.contexts_json = $contexts_json",
                     {
                         "session_id": session_id,
@@ -580,7 +580,7 @@ class GraphSessionStore:
     ) -> None:
         """Remove a context folder from a session."""
         rows = await self.graph.execute_cypher(
-            "MATCH (s:Conversation {session_id: $session_id}) RETURN s.contexts_json",
+            "MATCH (s:Chat {session_id: $session_id}) RETURN s.contexts_json",
             {"session_id": session_id},
         )
         if not rows:
@@ -589,7 +589,7 @@ class GraphSessionStore:
         contexts = [c for c in contexts if c != folder_path]
         async with self.graph.write_lock:
             await self.graph._execute(
-                "MATCH (s:Conversation {session_id: $session_id}) "
+                "MATCH (s:Chat {session_id: $session_id}) "
                 "SET s.contexts_json = $contexts_json",
                 {
                     "session_id": session_id,
@@ -600,7 +600,7 @@ class GraphSessionStore:
     async def get_session_contexts(self, session_id: str) -> list[str]:
         """Get all context folder paths for a session."""
         rows = await self.graph.execute_cypher(
-            "MATCH (s:Conversation {session_id: $session_id}) RETURN s.contexts_json",
+            "MATCH (s:Chat {session_id: $session_id}) RETURN s.contexts_json",
             {"session_id": session_id},
         )
         if not rows:
@@ -612,7 +612,7 @@ class GraphSessionStore:
     ) -> list[Session]:
         """Get all sessions using a specific context folder."""
         all_sessions = await self.graph.execute_cypher(
-            "MATCH (s:Conversation) RETURN s ORDER BY s.last_accessed DESC"
+            "MATCH (s:Chat) RETURN s ORDER BY s.last_accessed DESC"
         )
         result = []
         for row in all_sessions:
@@ -628,7 +628,7 @@ class GraphSessionStore:
     ) -> Optional[Session]:
         """Get the most recent active session linked to a bot chat."""
         rows = await self.graph.execute_cypher(
-            "MATCH (s:Conversation) "
+            "MATCH (s:Chat) "
             "WHERE s.linked_bot_platform = $platform "
             "  AND s.linked_bot_chat_id = $chat_id "
             "  AND s.archived = false "
@@ -644,7 +644,7 @@ class GraphSessionStore:
     async def count_children(self, parent_session_id: str) -> int:
         """Count active (non-archived) child sessions."""
         rows = await self.graph.execute_cypher(
-            "MATCH (s:Conversation) "
+            "MATCH (s:Chat) "
             "WHERE s.parent_session_id = $parent_session_id AND s.archived = false "
             "RETURN count(s) AS cnt",
             {"parent_session_id": parent_session_id},
@@ -656,7 +656,7 @@ class GraphSessionStore:
     ) -> Optional[datetime]:
         """Get timestamp of most recent child session."""
         rows = await self.graph.execute_cypher(
-            "MATCH (s:Conversation) "
+            "MATCH (s:Chat) "
             "WHERE s.parent_session_id = $parent_session_id "
             "RETURN s.created_at ORDER BY s.created_at DESC LIMIT 1",
             {"parent_session_id": parent_session_id},
@@ -848,7 +848,7 @@ class GraphSessionStore:
         # Nullify project_id on referencing sessions
         async with self.graph.write_lock:
             await self.graph._execute(
-                "MATCH (s:Conversation {project_id: $slug}) "
+                "MATCH (s:Chat {project_id: $slug}) "
                 "SET s.project_id = null",
                 {"slug": slug},
             )
@@ -870,7 +870,7 @@ class GraphSessionStore:
         async with self.graph.write_lock:
             # Check if any sessions reference this env
             sessions = await self.graph.execute_cypher(
-                "MATCH (s:Conversation {project_id: $slug}) RETURN count(s) AS cnt",
+                "MATCH (s:Chat {project_id: $slug}) RETURN count(s) AS cnt",
                 {"slug": slug},
             )
             if sessions and sessions[0]["cnt"] > 0:
@@ -907,7 +907,7 @@ class GraphSessionStore:
                 continue
             # Check if any session with message_count > 0 references this env
             sessions = await self.graph.execute_cypher(
-                "MATCH (s:Conversation {project_id: $slug}) "
+                "MATCH (s:Chat {project_id: $slug}) "
                 "WHERE s.message_count > 0 "
                 "RETURN count(s) AS cnt",
                 {"slug": slug},

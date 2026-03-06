@@ -291,7 +291,7 @@ async def _store_exchange(
     The context field captures the session summary at time of exchange, giving
     each exchange a "what was happening when this was said" anchor.
 
-    If session_meta is provided, lazily upserts a Conversation node and creates
+    If session_meta is provided, lazily upserts a Chat node and creates
     a HAS_EXCHANGE relationship from session to exchange.
 
     Skips trivial exchanges (very short user message AND very short AI response).
@@ -320,10 +320,10 @@ async def _store_exchange(
     tools_summary = _summarize_tool_calls(tool_calls)
 
     async with graph.write_lock:
-        # 1. Lazy-upsert Conversation node
+        # 1. Lazy-upsert Chat node
         if session_meta:
             await graph.execute_cypher(
-                "MERGE (s:Conversation {session_id: $session_id}) "
+                "MERGE (s:Chat {session_id: $session_id}) "
                 "ON CREATE SET s.title = $title, s.module = $module, "
                 "s.source = $source, s.agent_type = $agent_type, "
                 "s.created_at = $created_at",
@@ -363,10 +363,10 @@ async def _store_exchange(
             },
         )
 
-        # 3. HAS_EXCHANGE relationship (requires Conversation node to exist)
+        # 3. HAS_EXCHANGE relationship (requires Chat node to exist)
         if session_meta:
             await graph.execute_cypher(
-                "MATCH (s:Conversation {session_id: $sid}), "
+                "MATCH (s:Chat {session_id: $sid}), "
                 "(e:Exchange {exchange_id: $eid}) "
                 "MERGE (s)-[:HAS_EXCHANGE]->(e)",
                 {"sid": session_id, "eid": exchange_id},

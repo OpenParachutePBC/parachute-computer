@@ -29,7 +29,7 @@ final graphTableDataProvider = FutureProvider.autoDispose.family<Map<String, dyn
   (ref, tableName) async {
     final service = ref.watch(graphServiceProvider);
     switch (tableName) {
-      case 'Conversation':
+      case 'Chat':
         return service.getSessions(limit: 50);
       case 'Project':
         return service.getProjects(limit: 50);

@@ -96,7 +96,7 @@ async def list_sessions(
 
     where = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
     query = (
-        f"MATCH (s:Conversation) {where} "
+        f"MATCH (s:Chat) {where} "
         f"RETURN s ORDER BY s.last_accessed DESC LIMIT {limit}"
     )
 
@@ -110,7 +110,7 @@ async def get_session(session_id: str):
     graph = _get_graph()
 
     rows = await graph.execute_cypher(
-        "MATCH (s:Conversation {session_id: $session_id}) RETURN s",
+        "MATCH (s:Chat {session_id: $session_id}) RETURN s",
         {"session_id": session_id},
     )
     if not rows:
@@ -121,7 +121,7 @@ async def get_session(session_id: str):
     # Fetch exchanges if this session has them
     try:
         exchanges = await graph.execute_cypher(
-            "MATCH (s:Conversation {session_id: $session_id})-[:HAS_EXCHANGE]->(e:Exchange) "
+            "MATCH (s:Chat {session_id: $session_id})-[:HAS_EXCHANGE]->(e:Exchange) "
             "RETURN e ORDER BY e.exchange_number",
             {"session_id": session_id},
         )

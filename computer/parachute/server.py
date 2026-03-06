@@ -86,7 +86,7 @@ async def lifespan(app: FastAPI):
     await graph.start_checkpoint_loop()
     logger.info(f"GraphDB initialized: {settings.graph_db_path}")
 
-    # Run graph schema v2 migration if needed (Parachute_Session→Conversation etc.)
+    # Run graph schema v2 migration if needed (Parachute_Session→Chat etc.)
     await migrate_schema_v2(graph)
 
     # Run SQLite migration if needed (one-time)

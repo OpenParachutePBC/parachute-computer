@@ -51,7 +51,7 @@ class ChatModule:
             },
             primary_key="exchange_id",
         )
-        await graph.ensure_rel_table("HAS_EXCHANGE", "Conversation", "Exchange")
+        await graph.ensure_rel_table("HAS_EXCHANGE", "Chat", "Exchange")
         logger.info("Chat: graph schema registered (Exchange, HAS_EXCHANGE)")
 
     def _ensure_claude_dir(self):
