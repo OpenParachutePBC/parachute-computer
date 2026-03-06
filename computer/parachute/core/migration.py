@@ -402,6 +402,7 @@ async def migrate_schema_v2(graph) -> bool:
     old_has_exchange = await graph.get_table_columns("HAS_EXCHANGE")
     if old_has_exchange:
         try:
+            await graph._execute("MATCH ()-[r:HAS_EXCHANGE]->() DELETE r")
             await graph._execute("DROP TABLE HAS_EXCHANGE")
         except Exception:
             pass
@@ -544,16 +545,17 @@ async def migrate_schema_v2(graph) -> bool:
             except Exception as e:
                 logger.warning(f"  Note migration failed for {row.get('entry_id')}: {e}")
 
-        # Drop rel tables before node tables (Kuzu requirement)
+        async with graph.write_lock:
+            await graph._execute("MATCH (e:Journal_Entry) DETACH DELETE e")
+
+        # Drop rel tables after DETACH DELETE removes edges (Kuzu requires empty rel tables)
         for rel_table in ("HAS_ENTRY", "HAS_CARD"):
             if await graph.get_table_columns(rel_table):
                 try:
+                    await graph._execute(f"MATCH ()-[r:{rel_table}]->() DELETE r")
                     await graph._execute(f"DROP TABLE {rel_table}")
                 except Exception:
                     pass
-
-        async with graph.write_lock:
-            await graph._execute("MATCH (e:Journal_Entry) DETACH DELETE e")
         try:
             await graph._execute("DROP TABLE Journal_Entry")
         except Exception:
