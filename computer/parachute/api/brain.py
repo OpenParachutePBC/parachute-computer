@@ -171,3 +171,71 @@ async def list_daily_entries(
 
     rows = await graph.execute_cypher(query, params if params else None)
     return {"entries": rows, "count": len(rows)}
+
+
+@router.get("/memory")
+async def get_memory(
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    search: str | None = Query(None, description="Search query across titles and content"),
+    type: str | None = Query(None, description="Filter by type: sessions, notes"),
+):
+    """Unified memory feed — sessions and notes merged, sorted by time descending.
+
+    Returns a chronological mix of conversation sessions and journal entries,
+    giving a single view of everything in the brain.
+    """
+    brain = _get_graph()
+    items: list[dict] = []
+
+    if type != "notes":
+        # Fetch sessions
+        session_where_clauses = [
+            "(s.archived IS NULL OR s.archived = false)",
+            "(s.source = 'parachute' AND (s.agent_type IS NULL OR s.agent_type = 'orchestrator'))",
+        ]
+        session_params: dict = {}
+        if search:
+            session_where_clauses.append("s.title CONTAINS $search")
+            session_params["search"] = search
+        s_where = f"WHERE {' AND '.join(session_where_clauses)}"
+        session_rows = await brain.execute_cypher(
+            f"MATCH (s:Chat) {s_where} RETURN s ORDER BY s.last_accessed DESC LIMIT 500",
+            session_params if session_params else None,
+        )
+        for s in session_rows:
+            items.append({
+                "kind": "session",
+                "id": s.get("session_id", ""),
+                "title": s.get("title") or "Untitled conversation",
+                "ts": s.get("last_accessed") or s.get("created_at") or "",
+                "module": s.get("module", "chat"),
+            })
+
+    if type != "sessions":
+        # Fetch notes
+        note_where_clauses = []
+        note_params: dict = {}
+        if search:
+            note_where_clauses.append("(e.content CONTAINS $search OR e.title CONTAINS $search)")
+            note_params["search"] = search
+        n_where = f"WHERE {' AND '.join(note_where_clauses)}" if note_where_clauses else ""
+        note_rows = await brain.execute_cypher(
+            f"MATCH (e:Note) {n_where} RETURN e ORDER BY e.created_at DESC LIMIT 500",
+            note_params if note_params else None,
+        )
+        for e in note_rows:
+            items.append({
+                "kind": "note",
+                "id": e.get("id", ""),
+                "title": e.get("title") or e.get("snippet") or "Journal entry",
+                "ts": e.get("created_at") or "",
+                "date": e.get("date", ""),
+            })
+
+    # Sort all items by ts descending, then paginate
+    items.sort(key=lambda x: x.get("ts") or "", reverse=True)
+    total = len(items)
+    page = items[offset: offset + limit]
+
+    return {"items": page, "total": total, "offset": offset, "limit": limit}

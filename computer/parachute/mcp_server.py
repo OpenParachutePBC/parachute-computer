@@ -18,11 +18,13 @@ Daily Journal Tools:
 - get_journal: Get a specific day's journal entries
 
 Graph Query Tools:
-- get_graph_schema: Returns all node and relationship tables with columns
-- list_conversations: List conversation sessions from the graph
-- get_conversation: Get a single session by ID from the graph
-- list_projects: List named project environments (container envs)
-- list_entries: List Daily journal entries from the graph
+- brain_schema: Returns all node and relationship tables in the brain (Kuzu graph)
+- brain_list_sessions: List conversation sessions from the brain
+- brain_get_session: Get a single session by ID from the brain
+- brain_list_projects: List named project environments (container envs)
+- brain_list_entries: List Daily journal entries from the brain
+- brain_query: Execute a read-only Cypher query against the brain
+- brain_execute: Execute a write Cypher query against the brain
 
 Run with:
     python -m parachute.mcp_server /path/to/vault
@@ -372,18 +374,18 @@ TOOLS = [
             "required": ["date"],
         },
     ),
-    # Brain Query Tools
+    # Brain Tools
     Tool(
-        name="get_graph_schema",
+        name="brain_schema",
         description=(
-            "Returns all node and relationship tables in the graph database with their "
-            "column names and types. Call this first to understand what data is queryable."
+            "Returns all node and relationship tables in the Parachute brain (Kuzu graph) "
+            "with their column names and types. Call this first to understand what memory is queryable."
         ),
         inputSchema={"type": "object", "properties": {}},
     ),
     Tool(
-        name="list_conversations",
-        description="List conversation sessions from the graph.",
+        name="brain_list_sessions",
+        description="List conversation sessions from the brain (your memory of past conversations).",
         inputSchema={
             "type": "object",
             "properties": {
@@ -394,8 +396,8 @@ TOOLS = [
         },
     ),
     Tool(
-        name="get_conversation",
-        description="Get a single conversation session by ID.",
+        name="brain_get_session",
+        description="Get a single conversation session by ID, including its exchanges.",
         inputSchema={
             "type": "object",
             "properties": {"session_id": {"type": "string"}},
@@ -403,7 +405,7 @@ TOOLS = [
         },
     ),
     Tool(
-        name="list_projects",
+        name="brain_list_projects",
         description="List named project environments (shared containers).",
         inputSchema={
             "type": "object",
@@ -411,8 +413,8 @@ TOOLS = [
         },
     ),
     Tool(
-        name="list_entries",
-        description="List Daily journal entries.",
+        name="brain_list_entries",
+        description="List Daily journal entries from the brain.",
         inputSchema={
             "type": "object",
             "properties": {
@@ -420,6 +422,37 @@ TOOLS = [
                 "date_to": {"type": "string", "description": "YYYY-MM-DD"},
                 "limit": {"type": "integer", "description": "Max results (default 20)"},
             },
+        },
+    ),
+    Tool(
+        name="brain_query",
+        description=(
+            "Execute a read-only Cypher query against the Parachute brain (Kuzu graph). "
+            "Use for MATCH/RETURN queries to explore memory. "
+            "Call brain_schema first to discover available tables and columns."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Cypher MATCH/RETURN query"},
+                "params": {"type": "object", "description": "Optional $param bindings"},
+            },
+            "required": ["query"],
+        },
+    ),
+    Tool(
+        name="brain_execute",
+        description=(
+            "Execute a write Cypher query against the Parachute brain (Kuzu graph). "
+            "Use for MERGE, CREATE, SET, DELETE. Use brain_query for reads."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Cypher write query"},
+                "params": {"type": "object", "description": "Optional $param bindings"},
+            },
+            "required": ["query"],
         },
     ),
 ]
@@ -1039,25 +1072,48 @@ async def handle_tool_call(name: str, arguments: dict[str, Any]) -> str:
             result = await get_journal(date=arguments["date"])
             if result is None:
                 return json.dumps({"error": f"Journal not found for date: {arguments['date']}"})
-        # Brain Query Tools
-        elif name == "get_graph_schema":
+        # Brain Tools
+        elif name == "brain_schema":
             result = await _brain_call("/schema")
-        elif name == "list_conversations":
+        elif name == "brain_list_sessions":
             params = {k: arguments[k] for k in ("module", "limit") if k in arguments}
             if "archived" in arguments:
                 params["archived"] = "true" if arguments["archived"] else "false"
             qs = ("?" + urllib.parse.urlencode(params)) if params else ""
             result = await _brain_call(f"/sessions{qs}")
-        elif name == "get_conversation":
+        elif name == "brain_get_session":
             sid = urllib.parse.quote(arguments["session_id"], safe="")
             result = await _brain_call(f"/sessions/{sid}")
-        elif name == "list_projects":
+        elif name == "brain_list_projects":
             qs = f"?limit={arguments['limit']}" if "limit" in arguments else ""
             result = await _brain_call(f"/projects{qs}")
-        elif name == "list_entries":
+        elif name == "brain_list_entries":
             params = {k: arguments[k] for k in ("date_from", "date_to", "limit") if k in arguments}
             qs = ("?" + urllib.parse.urlencode(params)) if params else ""
             result = await _brain_call(f"/daily/entries{qs}")
+        elif name == "brain_query":
+            from parachute.core.interfaces import get_registry
+            brain = get_registry().get("BrainDB")
+            if brain is None:
+                result = {"error": "BrainDB not available"}
+            else:
+                rows = await brain.execute_cypher(
+                    arguments["query"],
+                    arguments.get("params") or None,
+                )
+                result = {"rows": rows, "count": len(rows)}
+        elif name == "brain_execute":
+            from parachute.core.interfaces import get_registry
+            brain = get_registry().get("BrainDB")
+            if brain is None:
+                result = {"error": "BrainDB not available"}
+            else:
+                async with brain.write_lock:
+                    rows = await brain.execute_cypher(
+                        arguments["query"],
+                        arguments.get("params") or None,
+                    )
+                result = {"ok": True, "rows": rows, "count": len(rows)}
         else:
             return json.dumps({"error": f"Unknown tool: {name}"})
 

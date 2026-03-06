@@ -1,71 +1,162 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
-import '../providers/graph_providers.dart';
+import '../providers/brain_providers.dart';
 
-/// Graph navigator — replaces the old BrainEntity browser.
+/// Brain — your extended mind.
 ///
-/// Wide (≥700px): table sidebar | row/schema panel
-/// Narrow: table list → row detail (pushed route)
-class BrainHomeScreen extends ConsumerWidget {
+/// A unified, chronological view of your conversations and journal entries.
+/// Search, filter by type, tap to open in Chat or Daily.
+class BrainHomeScreen extends ConsumerStatefulWidget {
   const BrainHomeScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        return constraints.maxWidth >= 700
-            ? const _GraphWideLayout()
-            : const _GraphNarrowLayout();
-      },
-    );
-  }
+  ConsumerState<BrainHomeScreen> createState() => _BrainHomeScreenState();
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Wide layout
-// ──────────────────────────────────────────────────────────────────────────────
-
-class _GraphWideLayout extends ConsumerWidget {
-  const _GraphWideLayout();
+class _BrainHomeScreenState extends ConsumerState<BrainHomeScreen> {
+  final _searchController = TextEditingController();
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final selectedTable = ref.watch(graphSelectedTableProvider);
+    final filter = ref.watch(brainMemoryFilterProvider);
+    final search = ref.watch(brainMemorySearchProvider);
+    final memoryAsync = ref.watch(brainMemoryProvider((filter, search)));
+
+    final bgColor = isDark ? BrandColors.nightSurface : BrandColors.cream;
+    final textColor = isDark ? BrandColors.nightText : BrandColors.charcoal;
+    final subColor = isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood;
 
     return Scaffold(
-      backgroundColor: isDark ? BrandColors.nightSurface : BrandColors.cream,
+      backgroundColor: bgColor,
       body: SafeArea(
-        child: Row(
+        child: Column(
           children: [
-            SizedBox(
-              width: 200,
-              child: _TableSidebar(
-                onTableTap: (name) =>
-                    ref.read(graphSelectedTableProvider.notifier).state = name,
+            // ── Search bar ──────────────────────────────────────────────────
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+              child: TextField(
+                controller: _searchController,
+                onChanged: (val) =>
+                    ref.read(brainMemorySearchProvider.notifier).state = val,
+                style: TextStyle(fontSize: 14, color: textColor),
+                decoration: InputDecoration(
+                  hintText: 'Search your memory...',
+                  hintStyle: TextStyle(fontSize: 14, color: subColor),
+                  prefixIcon: Icon(Icons.search, size: 20, color: subColor),
+                  suffixIcon: search.isNotEmpty
+                      ? IconButton(
+                          icon: Icon(Icons.clear, size: 18, color: subColor),
+                          onPressed: () {
+                            _searchController.clear();
+                            ref.read(brainMemorySearchProvider.notifier).state = '';
+                          },
+                        )
+                      : null,
+                  filled: true,
+                  fillColor: isDark
+                      ? BrandColors.nightSurface.withValues(alpha: 0.6)
+                      : BrandColors.softWhite,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: BorderSide.none,
+                  ),
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                ),
               ),
             ),
-            VerticalDivider(
-              width: 1,
-              color: isDark
-                  ? BrandColors.nightTextSecondary.withValues(alpha: 0.2)
-                  : BrandColors.charcoal.withValues(alpha: 0.1),
+
+            // ── Filter chips ────────────────────────────────────────────────
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+              child: Row(
+                children: [
+                  _FilterChip(
+                    label: 'All',
+                    selected: filter == 'all',
+                    isDark: isDark,
+                    onTap: () =>
+                        ref.read(brainMemoryFilterProvider.notifier).state =
+                            'all',
+                  ),
+                  const SizedBox(width: 8),
+                  _FilterChip(
+                    label: 'Conversations',
+                    selected: filter == 'sessions',
+                    isDark: isDark,
+                    onTap: () =>
+                        ref.read(brainMemoryFilterProvider.notifier).state =
+                            'sessions',
+                  ),
+                  const SizedBox(width: 8),
+                  _FilterChip(
+                    label: 'Notes',
+                    selected: filter == 'notes',
+                    isDark: isDark,
+                    onTap: () =>
+                        ref.read(brainMemoryFilterProvider.notifier).state =
+                            'notes',
+                  ),
+                ],
+              ),
             ),
+
+            const SizedBox(height: 8),
+
+            // ── Memory feed ─────────────────────────────────────────────────
             Expanded(
-              child: selectedTable == null
-                  ? Center(
-                      child: Text(
-                        'Select a table to explore',
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: isDark
-                              ? BrandColors.nightTextSecondary
-                              : BrandColors.driftwood,
+              child: memoryAsync.when(
+                loading: () =>
+                    const Center(child: CircularProgressIndicator()),
+                error: (e, _) => Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.cloud_off, size: 40, color: subColor),
+                        const SizedBox(height: 12),
+                        Text(
+                          'Brain unavailable',
+                          style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                              color: textColor),
                         ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Make sure the server is running.',
+                          style: TextStyle(fontSize: 13, color: subColor),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                data: (data) {
+                  final items = (data['items'] as List? ?? [])
+                      .cast<Map<String, dynamic>>();
+                  if (items.isEmpty) {
+                    return Center(
+                      child: Text(
+                        search.isNotEmpty
+                            ? 'No memories match "$search"'
+                            : 'No memories yet',
+                        style: TextStyle(fontSize: 14, color: subColor),
                       ),
-                    )
-                  : _TablePanel(tableName: selectedTable),
+                    );
+                  }
+                  return _MemoryFeed(items: items, isDark: isDark);
+                },
+              ),
             ),
           ],
         ),
@@ -74,145 +165,128 @@ class _GraphWideLayout extends ConsumerWidget {
   }
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Narrow layout
-// ──────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Filter chip
+// ─────────────────────────────────────────────────────────────────────────────
 
-class _GraphNarrowLayout extends ConsumerWidget {
-  const _GraphNarrowLayout();
+class _FilterChip extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final bool isDark;
+  final VoidCallback onTap;
 
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-
-    return Scaffold(
-      backgroundColor: isDark ? BrandColors.nightSurface : BrandColors.cream,
-      appBar: AppBar(
-        title: Text(
-          'Graph',
-          style: TextStyle(
-            fontWeight: FontWeight.w600,
-            color: isDark ? BrandColors.nightText : BrandColors.charcoal,
-          ),
-        ),
-        backgroundColor: isDark ? BrandColors.nightSurface : BrandColors.softWhite,
-        elevation: 0,
-      ),
-      body: _TableSidebar(
-        onTableTap: (name) {
-          Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (_) => _TableDetailPage(tableName: name),
-            ),
-          );
-        },
-      ),
-    );
-  }
-}
-
-class _TableDetailPage extends StatelessWidget {
-  final String tableName;
-  const _TableDetailPage({required this.tableName});
+  const _FilterChip({
+    required this.label,
+    required this.selected,
+    required this.isDark,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final selectedBg =
+        isDark ? BrandColors.nightForest : BrandColors.forest;
+    final unselectedBg =
+        isDark ? BrandColors.nightSurface : BrandColors.softWhite;
+    final selectedText = Colors.white;
+    final unselectedText =
+        isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood;
 
-    return Scaffold(
-      backgroundColor: isDark ? BrandColors.nightSurface : BrandColors.cream,
-      appBar: AppBar(
-        title: Text(
-          tableName,
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: selected ? selectedBg : unselectedBg,
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Text(
+          label,
           style: TextStyle(
-            fontWeight: FontWeight.w600,
-            color: isDark ? BrandColors.nightText : BrandColors.charcoal,
-            fontSize: 15,
+            fontSize: 13,
+            fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+            color: selected ? selectedText : unselectedText,
           ),
         ),
-        backgroundColor: isDark ? BrandColors.nightSurface : BrandColors.softWhite,
-        elevation: 0,
       ),
-      body: _TablePanel(tableName: tableName),
     );
   }
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Table sidebar
-// ──────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Memory feed — grouped by date
+// ─────────────────────────────────────────────────────────────────────────────
 
-class _TableSidebar extends ConsumerWidget {
-  final void Function(String name) onTableTap;
-  const _TableSidebar({required this.onTableTap});
+class _MemoryFeed extends StatelessWidget {
+  final List<Map<String, dynamic>> items;
+  final bool isDark;
+
+  const _MemoryFeed({required this.items, required this.isDark});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final schemaAsync = ref.watch(graphSchemaProvider);
-    final selectedTable = ref.watch(graphSelectedTableProvider);
+  Widget build(BuildContext context) {
+    // Group items by date label
+    final groups = <String, List<Map<String, dynamic>>>{};
+    final groupOrder = <String>[];
+    final now = DateTime.now();
 
-    return Container(
-      color: isDark ? BrandColors.nightSurface : BrandColors.softWhite,
-      child: schemaAsync.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => Padding(
-          padding: const EdgeInsets.all(12),
-          child: Text(
-            'Schema error:\n$e',
-            style: const TextStyle(fontSize: 12, color: Colors.red),
-          ),
-        ),
-        data: (schema) {
-          final nodeTables = (schema['node_tables'] as List? ?? [])
-              .cast<Map<String, dynamic>>();
-          final relTables = (schema['rel_tables'] as List? ?? [])
-              .cast<Map<String, dynamic>>();
+    for (final item in items) {
+      final label = _dateLabel(item['ts'] as String? ?? '', now);
+      if (!groups.containsKey(label)) {
+        groups[label] = [];
+        groupOrder.add(label);
+      }
+      groups[label]!.add(item);
+    }
 
-          return ListView(
-            children: [
-              _SectionLabel(isDark: isDark, label: 'NODE TABLES'),
-              for (final t in nodeTables)
-                _TableTile(
-                  name: t['name'] as String,
-                  isSelected: selectedTable == t['name'],
-                  isDark: isDark,
-                  onTap: () => onTableTap(t['name'] as String),
-                ),
-              if (relTables.isNotEmpty) ...[
-                _SectionLabel(isDark: isDark, label: 'REL TABLES'),
-                for (final t in relTables)
-                  _TableTile(
-                    name: t['name'] as String,
-                    isSelected: selectedTable == t['name'],
-                    isDark: isDark,
-                    onTap: () => onTableTap(t['name'] as String),
-                  ),
-              ],
-            ],
-          );
-        },
-      ),
+    // Build flat list with section headers
+    final widgets = <Widget>[];
+    for (final label in groupOrder) {
+      widgets.add(_DateHeader(label: label, isDark: isDark));
+      for (final item in groups[label]!) {
+        widgets.add(_MemoryItem(item: item, isDark: isDark));
+      }
+    }
+
+    return ListView.builder(
+      padding: const EdgeInsets.only(bottom: 24),
+      itemCount: widgets.length,
+      itemBuilder: (_, i) => widgets[i],
     );
   }
 
+  String _dateLabel(String ts, DateTime now) {
+    if (ts.isEmpty) return 'Unknown';
+    try {
+      final dt = DateTime.parse(ts).toLocal();
+      final diff = now.difference(dt);
+      if (diff.inDays == 0) return 'Today';
+      if (diff.inDays == 1) return 'Yesterday';
+      if (diff.inDays < 7) return 'This Week';
+      if (diff.inDays < 30) return 'This Month';
+      return 'Earlier';
+    } catch (_) {
+      return 'Unknown';
+    }
+  }
 }
 
-class _SectionLabel extends StatelessWidget {
-  final bool isDark;
+class _DateHeader extends StatelessWidget {
   final String label;
-  const _SectionLabel({required this.isDark, required this.label});
+  final bool isDark;
+
+  const _DateHeader({required this.label, required this.isDark});
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 16, 12, 4),
+      padding: const EdgeInsets.fromLTRB(16, 20, 16, 6),
       child: Text(
         label,
         style: TextStyle(
-          fontSize: 10,
+          fontSize: 11,
           fontWeight: FontWeight.w600,
-          letterSpacing: 0.8,
+          letterSpacing: 0.6,
           color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
         ),
       ),
@@ -220,379 +294,124 @@ class _SectionLabel extends StatelessWidget {
   }
 }
 
-class _TableTile extends StatelessWidget {
-  final String name;
-  final bool isSelected;
+// ─────────────────────────────────────────────────────────────────────────────
+// Single memory item
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _MemoryItem extends ConsumerWidget {
+  final Map<String, dynamic> item;
   final bool isDark;
-  final VoidCallback onTap;
 
-  const _TableTile({
-    required this.name,
-    required this.isSelected,
-    required this.isDark,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final bg = isSelected
-        ? (isDark
-            ? BrandColors.nightForest.withValues(alpha: 0.2)
-            : BrandColors.forest.withValues(alpha: 0.08))
-        : Colors.transparent;
-
-    return InkWell(
-      onTap: onTap,
-      child: Container(
-        color: bg,
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        child: Text(
-          name,
-          style: TextStyle(
-            fontSize: 13,
-            fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-            color: isSelected
-                ? (isDark ? BrandColors.nightForest : BrandColors.forest)
-                : (isDark ? BrandColors.nightText : BrandColors.charcoal),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Table panel
-// ──────────────────────────────────────────────────────────────────────────────
-
-class _TablePanel extends ConsumerWidget {
-  final String tableName;
-  const _TablePanel({required this.tableName});
+  const _MemoryItem({required this.item, required this.isDark});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final dataAsync = ref.watch(graphTableDataProvider(tableName));
-    final schemaAsync = ref.watch(graphSchemaProvider);
+    final kind = item['kind'] as String? ?? 'session';
+    final title = item['title'] as String? ?? '';
+    final ts = item['ts'] as String? ?? '';
+    final isSession = kind == 'session';
 
-    final columns = _findColumns(schemaAsync.valueOrNull, tableName);
-
-    return dataAsync.when(
-      loading: () => const Center(child: CircularProgressIndicator()),
-      error: (e, _) => Center(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Text(
-            'Error: $e',
-            style: TextStyle(
-              color: isDark ? Colors.red.shade300 : Colors.red,
-              fontSize: 13,
-            ),
-          ),
-        ),
-      ),
-      data: (data) {
-        final hasEndpoint = !data.containsKey('note');
-        final rows = _extractRows(data);
-
-        if (!hasEndpoint || rows.isEmpty) {
-          return _SchemaView(
-            tableName: tableName,
-            columns: columns,
-            isDark: isDark,
-            note: data['note'] as String?,
-          );
-        }
-
-        return _RowsView(
-          tableName: tableName,
-          rows: rows,
-          isDark: isDark,
-        );
-      },
-    );
-  }
-
-  List<Map<String, dynamic>> _findColumns(
-      Map<String, dynamic>? schema, String name) {
-    if (schema == null) return [];
-    final all = [
-      ...(schema['node_tables'] as List? ?? []),
-      ...(schema['rel_tables'] as List? ?? []),
-    ].cast<Map<String, dynamic>>();
-    final match = all.where((t) => t['name'] == name).firstOrNull;
-    return (match?['columns'] as List? ?? []).cast<Map<String, dynamic>>();
-  }
-
-  List<Map<String, dynamic>> _extractRows(Map<String, dynamic> data) {
-    for (final key in ['sessions', 'projects', 'entries', 'rows']) {
-      if (data.containsKey(key)) {
-        return (data[key] as List? ?? []).cast<Map<String, dynamic>>();
-      }
-    }
-    return [];
-  }
-}
-
-class _SchemaView extends StatelessWidget {
-  final String tableName;
-  final List<Map<String, dynamic>> columns;
-  final bool isDark;
-  final String? note;
-
-  const _SchemaView({
-    required this.tableName,
-    required this.columns,
-    required this.isDark,
-    this.note,
-  });
-
-  @override
-  Widget build(BuildContext context) {
     final textColor = isDark ? BrandColors.nightText : BrandColors.charcoal;
-    final subColor = isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood;
+    final subColor =
+        isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood;
     final divColor = isDark
-        ? BrandColors.nightTextSecondary.withValues(alpha: 0.15)
-        : BrandColors.charcoal.withValues(alpha: 0.08);
+        ? BrandColors.nightTextSecondary.withValues(alpha: 0.1)
+        : BrandColors.charcoal.withValues(alpha: 0.07);
 
-    return Padding(
-      padding: const EdgeInsets.all(16),
+    final subtitle = _relativeTime(ts);
+
+    return InkWell(
+      onTap: () => _navigate(context, item),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            tableName,
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.w700,
-              color: textColor,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            note ?? 'Schema definition',
-            style: TextStyle(fontSize: 12, color: subColor),
-          ),
-          const SizedBox(height: 16),
-          Text(
-            'COLUMNS',
-            style: TextStyle(
-              fontSize: 10,
-              fontWeight: FontWeight.w600,
-              letterSpacing: 0.8,
-              color: subColor,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Expanded(
-            child: ListView.separated(
-              itemCount: columns.length,
-              separatorBuilder: (_, __) => Divider(height: 1, color: divColor),
-              itemBuilder: (_, i) {
-                final col = columns[i];
-                final isPk = col['primary_key'] == true;
-                return Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 8),
-                  child: Row(
-                    children: [
-                      if (isPk) ...[
-                        Icon(Icons.key, size: 12, color: subColor),
-                        const SizedBox(width: 4),
-                      ],
-                      Text(
-                        col['name'] as String? ?? '',
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: isPk ? FontWeight.w600 : FontWeight.normal,
-                          color: textColor,
-                        ),
-                      ),
-                      const Spacer(),
-                      Text(
-                        col['type'] as String? ?? '',
-                        style: TextStyle(fontSize: 11, color: subColor),
-                      ),
-                    ],
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                // Icon
+                Container(
+                  width: 32,
+                  height: 32,
+                  decoration: BoxDecoration(
+                    color: isSession
+                        ? (isDark
+                            ? BrandColors.nightForest.withValues(alpha: 0.15)
+                            : BrandColors.forest.withValues(alpha: 0.08))
+                        : (isDark
+                            ? Colors.blue.withValues(alpha: 0.15)
+                            : Colors.blue.withValues(alpha: 0.08)),
+                    borderRadius: BorderRadius.circular(8),
                   ),
-                );
-              },
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _RowsView extends StatelessWidget {
-  final String tableName;
-  final List<Map<String, dynamic>> rows;
-  final bool isDark;
-
-  const _RowsView({
-    required this.tableName,
-    required this.rows,
-    required this.isDark,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final textColor = isDark ? BrandColors.nightText : BrandColors.charcoal;
-    final subColor = isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood;
-    final divColor = isDark
-        ? BrandColors.nightTextSecondary.withValues(alpha: 0.15)
-        : BrandColors.charcoal.withValues(alpha: 0.08);
-
-    final (primaryKey, secondaryKey) = _previewKeys(tableName);
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-          child: Row(
-            children: [
-              Text(
-                tableName,
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w700,
-                  color: textColor,
+                  child: Icon(
+                    isSession ? Icons.chat_bubble_outline : Icons.book_outlined,
+                    size: 16,
+                    color: isSession
+                        ? (isDark ? BrandColors.nightForest : BrandColors.forest)
+                        : Colors.blue.shade400,
+                  ),
                 ),
-              ),
-              const Spacer(),
-              Text(
-                '${rows.length} rows',
-                style: TextStyle(fontSize: 12, color: subColor),
-              ),
-            ],
-          ),
-        ),
-        Divider(height: 1, color: divColor),
-        Expanded(
-          child: ListView.separated(
-            itemCount: rows.length,
-            separatorBuilder: (_, __) => Divider(height: 1, color: divColor),
-            itemBuilder: (context, i) {
-              final row = rows[i];
-              final primary = _clip(row[primaryKey]?.toString() ?? '—', 60);
-              final secondary = secondaryKey != null
-                  ? _clip(row[secondaryKey]?.toString() ?? '', 80)
-                  : null;
-
-              return ListTile(
-                dense: true,
-                title: Text(
-                  primary,
-                  style: TextStyle(fontSize: 13, color: textColor),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                subtitle: (secondary != null && secondary.isNotEmpty)
-                    ? Text(
-                        secondary,
-                        style: TextStyle(fontSize: 12, color: subColor),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      )
-                    : null,
-                onTap: () => _showDetail(context, row),
-              );
-            },
-          ),
-        ),
-      ],
-    );
-  }
-
-  (String, String?) _previewKeys(String table) => switch (table) {
-        'Chat' => ('title', 'session_id'),
-        'Project' => ('display_name', 'slug'),
-        'Note' => ('snippet', 'date'),
-        _ => ('name', null),
-      };
-
-  String _clip(String s, int max) =>
-      s.length > max ? '${s.substring(0, max)}…' : s;
-
-  void _showDetail(BuildContext context, Map<String, dynamic> row) {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      builder: (_) => _RowDetailSheet(row: row),
-    );
-  }
-}
-
-class _RowDetailSheet extends StatelessWidget {
-  final Map<String, dynamic> row;
-  const _RowDetailSheet({required this.row});
-
-  @override
-  Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final textColor = isDark ? BrandColors.nightText : BrandColors.charcoal;
-    final subColor = isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood;
-    final bgColor = isDark ? BrandColors.nightSurface : BrandColors.softWhite;
-    final divColor = isDark
-        ? BrandColors.nightTextSecondary.withValues(alpha: 0.15)
-        : BrandColors.charcoal.withValues(alpha: 0.08);
-
-    final entries = row.entries
-        .where((e) => e.value != null && e.value.toString().isNotEmpty)
-        .toList();
-
-    return Container(
-      color: bgColor,
-      padding: const EdgeInsets.only(top: 8),
-      constraints: BoxConstraints(
-        maxHeight: MediaQuery.sizeOf(context).height * 0.75,
-      ),
-      child: Column(
-        children: [
-          Container(
-            width: 32,
-            height: 4,
-            margin: const EdgeInsets.only(bottom: 12),
-            decoration: BoxDecoration(
-              color: subColor.withValues(alpha: 0.4),
-              borderRadius: BorderRadius.circular(2),
-            ),
-          ),
-          Expanded(
-            child: ListView.separated(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
-              itemCount: entries.length,
-              separatorBuilder: (_, __) => Divider(height: 1, color: divColor),
-              itemBuilder: (_, i) {
-                final e = entries[i];
-                return Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 8),
+                const SizedBox(width: 12),
+                // Title + subtitle
+                Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        e.key,
+                        title,
                         style: TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.w600,
-                          letterSpacing: 0.6,
-                          color: subColor,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                          color: textColor,
                         ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                       ),
-                      const SizedBox(height: 2),
-                      SelectableText(
-                        e.value.toString(),
-                        style: TextStyle(fontSize: 13, color: textColor),
+                      const SizedBox(height: 1),
+                      Text(
+                        subtitle,
+                        style: TextStyle(fontSize: 12, color: subColor),
                       ),
                     ],
                   ),
-                );
-              },
+                ),
+                Icon(Icons.chevron_right, size: 18, color: subColor),
+              ],
             ),
           ),
+          Divider(height: 1, color: divColor, indent: 60),
         ],
       ),
     );
+  }
+
+  void _navigate(BuildContext context, Map<String, dynamic> item) {
+    final kind = item['kind'] as String? ?? 'session';
+    if (kind == 'session') {
+      final id = item['id'] as String? ?? '';
+      if (id.isNotEmpty) context.go('/chat/$id');
+    } else {
+      final date = item['date'] as String? ?? '';
+      if (date.isNotEmpty) {
+        context.go('/daily?date=$date');
+      } else {
+        context.go('/daily');
+      }
+    }
+  }
+
+  String _relativeTime(String ts) {
+    if (ts.isEmpty) return '';
+    try {
+      final dt = DateTime.parse(ts).toLocal();
+      final diff = DateTime.now().difference(dt);
+      if (diff.inMinutes < 1) return 'just now';
+      if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+      if (diff.inHours < 24) return '${diff.inHours}h ago';
+      if (diff.inDays < 7) return '${diff.inDays}d ago';
+      return '${dt.day}/${dt.month}/${dt.year}';
+    } catch (_) {
+      return '';
+    }
   }
 }
