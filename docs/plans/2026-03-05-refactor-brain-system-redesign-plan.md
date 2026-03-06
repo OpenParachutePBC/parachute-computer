@@ -12,12 +12,12 @@ code, adds agent-accessible Cypher tools, and redesigns the Brain tab as a memor
 
 ## Acceptance Criteria
 
-- [ ] `vault/.modules/brain/` deleted; no TerminusDB references remain
-- [ ] `GraphService` → `BrainService` throughout backend; `/api/graph/` → `/api/brain/`
-- [ ] `GraphService` → `BrainService` in Flutter; all API calls updated
-- [ ] MCP tools renamed to `brain_*` prefix; `brain_query` and `brain_execute` added
-- [ ] Brain tab shows unified memory feed (sessions + notes, chronological, searchable)
-- [ ] CLAUDE.md files updated to reflect current architecture
+- [x] `vault/.modules/brain/` deleted; no TerminusDB references remain
+- [x] `GraphService` → `BrainService` throughout backend; `/api/graph/` → `/api/brain/`
+- [x] `GraphService` → `BrainService` in Flutter; all API calls updated
+- [x] MCP tools renamed to `brain_*` prefix; `brain_query` and `brain_execute` added
+- [x] Brain tab shows unified memory feed (sessions + notes, chronological, searchable)
+- [x] CLAUDE.md files updated to reflect current architecture
 
 ---
 
