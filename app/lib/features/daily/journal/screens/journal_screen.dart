@@ -117,10 +117,18 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
     // Clear cache if date changed
     _updateCacheIfNeeded(selectedDate);
 
-    // Update cache when data is available
-    journalAsync.whenData((journal) {
-      _cachedJournal = journal;
-      _cachedJournalDate = selectedDate;
+    // Update the cached journal via ref.listen rather than mutating inside build().
+    // ref.listen fires after the current build completes, so setState here is safe
+    // and won't cause a mid-build mutation.
+    ref.listen<AsyncValue<JournalDay>>(selectedJournalProvider, (_, next) {
+      next.whenData((journal) {
+        if (mounted) {
+          setState(() {
+            _cachedJournal = journal;
+            _cachedJournalDate = ref.read(selectedJournalDateProvider);
+          });
+        }
+      });
     });
 
     return Scaffold(
@@ -428,12 +436,14 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
         imagePath: imagePath,
         durationSeconds: durationSeconds,
       );
+      if (!mounted) return;
       setState(() {
         final date = ref.read(selectedJournalDateProvider);
         _cachedJournal = (_cachedJournal ?? JournalDay.empty(date)).addEntry(pending);
         _shouldScrollToBottom = true;
       });
     }
+    if (!mounted) return;
     ref.invalidate(selectedJournalProvider);
     ref.read(journalRefreshTriggerProvider.notifier).state++;
   }
@@ -744,9 +754,8 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
           ),
         );
+        ref.invalidate(selectedJournalProvider);
       }
-
-      ref.invalidate(selectedJournalProvider);
     } else {
       // Server unreachable — queue the edit locally for retry on reconnect.
       debugPrint('[JournalScreen] Edit queued for retry (offline or server error)');
@@ -1248,6 +1257,7 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
         debugPrint('[JournalScreen] Delete queued for retry (offline or server error)');
       }
 
+      if (!mounted) return;
       ref.invalidate(selectedJournalProvider);
       ref.read(journalRefreshTriggerProvider.notifier).state++;
     }

@@ -78,19 +78,30 @@ class _TodayJournalNotifier extends AutoDisposeAsyncNotifier<JournalDay> {
 
     // Flush pending queue when connectivity restores (offline → online transition).
     // Guard on previous == null to ignore the stream's initial emission on (re)start.
-    ref.listen(periodicServerHealthProvider, (previous, next) async {
+    //
+    // NOTE: ref.listen callbacks must be synchronous — async lambdas silently
+    // discard errors. We fire-and-forget a Future and handle errors inside it.
+    // The try/catch also protects against StateError if the notifier is disposed
+    // between when the health event fires and when the awaited calls complete.
+    ref.listen(periodicServerHealthProvider, (previous, next) {
       if (previous == null) return;
       final wasHealthy = previous.valueOrNull?.isHealthy ?? false;
       final isHealthy = next.valueOrNull?.isHealthy ?? false;
       if (!wasHealthy && isHealthy) {
-        final api = ref.read(dailyApiServiceProvider);
-        final queue = await ref.read(pendingQueueProvider.future);
-        await queue.flush(api);
-        // Also flush pending deletes/edits that queued while offline.
-        final cache = await ref.read(journalLocalCacheProvider.future);
-        await _flushPendingOps(api, cache);
-        // _loadJournal already calls flush on every build; no need to increment
-        // the refresh trigger here — that would cause a redundant rebuild cycle.
+        Future(() async {
+          try {
+            final api = ref.read(dailyApiServiceProvider);
+            final queue = await ref.read(pendingQueueProvider.future);
+            await queue.flush(api);
+            // Also flush pending deletes/edits that queued while offline.
+            final cache = await ref.read(journalLocalCacheProvider.future);
+            await _flushPendingOps(api, cache);
+            // _loadJournal already calls flush on every build; no need to increment
+            // the refresh trigger here — that would cause a redundant rebuild cycle.
+          } catch (e) {
+            debugPrint('[_TodayJournalNotifier] Error flushing on reconnect: $e');
+          }
+        });
       }
     });
 
@@ -177,35 +188,48 @@ Future<JournalDay> _loadJournal(
   return JournalDay.fromEntries(date, [...freshCached, ...pendingForDate]);
 }
 
+/// Re-entrancy guard for [_flushPendingOps].
+///
+/// [selectedJournalProvider] and [todayJournalProvider] may both be alive
+/// simultaneously — without this guard both would call _flushPendingOps at the
+/// same time, sending duplicate DELETE/PATCH requests for the same IDs.
+bool _flushPendingOpsActive = false;
+
 /// Flush pending delete and edit operations for all dates.
 ///
 /// Called during Phase 2 of every journal load and on network reconnect.
-/// Safe to call concurrently — SQLite ops are synchronous and idempotent.
+/// Re-entrant calls are dropped — the in-flight flush covers them.
 Future<void> _flushPendingOps(DailyApiService api, JournalLocalCache cache) async {
-  // Flush pending deletes
-  final deleteIds = cache.getPendingDeletes();
-  for (final id in deleteIds) {
-    final ok = await api.deleteEntry(id);
-    if (ok) {
-      // 204 or 404 both treated as success — entry is gone from server.
-      cache.removeEntry(id);
+  if (_flushPendingOpsActive) return;
+  _flushPendingOpsActive = true;
+  try {
+    // Flush pending deletes
+    final deleteIds = cache.getPendingDeletes();
+    for (final id in deleteIds) {
+      final ok = await api.deleteEntry(id);
+      if (ok) {
+        // 204 or 404 both treated as success — entry is gone from server.
+        cache.removeEntry(id);
+      }
+      // If ok == false (server error), leave as pending_delete for next flush.
     }
-    // If ok == false (server error), leave as pending_delete for next flush.
-  }
 
-  // Flush pending edits
-  final editEntries = cache.getPendingEdits();
-  for (final entry in editEntries) {
-    final updated = await api.updateEntry(
-      entry.id,
-      content: entry.content,
-      metadata: entry.title.isNotEmpty ? {'title': entry.title} : null,
-    );
-    if (updated != null) {
-      // Update cache with the server's authoritative response and clear the flag.
-      cache.markSynced(entry.id, content: updated.content, title: updated.title);
+    // Flush pending edits
+    final editEntries = cache.getPendingEdits();
+    for (final entry in editEntries) {
+      final updated = await api.updateEntry(
+        entry.id,
+        content: entry.content,
+        metadata: entry.title.isNotEmpty ? {'title': entry.title} : null,
+      );
+      if (updated != null) {
+        // Update cache with the server's authoritative response and clear the flag.
+        cache.markSynced(entry.id, content: updated.content, title: updated.title);
+      }
+      // If null (offline or server error), leave as pending_edit for next flush.
     }
-    // If null (offline or server error), leave as pending_edit for next flush.
+  } finally {
+    _flushPendingOpsActive = false;
   }
 }
 

@@ -103,7 +103,7 @@ class JournalLocalCache {
       );
       return rows.map((r) => r['entry_id'] as String).toList();
     } catch (e) {
-debugPrint('[JournalLocalCache] getPendingDeletes error: $e');
+      debugPrint('[JournalLocalCache] getPendingDeletes error: $e');
       return [];
     }
   }
@@ -130,19 +130,17 @@ debugPrint('[JournalLocalCache] getPendingDeletes error: $e');
   /// Only removes [synced] entries — [pending_delete] and [pending_edit] are
   /// left alone since they represent unsynced local changes.
   void removeStaleEntries(String date, Set<String> serverIds) {
+    if (serverIds.isEmpty) return;
     try {
-      final rows = _db.select(
-        "SELECT entry_id FROM journal_entries "
-        "WHERE date = ? AND COALESCE(sync_state, 'synced') = 'synced'",
-        [date],
+      // Single DELETE … NOT IN is more efficient than a SELECT + per-row DELETE loop.
+      final placeholders = List.filled(serverIds.length, '?').join(', ');
+      _db.execute(
+        "DELETE FROM journal_entries "
+        "WHERE date = ? AND COALESCE(sync_state, 'synced') = 'synced' "
+        "AND entry_id NOT IN ($placeholders)",
+        [date, ...serverIds],
       );
-      for (final row in rows) {
-        final id = row['entry_id'] as String;
-        if (!serverIds.contains(id)) {
-          _db.execute('DELETE FROM journal_entries WHERE entry_id = ?', [id]);
-          debugPrint('[JournalLocalCache] pruned stale entry: $id');
-        }
-      }
+      debugPrint('[JournalLocalCache] removeStaleEntries: pruned stale entries for $date');
     } catch (e) {
       debugPrint('[JournalLocalCache] removeStaleEntries error: $e');
     }
@@ -160,8 +158,10 @@ debugPrint('[JournalLocalCache] getPendingDeletes error: $e');
   /// All other rows are updated normally and reset to `synced`.
   void putEntries(String date, List<JournalEntry> entries) {
     if (entries.isEmpty) return;
+    // Nullable so the finally block can safely skip dispose() if prepare() itself throws.
+    PreparedStatement? stmt;
     try {
-      final stmt = _db.prepare(
+      stmt = _db.prepare(
         'INSERT INTO journal_entries '
         '(entry_id, date, content, title, entry_type, audio_path, image_path, '
         ' linked_file_path, duration_secs, created_at, sync_state) '
@@ -192,9 +192,10 @@ debugPrint('[JournalLocalCache] getPendingDeletes error: $e');
           e.createdAt.toUtc().toIso8601String(),
         ]);
       }
-      stmt.dispose();
     } catch (e) {
       debugPrint('[JournalLocalCache] putEntries error: $e');
+    } finally {
+      stmt?.dispose();
     }
   }
 
@@ -233,20 +234,18 @@ debugPrint('[JournalLocalCache] getPendingDeletes error: $e');
   /// Mark an entry as synced (clears any pending state).
   ///
   /// Optionally update [content] and [title] with the authoritative server
-  /// values returned after a successful flush.
+  /// values returned after a successful flush. If null, existing values are kept.
   void markSynced(String entryId, {String? content, String? title}) {
     try {
-      if (content != null || title != null) {
-        _db.execute(
-          "UPDATE journal_entries SET content = ?, title = ?, sync_state = 'synced' WHERE entry_id = ?",
-          [content ?? '', title ?? '', entryId],
-        );
-      } else {
-        _db.execute(
-          "UPDATE journal_entries SET sync_state = 'synced' WHERE entry_id = ?",
-          [entryId],
-        );
-      }
+      // COALESCE(?, col) → use the provided value if non-null, else keep existing.
+      _db.execute(
+        "UPDATE journal_entries SET "
+        "  content    = COALESCE(?, content), "
+        "  title      = COALESCE(?, title), "
+        "  sync_state = 'synced' "
+        "WHERE entry_id = ?",
+        [content, title, entryId],
+      );
     } catch (e) {
       debugPrint('[JournalLocalCache] markSynced error: $e');
     }
@@ -267,14 +266,6 @@ debugPrint('[JournalLocalCache] getPendingDeletes error: $e');
       _db.execute('DELETE FROM journal_entries WHERE date = ?', [date]);
     } catch (e) {
       debugPrint('[JournalLocalCache] clearDate error: $e');
-    }
-  }
-
-  void clearAll() {
-    try {
-      _db.execute('DELETE FROM journal_entries');
-    } catch (e) {
-      debugPrint('[JournalLocalCache] clearAll error: $e');
     }
   }
 
