@@ -1,3 +1,4 @@
+import 'dart:async' show unawaited;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
@@ -15,13 +16,14 @@ import '../providers/brain_providers.dart';
 
 enum MemoryKind { session, note }
 
+@immutable
 class MemoryItem {
   final MemoryKind kind;
   final String id;
   final String title;
   final String ts;
   final String module;
-  final String date; // note only
+  final String? date; // non-null for notes only
 
   const MemoryItem({
     required this.kind,
@@ -29,18 +31,19 @@ class MemoryItem {
     required this.title,
     required this.ts,
     required this.module,
-    required this.date,
+    this.date,
   });
 
   factory MemoryItem.fromJson(Map<String, dynamic> json) {
     final kind = json['kind'] == 'note' ? MemoryKind.note : MemoryKind.session;
+    final dateStr = json['date'] as String?;
     return MemoryItem(
       kind: kind,
       id: json['id'] as String? ?? '',
       title: json['title'] as String? ?? '',
       ts: json['ts'] as String? ?? '',
       module: json['module'] as String? ?? 'chat',
-      date: json['date'] as String? ?? '',
+      date: (dateStr != null && dateStr.isNotEmpty) ? dateStr : null,
     );
   }
 }
@@ -213,6 +216,7 @@ class _BrainHomeScreenState extends ConsumerState<BrainHomeScreen> {
 // Filter chip
 // ─────────────────────────────────────────────────────────────────────────────
 
+@immutable
 class _FilterChip extends StatelessWidget {
   final String label;
   final bool selected;
@@ -260,18 +264,23 @@ class _FilterChip extends StatelessWidget {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Lightweight discriminated union for the flat list.
-sealed class _FeedRow {}
+sealed class _FeedRow {
+  const _FeedRow();
+}
 
+@immutable
 class _HeaderRow extends _FeedRow {
   final String label;
-  _HeaderRow(this.label);
+  const _HeaderRow(this.label);
 }
 
+@immutable
 class _ItemRow extends _FeedRow {
   final MemoryItem item;
-  _ItemRow(this.item);
+  const _ItemRow(this.item);
 }
 
+@immutable
 class _MemoryFeed extends StatelessWidget {
   final List<MemoryItem> items;
   final bool isDark;
@@ -306,15 +315,19 @@ class _MemoryFeed extends StatelessWidget {
     );
   }
 
+  /// Calendar-day grouping (not 24-hour periods).
+  /// e.g. an item from 11:30pm yesterday is "Yesterday", not "Today".
   String _dateLabel(String ts, DateTime now) {
     if (ts.isEmpty) return 'Unknown';
     try {
       final dt = DateTime.parse(ts).toLocal();
-      final diff = now.difference(dt);
-if (diff.inDays == 0) return 'Today';
-      if (diff.inDays == 1) return 'Yesterday';
-      if (diff.inDays < 7) return 'This Week';
-      if (diff.inDays < 30) return 'This Month';
+      final today = DateTime(now.year, now.month, now.day);
+      final itemDay = DateTime(dt.year, dt.month, dt.day);
+      final diffDays = today.difference(itemDay).inDays;
+      if (diffDays == 0) return 'Today';
+      if (diffDays == 1) return 'Yesterday';
+      if (diffDays < 7) return 'This Week';
+      if (diffDays < 30) return 'This Month';
       return 'Earlier';
     } catch (_) {
       return 'Unknown';
@@ -322,6 +335,7 @@ if (diff.inDays == 0) return 'Today';
   }
 }
 
+@immutable
 class _DateHeader extends StatelessWidget {
   final String label;
   final bool isDark;
@@ -349,6 +363,7 @@ class _DateHeader extends StatelessWidget {
 // Single memory item tile
 // ─────────────────────────────────────────────────────────────────────────────
 
+@immutable
 class _MemoryItemTile extends ConsumerWidget {
   final MemoryItem item;
   final bool isDark;
@@ -432,20 +447,25 @@ class _MemoryItemTile extends ConsumerWidget {
   }
 
   /// Navigate to the item using provider-based tab switching.
-  /// No GoRouter — switches tabs and sets session/date state directly.
+  ///
+  /// NOTE: visibleTabs index order matches the IndexedStack child order
+  /// in main.dart ([AppTab.chat, AppTab.daily, AppTab.brain] at indices 0, 1, 2).
+  /// If either ordering changes, navigation will silently switch to the wrong tab.
   void _navigate(WidgetRef ref) {
     final visibleTabs = ref.read(visibleTabsProvider);
 
     if (item.kind == MemoryKind.session && item.id.isNotEmpty) {
       final chatIndex = visibleTabs.indexOf(AppTab.chat);
       if (chatIndex < 0) return;
-      ref.read(switchSessionProvider)(item.id);
+      // unawaited: tab switches immediately; session loads in background.
+      // Errors from loadSession are handled inside switchSessionProvider.
+      unawaited(ref.read(switchSessionProvider)(item.id));
       ref.read(currentTabIndexProvider.notifier).state = chatIndex;
-    } else if (item.kind == MemoryKind.note && item.date.isNotEmpty) {
+    } else if (item.kind == MemoryKind.note && item.date != null) {
       final dailyIndex = visibleTabs.indexOf(AppTab.daily);
       if (dailyIndex < 0) return;
       try {
-        final parts = item.date.split('-');
+        final parts = item.date!.split('-');
         if (parts.length == 3) {
           final date = DateTime(
             int.parse(parts[0]),
@@ -454,7 +474,9 @@ class _MemoryItemTile extends ConsumerWidget {
           );
           ref.read(selectedJournalDateProvider.notifier).state = date;
         }
-      } catch (_) {}
+      } catch (e, _) {
+        debugPrint('[BrainHomeScreen] Failed to parse note date "${item.date}": $e');
+      }
       ref.read(currentTabIndexProvider.notifier).state = dailyIndex;
     }
   }

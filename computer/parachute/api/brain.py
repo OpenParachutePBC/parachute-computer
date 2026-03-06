@@ -10,6 +10,7 @@ Endpoints:
 """
 
 import logging
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query
 
@@ -177,7 +178,7 @@ async def list_daily_entries(
 async def get_memory(
     limit: int = Query(50, ge=1, le=200),
     search: str | None = Query(None, description="Search query across titles and content"),
-    type: str | None = Query(None, description="Filter by type: sessions, notes"),
+    type: Literal["sessions", "notes"] | None = Query(None, description="Filter by type: sessions, notes"),
 ):
     """Unified memory feed — sessions and notes merged, sorted by time descending.
 
@@ -201,7 +202,7 @@ async def get_memory(
         s_where = f"WHERE {' AND '.join(session_where_clauses)}"
         session_rows = await brain.execute_cypher(
             f"MATCH (s:Chat) {s_where} RETURN s ORDER BY s.last_accessed DESC LIMIT {limit}",
-            session_params if session_params else None,
+            session_params or None,
         )
         for s in session_rows:
             items.append({
@@ -222,7 +223,7 @@ async def get_memory(
         n_where = f"WHERE {' AND '.join(note_where_clauses)}" if note_where_clauses else ""
         note_rows = await brain.execute_cypher(
             f"MATCH (e:Note) {n_where} RETURN e ORDER BY e.created_at DESC LIMIT {limit}",
-            note_params if note_params else None,
+            note_params or None,
         )
         for e in note_rows:
             items.append({
@@ -230,7 +231,7 @@ async def get_memory(
                 "id": e.get("id", ""),
                 "title": e.get("title") or e.get("snippet") or "Journal entry",
                 "ts": e.get("created_at") or "",
-                "date": e.get("date", ""),
+                "date": e.get("date") or None,
             })
 
     # Merge and return top `limit` by timestamp descending

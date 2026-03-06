@@ -260,14 +260,3 @@ class BrainService:
                 rows.append(dict(zip(col_names, row)))
         return rows
 
-    async def execute_cypher_write(
-        self,
-        query: str,
-        params: dict[str, Any] | None = None,
-    ) -> list[dict[str, Any]]:
-        """
-        Execute a write Cypher mutation (MERGE, CREATE, SET, DELETE).
-        Acquires write_lock to serialize mutations — same contract as BrainSessionStore.
-        """
-        async with self.write_lock:
-            return await self.execute_cypher(query, params)

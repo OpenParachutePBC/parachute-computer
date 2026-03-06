@@ -122,6 +122,12 @@ async def get_db():
     return _db
 
 
+def _get_brain():
+    """Return the live BrainService from the registry, or None if unavailable."""
+    from parachute.core.interfaces import get_registry
+    return get_registry().get("BrainDB")
+
+
 def _validate_message_content(
     content: str,
     field_name: str = "message",
@@ -1092,12 +1098,13 @@ async def handle_tool_call(name: str, arguments: dict[str, Any]) -> str:
             qs = ("?" + urllib.parse.urlencode(params)) if params else ""
             result = await _brain_call(f"/daily/entries{qs}")
         elif name == "brain_query":
-            # Require non-sandboxed trust level — raw Cypher can read all journal data
-            if _session_context and _session_context.trust_level == "sandboxed":
+            # Require vault/direct trust — raw Cypher reads all journal data.
+            # Fail-closed: deny if context is absent (standalone/legacy mode).
+            trust = _session_context.trust_level if _session_context else None
+            if trust != "direct":
                 result = {"error": "brain_query requires vault or full trust level"}
             else:
-                from parachute.core.interfaces import get_registry
-                brain = get_registry().get("BrainDB")
+                brain = _get_brain()
                 if brain is None:
                     result = {"error": "BrainDB not available"}
                 else:
@@ -1107,19 +1114,21 @@ async def handle_tool_call(name: str, arguments: dict[str, Any]) -> str:
                     )
                     result = {"rows": rows, "count": len(rows)}
         elif name == "brain_execute":
-            # Require full trust level — arbitrary writes can corrupt or destroy the graph
-            if _session_context and _session_context.trust_level != "full":
+            # Require full (direct) trust — arbitrary writes can corrupt or destroy the graph.
+            # Fail-closed: deny if context is absent (standalone/legacy mode).
+            trust = _session_context.trust_level if _session_context else None
+            if trust != "direct":
                 result = {"error": "brain_execute requires full trust level"}
             else:
-                from parachute.core.interfaces import get_registry
-                brain = get_registry().get("BrainDB")
+                brain = _get_brain()
                 if brain is None:
                     result = {"error": "BrainDB not available"}
                 else:
-                    rows = await brain.execute_cypher_write(
-                        arguments["query"],
-                        arguments.get("params") or None,
-                    )
+                    async with brain.write_lock:
+                        rows = await brain.execute_cypher(
+                            arguments["query"],
+                            arguments.get("params") or None,
+                        )
                     result = {"ok": True, "rows": rows, "count": len(rows)}
         else:
             return json.dumps({"error": f"Unknown tool: {name}"})
