@@ -3,7 +3,6 @@ Filesystem API endpoints for vault browsing.
 """
 
 import logging
-from pathlib import Path
 import os
 from datetime import datetime
 from pathlib import Path
@@ -25,9 +24,6 @@ class WriteFileRequest(BaseModel):
 
 def get_vault_path(request: Request) -> Path:
     """Get vault path from app state."""
-    from parachute.config import get_settings
-
-    settings = get_settings()
     return Path.home()
 
 
@@ -128,15 +124,22 @@ async def list_directory(
 
             # For directories, check if they have AGENTS.md, CLAUDE.md, or .git
             # (skip for broken symlinks since we can't traverse them)
+            # Wrapped in try/except because FUSE mounts (e.g. OrbStack) can timeout
             if is_dir and not is_broken_symlink:
-                entry["hasAgentsMd"] = (item / "AGENTS.md").exists()
-                entry["hasClaudeMd"] = (item / "CLAUDE.md").exists()
-                entry["isGitRepo"] = (item / ".git").exists()
+                try:
+                    entry["hasAgentsMd"] = (item / "AGENTS.md").exists()
+                    entry["hasClaudeMd"] = (item / "CLAUDE.md").exists()
+                    entry["isGitRepo"] = (item / ".git").exists()
+                except OSError:
+                    pass  # FUSE/network mounts may timeout or refuse
 
             entries.append(entry)
 
     except PermissionError:
         raise HTTPException(status_code=403, detail="Permission denied")
+    except OSError as e:
+        logger.warning("OS error listing directory %s: %s", target_path, e)
+        raise HTTPException(status_code=500, detail=f"OS error listing directory: {e}")
 
     return {
         "path": path or "",
