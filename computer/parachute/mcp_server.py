@@ -152,13 +152,13 @@ def _validate_message_content(
 TOOLS = [
     Tool(
         name="search_sessions",
-        description="Search chat sessions by keyword. Returns matching sessions with titles and snippets.",
+        description="Search chat sessions by keyword in title and summary. Returns matching sessions with titles and snippets.",
         inputSchema={
             "type": "object",
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "Search query - keywords to find in session titles and content",
+                    "description": "Search query - keywords to find in session titles and summaries",
                 },
                 "limit": {
                     "type": "number",
@@ -180,7 +180,7 @@ TOOLS = [
     ),
     Tool(
         name="list_recent_sessions",
-        description="List recent chat sessions, optionally filtered by module or archived status.",
+        description="List recent chat sessions from the brain graph, optionally filtered by module or archived status.",
         inputSchema={
             "type": "object",
             "properties": {
@@ -327,7 +327,7 @@ TOOLS = [
     # Daily Journal Tools
     Tool(
         name="search_journals",
-        description="Search Daily journal entries by keyword. Returns matching entries with snippets.",
+        description="Search Daily journal entries by keyword in the brain graph. Returns matching entries with snippets.",
         inputSchema={
             "type": "object",
             "properties": {
@@ -354,7 +354,7 @@ TOOLS = [
     ),
     Tool(
         name="list_recent_journals",
-        description="List recent journal dates.",
+        description="List recent journal entries from the brain graph.",
         inputSchema={
             "type": "object",
             "properties": {
@@ -368,7 +368,7 @@ TOOLS = [
     ),
     Tool(
         name="get_journal",
-        description="Get a specific day's journal entries.",
+        description="Get a specific day's journal entries from the brain graph.",
         inputSchema={
             "type": "object",
             "properties": {
@@ -378,6 +378,43 @@ TOOLS = [
                 },
             },
             "required": ["date"],
+        },
+    ),
+    # Memory Search Tool
+    Tool(
+        name="search_memory",
+        description=(
+            "Search all memory — chat sessions and journal entries — by keyword. "
+            "Returns ranked results with summaries and matched snippets. "
+            "By default searches everything; use 'source' to narrow to 'journal' or 'chat'. "
+            "Use date_from/date_to (YYYY-MM-DD) to scope journal results by date."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Keyword or phrase to search across all memory",
+                },
+                "source": {
+                    "type": "string",
+                    "description": "Optional: 'journal' to search only journal entries, 'chat' for sessions only",
+                },
+                "date_from": {
+                    "type": "string",
+                    "description": "Optional: YYYY-MM-DD — scope journal results from this date",
+                },
+                "date_to": {
+                    "type": "string",
+                    "description": "Optional: YYYY-MM-DD — scope journal results to this date",
+                },
+                "limit": {
+                    "type": "number",
+                    "description": "Maximum number of results (default: 10)",
+                    "default": 10,
+                },
+            },
+            "required": ["query"],
         },
     ),
     # Brain Tools
@@ -1020,19 +1057,34 @@ async def _brain_call(
 async def handle_tool_call(name: str, arguments: dict[str, Any]) -> str:
     """Handle a tool call and return the result as JSON string."""
     try:
-        if name == "search_sessions":
-            result = await search_sessions(
-                query=arguments["query"],
-                limit=arguments.get("limit", 10),
-                tags=arguments.get("tags"),
-                source=arguments.get("source"),
-            )
+        if name == "search_memory":
+            params: dict[str, Any] = {"search": arguments["query"]}
+            if arguments.get("source") == "journal":
+                params["type"] = "notes"
+                params["note_type"] = "journal"
+            elif arguments.get("source") == "chat":
+                params["type"] = "sessions"
+            if arguments.get("date_from"):
+                params["date_from"] = arguments["date_from"]
+            if arguments.get("date_to"):
+                params["date_to"] = arguments["date_to"]
+            params["limit"] = arguments.get("limit", 10)
+            qs = "?" + urllib.parse.urlencode(params)
+            result = await _brain_call(f"/memory{qs}")
+        elif name == "search_sessions":
+            # Route through brain API — avoids DB file lock conflict
+            sp: dict[str, Any] = {"search": arguments["query"], "limit": arguments.get("limit", 10)}
+            qs = "?" + urllib.parse.urlencode(sp)
+            result = await _brain_call(f"/sessions{qs}")
         elif name == "list_recent_sessions":
-            result = await list_recent_sessions(
-                limit=arguments.get("limit", 20),
-                archived=arguments.get("archived", False),
-                module=arguments.get("module"),
-            )
+            # Route through brain API — avoids DB file lock conflict
+            lp: dict[str, Any] = {"limit": arguments.get("limit", 20)}
+            if arguments.get("module"):
+                lp["module"] = arguments["module"]
+            if arguments.get("archived"):
+                lp["archived"] = "true"
+            qs = "?" + urllib.parse.urlencode(lp)
+            result = await _brain_call(f"/sessions{qs}")
         elif name == "get_session":
             result = await get_session(
                 session_id=arguments["session_id"],
@@ -1069,22 +1121,31 @@ async def handle_tool_call(name: str, arguments: dict[str, Any]) -> str:
                 session_id=arguments["session_id"],
                 message=arguments["message"],
             )
-        # Daily Journal Tools
+        # Daily Journal Tools — route through brain API (data lives in Note graph nodes)
         elif name == "search_journals":
-            result = await search_journals(
-                query=arguments["query"],
-                limit=arguments.get("limit", 10),
-                date_from=arguments.get("date_from"),
-                date_to=arguments.get("date_to"),
-            )
+            jp: dict[str, Any] = {
+                "search": arguments["query"],
+                "type": "notes",
+                "note_type": "journal",
+                "limit": arguments.get("limit", 10),
+            }
+            if arguments.get("date_from"):
+                jp["date_from"] = arguments["date_from"]
+            if arguments.get("date_to"):
+                jp["date_to"] = arguments["date_to"]
+            qs = "?" + urllib.parse.urlencode(jp)
+            result = await _brain_call(f"/memory{qs}")
         elif name == "list_recent_journals":
-            result = await list_recent_journals(
-                limit=arguments.get("limit", 14),
-            )
+            lj: dict[str, Any] = {"limit": arguments.get("limit", 14)}
+            qs = "?" + urllib.parse.urlencode(lj)
+            result = await _brain_call(f"/daily/entries{qs}")
         elif name == "get_journal":
-            result = await get_journal(date=arguments["date"])
-            if result is None:
-                return json.dumps({"error": f"Journal not found for date: {arguments['date']}"})
+            date = arguments["date"]
+            gj: dict[str, Any] = {"date_from": date, "date_to": date, "limit": 50}
+            qs = "?" + urllib.parse.urlencode(gj)
+            result = await _brain_call(f"/daily/entries{qs}")
+            if isinstance(result, dict) and result.get("count", 0) == 0 and "error" not in result:
+                return json.dumps({"error": f"Journal not found for date: {date}"})
         # Brain Tools
         elif name == "brain_schema":
             result = await _brain_call("/schema")

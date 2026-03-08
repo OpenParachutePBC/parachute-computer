@@ -3,11 +3,11 @@ Brain query API — read-only access to the shared Kuzu graph.
 
 Endpoints:
   GET  /api/brain/schema            — all tables with column types
-  GET  /api/brain/sessions          — conversation sessions (Chat)
+  GET  /api/brain/sessions          — conversation sessions (Chat), supports ?search=
   GET  /api/brain/sessions/{id}     — single session by ID
   GET  /api/brain/projects          — named projects
-  GET  /api/brain/daily/entries     — Daily journal notes
-  GET  /api/brain/memory            — unified memory feed
+  GET  /api/brain/daily/entries     — Daily journal notes, supports ?search=
+  GET  /api/brain/memory            — unified memory search across sessions + notes
   POST /api/brain/query             — read-only Cypher passthrough
   POST /api/brain/execute           — write Cypher passthrough (auth required)
 """
@@ -31,12 +31,30 @@ def _get_graph():
     return graph
 
 
+def _extract_snippet(content: str, query: str, window: int = 200) -> str:
+    """Extract ~200-char snippet centered around the first match of query in content."""
+    if not content:
+        return ""
+    pos = content.lower().find(query.lower())
+    if pos < 0:
+        # No match found — return start of content
+        return content[:window] + ("..." if len(content) > window else "")
+    start = max(0, pos - 80)
+    end = min(len(content), pos + len(query) + 120)
+    snippet = content[start:end]
+    if start > 0:
+        snippet = "..." + snippet
+    if end < len(content):
+        snippet = snippet + "..."
+    return snippet
+
+
 @router.get("/schema")
 async def get_schema():
     """Return all node and relationship tables with their column definitions."""
     graph = _get_graph()
 
-    tables = await graph.execute_cypher("CALL show_tables() RETURN *")
+    tables= await graph.execute_cypher("CALL show_tables() RETURN *")
 
     node_tables = []
     rel_tables = []
@@ -77,11 +95,13 @@ async def list_sessions(
     limit: int = Query(20, ge=1, le=200),
     archived: bool = Query(False),
     all: bool = Query(False, description="Show all sessions (including agent runs). Default: human-initiated only."),
+    search: str | None = Query(None, description="Search in session title and summary"),
 ):
     """List conversation sessions from the graph.
 
     By default filters to human-initiated sessions (source=parachute, non-bridge agents).
     Pass ?all=true to see all sessions including agent runs and bot sessions.
+    Pass ?search=keyword to filter by title or summary content.
     """
     graph = _get_graph()
 
@@ -98,6 +118,11 @@ async def list_sessions(
         where_clauses.append(
             "(s.source = 'parachute' AND (s.agent_type IS NULL OR s.agent_type = 'orchestrator'))"
         )
+    if search:
+        where_clauses.append(
+            "(s.title CONTAINS $search OR (s.summary IS NOT NULL AND s.summary CONTAINS $search))"
+        )
+        params["search"] = search
 
     where = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
     query = (
@@ -154,8 +179,13 @@ async def list_daily_entries(
     date_from: str | None = Query(None, description="YYYY-MM-DD"),
     date_to: str | None = Query(None, description="YYYY-MM-DD"),
     limit: int = Query(20, ge=1, le=200),
+    search: str | None = Query(None, description="Search in note content"),
 ):
-    """List daily journal notes from the graph."""
+    """List daily journal notes from the graph.
+
+    Pass ?search=keyword to filter by note content.
+    Pass ?date_from and/or ?date_to (YYYY-MM-DD) to scope by date.
+    """
     graph = _get_graph()
 
     where_clauses = []
@@ -167,6 +197,9 @@ async def list_daily_entries(
     if date_to:
         where_clauses.append("e.date <= $date_to")
         params["date_to"] = date_to
+    if search:
+        where_clauses.append("e.content CONTAINS $search")
+        params["search"] = search
 
     where = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
     query = (
@@ -181,14 +214,23 @@ async def list_daily_entries(
 @router.get("/memory")
 async def get_memory(
     limit: int = Query(50, ge=1, le=200),
-    search: str | None = Query(None, description="Search query across titles and content"),
+    search: str | None = Query(None, description="Search query across session summaries and note content"),
     type: Literal["sessions", "notes"] | None = Query(None, description="Filter by type: sessions, notes"),
+    date_from: str | None = Query(None, description="YYYY-MM-DD — filter notes by date (start)"),
+    date_to: str | None = Query(None, description="YYYY-MM-DD — filter notes by date (end)"),
+    note_type: str | None = Query(None, description="Filter notes by note_type (e.g. 'journal')"),
 ):
-    """Unified memory feed — sessions and notes merged, sorted by time descending.
+    """Unified memory search — sessions and notes merged, sorted by time descending.
 
-    Returns a chronological mix of conversation sessions and journal entries,
-    giving a single view of everything in the brain. Fetches `limit` records
-    from each type, merges, and returns the top `limit` by timestamp.
+    Returns a chronological mix of conversation sessions and journal entries.
+    When search is provided, matches against Chat.summary + Chat.title for sessions
+    and Note.content for notes. Each result includes a snippet of matched text.
+
+    Filters:
+    - type=sessions: sessions only
+    - type=notes: notes only
+    - date_from/date_to: scope notes by date (YYYY-MM-DD)
+    - note_type=journal: only journal-type notes
     """
     brain = _get_graph()
     items: list[dict] = []
@@ -201,7 +243,9 @@ async def get_memory(
         ]
         session_params: dict = {}
         if search:
-            session_where_clauses.append("s.title CONTAINS $search")
+            session_where_clauses.append(
+                "(s.title CONTAINS $search OR (s.summary IS NOT NULL AND s.summary CONTAINS $search))"
+            )
             session_params["search"] = search
         s_where = f"WHERE {' AND '.join(session_where_clauses)}"
         session_rows = await brain.execute_cypher(
@@ -209,10 +253,16 @@ async def get_memory(
             session_params or None,
         )
         for s in session_rows:
+            summary = s.get("summary") or ""
+            title = s.get("title") or "Untitled conversation"
+            # Prefer snippet from summary (richer), fall back to title
+            search_in = summary if summary else title
             items.append({
                 "kind": "session",
                 "id": s.get("session_id", ""),
-                "title": s.get("title") or "Untitled conversation",
+                "title": title,
+                "summary": summary,
+                "snippet": _extract_snippet(search_in, search) if search else "",
                 "ts": s.get("last_accessed") or s.get("created_at") or "",
                 "module": s.get("module", "chat"),
             })
@@ -222,20 +272,32 @@ async def get_memory(
         note_where_clauses = []
         note_params: dict = {}
         if search:
-            note_where_clauses.append("(e.content CONTAINS $search OR e.title CONTAINS $search)")
+            note_where_clauses.append("e.content CONTAINS $search")
             note_params["search"] = search
+        if note_type:
+            note_where_clauses.append("e.note_type = $note_type")
+            note_params["note_type"] = note_type
+        if date_from:
+            note_where_clauses.append("e.date >= $date_from")
+            note_params["date_from"] = date_from
+        if date_to:
+            note_where_clauses.append("e.date <= $date_to")
+            note_params["date_to"] = date_to
         n_where = f"WHERE {' AND '.join(note_where_clauses)}" if note_where_clauses else ""
         note_rows = await brain.execute_cypher(
             f"MATCH (e:Note) {n_where} RETURN e ORDER BY e.created_at DESC LIMIT {limit}",
             note_params or None,
         )
         for e in note_rows:
+            content = e.get("content") or ""
             items.append({
                 "kind": "note",
-                "id": e.get("id", ""),
+                "id": e.get("entry_id", ""),
                 "title": e.get("title") or e.get("snippet") or "Journal entry",
+                "snippet": _extract_snippet(content, search) if search else "",
                 "ts": e.get("created_at") or "",
                 "date": e.get("date") or None,
+                "note_type": e.get("note_type") or "",
             })
 
     # Merge and return top `limit` by timestamp descending
