@@ -33,14 +33,18 @@ def _get_graph():
 
 
 def _extract_snippet(content: str, query: str, window: int = 200) -> str:
-    """Extract ~200-char snippet centered around the first match of query in content."""
+    """Extract a snippet of up to `window` chars centered around the first match.
+
+    If no match is found, returns the first `window` chars.
+    """
     if not content:
         return ""
     pos = content.lower().find(query.lower())
     if pos < 0:
         return content[:window] + ("..." if len(content) > window else "")
-    start = max(0, pos - 80)
-    end = min(len(content), pos + len(query) + 120)
+    half = window // 2
+    start = max(0, pos - half)
+    end = min(len(content), pos + len(query) + half)
     snippet = content[start:end]
     if start > 0:
         snippet = "..." + snippet
@@ -177,6 +181,7 @@ async def get_session(
             e["ai_response"] = _truncate(e.get("ai_response"), max_chars)
             exchanges.append(e)
     except Exception:
+        logger.exception("Failed to fetch exchanges for session %s", session_id)
         exchanges = []
 
     return {"session": session, "exchanges": exchanges, "exchange_count": len(exchanges)}
@@ -184,7 +189,7 @@ async def get_session(
 
 @router.get("/exchanges")
 async def get_exchange(
-    id: str = Query(..., description="Exchange ID (e.g. session_id:ex:N)"),
+    exchange_id: str = Query(..., alias="id", description="Exchange ID (e.g. session_id:ex:N)"),
 ):
     """Get a single exchange by ID with full message content.
 
@@ -195,10 +200,10 @@ async def get_exchange(
 
     rows = await graph.execute_cypher(
         "MATCH (e:Exchange {exchange_id: $exchange_id}) RETURN e",
-        {"exchange_id": id},
+        {"exchange_id": exchange_id},
     )
     if not rows:
-        raise HTTPException(status_code=404, detail=f"Exchange not found: {id}")
+        raise HTTPException(status_code=404, detail=f"Exchange not found: {exchange_id}")
 
     return {"exchange": rows[0]}
 
@@ -344,7 +349,7 @@ async def get_memory(
                     "snippet": row.get("matched_description") or "",
                     "matched_exchange_id": row.get("matched_exchange_id") or "",
                     "ts": row.get("last_accessed") or row.get("created_at") or "",
-"module": row.get("module") or "chat",
+                    "module": row.get("module") or "chat",
                 })
 
     if type != "sessions":

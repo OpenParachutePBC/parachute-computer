@@ -39,7 +39,7 @@ import httpx
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Optional, Self
+from typing import Any, Self
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
@@ -117,17 +117,11 @@ async def get_db():
     return _db
 
 
-def _get_brain():
-    """Return the live BrainService from the registry, or None if unavailable."""
-    from parachute.core.interfaces import get_registry
-    return get_registry().get("BrainDB")
-
-
 def _validate_message_content(
     content: str,
     field_name: str = "message",
     max_length: int = 50_000
-) -> Optional[str]:
+) -> str | None:
     """Validate message content.
 
     Returns:
@@ -421,7 +415,7 @@ TOOLS = [
 async def get_session(
     session_id: str,
     include_messages: bool = True,
-) -> Optional[dict[str, Any]]:
+) -> dict[str, Any] | None:
     """Get a session by ID with optional messages."""
     db = await get_db()
     session = await db.get_session(session_id)
@@ -702,20 +696,6 @@ async def handle_tool_call(name: str, arguments: dict[str, Any]) -> str:
             params["limit"] = arguments.get("limit", 10)
             qs = "?" + urllib.parse.urlencode(params)
             result = await _brain_call(f"/memory{qs}")
-        elif name == "search_sessions":
-            # Route through brain API — avoids DB file lock conflict
-            sp: dict[str, Any] = {"search": arguments["query"], "limit": arguments.get("limit", 10)}
-            qs = "?" + urllib.parse.urlencode(sp)
-            result = await _brain_call(f"/sessions{qs}")
-        elif name == "list_recent_sessions":
-            # Route through brain API — avoids DB file lock conflict
-            lp: dict[str, Any] = {"limit": arguments.get("limit", 20)}
-            if arguments.get("module"):
-                lp["module"] = arguments["module"]
-            if arguments.get("archived"):
-                lp["archived"] = "true"
-            qs = "?" + urllib.parse.urlencode(lp)
-            result = await _brain_call(f"/sessions{qs}")
         elif name == "get_session":
             result = await get_session(
                 session_id=arguments["session_id"],
