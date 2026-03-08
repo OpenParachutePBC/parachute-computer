@@ -140,6 +140,8 @@ Workflow commands, research agents, review agents, and skills live in `.claude/`
 └── skills/               # brainstorming, agent-native-architecture, create-agent-skills
 ```
 
+> **GitNexus scope**: `computer/` (Python backend) only. Dart/Flutter (`app/`) is not indexed — skip GitNexus tools when working in `app/`.
+
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
