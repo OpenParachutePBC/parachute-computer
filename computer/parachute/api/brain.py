@@ -4,10 +4,11 @@ Brain query API — read-only access to the shared Kuzu graph.
 Endpoints:
   GET  /api/brain/schema            — all tables with column types
   GET  /api/brain/sessions          — conversation sessions (Chat), supports ?search=
-  GET  /api/brain/sessions/{id}     — single session by ID
+  GET  /api/brain/sessions/{id}     — single session + exchanges (brain_get_chat)
+  GET  /api/brain/exchanges         — single exchange by ?id= (brain_get_exchange)
   GET  /api/brain/projects          — named projects
-  GET  /api/brain/daily/entries     — Daily journal notes, supports ?search=
-  GET  /api/brain/memory            — unified memory search across sessions + notes
+  GET  /api/brain/daily/entries     — Daily journal notes (brain_list_notes), supports ?search=
+  GET  /api/brain/memory            — unified memory search across sessions, notes, and exchanges
   POST /api/brain/query             — read-only Cypher passthrough
   POST /api/brain/execute           — write Cypher passthrough (auth required)
 """
@@ -32,15 +33,18 @@ def _get_graph():
 
 
 def _extract_snippet(content: str, query: str, window: int = 200) -> str:
-    """Extract ~200-char snippet centered around the first match of query in content."""
+    """Extract a snippet of up to `window` chars centered around the first match.
+
+    If no match is found, returns the first `window` chars.
+    """
     if not content:
         return ""
     pos = content.lower().find(query.lower())
     if pos < 0:
-        # No match found — return start of content
         return content[:window] + ("..." if len(content) > window else "")
-    start = max(0, pos - 80)
-    end = min(len(content), pos + len(query) + 120)
+    half = window // 2
+    start = max(0, pos - half)
+    end = min(len(content), pos + len(query) + half)
     snippet = content[start:end]
     if start > 0:
         snippet = "..." + snippet
@@ -49,18 +53,26 @@ def _extract_snippet(content: str, query: str, window: int = 200) -> str:
     return snippet
 
 
+def _truncate(text: str | None, max_chars: int) -> str:
+    """Truncate text to max_chars, appending '...' if cut."""
+    if not text:
+        return ""
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars] + "..."
+
+
 @router.get("/schema")
 async def get_schema():
     """Return all node and relationship tables with their column definitions."""
     graph = _get_graph()
 
-    tables= await graph.execute_cypher("CALL show_tables() RETURN *")
+    tables = await graph.execute_cypher("CALL show_tables() RETURN *")
 
     node_tables = []
     rel_tables = []
 
     for t in tables:
-        # KuzuDB returns: name, type, comment
         name = t.get("name", "")
         ttype = str(t.get("type", "NODE")).upper()
 
@@ -68,7 +80,6 @@ async def get_schema():
             col_rows = await graph.execute_cypher(f"CALL table_info('{name}') RETURN *")
             columns = []
             for c in col_rows:
-                # KuzuDB row: {"property id": N, "name": ..., "type": ..., ...}
                 col_name = c.get("name", "")
                 col_type = c.get("type", "")
                 is_pk = c.get("is primary key", False)
@@ -97,11 +108,9 @@ async def list_sessions(
     all: bool = Query(False, description="Show all sessions (including agent runs). Default: human-initiated only."),
     search: str | None = Query(None, description="Search in session title and summary"),
 ):
-    """List conversation sessions from the graph.
+    """List conversation sessions (chats) from the graph.
 
-    By default filters to human-initiated sessions (source=parachute, non-bridge agents).
-    Pass ?all=true to see all sessions including agent runs and bot sessions.
-    Pass ?search=keyword to filter by title or summary content.
+    By default filters to human-initiated sessions. Pass ?search= to filter by title or summary.
     """
     graph = _get_graph()
 
@@ -114,7 +123,6 @@ async def list_sessions(
         where_clauses.append("s.module = $module")
         params["module"] = module
     if not all:
-        # Default: human-initiated sessions only
         where_clauses.append(
             "(s.source = 'parachute' AND (s.agent_type IS NULL OR s.agent_type = 'orchestrator'))"
         )
@@ -135,8 +143,17 @@ async def list_sessions(
 
 
 @router.get("/sessions/{session_id}")
-async def get_session(session_id: str):
-    """Get a single conversation session by ID."""
+async def get_session(
+    session_id: str,
+    exchange_limit: int = Query(25, ge=1, le=200, description="Max exchanges to return (default 25, most recent first)"),
+    max_chars: int = Query(2000, ge=100, le=50000, description="Max chars per message field before truncation"),
+):
+    """Get a single chat session by ID with its exchanges.
+
+    Exchanges are returned most-recent-first up to exchange_limit, then reversed to
+    chronological order. Long user_message/ai_response fields are truncated at max_chars.
+    For full content of a specific exchange, use GET /exchanges?id=...
+    """
     graph = _get_graph()
 
     rows = await graph.execute_cypher(
@@ -148,17 +165,47 @@ async def get_session(session_id: str):
 
     session = rows[0]
 
-    # Fetch exchanges if this session has them
+    # Fetch most recent N exchanges, then reverse to chronological order
     try:
-        exchanges = await graph.execute_cypher(
+        exchange_rows = await graph.execute_cypher(
             "MATCH (s:Chat {session_id: $session_id})-[:HAS_EXCHANGE]->(e:Exchange) "
-            "RETURN e ORDER BY e.exchange_number",
+            f"RETURN e ORDER BY e.exchange_number DESC LIMIT {exchange_limit}",
             {"session_id": session_id},
         )
+        # Reverse to chronological order
+        exchange_rows = list(reversed(exchange_rows))
+        # Truncate long message fields
+        exchanges = []
+        for e in exchange_rows:
+            e["user_message"] = _truncate(e.get("user_message"), max_chars)
+            e["ai_response"] = _truncate(e.get("ai_response"), max_chars)
+            exchanges.append(e)
     except Exception:
+        logger.exception("Failed to fetch exchanges for session %s", session_id)
         exchanges = []
 
-    return {"session": session, "exchanges": exchanges}
+    return {"session": session, "exchanges": exchanges, "exchange_count": len(exchanges)}
+
+
+@router.get("/exchanges")
+async def get_exchange(
+    exchange_id: str = Query(..., alias="id", description="Exchange ID (e.g. session_id:ex:N)"),
+):
+    """Get a single exchange by ID with full message content.
+
+    Use after search_memory or brain_get_chat identifies a specific exchange of interest.
+    Returns full user_message and ai_response without truncation.
+    """
+    graph = _get_graph()
+
+    rows = await graph.execute_cypher(
+        "MATCH (e:Exchange {exchange_id: $exchange_id}) RETURN e",
+        {"exchange_id": exchange_id},
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail=f"Exchange not found: {exchange_id}")
+
+    return {"exchange": rows[0]}
 
 
 @router.get("/projects")
@@ -180,10 +227,11 @@ async def list_daily_entries(
     date_to: str | None = Query(None, description="YYYY-MM-DD"),
     limit: int = Query(20, ge=1, le=200),
     search: str | None = Query(None, description="Search in note content"),
+    note_type: str | None = Query(None, description="Filter by note_type (e.g. 'journal')"),
 ):
-    """List daily journal notes from the graph.
+    """List notes from the graph (brain_list_notes).
 
-    Pass ?search=keyword to filter by note content.
+    Pass ?search= to filter by content. Pass ?note_type=journal for Daily journal entries.
     Pass ?date_from and/or ?date_to (YYYY-MM-DD) to scope by date.
     """
     graph = _get_graph()
@@ -200,6 +248,9 @@ async def list_daily_entries(
     if search:
         where_clauses.append("e.content CONTAINS $search")
         params["search"] = search
+    if note_type:
+        where_clauses.append("e.note_type = $note_type")
+        params["note_type"] = note_type
 
     where = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
     query = (
@@ -214,29 +265,29 @@ async def list_daily_entries(
 @router.get("/memory")
 async def get_memory(
     limit: int = Query(50, ge=1, le=200),
-    search: str | None = Query(None, description="Search query across session summaries and note content"),
+    search: str | None = Query(None, description="Search query across session summaries, note content, and exchange messages"),
     type: Literal["sessions", "notes"] | None = Query(None, description="Filter by type: sessions, notes"),
     date_from: str | None = Query(None, description="YYYY-MM-DD — filter notes by date (start)"),
     date_to: str | None = Query(None, description="YYYY-MM-DD — filter notes by date (end)"),
     note_type: str | None = Query(None, description="Filter notes by note_type (e.g. 'journal')"),
 ):
-    """Unified memory search — sessions and notes merged, sorted by time descending.
+    """Unified memory search — sessions, notes, and exchanges merged, sorted by time descending.
 
-    Returns a chronological mix of conversation sessions and journal entries.
-    When search is provided, matches against Chat.summary + Chat.title for sessions
-    and Note.content for notes. Each result includes a snippet of matched text.
+    When search is provided:
+    - Matches Chat.summary + Chat.title for sessions
+    - Matches Exchange.user_message + Exchange.ai_response + Exchange.description for exchanges
+      (returns parent Chat session with matched exchange description as snippet)
+    - Matches Note.content for notes
 
-    Filters:
-    - type=sessions: sessions only
-    - type=notes: notes only
-    - date_from/date_to: scope notes by date (YYYY-MM-DD)
-    - note_type=journal: only journal-type notes
+    Sessions found via exchange match include matched_exchange_id for follow-up with brain_get_exchange.
+    Results are deduplicated: a session appears once even if multiple exchanges match.
     """
     brain = _get_graph()
     items: list[dict] = []
+    seen_session_ids: set[str] = set()
 
     if type != "notes":
-        # Fetch sessions
+        # --- Session search (title + summary) ---
         session_where_clauses = [
             "(s.archived IS NULL OR s.archived = false)",
             "(s.source = 'parachute' AND (s.agent_type IS NULL OR s.agent_type = 'orchestrator'))",
@@ -253,13 +304,14 @@ async def get_memory(
             session_params or None,
         )
         for s in session_rows:
+            sid = s.get("session_id", "")
+            seen_session_ids.add(sid)
             summary = s.get("summary") or ""
             title = s.get("title") or "Untitled conversation"
-            # Prefer snippet from summary (richer), fall back to title
             search_in = summary if summary else title
             items.append({
                 "kind": "session",
-                "id": s.get("session_id", ""),
+                "id": sid,
                 "title": title,
                 "summary": summary,
                 "snippet": _extract_snippet(search_in, search) if search else "",
@@ -267,8 +319,41 @@ async def get_memory(
                 "module": s.get("module", "chat"),
             })
 
+        # --- Exchange search (full content, returns parent session + description as snippet) ---
+        if search:
+            exchange_where_clauses = [
+                "(s.archived IS NULL OR s.archived = false)",
+                "(s.source = 'parachute' AND (s.agent_type IS NULL OR s.agent_type = 'orchestrator'))",
+                "(e.user_message CONTAINS $search OR e.ai_response CONTAINS $search "
+                "OR e.description CONTAINS $search)",
+            ]
+            ex_rows = await brain.execute_cypher(
+                f"MATCH (s:Chat)-[:HAS_EXCHANGE]->(e:Exchange) "
+                f"WHERE {' AND '.join(exchange_where_clauses)} "
+                f"RETURN s.session_id AS session_id, s.title AS title, s.summary AS summary, "
+                f"s.last_accessed AS last_accessed, s.created_at AS created_at, s.module AS module, "
+                f"e.description AS matched_description, e.exchange_id AS matched_exchange_id "
+                f"ORDER BY s.last_accessed DESC LIMIT {limit}",
+                {"search": search},
+            )
+            for row in ex_rows:
+                sid = row.get("session_id", "")
+                if sid in seen_session_ids:
+                    continue  # already found via session summary search
+                seen_session_ids.add(sid)
+                items.append({
+                    "kind": "session",
+                    "id": sid,
+                    "title": row.get("title") or "Untitled conversation",
+                    "summary": row.get("summary") or "",
+                    "snippet": row.get("matched_description") or "",
+                    "matched_exchange_id": row.get("matched_exchange_id") or "",
+                    "ts": row.get("last_accessed") or row.get("created_at") or "",
+                    "module": row.get("module") or "chat",
+                })
+
     if type != "sessions":
-        # Fetch notes
+        # --- Note search ---
         note_where_clauses = []
         note_params: dict = {}
         if search:
@@ -316,8 +401,8 @@ class CypherRequest(BaseModel):
 async def cypher_query(body: CypherRequest):
     """Execute a read-only Cypher query against the brain (MATCH/RETURN).
 
-    Intended for agents with vault/direct trust. Write queries are not blocked
-    here — trust enforcement is done by the MCP server before calling this endpoint.
+    Intended for power users and debugging. Prefer search_memory, brain_list_chats,
+    brain_list_notes, and brain_get_chat for common use cases.
     """
     brain = _get_graph()
     rows = await brain.execute_cypher(body.query, body.params or None)
