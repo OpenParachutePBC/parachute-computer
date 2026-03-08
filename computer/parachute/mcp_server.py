@@ -2,29 +2,24 @@
 """
 Parachute MCP Server
 
-Provides search access to Parachute data via Model Context Protocol.
-Covers both Chat sessions and Daily journals.
+Provides memory search and brain graph access via Model Context Protocol.
+All tools route through the brain HTTP API — no direct DB access.
 
-Chat Session Tools:
-- search_sessions: Search chat sessions by keyword
-- list_recent_sessions: List recent sessions
-- get_session: Get a specific session with messages
-- search_by_tag: Search sessions with specific tags
-- list_tags / add_session_tag / remove_session_tag
+Memory Search:
+- search_memory: Unified search across Chat sessions, exchanges, and journal Notes
 
-Daily Journal Tools:
-- search_journals: Search journal entries by keyword
-- list_recent_journals: List recent journal dates
-- get_journal: Get a specific day's journal entries
-
-Graph Query Tools:
+Brain Tools:
 - brain_schema: Returns all node and relationship tables in the brain (Kuzu graph)
-- brain_list_sessions: List conversation sessions from the brain
-- brain_get_session: Get a single session by ID from the brain
+- brain_list_chats: List conversation sessions from the brain
+- brain_get_chat: Get a single session by ID with its exchanges (truncated, paginated)
+- brain_get_exchange: Get a single exchange by ID with full message content
 - brain_list_projects: List named project environments (container envs)
-- brain_list_entries: List Daily journal entries from the brain
-- brain_query: Execute a read-only Cypher query against the brain
+- brain_list_notes: List Daily journal Notes from the brain
+- brain_query: Execute a read-only Cypher query (power users / debugging)
 - brain_execute: Execute a write Cypher query against the brain
+
+Tag Tools (read from sessions.db via HTTP API):
+- search_by_tag / list_tags / add_session_tag / remove_session_tag
 
 Run with:
     python -m parachute.mcp_server /path/to/vault
@@ -151,57 +146,6 @@ def _validate_message_content(
 # Tool definitions
 TOOLS = [
     Tool(
-        name="search_sessions",
-        description="Search chat sessions by keyword in title and summary. Returns matching sessions with titles and snippets.",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "Search query - keywords to find in session titles and summaries",
-                },
-                "limit": {
-                    "type": "number",
-                    "description": "Maximum number of results (default: 10)",
-                    "default": 10,
-                },
-                "tags": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Optional: filter by tags",
-                },
-                "source": {
-                    "type": "string",
-                    "description": "Optional: filter by source (parachute, claude, chatgpt, claude-code)",
-                },
-            },
-            "required": ["query"],
-        },
-    ),
-    Tool(
-        name="list_recent_sessions",
-        description="List recent chat sessions from the brain graph, optionally filtered by module or archived status.",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "limit": {
-                    "type": "number",
-                    "description": "Maximum number of sessions to return (default: 20)",
-                    "default": 20,
-                },
-                "archived": {
-                    "type": "boolean",
-                    "description": "Include archived sessions (default: false)",
-                    "default": False,
-                },
-                "module": {
-                    "type": "string",
-                    "description": "Filter by module (chat, daily, build)",
-                },
-            },
-        },
-    ),
-    Tool(
         name="get_session",
         description="Get a specific session by ID, including its messages.",
         inputSchema={
@@ -324,68 +268,13 @@ TOOLS = [
             "required": ["session_id", "message"],
         },
     ),
-    # Daily Journal Tools
-    Tool(
-        name="search_journals",
-        description="Search Daily journal entries by keyword in the brain graph. Returns matching entries with snippets.",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "Search query - keywords to find in journal entries",
-                },
-                "limit": {
-                    "type": "number",
-                    "description": "Maximum number of results (default: 10)",
-                    "default": 10,
-                },
-                "date_from": {
-                    "type": "string",
-                    "description": "Start date (YYYY-MM-DD format)",
-                },
-                "date_to": {
-                    "type": "string",
-                    "description": "End date (YYYY-MM-DD format)",
-                },
-            },
-            "required": ["query"],
-        },
-    ),
-    Tool(
-        name="list_recent_journals",
-        description="List recent journal entries from the brain graph.",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "limit": {
-                    "type": "number",
-                    "description": "Maximum number of dates to return (default: 14)",
-                    "default": 14,
-                },
-            },
-        },
-    ),
-    Tool(
-        name="get_journal",
-        description="Get a specific day's journal entries from the brain graph.",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "date": {
-                    "type": "string",
-                    "description": "Date in YYYY-MM-DD format",
-                },
-            },
-            "required": ["date"],
-        },
-    ),
     # Memory Search Tool
     Tool(
         name="search_memory",
         description=(
-            "Search all memory — chat sessions and journal entries — by keyword. "
+            "Search all memory — chat sessions, conversation exchanges, and journal entries — by keyword. "
             "Returns ranked results with summaries and matched snippets. "
+            "Sessions matched via exchange content include matched_exchange_id for follow-up with brain_get_exchange. "
             "By default searches everything; use 'source' to narrow to 'journal' or 'chat'. "
             "Use date_from/date_to (YYYY-MM-DD) to scope journal results by date."
         ),
@@ -427,24 +316,49 @@ TOOLS = [
         inputSchema={"type": "object", "properties": {}},
     ),
     Tool(
-        name="brain_list_sessions",
-        description="List conversation sessions from the brain (your memory of past conversations).",
+        name="brain_list_chats",
+        description="List recent chat conversations from the brain graph. Use when browsing recent activity rather than searching for something specific.",
         inputSchema={
             "type": "object",
             "properties": {
                 "module": {"type": "string", "description": "Filter by module: chat, daily"},
                 "limit": {"type": "integer", "description": "Max results (default 20)"},
                 "archived": {"type": "boolean", "description": "Include archived (default false)"},
+                "search": {"type": "string", "description": "Optional: filter by title or summary keyword"},
             },
         },
     ),
     Tool(
-        name="brain_get_session",
-        description="Get a single conversation session by ID, including its exchanges.",
+        name="brain_get_chat",
+        description=(
+            "Get a specific chat session by ID with its exchanges. "
+            "Exchanges include description, user_message (truncated), and ai_response (truncated). "
+            "For full content of a specific exchange, use brain_get_exchange. "
+            "Use exchange_limit to control how many exchanges are returned (default 25, most recent)."
+        ),
         inputSchema={
             "type": "object",
-            "properties": {"session_id": {"type": "string"}},
+            "properties": {
+                "session_id": {"type": "string", "description": "The session ID to retrieve"},
+                "exchange_limit": {"type": "integer", "description": "Max exchanges to return (default 25)"},
+                "max_chars": {"type": "integer", "description": "Max chars per message field before truncation (default 2000)"},
+            },
             "required": ["session_id"],
+        },
+    ),
+    Tool(
+        name="brain_get_exchange",
+        description=(
+            "Get a single exchange by ID with full message content (user message + AI response, untruncated). "
+            "Use after search_memory or brain_get_chat identifies a specific exchange of interest. "
+            "The exchange ID is available as matched_exchange_id in search_memory results."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "exchange_id": {"type": "string", "description": "Exchange ID (e.g. session_id:ex:N)"},
+            },
+            "required": ["exchange_id"],
         },
     ),
     Tool(
@@ -456,14 +370,16 @@ TOOLS = [
         },
     ),
     Tool(
-        name="brain_list_entries",
-        description="List Daily journal entries from the brain.",
+        name="brain_list_notes",
+        description="List notes and journal entries from the brain graph. Use date_from/date_to to scope by date. Use note_type='journal' for Daily journal entries.",
         inputSchema={
             "type": "object",
             "properties": {
                 "date_from": {"type": "string", "description": "YYYY-MM-DD"},
                 "date_to": {"type": "string", "description": "YYYY-MM-DD"},
                 "limit": {"type": "integer", "description": "Max results (default 20)"},
+                "note_type": {"type": "string", "description": "Filter by note_type (e.g. 'journal')"},
+                "search": {"type": "string", "description": "Optional: filter by content keyword"},
             },
         },
     ),
@@ -471,7 +387,8 @@ TOOLS = [
         name="brain_query",
         description=(
             "Execute a read-only Cypher query against the Parachute brain (Kuzu graph). "
-            "Use for MATCH/RETURN queries to explore memory. "
+            "For power users and debugging. Prefer search_memory, brain_list_chats, brain_list_notes, "
+            "and brain_get_chat for common use cases. "
             "Call brain_schema first to discover available tables and columns."
         ),
         inputSchema={
@@ -499,84 +416,6 @@ TOOLS = [
         },
     ),
 ]
-
-
-async def search_sessions(
-    query: str,
-    limit: int = 10,
-    tags: Optional[list[str]] = None,
-    source: Optional[str] = None,
-) -> list[dict[str, Any]]:
-    """Search sessions by keyword in title."""
-    db = await get_db()
-
-    # Build query - search in title for now
-    # TODO: Add full-text search in chunks when indexed
-    sql = "SELECT * FROM sessions WHERE title LIKE ?"
-    params: list[Any] = [f"%{query}%"]
-
-    if source:
-        sql += " AND source = ?"
-        params.append(source)
-
-    if tags:
-        # Join with session_tags
-        tag_placeholders = ",".join("?" * len(tags))
-        sql = f"""
-            SELECT DISTINCT s.* FROM sessions s
-            JOIN session_tags t ON s.id = t.session_id
-            WHERE s.title LIKE ? AND t.tag IN ({tag_placeholders})
-        """
-        params = [f"%{query}%"] + [tag.lower() for tag in tags]
-        if source:
-            sql += " AND s.source = ?"
-            params.append(source)
-
-    sql += " ORDER BY last_accessed DESC LIMIT ?"
-    params.append(limit)
-
-    async with db.connection.execute(sql, params) as cursor:
-        rows = await cursor.fetchall()
-        return [
-            {
-                "id": row["id"],
-                "title": row["title"],
-                "source": row["source"],
-                "module": row["module"],
-                "message_count": row["message_count"],
-                "created_at": row["created_at"],
-                "last_accessed": row["last_accessed"],
-                "archived": bool(row["archived"]),
-            }
-            for row in rows
-        ]
-
-
-async def list_recent_sessions(
-    limit: int = 20,
-    archived: bool = False,
-    module: Optional[str] = None,
-) -> list[dict[str, Any]]:
-    """List recent sessions."""
-    db = await get_db()
-    sessions = await db.list_sessions(
-        module=module,
-        archived=archived,
-        limit=limit,
-    )
-    return [
-        {
-            "id": s.id,
-            "title": s.title,
-            "source": s.source.value,
-            "module": s.module,
-            "message_count": s.message_count,
-            "created_at": s.created_at.isoformat(),
-            "last_accessed": s.last_accessed.isoformat(),
-            "archived": s.archived,
-        }
-        for s in sessions
-    ]
 
 
 async def get_session(
@@ -816,214 +655,6 @@ async def send_message(
     }
 
 
-# =============================================================================
-# Daily Journal Functions
-# =============================================================================
-
-def get_journals_path() -> Path:
-    """Get the path to the Daily journals folder."""
-    return Path.home() / "Daily" / "journals"
-
-
-def _is_legacy_journal(content: str) -> bool:
-    """Return True if content lacks para:daily: markers (pre-Dec 15, 2025 Obsidian format)."""
-    return "# para:daily:" not in content
-
-
-async def search_journals(
-    query: str,
-    limit: int = 10,
-    date_from: Optional[str] = None,
-    date_to: Optional[str] = None,
-) -> list[dict[str, Any]]:
-    """Search journal entries by keyword."""
-    journals_path = get_journals_path()
-    if not journals_path.exists():
-        return []
-
-    results = []
-    query_lower = query.lower()
-
-    # Get all journal files, sorted by date descending
-    journal_files = sorted(
-        [f for f in journals_path.glob("*.md") if f.name != "ids.jsonl"],
-        key=lambda f: f.stem,
-        reverse=True,
-    )
-
-    # Apply date filters
-    if date_from:
-        journal_files = [f for f in journal_files if f.stem >= date_from]
-    if date_to:
-        journal_files = [f for f in journal_files if f.stem <= date_to]
-
-    for journal_file in journal_files:
-        if len(results) >= limit:
-            break
-
-        try:
-            content = await asyncio.to_thread(journal_file.read_text, encoding="utf-8")
-
-            # Search in content
-            if query_lower in content.lower():
-                if _is_legacy_journal(content):
-                    # Legacy Obsidian file — treat whole document as one searchable unit
-                    match_pos = content.lower().find(query_lower)
-                    start = max(0, match_pos - 50)
-                    end = min(len(content), match_pos + len(query) + 100)
-                    snippet = content[start:end]
-                    if start > 0:
-                        snippet = "..." + snippet
-                    if end < len(content):
-                        snippet = snippet + "..."
-                    results.append({
-                        "date": journal_file.stem,
-                        "entry_header": f"legacy:{journal_file.stem}",
-                        "snippet": snippet,
-                        "file": str(journal_file.name),
-                        "type": "legacy",
-                    })
-                else:
-                    # New structured format — extract matching para:daily: entries
-                    entries = content.split("\n# para:daily:")
-                    for i, entry in enumerate(entries[1:], 1):  # Skip first (frontmatter)
-                        if query_lower in entry.lower():
-                            # Extract entry ID and time from header
-                            lines = entry.strip().split("\n")
-                            if lines:
-                                header = lines[0]
-                                entry_content = "\n".join(lines[1:]).strip()
-
-                                # Create snippet around match
-                                match_pos = entry_content.lower().find(query_lower)
-                                if match_pos >= 0:
-                                    start = max(0, match_pos - 50)
-                                    end = min(len(entry_content), match_pos + len(query) + 100)
-                                    snippet = entry_content[start:end]
-                                    if start > 0:
-                                        snippet = "..." + snippet
-                                    if end < len(entry_content):
-                                        snippet = snippet + "..."
-                                else:
-                                    snippet = entry_content[:150] + "..." if len(entry_content) > 150 else entry_content
-
-                                results.append({
-                                    "date": journal_file.stem,
-                                    "entry_header": header.strip(),
-                                    "snippet": snippet,
-                                    "file": str(journal_file.name),
-                                })
-
-                                if len(results) >= limit:
-                                    break
-        except Exception as e:
-            logger.warning(f"Error reading journal {journal_file}: {e}")
-            continue
-
-    return results
-
-
-async def list_recent_journals(limit: int = 14) -> list[dict[str, Any]]:
-    """List recent journal dates."""
-    journals_path = get_journals_path()
-    if not journals_path.exists():
-        return []
-
-    # Get all journal files, sorted by date descending
-    journal_files = sorted(
-        [f for f in journals_path.glob("*.md") if f.name != "ids.jsonl"],
-        key=lambda f: f.stem,
-        reverse=True,
-    )[:limit]
-
-    results = []
-    for journal_file in journal_files:
-        try:
-            content = await asyncio.to_thread(journal_file.read_text, encoding="utf-8")
-            if _is_legacy_journal(content):
-                results.append({
-                    "date": journal_file.stem,
-                    "entry_count": 1,
-                    "file": str(journal_file.name),
-                    "type": "legacy",
-                })
-            else:
-                entry_count = content.count("# para:daily:")
-                results.append({
-                    "date": journal_file.stem,
-                    "entry_count": entry_count,
-                    "file": str(journal_file.name),
-                })
-        except Exception as e:
-            logger.warning(f"Error reading journal {journal_file}: {e}")
-            results.append({
-                "date": journal_file.stem,
-                "entry_count": 0,
-                "file": str(journal_file.name),
-                "error": str(e),
-            })
-
-    return results
-
-
-async def get_journal(date: str) -> Optional[dict[str, Any]]:
-    """Get a specific day's journal."""
-    journals_path = get_journals_path()
-    journal_file = journals_path / f"{date}.md"
-
-    if not journal_file.exists():
-        return None
-
-    try:
-        content = await asyncio.to_thread(journal_file.read_text, encoding="utf-8")
-
-        # Legacy Obsidian files have no para:daily: markers — return as single entry
-        if _is_legacy_journal(content):
-            return {
-                "date": date,
-                "file": str(journal_file.name),
-                "entry_count": 1,
-                "entries": [{
-                    "id": f"legacy-{date}",
-                    "time": None,
-                    "type": "legacy",
-                    "content": content,
-                }],
-                "raw_content": content,
-            }
-
-        # Parse structured entries
-        entries = []
-        parts = content.split("\n# para:daily:")
-
-        for i, part in enumerate(parts[1:], 1):  # Skip frontmatter
-            lines = part.strip().split("\n")
-            if lines:
-                header = lines[0].strip()
-                entry_content = "\n".join(lines[1:]).strip()
-
-                # Extract ID and time from header like "g2jvjpj4g9tk 07:30"
-                header_parts = header.split(" ", 1)
-                entry_id = header_parts[0] if header_parts else ""
-                entry_time = header_parts[1] if len(header_parts) > 1 else ""
-
-                entries.append({
-                    "id": entry_id,
-                    "time": entry_time,
-                    "content": entry_content,
-                })
-
-        return {
-            "date": date,
-            "file": str(journal_file.name),
-            "entry_count": len(entries),
-            "entries": entries,
-            "raw_content": content,
-        }
-    except Exception as e:
-        logger.error(f"Error reading journal {journal_file}: {e}")
-        return {"date": date, "error": str(e)}
-
 
 async def _brain_call(
     path: str,
@@ -1121,49 +752,33 @@ async def handle_tool_call(name: str, arguments: dict[str, Any]) -> str:
                 session_id=arguments["session_id"],
                 message=arguments["message"],
             )
-        # Daily Journal Tools — route through brain API (data lives in Note graph nodes)
-        elif name == "search_journals":
-            jp: dict[str, Any] = {
-                "search": arguments["query"],
-                "type": "notes",
-                "note_type": "journal",
-                "limit": arguments.get("limit", 10),
-            }
-            if arguments.get("date_from"):
-                jp["date_from"] = arguments["date_from"]
-            if arguments.get("date_to"):
-                jp["date_to"] = arguments["date_to"]
-            qs = "?" + urllib.parse.urlencode(jp)
-            result = await _brain_call(f"/memory{qs}")
-        elif name == "list_recent_journals":
-            lj: dict[str, Any] = {"limit": arguments.get("limit", 14)}
-            qs = "?" + urllib.parse.urlencode(lj)
-            result = await _brain_call(f"/daily/entries{qs}")
-        elif name == "get_journal":
-            date = arguments["date"]
-            gj: dict[str, Any] = {"date_from": date, "date_to": date, "limit": 50}
-            qs = "?" + urllib.parse.urlencode(gj)
-            result = await _brain_call(f"/daily/entries{qs}")
-            if isinstance(result, dict) and result.get("count", 0) == 0 and "error" not in result:
-                return json.dumps({"error": f"Journal not found for date: {date}"})
         # Brain Tools
         elif name == "brain_schema":
             result = await _brain_call("/schema")
-        elif name == "brain_list_sessions":
-            params = {k: arguments[k] for k in ("module", "limit") if k in arguments}
+        elif name == "brain_list_chats":
+            bp: dict[str, Any] = {k: arguments[k] for k in ("module", "limit", "search") if k in arguments}
             if "archived" in arguments:
-                params["archived"] = "true" if arguments["archived"] else "false"
-            qs = ("?" + urllib.parse.urlencode(params)) if params else ""
+                bp["archived"] = "true" if arguments["archived"] else "false"
+            qs = ("?" + urllib.parse.urlencode(bp)) if bp else ""
             result = await _brain_call(f"/sessions{qs}")
-        elif name == "brain_get_session":
+        elif name == "brain_get_chat":
             sid = urllib.parse.quote(arguments["session_id"], safe="")
-            result = await _brain_call(f"/sessions/{sid}")
+            gp: dict[str, Any] = {}
+            if "exchange_limit" in arguments:
+                gp["exchange_limit"] = arguments["exchange_limit"]
+            if "max_chars" in arguments:
+                gp["max_chars"] = arguments["max_chars"]
+            qs = ("?" + urllib.parse.urlencode(gp)) if gp else ""
+            result = await _brain_call(f"/sessions/{sid}{qs}")
+        elif name == "brain_get_exchange":
+            eid = urllib.parse.quote(arguments["exchange_id"], safe="")
+            result = await _brain_call(f"/exchanges?id={eid}")
         elif name == "brain_list_projects":
             qs = f"?limit={arguments['limit']}" if "limit" in arguments else ""
             result = await _brain_call(f"/projects{qs}")
-        elif name == "brain_list_entries":
-            params = {k: arguments[k] for k in ("date_from", "date_to", "limit") if k in arguments}
-            qs = ("?" + urllib.parse.urlencode(params)) if params else ""
+        elif name == "brain_list_notes":
+            np: dict[str, Any] = {k: arguments[k] for k in ("date_from", "date_to", "limit", "note_type", "search") if k in arguments}
+            qs = ("?" + urllib.parse.urlencode(np)) if np else ""
             result = await _brain_call(f"/daily/entries{qs}")
         elif name == "brain_query":
             # Require vault/direct trust — raw Cypher reads all journal data.
