@@ -30,6 +30,7 @@ CONFIG_KEYS = {
     "port", "host", "default_model", "log_level",
     "cors_origins", "auth_mode", "debug",
     "docker_runtime", "docker_auto_start",
+    "github_app_id", "github_broker_secret",
 }
 
 
@@ -220,6 +221,20 @@ class Settings(BaseSettings):
         description="Optional model override. If not set, uses Claude Code default.",
     )
 
+    # GitHub App credential broker
+    github_app_id: Optional[int] = Field(
+        default=None,
+        description="GitHub App ID for credential broker",
+    )
+    github_installations: dict[str, int] = Field(
+        default_factory=dict,
+        description="Mapping of GitHub org/account name to installation ID",
+    )
+    github_broker_secret: Optional[str] = Field(
+        default=None,
+        description="Bearer token for credential broker endpoint authentication",
+    )
+
     model_config = {
         "env_prefix": "",
         "env_file": ".env",
@@ -291,6 +306,11 @@ class Settings(BaseSettings):
     def log_dir(self) -> Path:
         """Get the daemon log directory path."""
         return PARACHUTE_DIR / "logs"
+
+    @property
+    def github_app_pem_path(self) -> Path:
+        """Path to the GitHub App private key PEM file."""
+        return PARACHUTE_DIR / "github-app.pem"
 
 
 # Global settings instance (lazy-initialized so CLI can set env vars first)

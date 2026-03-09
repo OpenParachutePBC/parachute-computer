@@ -28,6 +28,7 @@ Usage:
     parachute bot approve [ID]         # Approve pending user (list if no ID)
     parachute bot deny ID              # Deny a pending user
     parachute bot users                # List approved users
+    parachute setup github             # Configure GitHub App credential broker
     parachute sandbox clean-cache      # Remove shared package cache volumes
     parachute sandbox inspect          # Inspect sandbox configuration and containers
 """
@@ -1019,6 +1020,194 @@ def cmd_tools(args: argparse.Namespace) -> None:
 
 
 # --- Sandbox command ---
+
+
+def cmd_setup(args: argparse.Namespace) -> None:
+    """Setup integrations."""
+    action = getattr(args, "action", None)
+
+    if action == "github":
+        _setup_github()
+    else:
+        print("Usage: parachute setup github")
+        print("\nAvailable integrations:")
+        print("  github  — Configure GitHub App for credential broker")
+
+
+def _setup_github() -> None:
+    """Interactive setup for GitHub App credential broker."""
+    import secrets
+
+    parachute_dir = _get_parachute_dir()
+    config = _load_yaml_config(parachute_dir)
+    pem_path = parachute_dir / "github-app.pem"
+
+    print("=" * 60)
+    print("  GitHub App Credential Broker Setup")
+    print("=" * 60)
+    print()
+
+    # Check existing configuration
+    existing_app_id = config.get("github_app_id")
+    if existing_app_id and pem_path.exists():
+        existing_installations = config.get("github_installations", {})
+        print(f"GitHub App already configured (App ID: {existing_app_id})")
+        print(f"Installations: {existing_installations}")
+        response = input("\nReconfigure? [y/N]: ").strip().lower()
+        if response not in ("y", "yes"):
+            print("Keeping existing configuration.")
+            return
+
+    # Step 1: Create the GitHub App
+    print("Step 1: Create a GitHub App")
+    print("-" * 40)
+    print()
+    print("Go to: https://github.com/settings/apps/new")
+    print()
+    print("Recommended settings:")
+    print("  Name:          parachute-dev (or any name you like)")
+    print("  Homepage URL:  https://parachute.computer")
+    print("  Webhook:       ☐ Uncheck 'Active' (not needed)")
+    print()
+    print("Repository permissions:")
+    print("  Contents:        Read & write  (push commits, clone)")
+    print("  Pull requests:   Read & write  (create PRs)")
+    print("  Issues:          Read & write  (create issues)")
+    print("  Metadata:        Read-only     (required)")
+    print("  Workflows:       Read & write  (optional, for .github/workflows)")
+    print()
+    print("After creating the app:")
+    print("  1. Note the App ID (shown at the top of the app settings page)")
+    print("  2. Generate a private key (scroll down, click 'Generate a private key')")
+    print("     The .pem file will download automatically.")
+    print()
+
+    # Step 2: Get App ID
+    app_id_str = input("Enter your GitHub App ID: ").strip()
+    if not app_id_str:
+        print("Cancelled.")
+        return
+    try:
+        app_id = int(app_id_str)
+    except ValueError:
+        print(f"Invalid App ID: {app_id_str}")
+        return
+
+    # Step 3: Get PEM file
+    print()
+    pem_input = input(f"Path to private key .pem file [or press Enter to paste]: ").strip()
+
+    if pem_input:
+        # File path provided
+        source_pem = Path(pem_input).expanduser()
+        if not source_pem.exists():
+            print(f"File not found: {source_pem}")
+            return
+        pem_contents = source_pem.read_text()
+    else:
+        # Paste PEM contents
+        print("Paste your private key (end with an empty line):")
+        lines = []
+        while True:
+            line = input()
+            if not line and lines and lines[-1] == "":
+                lines.pop()  # Remove trailing empty line
+                break
+            lines.append(line)
+        pem_contents = "\n".join(lines) + "\n"
+
+    if "-----BEGIN RSA PRIVATE KEY-----" not in pem_contents:
+        print("Warning: This doesn't look like a valid RSA private key PEM file.")
+        response = input("Continue anyway? [y/N]: ").strip().lower()
+        if response not in ("y", "yes"):
+            return
+
+    # Save PEM
+    pem_path.parent.mkdir(parents=True, exist_ok=True)
+    pem_path.write_text(pem_contents)
+    pem_path.chmod(0o600)
+    print(f"  ✓ Private key saved to {pem_path}")
+
+    # Step 4: Configure installations
+    print()
+    print("Step 2: Install the App on your GitHub orgs/accounts")
+    print("-" * 40)
+    print()
+    print("Go to: https://github.com/settings/installations")
+    print("Click 'Configure' next to your app, then choose which repos to grant access.")
+    print()
+    print("For each org/account, you need the installation ID.")
+    print("You can find it in the URL when configuring: github.com/settings/installations/<ID>")
+    print()
+
+    installations: dict[str, int] = {}
+    while True:
+        org = input("GitHub org or username (or press Enter when done): ").strip()
+        if not org:
+            break
+        install_id_str = input(f"  Installation ID for '{org}': ").strip()
+        try:
+            installations[org] = int(install_id_str)
+            print(f"  ✓ {org} → {install_id_str}")
+        except ValueError:
+            print(f"  Invalid installation ID: {install_id_str}")
+
+    if not installations:
+        print("No installations configured. You can add them later in config.yaml.")
+
+    # Step 5: Generate broker secret
+    broker_secret = secrets.token_hex(32)
+
+    # Save everything to config
+    config["github_app_id"] = app_id
+    config["github_installations"] = installations
+    config["github_broker_secret"] = broker_secret
+    save_yaml_config(parachute_dir, config)
+
+    print()
+    print("Step 3: Verify")
+    print("-" * 40)
+
+    # Try to verify by minting a test token
+    if installations:
+        print("Verifying GitHub App configuration...")
+        try:
+            import asyncio
+            from parachute.lib.github_app import GitHubAppBroker
+
+            broker = GitHubAppBroker(
+                app_id=app_id,
+                private_key_pem=pem_contents,
+                installations=installations,
+            )
+            result = asyncio.run(broker.verify())
+            print(f"  ✓ Authenticated as GitHub App: {result['app_name']}")
+
+            # Try minting a token for the first installation
+            first_org = next(iter(installations))
+            first_id = installations[first_org]
+            token_result = asyncio.run(broker.get_token(first_id))
+            print(f"  ✓ Minted test token for {first_org} (expires {token_result['expires_at']})")
+
+        except Exception as e:
+            print(f"  ✗ Verification failed: {e}")
+            print("  Configuration saved anyway — check your App ID and PEM file.")
+
+    print()
+    print("=" * 60)
+    print("  Setup complete!")
+    print("=" * 60)
+    print()
+    print("Configuration saved to ~/.parachute/config.yaml")
+    print()
+    print("Next steps:")
+    print("  1. Rebuild the sandbox image to include credential helpers:")
+    print("     parachute sandbox build")
+    print("  2. Restart the server to load the new config:")
+    print("     parachute server restart")
+    print()
+    print("After that, `git push` and `gh pr create` will work")
+    print("transparently in sandboxed sessions.")
 
 
 def cmd_sandbox(args: argparse.Namespace) -> None:
@@ -2147,6 +2336,11 @@ def main() -> None:
     supervisor_sub.add_parser("install", help="Install supervisor daemon")
     supervisor_sub.add_parser("uninstall", help="Remove supervisor daemon")
 
+    # setup subcommand
+    setup_parser = subparsers.add_parser("setup", help="Setup integrations")
+    setup_sub = setup_parser.add_subparsers(dest="action")
+    setup_sub.add_parser("github", help="Configure GitHub App credential broker")
+
     # sandbox subcommand
     sandbox_parser = subparsers.add_parser("sandbox", help="Sandbox management")
     sandbox_sub = sandbox_parser.add_subparsers(dest="action")
@@ -2195,6 +2389,8 @@ def main() -> None:
         cmd_bot(args)
     elif args.command == "supervisor":
         cmd_supervisor(args)
+    elif args.command == "setup":
+        cmd_setup(args)
     elif args.command == "sandbox":
         cmd_sandbox(args)
     elif args.command == "tools":

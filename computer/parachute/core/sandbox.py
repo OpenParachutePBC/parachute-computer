@@ -317,6 +317,12 @@ class DockerSandbox:
         if config.model:
             env_lines.append(f"PARACHUTE_MODEL={config.model}")
 
+        # Inject credential broker secret for GitHub App integration
+        from parachute.config import get_settings
+        settings = get_settings()
+        if settings.github_broker_secret:
+            env_lines.append(f"BROKER_SECRET={settings.github_broker_secret}")
+
         # Pass filtered MCP server names so the container knows what's allowed
         if config.mcp_servers is not None:
             mcp_names = ",".join(config.mcp_servers.keys())
