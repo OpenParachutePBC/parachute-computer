@@ -79,8 +79,52 @@ _health_cache = ServerHealthCache(ttl=5.0)
 async def lifespan(app: FastAPI):
     """Supervisor startup/shutdown tasks."""
     logger.info("Supervisor starting...")
+
+    # Auto-start Docker if configured (fire-and-forget — don't block startup)
+    if settings:
+        import yaml
+        from parachute.config import get_config_path
+        config_path = get_config_path(settings.parachute_dir)
+        if config_path.exists():
+            try:
+                with open(config_path) as f:
+                    config_data = yaml.safe_load(f) or {}
+                if config_data.get("docker_auto_start"):
+                    if not await _docker_registry.is_daemon_running():
+                        config_override = config_data.get("docker_runtime")
+                        preferred = await _docker_registry.detect_preferred(config_override)
+                        if preferred:
+                            logger.info(
+                                f"Auto-starting Docker ({preferred.display_name}) "
+                                f"per docker_auto_start config"
+                            )
+                            asyncio.create_task(_auto_start_docker(preferred))
+                        else:
+                            logger.warning("docker_auto_start enabled but no runtime detected")
+                    else:
+                        logger.info("docker_auto_start enabled but Docker already running")
+            except Exception as e:
+                logger.error(f"Docker auto-start check failed: {e}")
+
     yield
     logger.info("Supervisor shutting down...")
+
+
+async def _auto_start_docker(runtime: DockerRuntime) -> None:
+    """Background task: start Docker and log the result."""
+    try:
+        started = await _docker_registry.start(runtime)
+        if started:
+            ready = await _docker_registry.poll_ready(timeout=45.0)
+            if ready:
+                logger.info(f"Docker auto-started successfully ({runtime.display_name})")
+                _docker_cache.invalidate()
+            else:
+                logger.warning(f"Docker auto-start: {runtime.display_name} started but not ready after 45s")
+        else:
+            logger.error(f"Docker auto-start failed for {runtime.display_name}")
+    except Exception as e:
+        logger.error(f"Docker auto-start error: {e}")
 
 
 # === FastAPI App ===

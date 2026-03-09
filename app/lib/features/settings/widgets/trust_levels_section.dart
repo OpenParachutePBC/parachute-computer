@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:parachute/core/models/supervisor_models.dart';
+import 'package:parachute/core/providers/supervisor_providers.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/core/providers/app_state_provider.dart' show apiKeyProvider;
 import 'package:parachute/core/providers/feature_flags_provider.dart';
@@ -237,21 +239,56 @@ class _TrustLevelsSectionState extends ConsumerState<TrustLevelsSection> {
     }
   }
 
+  bool _isStartingDocker = false;
+
+  Future<void> _handleStartDocker() async {
+    setState(() => _isStartingDocker = true);
+    try {
+      await ref.read(dockerStatusNotifierProvider.notifier).startDocker();
+      if (mounted) {
+        await _loadData(); // Refresh module/health data too
+      }
+    } finally {
+      if (mounted) setState(() => _isStartingDocker = false);
+    }
+  }
+
   Widget _buildDockerStatus(bool isDark) {
-    final available = _dockerStatus?['available'] == true;
-    final imageExists = _dockerStatus?['image_exists'] == true;
+    final dockerAsync = ref.watch(dockerStatusNotifierProvider);
+
+    return dockerAsync.when(
+      data: (status) => _buildDockerStatusContent(isDark, status),
+      loading: () => _buildDockerStatusContent(isDark, null),
+      error: (_, __) => _buildDockerStatusContent(isDark, null),
+    );
+  }
+
+  Widget _buildDockerStatusContent(bool isDark, DockerStatus? status) {
+    final available = status?.daemonRunning ?? (_dockerStatus?['available'] == true);
+    final imageExists = status?.imageExists ?? (_dockerStatus?['image_exists'] == true);
+    final runtimeDisplay = status?.runtimeDisplay;
+    final hasRuntime = status?.hasRuntime ?? false;
 
     Color statusColor;
     String statusLabel;
     if (available && imageExists) {
       statusColor = BrandColors.forest;
-      statusLabel = 'Docker ready (sandbox image built)';
+      statusLabel = runtimeDisplay != null
+          ? '$runtimeDisplay ready (sandbox image built)'
+          : 'Docker ready (sandbox image built)';
     } else if (available) {
       statusColor = BrandColors.warning;
-      statusLabel = 'Docker available (sandbox image not built)';
+      statusLabel = runtimeDisplay != null
+          ? '$runtimeDisplay running (sandbox image not built)'
+          : 'Docker available (sandbox image not built)';
+    } else if (hasRuntime) {
+      statusColor = BrandColors.warning;
+      statusLabel = runtimeDisplay != null
+          ? '$runtimeDisplay \u2014 not running'
+          : 'Docker not running';
     } else {
       statusColor = isDark ? BrandColors.nightTextSecondary : BrandColors.stone;
-      statusLabel = 'Docker not available';
+      statusLabel = 'No Docker runtime installed';
     }
 
     return Column(
@@ -283,6 +320,32 @@ class _TrustLevelsSectionState extends ConsumerState<TrustLevelsSection> {
                 ),
               ),
             ),
+            // Start Docker button when runtime exists but not running
+            if (!available && hasRuntime)
+              TextButton.icon(
+                onPressed: _isStartingDocker ? null : _handleStartDocker,
+icon: _isStartingDocker
+                    ? SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: isDark ? BrandColors.nightForest : BrandColors.forest,
+                        ),
+                      )
+                    : Icon(
+                        Icons.play_arrow_rounded,
+                        size: 14,
+                        color: isDark ? BrandColors.nightForest : BrandColors.forest,
+                      ),
+                label: Text(
+                  _isStartingDocker ? 'Starting...' : 'Start Docker',
+                  style: TextStyle(
+                    fontSize: TypographyTokens.labelSmall,
+                    color: isDark ? BrandColors.nightForest : BrandColors.forest,
+                  ),
+                ),
+              ),
             // Build button when Docker available but image not built
             if (available && !imageExists)
               TextButton.icon(
@@ -311,7 +374,7 @@ class _TrustLevelsSectionState extends ConsumerState<TrustLevelsSection> {
               ),
           ],
         ),
-        if (_isBuilding)
+        if (_isBuilding || _isStartingDocker)
           Padding(
             padding: EdgeInsets.only(top: Spacing.xs),
             child: LinearProgressIndicator(
