@@ -36,25 +36,11 @@ fi
 
 BROKER_URL="${CREDENTIAL_BROKER_URL:-http://host.docker.internal:3333/api}"
 
-# Resolve org -> installation_id
-INSTALL_RESULT=$(curl -sf --connect-timeout 5 --max-time 10 \
-    -H "Authorization: Bearer $BROKER_SECRET" \
-    "${BROKER_URL}/credentials/github/installation?org=${ORG}" 2>/dev/null) || {
-    echo "Warning: Could not reach credential broker — running gh without auth" >&2
-    exec /usr/bin/gh-real "$@"
-}
-
-INSTALL_ID=$(echo "$INSTALL_RESULT" | jq -r '.installation_id // empty')
-if [ -z "$INSTALL_ID" ]; then
-    echo "Warning: No installation ID for org '$ORG' — running gh without auth" >&2
-    exec /usr/bin/gh-real "$@"
-fi
-
-# Fetch token
+# Fetch token (broker resolves org -> installation internally)
 TOKEN_RESULT=$(curl -sf --connect-timeout 5 --max-time 10 \
     -H "Authorization: Bearer $BROKER_SECRET" \
-    "${BROKER_URL}/credentials/github/token?installation_id=${INSTALL_ID}" 2>/dev/null) || {
-    echo "Warning: Failed to get token from broker — running gh without auth" >&2
+    "${BROKER_URL}/credentials/github/token?org=${ORG}" 2>/dev/null) || {
+    echo "Warning: Could not reach credential broker — running gh without auth" >&2
     exec /usr/bin/gh-real "$@"
 }
 

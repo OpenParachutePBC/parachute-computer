@@ -14,8 +14,10 @@ Flow:
 Dependencies: PyJWT[crypto] (JWT signing with RS256)
 """
 
+import datetime
 import logging
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
@@ -23,12 +25,17 @@ import jwt
 
 logger = logging.getLogger(__name__)
 
-# Token cache: installation_id -> {"token": str, "expires_at": float (unix)}
-_token_cache: dict[int, dict] = {}
-
 
 class GitHubAppError(Exception):
     """Raised when GitHub App operations fail."""
+
+
+@dataclass(slots=True)
+class InstallationToken:
+    """A short-lived GitHub App installation token."""
+
+    token: str
+    expires_at: str  # ISO 8601
 
 
 class GitHubAppBroker:
@@ -44,6 +51,7 @@ class GitHubAppBroker:
         self.app_id = app_id
         self.private_key_pem = private_key_pem
         self.installations = installations  # org_name -> installation_id
+        self._token_cache: dict[int, dict] = {}
 
     @classmethod
     def from_config(
@@ -84,26 +92,33 @@ class GitHubAppBroker:
         }
         return jwt.encode(payload, self.private_key_pem, algorithm="RS256")
 
-    def get_installation_id(self, org: str) -> int | None:
-        """Look up installation ID for an org/account name."""
-        return self.installations.get(org)
+    async def get_token_for_org(self, org: str) -> InstallationToken:
+        """Get an installation token for an org, using cache if valid.
 
-    async def get_token(self, installation_id: int) -> dict:
+        Resolves the org name to an installation ID internally,
+        then mints or returns a cached token.
+
+        Raises:
+            GitHubAppError: If the org is unknown or token minting fails.
+        """
+        installation_id = self.installations.get(org)
+        if installation_id is None:
+            raise GitHubAppError(f"No GitHub App installation for org: {org}")
+        return await self._get_token(installation_id)
+
+    async def _get_token(self, installation_id: int) -> InstallationToken:
         """Get an installation token, using cache if valid.
-
-        Returns:
-            {"token": "ghs_...", "expires_at": "2026-03-09T01:00:00Z"}
 
         Raises:
             GitHubAppError: If token minting fails.
         """
         # Check cache — refresh if less than 5 minutes until expiry
-        cached = _token_cache.get(installation_id)
+        cached = self._token_cache.get(installation_id)
         if cached and cached["expires_at"] - time.time() > 300:
-            return {
-                "token": cached["token"],
-                "expires_at": cached["expires_at_iso"],
-            }
+            return InstallationToken(
+                token=cached["token"],
+                expires_at=cached["expires_at_iso"],
+            )
 
         # Mint a new token
         app_jwt = self._make_jwt()
@@ -133,20 +148,19 @@ class GitHubAppBroker:
         expires_at_iso = data["expires_at"]  # e.g. "2026-03-09T01:00:00Z"
 
         # Parse expiry to unix timestamp for cache comparison
-        import datetime
         expires_at_unix = datetime.datetime.fromisoformat(
             expires_at_iso.replace("Z", "+00:00")
         ).timestamp()
 
         # Cache it
-        _token_cache[installation_id] = {
+        self._token_cache[installation_id] = {
             "token": token,
             "expires_at": expires_at_unix,
             "expires_at_iso": expires_at_iso,
         }
 
         logger.info(f"Minted GitHub token for installation {installation_id}, expires {expires_at_iso}")
-        return {"token": token, "expires_at": expires_at_iso}
+        return InstallationToken(token=token, expires_at=expires_at_iso)
 
     async def verify(self) -> dict:
         """Verify the GitHub App configuration by checking the App identity.
@@ -168,7 +182,7 @@ class GitHubAppBroker:
                         "X-GitHub-Api-Version": "2022-11-28",
                     },
                     timeout=10.0,
-                )
+)
                 resp.raise_for_status()
         except httpx.HTTPError as e:
             raise GitHubAppError(f"Failed to verify GitHub App: {e}") from e
@@ -182,23 +196,21 @@ class GitHubAppBroker:
 
 
 # Module-level singleton, initialized lazily
-_broker: GitHubAppBroker | None = None
-_broker_initialized: bool = False
+_UNSET = object()
+_broker: "GitHubAppBroker | None | object" = _UNSET
 
 
 def get_broker() -> GitHubAppBroker | None:
     """Get the module-level broker singleton, initializing from config if needed."""
-    global _broker, _broker_initialized
+    global _broker
 
-    if _broker_initialized:
-        return _broker
-
-    _broker_initialized = True
+    if _broker is not _UNSET:
+        return _broker  # type: ignore[return-value]
 
     from parachute.config import get_settings
     settings = get_settings()
 
-    _broker= GitHubAppBroker.from_config(
+    _broker = GitHubAppBroker.from_config(
         app_id=settings.github_app_id,
         pem_path=settings.github_app_pem_path,
         installations=settings.github_installations,
@@ -214,7 +226,5 @@ def get_broker() -> GitHubAppBroker | None:
 
 def reset_broker() -> None:
     """Reset the broker singleton (for testing or config reload)."""
-    global _broker, _broker_initialized
-    _broker = None
-    _broker_initialized = False
-    _token_cache.clear()
+    global _broker
+    _broker = _UNSET

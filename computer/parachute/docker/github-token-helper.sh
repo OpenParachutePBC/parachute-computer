@@ -1,8 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 # Git credential helper — called by git with protocol/host/path on stdin.
-# Parses org from the repo path, resolves installation ID via the broker,
-# fetches a short-lived token, and returns it to git.
+# Parses org from the repo path, fetches a short-lived token from the broker.
 #
 # Installed via: git config --system credential.helper '!/usr/local/bin/github-token-helper.sh'
 # Requires: BROKER_SECRET env var, curl, jq
@@ -39,20 +38,10 @@ fi
 
 BROKER_URL="${CREDENTIAL_BROKER_URL:-http://host.docker.internal:3333/api}"
 
-# Resolve org -> installation_id
-INSTALL_RESULT=$(curl -sf --connect-timeout 5 --max-time 10 \
-  -H "Authorization: Bearer $BROKER_SECRET" \
-  "${BROKER_URL}/credentials/github/installation?org=${ORG}" 2>/dev/null) || exit 1
-
-INSTALL_ID=$(echo "$INSTALL_RESULT" | jq -r '.installation_id // empty')
-if [ -z "$INSTALL_ID" ]; then
-  exit 1
-fi
-
-# Fetch token
+# Fetch token (broker resolves org -> installation internally)
 TOKEN_RESULT=$(curl -sf --connect-timeout 5 --max-time 10 \
   -H "Authorization: Bearer $BROKER_SECRET" \
-  "${BROKER_URL}/credentials/github/token?installation_id=${INSTALL_ID}" 2>/dev/null) || exit 1
+  "${BROKER_URL}/credentials/github/token?org=${ORG}" 2>/dev/null) || exit 1
 
 TOKEN=$(echo "$TOKEN_RESULT" | jq -r '.token // empty')
 if [ -z "$TOKEN" ]; then

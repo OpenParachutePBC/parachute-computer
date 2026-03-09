@@ -8,6 +8,7 @@ helper + gh CLI wrapper) — the agent never sees the token directly.
 Endpoints are protected by a bearer secret shared between the host and containers.
 """
 
+import hmac
 import logging
 
 from fastapi import APIRouter, HTTPException, Request
@@ -28,24 +29,17 @@ class GitHubTokenResponse(BaseModel):
     expires_at: str = Field(..., description="ISO 8601 expiry timestamp")
 
 
-class InstallationResponse(BaseModel):
-    """Response containing an installation ID for an org."""
-
-    installation_id: int
-    org: str
-
-
 class BrokerStatusResponse(BaseModel):
     """Response containing broker configuration status."""
 
     configured: bool
     app_id: int | None = None
-    installations: dict[str, int] = Field(default_factory=dict)
 
 
 def _validate_broker_secret(request: Request) -> None:
     """Validate the Authorization header against the broker secret.
 
+    Uses constant-time comparison to prevent timing attacks.
     Raises HTTPException 401 if invalid or not configured.
     """
     settings = get_settings()
@@ -54,16 +48,23 @@ def _validate_broker_secret(request: Request) -> None:
         raise HTTPException(status_code=503, detail="Credential broker not configured")
 
     auth_header = request.headers.get("authorization", "")
-    if not auth_header.startswith("Bearer ") or auth_header[7:] != broker_secret:
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Invalid broker secret")
+
+    provided = auth_header[7:]
+    if not hmac.compare_digest(provided.encode(), broker_secret.encode()):
         raise HTTPException(status_code=401, detail="Invalid broker secret")
 
 
 @router.get("/github/token", response_model=GitHubTokenResponse)
-async def get_github_token(request: Request, installation_id: int):
+async def get_github_token(request: Request, org: str):
     """
-    Mint a short-lived GitHub App installation token.
+    Mint a short-lived GitHub App installation token for an org.
 
     Called by the git credential helper and gh CLI wrapper in sandbox containers.
+    The org-to-installation resolution happens server-side — containers only need
+    to know the org name from the git remote URL.
+
     Requires Bearer authentication with the broker secret.
     """
     _validate_broker_secret(request)
@@ -72,45 +73,13 @@ async def get_github_token(request: Request, installation_id: int):
     if not broker:
         raise HTTPException(status_code=503, detail="GitHub App broker not configured")
 
-    # Verify this installation_id is in our configured installations
-    valid_ids = set(broker.installations.values())
-    if installation_id not in valid_ids:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Unknown installation ID: {installation_id}",
-        )
-
     try:
-        result = await broker.get_token(installation_id)
+        result = await broker.get_token_for_org(org)
     except GitHubAppError as e:
-        logger.error(f"Failed to mint token for installation {installation_id}: {e}")
-        raise HTTPException(status_code=502, detail=str(e))
+        logger.error(f"Failed to mint token for org '{org}': {e}")
+        raise HTTPException(status_code=404, detail=str(e))
 
-    return GitHubTokenResponse(token=result["token"], expires_at=result["expires_at"])
-
-
-@router.get("/github/installation", response_model=InstallationResponse)
-async def get_installation(request: Request, org: str):
-    """
-    Resolve a GitHub org/account name to an installation ID.
-
-    Convenience endpoint so credential helpers don't need a local copy
-    of the installations mapping.
-    """
-    _validate_broker_secret(request)
-
-    broker = get_broker()
-    if not broker:
-        raise HTTPException(status_code=503, detail="GitHub App broker not configured")
-
-    installation_id = broker.get_installation_id(org)
-    if installation_id is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"No GitHub App installation for org: {org}",
-        )
-
-    return InstallationResponse(installation_id=installation_id, org=org)
+    return GitHubTokenResponse(token=result.token, expires_at=result.expires_at)
 
 
 @router.get("/github/status", response_model=BrokerStatusResponse)
@@ -118,8 +87,8 @@ async def get_broker_status(request: Request):
     """
     Check credential broker configuration status.
 
-    This endpoint does NOT require broker secret authentication —
-    it only returns whether the broker is configured, not any secrets.
+    Returns only whether the broker is configured and the app ID.
+    No sensitive data is exposed.
     """
     broker = get_broker()
     if not broker:
@@ -128,5 +97,4 @@ async def get_broker_status(request: Request):
     return BrokerStatusResponse(
         configured=True,
         app_id=broker.app_id,
-        installations=broker.installations,
     )
