@@ -108,20 +108,23 @@ class TestBuildToolGuidance:
         # Check for guidance from the Brain: Browse group
         assert "Browse and read past conversations" in result
 
-    def test_empty_string_when_no_groups_match(self):
-        """Should return empty string if no groups match (edge case)."""
-        # This shouldn't happen with current TRUST_ORDER, but test the behavior
-        # by monkeypatching would be complex — just verify non-empty for valid levels
-        assert build_tool_guidance("direct") != ""
-        assert build_tool_guidance("sandboxed") != ""
+    def test_empty_string_when_no_groups_match(self, monkeypatch):
+        """Should return empty string if no tool groups match the trust level."""
+        monkeypatch.setattr("parachute.core.tool_guidance.TOOL_GROUPS", [])
+        assert build_tool_guidance("direct") == ""
+        assert build_tool_guidance("sandboxed") == ""
 
     def test_direct_is_superset_of_sandboxed(self):
-        """Direct guidance should contain everything sandboxed has, plus more."""
+        """Direct guidance should contain every sandboxed group plus direct-only groups."""
         direct = build_tool_guidance("direct")
         sandboxed = build_tool_guidance("sandboxed")
-        assert len(direct) > len(sandboxed)
-        # Every sandboxed tool group should appear in direct
+        # Every sandboxed tool group must appear in both outputs
         for group in TOOL_GROUPS:
             if group["trust"] == "sandboxed":
                 assert group["name"] in direct
                 assert group["name"] in sandboxed
+        # Direct-only groups must appear only in direct output
+        for group in TOOL_GROUPS:
+            if group["trust"] == "direct":
+                assert group["name"] in direct
+                assert group["name"] not in sandboxed

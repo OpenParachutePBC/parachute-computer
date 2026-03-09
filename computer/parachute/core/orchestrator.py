@@ -152,6 +152,7 @@ class CapabilityBundle:
     plugin_dirs: list[Path]
     agents_dict: dict | None
     effective_trust: str
+    tool_guidance: str  # Dynamic tool guidance markdown, filtered by trust level
     warnings: list[dict] = field(default_factory=list)  # Serialized WarningEvent dicts
 
 
@@ -385,20 +386,9 @@ class Orchestrator:
             if project and project.core_memory:
                 project_memory = project.core_memory[:4000]
 
-        # Resolve trust level early for prompt building (same logic as _discover_capabilities)
-        from parachute.core.trust import normalize_trust_level
-
-        if trust_level:
-            try:
-                prompt_trust = normalize_trust_level(trust_level)
-            except ValueError:
-                prompt_trust = session.get_trust_level().value
-        elif session.trust_level:
-            prompt_trust = session.get_trust_level().value
-        else:
-            prompt_trust = "direct"
-
         # Build system prompt (after loading prior conversation, with working dir)
+        # Note: tool guidance is injected later, after capability discovery resolves
+        # the trust level and generates the filtered tool guidance markdown.
         # Only surface credential discoverability for non-bot sessions — bot sessions
         # receive empty credentials, so advertising pre-authenticated tools would mislead the agent.
         prompt_cred_keys = (
@@ -415,7 +405,6 @@ class Orchestrator:
             credential_keys=prompt_cred_keys,
             mode=effective_mode,
             project_memory=project_memory,
-            trust_level=prompt_trust,
         )
 
         logger.info(
@@ -489,6 +478,11 @@ class Orchestrator:
         try:
             # Phase 2: Capability discovery
             caps = await self._discover_capabilities(agent, session, trust_level)
+
+            # Inject trust-filtered tool guidance into the prompt
+            # (skipped for custom/agent prompts — those manage their own tool docs)
+            if caps.tool_guidance and prompt_metadata.get("prompt_source") not in ("custom", "agent"):
+                effective_prompt = f"{effective_prompt}\n\n{caps.tool_guidance}"
 
             # converse mode always uses a full replacement prompt (no Claude Code preset)
             is_full_prompt = prompt_metadata.get("prompt_source") in ("custom", "agent", "converse")
@@ -871,6 +865,7 @@ class Orchestrator:
             plugin_dirs=plugin_dirs,
             agents_dict=agents_dict,
             effective_trust=effective_trust,
+            tool_guidance=build_tool_guidance(effective_trust),
             warnings=warnings,
         )
 
@@ -1584,17 +1579,18 @@ class Orchestrator:
         credential_keys: Optional[set[str]] = None,
         mode: str = "converse",
         project_memory: Optional[str] = None,
-        trust_level: Optional[str] = None,
     ) -> tuple[str, dict[str, Any]]:
         """
         Build the system prompt additions.
 
         The SDK handles project-level discovery (CLAUDE.md, .claude/ commands/skills/agents)
         via setting_sources=["project"]. This method builds additional content:
-        - Dynamic tool guidance (filtered by trust level)
         - Vault-level CLAUDE.md (outside the project root)
         - Prior conversation history (runtime only)
         - Explicitly selected context files
+
+        Note: Dynamic tool guidance is injected separately by run_streaming()
+        after capability discovery resolves the trust level.
 
         For converse mode: returns CONVERSE_PROMPT as a full replacement (no preset).
         For cocreate mode: returns COCREATE_PROMPT_APPEND appended to Claude Code preset.
@@ -1654,11 +1650,6 @@ class Orchestrator:
                         metadata["prompt_source_path"] = "CLAUDE.md"
                 except OSError as e:
                     logger.warning(f"Failed to read vault CLAUDE.md: {e}")
-
-        # Dynamic tool guidance — filtered by trust level
-        tool_guidance = build_tool_guidance(trust_level or "direct")
-        if tool_guidance:
-            append_parts.append(tool_guidance)
 
         # Project context (core_memory from Project node) — injected after mode framing
         if project_memory:

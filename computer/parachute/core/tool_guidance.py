@@ -9,17 +9,28 @@ tool documentation with usage guidance.
 
 from __future__ import annotations
 
+from typing import Literal, TypedDict
+
 from parachute.core.capability_filter import TRUST_ORDER, trust_rank
 
-# ---------------------------------------------------------------------------
-# Tool groups — each group has:
-#   name:     display label
-#   trust:    minimum trust level ("sandboxed" = everywhere, "direct" = trusted only)
-#   guidance: contextual usage guidance (when/why to use these tools)
-#   tools:    list of {name, description} dicts
-# ---------------------------------------------------------------------------
 
-TOOL_GROUPS: list[dict] = [
+class ToolEntry(TypedDict):
+    """A single MCP tool with its name and description."""
+
+    name: str
+    description: str
+
+
+class ToolGroup(TypedDict):
+    """A group of related MCP tools with shared trust level and usage guidance."""
+
+    name: str
+    trust: Literal["direct", "sandboxed"]
+    guidance: str
+    tools: list[ToolEntry]
+
+
+TOOL_GROUPS: list[ToolGroup] = [
     {
         "name": "Memory Search",
         "trust": "sandboxed",
