@@ -77,6 +77,10 @@ class _JournalEntryRowState extends ConsumerState<JournalEntryRow> {
   bool? _cachedLikelyTruncated;
   String? _cachedContentForTruncation;
 
+  // Cache markdown style sheet to avoid allocating per build in list scroll
+  MarkdownStyleSheet? _cachedMarkdownStyle;
+  bool? _cachedMarkdownIsDark;
+
   @override
   void initState() {
     super.initState();
@@ -690,39 +694,44 @@ class _JournalEntryRowState extends ConsumerState<JournalEntryRow> {
       _cachedLikelyTruncated = likelyTruncated;
     }
 
-    final markdownStyle = MarkdownStyleSheet(
-      p: theme.textTheme.bodyMedium?.copyWith(
-        color: isDark ? BrandColors.stone : BrandColors.charcoal,
-        height: 1.6,
-      ),
-      h1: theme.textTheme.titleMedium?.copyWith(
-        color: isDark ? BrandColors.softWhite : BrandColors.ink,
-        fontWeight: FontWeight.bold,
-      ),
-      h2: theme.textTheme.titleSmall?.copyWith(
-        color: isDark ? BrandColors.softWhite : BrandColors.ink,
-        fontWeight: FontWeight.w600,
-      ),
-      listBullet: theme.textTheme.bodyMedium?.copyWith(
-        color: isDark ? BrandColors.stone : BrandColors.charcoal,
-      ),
-      code: TextStyle(
-        fontFamily: 'monospace',
-        fontSize: 13,
-        backgroundColor: isDark
-            ? BrandColors.charcoal.withValues(alpha: 0.3)
-            : BrandColors.stone.withValues(alpha: 0.3),
-        color: isDark ? BrandColors.turquoise : BrandColors.turquoiseDeep,
-      ),
-      blockquoteDecoration: BoxDecoration(
-        border: Border(
-          left: BorderSide(
-            color: BrandColors.driftwood,
-            width: 3,
+    // Cache style sheet — only rebuild when theme changes
+    if (_cachedMarkdownStyle == null || _cachedMarkdownIsDark != isDark) {
+      _cachedMarkdownIsDark = isDark;
+      _cachedMarkdownStyle = MarkdownStyleSheet(
+        p: theme.textTheme.bodyMedium?.copyWith(
+          color: isDark ? BrandColors.stone : BrandColors.charcoal,
+          height: 1.6,
+        ),
+        h1: theme.textTheme.titleMedium?.copyWith(
+          color: isDark ? BrandColors.softWhite : BrandColors.ink,
+          fontWeight: FontWeight.bold,
+        ),
+        h2: theme.textTheme.titleSmall?.copyWith(
+          color: isDark ? BrandColors.softWhite : BrandColors.ink,
+          fontWeight: FontWeight.w600,
+        ),
+        listBullet: theme.textTheme.bodyMedium?.copyWith(
+          color: isDark ? BrandColors.stone : BrandColors.charcoal,
+        ),
+        code: TextStyle(
+          fontFamily: 'monospace',
+          fontSize: 13,
+          backgroundColor: isDark
+              ? BrandColors.charcoal.withValues(alpha: 0.3)
+              : BrandColors.stone.withValues(alpha: 0.3),
+          color: isDark ? BrandColors.turquoise : BrandColors.turquoiseDeep,
+        ),
+        blockquoteDecoration: BoxDecoration(
+          border: Border(
+            left: BorderSide(
+              color: BrandColors.driftwood,
+              width: 3,
+            ),
           ),
         ),
-      ),
-    );
+      );
+    }
+    final markdownStyle = _cachedMarkdownStyle!;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,

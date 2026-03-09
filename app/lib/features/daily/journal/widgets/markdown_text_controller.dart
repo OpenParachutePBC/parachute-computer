@@ -54,19 +54,17 @@ class MarkdownTextEditingController extends TextEditingController {
       matches.add(_InlineMatch(match.start, match.end, 'bold', match));
     }
     for (final match in _italicRegex.allMatches(text)) {
-      // Skip if overlaps with a bold match
+      // Skip if overlaps with any existing match (standard interval overlap)
       final overlaps = matches.any((m) =>
-          m.type == 'bold' &&
-          match.start >= m.start &&
-          match.start < m.end);
+          match.start < m.end && match.end > m.start);
       if (!overlaps) {
         matches.add(_InlineMatch(match.start, match.end, 'italic', match));
       }
     }
     for (final match in _codeRegex.allMatches(text)) {
-      // Skip if overlaps with an existing match
+      // Skip if overlaps with any existing match
       final overlaps = matches.any((m) =>
-          match.start >= m.start && match.start < m.end);
+          match.start < m.end && match.end > m.start);
       if (!overlaps) {
         matches.add(_InlineMatch(match.start, match.end, 'code', match));
       }

@@ -1151,8 +1151,10 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
         content: updatedEntry.content,
         metadata: {'title': updatedEntry.title},
       );
+      if (!mounted) return;
       if (serverUpdated == null) {
         final cache = await ref.read(journalLocalCacheProvider.future);
+        if (!mounted) return;
         cache.markForEdit(
           updatedEntry.id,
           content: updatedEntry.content,

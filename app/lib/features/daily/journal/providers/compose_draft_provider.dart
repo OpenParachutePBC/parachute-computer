@@ -28,7 +28,7 @@ class ComposeDraftNotifier extends Notifier<ComposeDraft> {
 
   @override
   ComposeDraft build() {
-    // Load draft synchronously from cache, async from SharedPreferences
+    ref.onDispose(() => _debounceTimer?.cancel());
     _loadDraft();
     return const ComposeDraft(title: '', content: '');
   }

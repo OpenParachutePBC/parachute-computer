@@ -45,6 +45,8 @@ class _ComposeScreenState extends ConsumerState<ComposeScreen>
   final FocusNode _contentFocusNode = FocusNode();
   final FocusNode _titleFocusNode = FocusNode();
   bool _showPreview = false;
+  bool _draftRestored = false;
+  bool _shouldRestoreDraft = false;
 
   bool get _hasContent =>
       _titleController.text.trim().isNotEmpty ||
@@ -66,12 +68,12 @@ class _ComposeScreenState extends ConsumerState<ComposeScreen>
       bodyColor: isDark ? BrandColors.stone : BrandColors.charcoal,
     );
 
-    // If no initial content provided, try loading draft
-    if ((widget.initialContent == null || widget.initialContent!.isEmpty) &&
+    // If no initial content, draft will be restored reactively via
+    // ref.listen in build() — handles both sync cache hits and async loads.
+    _shouldRestoreDraft =
+        (widget.initialContent == null || widget.initialContent!.isEmpty) &&
         (widget.initialTitle == null || widget.initialTitle!.isEmpty) &&
-        !widget.isEditing) {
-      _restoreDraft();
-    }
+        !widget.isEditing;
 
     _titleController.addListener(_onTextChanged);
     _contentController.addListener(_onTextChanged);
@@ -105,27 +107,25 @@ class _ComposeScreenState extends ConsumerState<ComposeScreen>
     }
   }
 
-  void _restoreDraft() {
-    final draft = ref.read(composeDraftProvider);
-    if (draft.isNotEmpty) {
-      _titleController.text = draft.title;
-      _contentController.text = draft.content;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Draft restored'),
-              duration: Duration(seconds: 2),
-              behavior: SnackBarBehavior.floating,
-            ),
-          );
-        }
-      });
+  void _restoreDraft(ComposeDraft draft) {
+    if (_draftRestored || draft.isEmpty) return;
+    _draftRestored = true;
+    _titleController.text = draft.title;
+    _contentController.text = draft.content;
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Draft restored'),
+          duration: Duration(seconds: 2),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
     }
   }
 
   void _onTextChanged() {
-    setState(() {});
+    // No setState — save button uses ValueListenableBuilder to
+    // avoid rebuilding the entire compose screen on every keystroke.
     if (!widget.isEditing) {
       ref.read(composeDraftProvider.notifier).saveDraft(
             _titleController.text,
@@ -188,6 +188,7 @@ class _ComposeScreenState extends ConsumerState<ComposeScreen>
   }
 
   /// Insert markdown syntax around the current selection or at cursor.
+  /// Uses [TextEditingValue] to preserve IME composing state.
   void _insertMarkdown(String prefix, [String? suffix]) {
     final text = _contentController.text;
     final selection = _contentController.selection;
@@ -198,9 +199,11 @@ class _ComposeScreenState extends ConsumerState<ComposeScreen>
           prefix +
           suffix +
           text.substring(selection.start);
-      _contentController.text = newText;
-      _contentController.selection = TextSelection.collapsed(
-        offset: selection.start + prefix.length,
+      _contentController.value = TextEditingValue(
+        text: newText,
+        selection: TextSelection.collapsed(
+          offset: selection.start + prefix.length,
+        ),
       );
     } else {
       final selected = text.substring(selection.start, selection.end);
@@ -209,10 +212,12 @@ class _ComposeScreenState extends ConsumerState<ComposeScreen>
           selected +
           suffix +
           text.substring(selection.end);
-      _contentController.text = newText;
-      _contentController.selection = TextSelection(
-        baseOffset: selection.start + prefix.length,
-        extentOffset: selection.end + prefix.length,
+      _contentController.value = TextEditingValue(
+        text: newText,
+        selection: TextSelection(
+          baseOffset: selection.start + prefix.length,
+          extentOffset: selection.end + prefix.length,
+        ),
       );
     }
 
@@ -220,6 +225,7 @@ class _ComposeScreenState extends ConsumerState<ComposeScreen>
   }
 
   /// Insert markdown at the start of the current line.
+  /// Uses [TextEditingValue] to preserve IME composing state.
   void _insertLinePrefix(String prefix) {
     final text = _contentController.text;
     final selection = _contentController.selection;
@@ -232,16 +238,20 @@ class _ComposeScreenState extends ConsumerState<ComposeScreen>
     if (text.substring(lineStart).startsWith(prefix)) {
       final newText =
           text.substring(0, lineStart) + text.substring(lineStart + prefix.length);
-      _contentController.text = newText;
-      _contentController.selection = TextSelection.collapsed(
-        offset: selection.start - prefix.length,
+      _contentController.value = TextEditingValue(
+        text: newText,
+        selection: TextSelection.collapsed(
+          offset: selection.start - prefix.length,
+        ),
       );
     } else {
       final newText =
           text.substring(0, lineStart) + prefix + text.substring(lineStart);
-      _contentController.text = newText;
-      _contentController.selection = TextSelection.collapsed(
-        offset: selection.start + prefix.length,
+      _contentController.value = TextEditingValue(
+        text: newText,
+        selection: TextSelection.collapsed(
+          offset: selection.start + prefix.length,
+        ),
       );
     }
 
@@ -250,9 +260,24 @@ class _ComposeScreenState extends ConsumerState<ComposeScreen>
 
   @override
   Widget build(BuildContext context) {
+    // Reactively restore draft when async _loadDraft() completes
+    if (_shouldRestoreDraft) {
+      ref.listen<ComposeDraft>(composeDraftProvider, (prev, next) {
+        if (!_draftRestored && next.isNotEmpty) {
+          _restoreDraft(next);
+        }
+      });
+      // Also check current value (covers sync cache hit)
+      final current = ref.read(composeDraftProvider);
+      if (!_draftRestored && current.isNotEmpty) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _restoreDraft(current);
+        });
+      }
+    }
+
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
-    final canSave = _contentController.text.trim().isNotEmpty;
 
     return PopScope(
       canPop: false,
@@ -289,21 +314,27 @@ class _ComposeScreenState extends ConsumerState<ComposeScreen>
               tooltip: _showPreview ? 'Edit' : 'Preview',
               onPressed: _togglePreview,
             ),
-            // Save button
+            // Save button — scoped rebuild via ValueListenableBuilder
             Padding(
               padding: const EdgeInsets.only(right: 8),
-              child: TextButton(
-                onPressed: canSave ? _save : null,
-                child: Text(
-                  widget.isEditing ? 'Update' : 'Save',
-                  style: TextStyle(
-                    color: canSave
-                        ? BrandColors.forest
-                        : BrandColors.driftwood,
-                    fontWeight: FontWeight.w600,
-                    fontSize: 16,
-                  ),
-                ),
+              child: ValueListenableBuilder<TextEditingValue>(
+                valueListenable: _contentController,
+                builder: (context, value, _) {
+                  final canSave = value.text.trim().isNotEmpty;
+                  return TextButton(
+                    onPressed: canSave ? _save : null,
+                    child: Text(
+                      widget.isEditing ? 'Update' : 'Save',
+                      style: TextStyle(
+                        color: canSave
+                            ? BrandColors.forest
+                            : BrandColors.driftwood,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 16,
+                      ),
+                    ),
+                  );
+                },
               ),
             ),
           ],
