@@ -21,6 +21,7 @@ import '../widgets/journal_input_bar.dart';
 import '../widgets/mini_audio_player.dart';
 import '../widgets/entry_edit_modal.dart';
 import '../widgets/send_to_chat_sheet.dart';
+import 'compose_screen.dart';
 import '../widgets/journal_entry_row.dart';
 import '../../recorder/widgets/playback_controls.dart';
 import '../utils/journal_helpers.dart';
@@ -184,6 +185,8 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
                 onPhotoCaptured: (imagePath) => _addPhotoEntry(imagePath),
                 onHandwritingCaptured: (imagePath, linedBackground) =>
                     _addHandwritingEntry(imagePath, linedBackground),
+                onComposeSubmitted: (title, content) =>
+                    _addComposeEntry(title, content),
               ),
           ],
         ),
@@ -465,6 +468,18 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
     await _appendEntryToCache(entry, content: text);
     if (entry == null) {
       debugPrint('[JournalScreen] Offline — text entry queued');
+    }
+  }
+
+  Future<void> _addComposeEntry(String title, String content) async {
+    debugPrint('[JournalScreen] Adding composed entry via API...');
+    // Prepend title as markdown heading if present
+    final fullContent = title.isNotEmpty ? '# $title\n\n$content' : content;
+    final api = ref.read(dailyApiServiceProvider);
+    final entry = await api.createEntry(content: fullContent);
+    await _appendEntryToCache(entry, content: fullContent);
+    if (entry == null) {
+      debugPrint('[JournalScreen] Offline — composed entry queued');
     }
   }
 
@@ -1056,6 +1071,13 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final canEdit = entry.id != 'preamble' && !entry.id.startsWith('plain_');
 
+    // Route text entries to full-screen ComposeScreen for editing
+    if (entry.type == JournalEntryType.text && canEdit) {
+      _openComposeForEdit(context, entry);
+      return;
+    }
+
+    // Voice/photo/handwriting entries use the existing modal
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -1084,6 +1106,61 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
         },
       ),
     );
+  }
+
+  /// Open ComposeScreen for editing an existing text entry
+  Future<void> _openComposeForEdit(BuildContext context, JournalEntry entry) async {
+    // Parse title from content if it starts with a markdown heading
+    String? initialTitle;
+    String initialContent = entry.content;
+
+    // Extract title if content starts with "# Title\n\n"
+    final headingMatch = RegExp(r'^# (.+)\n\n').firstMatch(entry.content);
+    if (headingMatch != null) {
+      initialTitle = headingMatch.group(1);
+      initialContent = entry.content.substring(headingMatch.end);
+    } else {
+      initialTitle = entry.title;
+    }
+
+    final result = await Navigator.push<ComposeResult>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ComposeScreen(
+          initialTitle: initialTitle,
+          initialContent: initialContent,
+          isEditing: true,
+        ),
+      ),
+    );
+
+    if (result != null && mounted) {
+      // Reconstruct content with title as heading
+      final fullContent = result.title.isNotEmpty
+          ? '# ${result.title}\n\n${result.content}'
+          : result.content;
+
+      final updatedEntry = entry.copyWith(
+        content: fullContent,
+        title: result.title,
+      );
+
+      final api = ref.read(dailyApiServiceProvider);
+      final serverUpdated = await api.updateEntry(
+        updatedEntry.id,
+        content: updatedEntry.content,
+        metadata: {'title': updatedEntry.title},
+      );
+      if (serverUpdated == null) {
+        final cache = await ref.read(journalLocalCacheProvider.future);
+        cache.markForEdit(
+          updatedEntry.id,
+          content: updatedEntry.content,
+          title: updatedEntry.title,
+        );
+      }
+      ref.invalidate(selectedJournalProvider);
+    }
   }
 
   Widget _buildAudioPlayer(BuildContext context, JournalEntry entry, bool isDark) {
