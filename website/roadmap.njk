@@ -33,7 +33,7 @@ permalink: /roadmap/
     <section class="section">
         <h2>Vision</h2>
         <p>Parachute is an open-source personal AI platform built around a simple premise: <strong>instead of you learning the system, the system learns you.</strong></p>
-        <p>We're building two products that serve different users and connect into one coherent extended mind.</p>
+        <p>We're building two entry points into one coherent system&mdash;connected by an intelligent graph database that gives everything shared memory.</p>
         <p><strong>Parachute Daily</strong> is a journaling app with gentle AI integration&mdash;daily reflections, weekly synthesis, pattern detection. Hosted service, accessible price point, designed for the 90% of people who want to think better without running a server. <a href="/vision/">Read the full vision &rarr;</a></p>
         <p><strong>Parachute Computer</strong> is the full agentic platform&mdash;Claude Code for your entire life, not just your codebase. It combines Chat with deep context, Daily journaling, and Brain (your personal knowledge graph) into one integrated system that runs on your machine, with your data, under your control.</p>
         <p>The two products connect through a seamless upgrade path: months of Daily journals flow into Parachute Brain, which bootstraps a system that already knows you the moment you switch.</p>
@@ -41,7 +41,7 @@ permalink: /roadmap/
 
     <section class="section">
         <h2>Progress This Semester</h2>
-        <p>Since the semester started in mid-January, ~180 commits across both repositories have transformed Parachute from an early prototype into a near-launch platform. Here's the arc:</p>
+        <p>Since the semester started in mid-January, 200+ pull requests merged across the repository have transformed Parachute from an early prototype into a near-launch platform. Here's the arc:</p>
 
         <h3>January: Foundation</h3>
         <ul>
@@ -65,6 +65,18 @@ permalink: /roadmap/
             <li>Decomposed large monolithic files into focused services&mdash;chat_service.dart went from 2,059 lines to 9 focused files</li>
             <li>Built the event-driven hooks system for extending behavior at every lifecycle point</li>
         </ul>
+
+        <h3>March: Graph as Core Infrastructure</h3>
+        <ul>
+            <li>Dissolved Brain as a standalone module&mdash;graph database became core infrastructure connecting all of Parachute</li>
+            <li>Complete brain system redesign: memory feed UI, MCP Cypher tools, graph-native entity system</li>
+            <li>Unified projects and conversation schema into a single coherent graph</li>
+            <li>Built chat system prompt modes (converse / cocreate) with skills pipeline</li>
+            <li>Shipped container file browser&mdash;full end-to-end with vault symlink support</li>
+            <li>Hardened Daily: durable audio staging, offline sync fixes, graph-native agent definitions (Callers &amp; Cards)</li>
+            <li>Extracted orchestrator phase methods, context system cleanup, WAL corruption fixes</li>
+            <li>UI polish across the app&mdash;approaching internal launch readiness</li>
+        </ul>
     </section>
 
     <section class="section">
@@ -74,6 +86,7 @@ permalink: /roadmap/
         <ul>
             <li>AI orchestration server (Python/FastAPI) wrapping the Claude Agent SDK with session management and streaming</li>
             <li>Three trust tiers&mdash;full access, vault-restricted, or sandboxed in Docker containers&mdash;so you control what AI can touch</li>
+            <li>Graph database as core infrastructure&mdash;an intelligent knowledge graph connecting journals, conversations, and entities across the entire system</li>
             <li>Modular architecture: brain, chat, and daily ship as independent modules with hash verification</li>
             <li>Workspaces that scope what tools, MCPs, and capabilities are available per session</li>
             <li>Telegram, Discord, and Matrix bot connectors with per-user trust and a pairing approval flow</li>
@@ -88,7 +101,7 @@ permalink: /roadmap/
             <li>Unified Flutter app with Chat, Daily, and Brain tabs</li>
             <li>Adaptive layout: single-panel on mobile, dual-panel on tablet, three-panel on desktop</li>
             <li>Voice journaling with local Sherpa-ONNX transcription (works fully offline)</li>
-            <li>Brain v2&mdash;TerminusDB knowledge graph with Tana-inspired dynamic schema UI, entity browser, and query bar</li>
+            <li>Brain&mdash;memory feed UI, entity browser, and Cypher query tools backed by the graph database</li>
             <li>Chat redesign with two-phase streaming and polished session management</li>
             <li>Workspace picker, model selection, trust level controls, bot session management</li>
             <li>CI/CD pipeline with macOS code signing and notarized DMG builds</li>
@@ -184,37 +197,47 @@ permalink: /roadmap/
                 </ul>
             </div>
             <div class="timeline-item">
-                <h3>Weeks of Feb 17 &ndash; 24 <span class="status-badge status-active">Now</span></h3>
+                <h3>Weeks of Feb 17 &ndash; 24 <span class="status-badge status-done">Done</span></h3>
                 <span class="week-label">Brain Module &amp; Platform Polish</span>
                 <ul>
-                    <li>Brain v2 shipped&mdash;TerminusDB knowledge graph backend + Tana-inspired Flutter UI &#10003;</li>
+                    <li>Brain v2 shipped&mdash;knowledge graph backend + Flutter UI &#10003;</li>
                     <li>Chat UI redesign&mdash;two-phase streaming, visual polish &#10003;</li>
                     <li>Multi-agent workspace teams &#10003;</li>
                     <li>Matrix bot connector with bridge-aware room detection &#10003;</li>
                     <li>Sandbox hardening and credential injection &#10003;</li>
-                    <li>Daily &rarr; Brain &rarr; Chat integration loop&mdash;in progress</li>
-                    <li>Open-source launch prep: README, install guides, contributing guide</li>
                 </ul>
             </div>
             <div class="timeline-item">
-                <h3>Late February / Early March <span class="status-badge status-upcoming">Upcoming</span></h3>
-                <span class="week-label">Open-Source Launch</span>
+                <h3>Late February / Early March <span class="status-badge status-done">Done</span></h3>
+                <span class="week-label">Graph Redesign &amp; Polish</span>
+                <ul>
+                    <li>Graph database as core infrastructure&mdash;dissolved Brain module into foundational layer &#10003;</li>
+                    <li>Brain system redesign: memory feed UI, MCP Cypher tools &#10003;</li>
+                    <li>Schema unification&mdash;projects and conversations into coherent graph &#10003;</li>
+                    <li>Chat system prompt modes (converse / cocreate) &#10003;</li>
+                    <li>Container file browser, Daily offline sync hardening &#10003;</li>
+                </ul>
+            </div>
+            <div class="timeline-item">
+                <h3>March <span class="status-badge status-active">Now</span></h3>
+                <span class="week-label">Internal Launch &amp; Onboarding</span>
+                <ul>
+                    <li>Internal launch to Regen Hub community&mdash;full Parachute experience</li>
+                    <li>Parachute Daily standalone onboarding for broader audience</li>
+                    <li>Daily note-taking UI polish&mdash;long-form markdown, better voice interface</li>
+                    <li>Callers &amp; Cards: graph-native agent definitions for daily reflections</li>
+                    <li>Open-source launch prep: README, install guides, community channels</li>
+                    <li>Hardware pendant prototyping with Marvin Melzer</li>
+                </ul>
+            </div>
+            <div class="timeline-item">
+                <h3>Late March / Early April <span class="status-badge status-upcoming">Upcoming</span></h3>
+                <span class="week-label">Public Launch &amp; Revenue</span>
                 <ul>
                     <li>Public launch: Claude Code community, Twitter, Hacker News</li>
                     <li><a href="https://learnvibe.build" target="_blank">Learn Vibe Build</a> graduates onboarded</li>
-                    <li>Documentation site polished with tutorials and guides</li>
-                    <li>Community channels and feedback loops established</li>
-                </ul>
-            </div>
-            <div class="timeline-item">
-                <h3>March <span class="status-badge status-upcoming">Upcoming</span></h3>
-                <span class="week-label">Growth, Revenue &amp; Hardware</span>
-                <ul>
-                    <li>User growth through open-source community and word of mouth</li>
-                    <li>Brain module mature: knowledge graph meaningfully improves daily use</li>
-                    <li>Revenue experimentation: hosted Parachute Computer, or other models</li>
-                    <li>Hardware pendant prototyping and iteration</li>
-                    <li>Apply to New Venture Challenge</li>
+                    <li>Revenue experimentation: Daily subscriptions, hosted Computer</li>
+                    <li>Documentation polished with tutorials and guides</li>
                 </ul>
             </div>
             <div class="timeline-item">
@@ -240,7 +263,7 @@ permalink: /roadmap/
             <li><strong>Hardware pendant</strong>&mdash;wearable voice capture device, in development with Marvin Melzer. Future revenue stream once prototyping is complete.</li>
         </ul>
         <p>The upgrade path is the flywheel: Daily users build months of journal context, then upgrade to Computer where Brain ingests their history and immediately knows them. Retention compounds on both sides.</p>
-        <p>February focuses on users. Revenue experimentation starts March once real usage patterns show which path has the most pull. Target: a path to $1,000 MRR identified by April 22.</p>
+        <p>Early 2026 focuses on real users and real usage. Revenue experimentation follows once usage patterns show which path has the most pull. Target: a path to $1,000 MRR identified by April 22.</p>
     </section>
 
     <section class="section">

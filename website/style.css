@@ -908,6 +908,27 @@ footer p:first-child {
 }
 
 /* ============================================
+   Two-path layout (Daily / Computer)
+   ============================================ */
+
+.paths {
+    grid-template-columns: 1fr 1fr;
+}
+
+.paths .product + .product {
+    margin-top: 0;
+}
+
+.path-label {
+    font-size: 0.75rem;
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-weight: 500;
+    margin-bottom: 0.25rem !important;
+}
+
+/* ============================================
    Responsive
    ============================================ */
 
@@ -946,6 +967,14 @@ footer p:first-child {
 
     .sow-meta {
         grid-template-columns: 1fr;
+    }
+
+    .paths {
+        grid-template-columns: 1fr;
+    }
+
+    .paths .product + .product {
+        margin-top: 1.5rem;
     }
 
     .nav-links {

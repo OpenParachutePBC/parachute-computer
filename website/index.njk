@@ -1,7 +1,7 @@
 ---
 layout: base.njk
 title: ""
-description: "Open source personal AI computer. Local-first. Voice-first. Your data, your machine, your mind."
+description: "Your journal and your AI, sharing one memory. Open source, local-first, voice-first."
 permalink: /
 ---
 <main>
@@ -12,44 +12,52 @@ permalink: /
             <p class="quote-attr">&mdash; Frank Zappa</p>
         </div>
         <h1 class="fade-up fade-up-2">Parachute Computer</h1>
-        <p class="tagline fade-up fade-up-3">Your personal AI computer</p>
+        <p class="tagline fade-up fade-up-3">Your journal and your AI, sharing one memory</p>
         <p class="subtitle fade-up fade-up-4">Open source &middot; Local-first &middot; Voice-first</p>
     </section>
 
     <!-- What it is -->
     <section class="section fade-up fade-up-5">
         <h2>What Is Parachute?</h2>
-        <p>Parachute is an open-source personal AI platform that runs on your machine. It combines the power of Claude Code, the conversational depth of Claude.ai, and a personal knowledge system&mdash;all in one integrated experience that connects directly with your everyday thinking.</p>
-        <p>Instead of scattered tools that forget you exist between sessions, Parachute builds a picture of who you are, what you're working on, and what matters to you. <strong>Instead of you learning the system, the system learns you.</strong></p>
+        <p>Parachute is your daily note-taking system and your AI chatbot, built on your own infrastructure, connected by an intelligent graph database that gives your whole system coherent memory.</p>
+        <p>You write, you think, you capture voice notes on walks. In the background, your AI works&mdash;remembering your projects, your people, your patterns. <strong>Instead of you learning the system, the system learns you.</strong></p>
     </section>
 
-    <!-- Components -->
+    <!-- Two Paths -->
     <section class="section fade-up fade-up-6">
-        <h2>How It Works</h2>
+        <h2>Two Ways In</h2>
 
-        <div class="product">
-            <h3>Parachute Computer</h3>
-            <p>Your personal AI server. Install it on your machine, a VPS, or a Raspberry Pi. It orchestrates AI agents with three tiers of trust, connects to Telegram and Discord, and keeps everything in your vault&mdash;plain files you own forever.</p>
-            <p>If you've used Claude Code, think of this as Claude Code for your whole life, not just your codebase.</p>
+        <div class="products paths">
+            <div class="product">
+                <p class="path-label">Start here</p>
+                <h3>Parachute Daily</h3>
+                <p>Voice-first journaling that works completely offline. Capture thoughts on walks, in the car, wherever you think. Your notes stay on your device in plain markdown files you own.</p>
+                <p>Coming soon: daily reflections that surface what mattered, patterns you didn't notice, and connections across your thinking.</p>
+            </div>
+
+            <div class="product">
+                <p class="path-label">Go deeper</p>
+                <h3>Parachute Computer</h3>
+                <p>Your own AI infrastructure. Chat with full context across every conversation. A knowledge graph that grows with you. Agents that work while you think. Runs on your machine, open source.</p>
+                <p>If you've used Claude Code, think of this as Claude Code for your whole life&mdash;not just your codebase.</p>
+            </div>
         </div>
 
-        <div class="product">
-            <h3>Parachute App</h3>
-            <p>One app, three core views. <strong>Chat</strong> for AI conversations with full context. <strong>Daily</strong> for voice journaling&mdash;capture thoughts on walks, in the car, wherever you think. <strong>Brain</strong> to search your personal knowledge graph.</p>
-            <p>Available on macOS, Android, and web. Daily works offline. Everything else connects to your Parachute Computer.</p>
-        </div>
+        <p>Everything in Daily flows into your Computer's memory. No migration, no export. The same files, the same graph. Start simple, grow when you're ready.</p>
     </section>
 
-    <!-- Architecture -->
+    <!-- How It Works -->
     <section class="section">
-        <h2>Architecture</h2>
+        <h2>How It Works</h2>
         <div class="architecture-diagram">
-User -> App (Flutter) -> Parachute Computer -> Claude Agent SDK -> AI
-                               |
-                         ~/Parachute (vault)
-                               |
-                    ModuleLoader -> brain | chat | daily</div>
-        <p>One server, one app, modular architecture. Your data stays in <code>~/Parachute</code> as plain files. <a href="/architecture/">Read the full docs &rarr;</a></p>
+You -> App (Flutter) -> Parachute Computer -> AI
+                              |
+                        ~/Parachute (vault)
+                              |
+                    Graph Database (memory)
+                     /        |        \
+                 Daily      Chat      Brain</div>
+        <p>One app. One server. One memory. Your data stays in <code>~/Parachute</code> as plain files and a local knowledge graph. <a href="/architecture/">Read the full docs &rarr;</a></p>
     </section>
 
     <!-- Principles -->
@@ -63,24 +71,23 @@ User -> App (Flutter) -> Parachute Computer -> Claude Agent SDK -> AI
         </ul>
     </section>
 
-    <!-- Coming Soon -->
+    <!-- Get Started -->
     <section class="section">
-        <h2>Coming Soon</h2>
-        <p>Parachute is in active development and approaching a polished public launch. If you want to follow along, the <a href="/roadmap/">roadmap</a> shows exactly where things stand.</p>
-        <p>If you're a developer and want to explore the code now, everything is on GitHub. Fair warning: this is pre-launch software&mdash;expect rough edges.</p>
+        <h2>Get Started</h2>
+        <p>Parachute is in active development with a small community of early users. The code is open source and on GitHub.</p>
         <div class="product">
             <h3>Explore on GitHub</h3>
             <div class="code-inline">
                 <code>git clone https://github.com/OpenParachutePBC/parachute-computer.git</code>
             </div>
-            <p>Requires Python 3.11+ and a Claude OAuth token (<code>claude setup-token</code>) for the server. Flutter for the app.</p>
+            <p>Requires Python 3.11+ and a Claude OAuth token (<code>claude setup-token</code>) for the server. Flutter for the app. Daily works offline with no server needed.</p>
         </div>
     </section>
 
     <!-- CTA -->
     <section class="cta">
-        <h2>Launching soon</h2>
-        <p>Parachute is in active development and approaching a public launch. Follow along on GitHub or read the roadmap to see where we're headed.</p>
+        <h2>One system that remembers</h2>
+        <p>Parachute is growing with a community of people who want their tools to actually know them. Follow along or dive in.</p>
         <a href="https://github.com/OpenParachutePBC/parachute-computer" class="button" target="_blank">View on GitHub</a>
         <p class="cta-secondary">Read the <a href="/blog/">blog</a> &middot; <a href="/roadmap/">roadmap</a> &middot; <a href="/vision/">vision</a></p>
     </section>
