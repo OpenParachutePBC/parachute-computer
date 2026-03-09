@@ -15,6 +15,7 @@ import 'package:parachute/core/services/logging_service.dart';
 import 'package:parachute/core/providers/core_service_providers.dart';
 import 'package:parachute/core/providers/supervisor_providers.dart' show supervisorConfigProvider;
 import 'chat_session_actions.dart' show newChatModeProvider;
+import 'agent_completion_provider.dart';
 import 'chat_session_providers.dart';
 import 'project_providers.dart' show activeProjectProvider;
 
@@ -787,6 +788,11 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
         _updateOrAddAssistantMessage(_reattachStreamContent, sessionId, isStreaming: false);
         _reattachStreamContent = []; // Reset for next stream
         state = state.copyWith(isStreaming: false);
+        // Notify completion for toast/badge/OS notification
+        _ref.read(agentCompletionProvider.notifier).onCompleted(
+          sessionId,
+          event.sessionTitle ?? state.sessionTitle,
+        );
         // Reload to get final state
         loadSession(sessionId);
         break;
@@ -1526,6 +1532,12 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
         }
         // Always refresh sessions list to get updated title
         _ref.invalidate(chatSessionsProvider);
+
+        // Notify completion for toast/badge/OS notification
+        _ref.read(agentCompletionProvider.notifier).onCompleted(
+          state.sessionId ?? ctx.actualSessionId ?? '',
+          doneTitle ?? state.sessionTitle,
+        );
 
         // Flush any queued messages (submitted while streaming was active).
         // Also handle the legacy single-message resend path.
