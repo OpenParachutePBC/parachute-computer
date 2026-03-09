@@ -57,7 +57,7 @@ permalink: /roadmap/
         <ul>
             <li>Completely rewrote the server as <strong>Parachute Computer</strong>&mdash;12,800+ lines of new code in under two weeks</li>
             <li>Built the module system: brain, chat, and daily as independent modules with SHA-256 hash verification</li>
-            <li>Implemented three trust tiers (full / vault / sandboxed) with Docker container isolation for untrusted sessions</li>
+            <li>Implemented three trust tiers (full / restricted / sandboxed) with Docker container isolation for untrusted sessions</li>
             <li>Built Telegram and Discord bot connectors with a per-user pairing and approval flow</li>
             <li>Created the <code>parachute</code> CLI for install, daemon management, config, diagnostics, module management, and updates</li>
             <li>Added workspaces&mdash;named capability scopes that control which tools, MCPs, and models are available per session</li>
@@ -72,7 +72,7 @@ permalink: /roadmap/
             <li>Complete brain system redesign: memory feed UI, MCP Cypher tools, graph-native entity system</li>
             <li>Unified projects and conversation schema into a single coherent graph</li>
             <li>Built chat system prompt modes (converse / cocreate) with skills pipeline</li>
-            <li>Shipped container file browser&mdash;full end-to-end with vault symlink support</li>
+            <li>Shipped container file browser&mdash;full end-to-end with symlink support</li>
             <li>Hardened Daily: durable audio staging, offline sync fixes, graph-native agent definitions (Callers &amp; Cards)</li>
             <li>Extracted orchestrator phase methods, context system cleanup, WAL corruption fixes</li>
             <li>UI polish across the app&mdash;approaching internal launch readiness</li>
@@ -85,12 +85,12 @@ permalink: /roadmap/
         <h3>Parachute Computer (Server)</h3>
         <ul>
             <li>AI orchestration server (Python/FastAPI) wrapping the Claude Agent SDK with session management and streaming</li>
-            <li>Three trust tiers&mdash;full access, vault-restricted, or sandboxed in Docker containers&mdash;so you control what AI can touch</li>
+            <li>Three trust tiers&mdash;full access, restricted, or sandboxed in Docker containers&mdash;so you control what AI can touch</li>
             <li>Graph database as core infrastructure&mdash;an intelligent knowledge graph connecting journals, conversations, and entities across the entire system</li>
             <li>Modular architecture: brain, chat, and daily ship as independent modules with hash verification</li>
             <li>Workspaces that scope what tools, MCPs, and capabilities are available per session</li>
             <li>Telegram, Discord, and Matrix bot connectors with per-user trust and a pairing approval flow</li>
-            <li>Multi-agent workspace teams&mdash;agents that spawn and coordinate sub-agents inside your vault</li>
+            <li>Multi-agent workspace teams&mdash;agents that spawn and coordinate sub-agents within your system</li>
             <li>MCP server for session and journal search, workspace operations, inter-agent messaging</li>
             <li>A real CLI (<code>parachute</code>) for install, daemon management, config, diagnostics, module management, and updates</li>
             <li>Event-driven hooks for extending behavior at every lifecycle point</li>
@@ -136,12 +136,12 @@ permalink: /roadmap/
 &#x2502;                  PARACHUTE COMPUTER (Python)                   &#x2502;
 &#x2502;   Orchestrator &#x2192; Claude SDK &#x2192; AI                              &#x2502;
 &#x2502;   Modules: brain &#xB7; chat &#xB7; daily                               &#x2502;
-&#x2502;   Trust: full &#xB7; vault &#xB7; sandboxed (Docker)                    &#x2502;
+&#x2502;   Trust: full &#xB7; restricted &#xB7; sandboxed (Docker)               &#x2502;
 &#x2502;   Connectors: Telegram &#xB7; Discord                              &#x2502;
 &#x2502;   Workspaces &#xB7; Hooks &#xB7; CLI                                    &#x2502;
 &#x2514;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x252C;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2518;
                             &#x2502;
-                    ~/Parachute (vault)
+               Local Graph Database (memory)
                   Your data. Your machine.</div>
     </section>
 
