@@ -28,6 +28,7 @@ from parachute.lib.context_loader import format_context_for_prompt, load_agent_c
 from parachute.lib.credentials import load_credentials
 from parachute.core.context_folders import ContextFolderService
 from parachute.core.capability_filter import filter_by_trust_level
+from parachute.core.tool_guidance import build_tool_guidance
 from parachute.lib.mcp_loader import (
     load_mcp_servers,
     resolve_mcp_servers,
@@ -107,19 +108,7 @@ This is a collaborative thinking relationship — not a task queue.
 - Make connections between what you know about their projects, interests, and past thinking
 - One question at a time — pick the best one, not all of them
 
-## Vault Context
-Search the vault when the user asks about their own thoughts, projects, or history,
-or when personalized context would improve your response.
-
-### Vault Tools (mcp__parachute__*)
-- **mcp__parachute__search_sessions** — search past conversations
-- **mcp__parachute__list_recent_sessions** — recent chat sessions
-- **mcp__parachute__get_session** — read a specific conversation
-- **mcp__parachute__search_journals** — search Daily voice journal entries
-- **mcp__parachute__list_recent_journals** — recent journal dates
-- **mcp__parachute__get_journal** — read a specific day's journal
-
-### Web Tools
+## Web Tools
 - **WebSearch** — current information, news, research
 - **WebFetch** — read a specific URL
 
@@ -138,10 +127,6 @@ COCREATE_PROMPT_APPEND = """## Parachute Context
 You are running as Parachute in cocreate mode — an agentic partner for building,
 writing, coding, and creating. The project's CLAUDE.md or AGENTS.md defines
 conventions and orientation for this specific context.
-
-## Vault Tools Available (mcp__parachute__*)
-The same vault tools from converse mode are available for personal context:
-search_sessions, search_journals, get_journal, list_recent_sessions, etc.
 
 ## Working Style
 - For multi-step tasks, use TodoWrite to track progress visibly
@@ -400,6 +385,19 @@ class Orchestrator:
             if project and project.core_memory:
                 project_memory = project.core_memory[:4000]
 
+        # Resolve trust level early for prompt building (same logic as _discover_capabilities)
+        from parachute.core.trust import normalize_trust_level
+
+        if trust_level:
+            try:
+                prompt_trust = normalize_trust_level(trust_level)
+            except ValueError:
+                prompt_trust = session.get_trust_level().value
+        elif session.trust_level:
+            prompt_trust = session.get_trust_level().value
+        else:
+            prompt_trust = "direct"
+
         # Build system prompt (after loading prior conversation, with working dir)
         # Only surface credential discoverability for non-bot sessions — bot sessions
         # receive empty credentials, so advertising pre-authenticated tools would mislead the agent.
@@ -417,6 +415,7 @@ class Orchestrator:
             credential_keys=prompt_cred_keys,
             mode=effective_mode,
             project_memory=project_memory,
+            trust_level=prompt_trust,
         )
 
         logger.info(
@@ -1585,12 +1584,14 @@ class Orchestrator:
         credential_keys: Optional[set[str]] = None,
         mode: str = "converse",
         project_memory: Optional[str] = None,
+        trust_level: Optional[str] = None,
     ) -> tuple[str, dict[str, Any]]:
         """
         Build the system prompt additions.
 
         The SDK handles project-level discovery (CLAUDE.md, .claude/ commands/skills/agents)
         via setting_sources=["project"]. This method builds additional content:
+        - Dynamic tool guidance (filtered by trust level)
         - Vault-level CLAUDE.md (outside the project root)
         - Prior conversation history (runtime only)
         - Explicitly selected context files
@@ -1653,6 +1654,11 @@ class Orchestrator:
                         metadata["prompt_source_path"] = "CLAUDE.md"
                 except OSError as e:
                     logger.warning(f"Failed to read vault CLAUDE.md: {e}")
+
+        # Dynamic tool guidance — filtered by trust level
+        tool_guidance = build_tool_guidance(trust_level or "direct")
+        if tool_guidance:
+            append_parts.append(tool_guidance)
 
         # Project context (core_memory from Project node) — injected after mode framing
         if project_memory:
