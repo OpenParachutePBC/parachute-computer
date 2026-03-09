@@ -34,7 +34,7 @@ from parachute.lib.mcp_loader import (
     validate_and_filter_servers,
 )
 from parachute.models.agent import AgentDefinition, create_vault_agent
-from parachute.lib.typed_errors import ErrorCode, parse_error
+from parachute.lib.typed_errors import ErrorCode, RecoveryAction, parse_error
 from parachute.models.events import (
     AbortedEvent,
     DoneEvent,
@@ -561,8 +561,8 @@ class Orchestrator:
             )
 
             # Phase 4: Execute (sandboxed or trusted)
-            # Pre-check Docker availability so we can fall back to trusted for
-            # local sessions without requiring _run_sandboxed() to signal this.
+            # Pre-check Docker availability. Local sessions get a TypedErrorEvent
+            # with recovery action; bot sessions hard-fail.
             run_trusted = caps.effective_trust != "sandboxed"
             if caps.effective_trust == "sandboxed":
                 if await self._sandbox.is_available():
@@ -593,15 +593,20 @@ class Orchestrator:
                 else:
                     logger.warning(
                         f"Docker unavailable for session {session.id[:8]} — "
-                        f"falling back to direct execution"
+                        f"blocking (no silent fallback)"
                     )
-                    yield WarningEvent(
-                        code=ErrorCode.SERVICE_UNAVAILABLE,
-                        title="Running Without Sandbox",
-                        message="Docker is not available. Running in direct mode — no sandboxing active.",
+                    yield TypedErrorEvent(
+                        code=ErrorCode.DOCKER_UNAVAILABLE,
+                        title="Docker Required",
+                        message="This session requires Docker for sandboxed execution.",
+                        actions=[RecoveryAction(
+                            key="d",
+                            label="Start Docker",
+                            action="start_docker",
+                        )],
+                        can_retry=True,
                         session_id=session.id if session.id != "pending" else None,
                     ).model_dump(by_alias=True)
-                    run_trusted = True
 
             if run_trusted:
                 async for event in self._run_trusted(

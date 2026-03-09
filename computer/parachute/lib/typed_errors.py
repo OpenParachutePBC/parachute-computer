@@ -47,6 +47,9 @@ class ErrorCode(str, Enum):
     # Transcription errors
     TRANSCRIPTION_FAILED = "transcription_failed"
 
+    # Docker/sandbox errors
+    DOCKER_UNAVAILABLE = "docker_unavailable"
+
     # Session errors
     SESSION_NOT_FOUND = "session_not_found"
     SESSION_UNAVAILABLE = "session_unavailable"
@@ -60,7 +63,7 @@ class RecoveryAction(BaseModel):
 
     key: str = Field(description="Keyboard shortcut (single letter)")
     label: str = Field(description="Description of the action")
-    action: Literal["retry", "settings", "reauth", "dismiss", "new_session"] = Field(
+    action: Literal["retry", "settings", "reauth", "dismiss", "new_session", "start_docker"] = Field(
         description="Action type for handling"
     )
 
@@ -236,6 +239,14 @@ ERROR_DEFINITIONS: dict[ErrorCode, dict[str, Any]] = {
         "actions": [
             RecoveryAction(key="n", label="New session", action="new_session"),
             RecoveryAction(key="r", label="Retry", action="retry"),
+        ],
+        "can_retry": True,
+    },
+    ErrorCode.DOCKER_UNAVAILABLE: {
+        "title": "Docker Required",
+        "message": "This session requires Docker for sandboxed execution.",
+        "actions": [
+            RecoveryAction(key="d", label="Start Docker", action="start_docker"),
         ],
         "can_retry": True,
     },
