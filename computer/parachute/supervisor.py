@@ -27,6 +27,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from parachute import __version__
+from parachute.docker_runtime import DockerRuntime, DockerRuntimeRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +124,104 @@ class ConfigUpdateResponse(BaseModel):
     success: bool
     updated_keys: list[str]
     server_restarted: bool
+
+
+class DockerStatusResponse(BaseModel):
+    """Response from GET /supervisor/docker/status."""
+    daemon_running: bool
+    runtime: Optional[str] = None  # "orbstack", "colima", etc.
+    runtime_display: Optional[str] = None  # "OrbStack", "Colima", etc.
+    detected_runtimes: list[str] = []  # All installed runtime names
+    image_exists: bool = False
+    auto_start_enabled: bool = False
+
+
+# === Docker Runtime Registry ===
+_docker_registry = DockerRuntimeRegistry()
+
+
+# === Docker Status Cache ===
+class DockerStatusCache:
+    """TTL cache for Docker status checks."""
+
+    def __init__(self, ttl: float = 5.0):
+        self._ttl = ttl
+        self._cache: Optional[DockerStatusResponse] = None
+        self._cached_at: float = 0
+
+    async def get_status(self, force: bool = False) -> DockerStatusResponse:
+        """Get Docker status with TTL caching."""
+        now = time.time()
+        if not force and self._cache and (now - self._cached_at) < self._ttl:
+            return self._cache
+
+        # Detect runtimes and daemon status
+        all_runtimes = await _docker_registry.detect_all()
+        daemon_running = await _docker_registry.is_daemon_running()
+
+        detected = [rt.name for rt in all_runtimes if rt.available]
+
+        # Find the preferred runtime
+        config_override = None
+        if settings:
+            import yaml
+            from parachute.config import get_config_path
+            config_path = get_config_path(settings.parachute_dir)
+            if config_path.exists():
+                try:
+                    with open(config_path) as f:
+                        config_data = yaml.safe_load(f) or {}
+                    config_override = config_data.get("docker_runtime")
+                except Exception:
+                    pass
+
+        preferred = await _docker_registry.detect_preferred(config_override)
+
+        # Check sandbox image
+        image_exists = False
+        if daemon_running:
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    "docker", "image", "inspect", "parachute-sandbox:latest",
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
+                await asyncio.wait_for(proc.wait(), timeout=5.0)
+                image_exists = proc.returncode == 0
+            except (asyncio.TimeoutError, OSError):
+                pass
+
+        # Check auto-start config
+        auto_start = False
+        if settings:
+            import yaml
+            from parachute.config import get_config_path
+            config_path = get_config_path(settings.parachute_dir)
+            if config_path.exists():
+                try:
+                    with open(config_path) as f:
+                        config_data = yaml.safe_load(f) or {}
+                    auto_start = bool(config_data.get("docker_auto_start", False))
+                except Exception:
+                    pass
+
+        self._cache = DockerStatusResponse(
+            daemon_running=daemon_running,
+            runtime=preferred.name if preferred else None,
+            runtime_display=preferred.display_name if preferred else None,
+            detected_runtimes=detected,
+            image_exists=image_exists,
+            auto_start_enabled=auto_start,
+        )
+        self._cached_at = now
+        return self._cache
+
+    def invalidate(self):
+        """Force next call to refresh."""
+        self._cached_at = 0
+
+
+_docker_cache = DockerStatusCache(ttl=5.0)
 
 
 # === Helper Functions ===
@@ -423,3 +522,112 @@ async def get_available_models(show_all: bool = False):
         raise HTTPException(status_code=500, detail=f"Models API error: {e}")
 
 
+# === Docker Management Endpoints ===
+
+@app.get("/supervisor/docker/status", response_model=DockerStatusResponse, status_code=200)
+async def get_docker_status() -> DockerStatusResponse:
+    """Check Docker daemon status, detected runtimes, and sandbox readiness."""
+    try:
+        return await _docker_cache.get_status()
+    except Exception as e:
+        logger.error(f"Docker status check failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Docker status check failed: {e}")
+
+
+@app.post("/supervisor/docker/start", response_model=ServerActionResponse, status_code=200)
+async def start_docker() -> ServerActionResponse:
+    """Start the preferred Docker runtime and poll until the daemon is ready."""
+    # Read config override
+    config_override = None
+    if settings:
+        import yaml
+        from parachute.config import get_config_path
+        config_path = get_config_path(settings.parachute_dir)
+        if config_path.exists():
+            try:
+                with open(config_path) as f:
+                    config_data = yaml.safe_load(f) or {}
+                config_override = config_data.get("docker_runtime")
+            except Exception:
+                pass
+
+    # Already running?
+    if await _docker_registry.is_daemon_running():
+        _docker_cache.invalidate()
+        return ServerActionResponse(success=True, message="Docker is already running")
+
+    # Find preferred runtime
+    preferred = await _docker_registry.detect_preferred(config_override)
+    if preferred is None:
+        raise HTTPException(
+            status_code=400,
+            detail="No Docker runtime detected. Install OrbStack, Colima, or Docker Desktop."
+        )
+
+    # Start it
+    started = await _docker_registry.start(preferred)
+    if not started:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to start {preferred.display_name}"
+        )
+
+    # Poll for readiness (blocks up to 45s)
+    ready = await _docker_registry.poll_ready(timeout=45.0, interval=1.0)
+    _docker_cache.invalidate()
+
+    if ready:
+        return ServerActionResponse(
+            success=True,
+            message=f"{preferred.display_name} started and Docker daemon is ready"
+        )
+    else:
+        return ServerActionResponse(
+            success=False,
+            message=f"{preferred.display_name} start command issued but daemon not ready after 45s"
+        )
+
+
+@app.post("/supervisor/docker/stop", response_model=ServerActionResponse, status_code=200)
+async def stop_docker() -> ServerActionResponse:
+    """Stop the running Docker runtime."""
+    # Read config override
+    config_override = None
+    if settings:
+        import yaml
+        from parachute.config import get_config_path
+        config_path = get_config_path(settings.parachute_dir)
+        if config_path.exists():
+            try:
+                with open(config_path) as f:
+                    config_data = yaml.safe_load(f) or {}
+                config_override = config_data.get("docker_runtime")
+            except Exception:
+                pass
+
+    # Not running?
+    if not await _docker_registry.is_daemon_running():
+        _docker_cache.invalidate()
+        return ServerActionResponse(success=True, message="Docker is not running")
+
+    # Find the runtime to stop
+    preferred = await _docker_registry.detect_preferred(config_override)
+    if preferred is None:
+        raise HTTPException(
+            status_code=400,
+            detail="No Docker runtime detected to stop"
+        )
+
+    stopped = await _docker_registry.stop(preferred)
+    _docker_cache.invalidate()
+
+    if stopped:
+        return ServerActionResponse(
+            success=True,
+            message=f"{preferred.display_name} stopped"
+        )
+    else:
+        return ServerActionResponse(
+            success=False,
+            message=f"Failed to stop {preferred.display_name}"
+        )

@@ -29,6 +29,7 @@ PARACHUTE_DIR = Path.home() / ".parachute"
 CONFIG_KEYS = {
     "port", "host", "default_model", "log_level",
     "cors_origins", "auth_mode", "debug",
+    "docker_runtime", "docker_auto_start",
 }
 
 
