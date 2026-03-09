@@ -19,7 +19,7 @@ import re
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
@@ -27,11 +27,15 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from parachute import __version__
+from parachute.docker_runtime import DockerRuntime, DockerRuntimeRegistry
 
 logger = logging.getLogger(__name__)
 
 # Track supervisor start time for uptime
 _start_time = time.time()
+
+# Track background tasks to prevent GC collection and silent exception loss
+_background_tasks: set[asyncio.Task] = set()
 
 # Defensive config loading (survives corrupted config.yaml)
 settings = None
@@ -49,7 +53,7 @@ class ServerHealthCache:
 
     def __init__(self, ttl: float = 5.0):
         self._ttl = ttl
-        self._cache: Optional[dict] = None
+        self._cache: dict | None = None
         self._cached_at: float = 0
 
     async def get_health(self) -> dict:
@@ -73,13 +77,74 @@ class ServerHealthCache:
 _health_cache = ServerHealthCache(ttl=5.0)
 
 
+# === Config Helper ===
+def _read_docker_config() -> tuple[str | None, bool]:
+    """Read docker_runtime and docker_auto_start from config.yaml.
+
+    Returns (config_override, auto_start). Handles missing/corrupt files gracefully.
+    Blocking I/O — call via asyncio.to_thread from async contexts.
+    """
+    if not settings:
+        return None, False
+    try:
+        import yaml
+        from parachute.config import get_config_path
+        config_path = get_config_path(settings.parachute_dir)
+        if not config_path.exists():
+            return None, False
+        with open(config_path) as f:
+            data = yaml.safe_load(f) or {}
+        return data.get("docker_runtime"), bool(data.get("docker_auto_start", False))
+    except Exception:
+        return None, False
+
+
 # === Lifespan ===
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Supervisor startup/shutdown tasks."""
     logger.info("Supervisor starting...")
+
+    # Auto-start Docker if configured (fire-and-forget — don't block startup)
+    try:
+        config_override, auto_start = await asyncio.to_thread(_read_docker_config)
+        if auto_start:
+            if not await _docker_registry.is_daemon_running():
+                preferred = await _docker_registry.detect_preferred(config_override)
+                if preferred:
+                    logger.info(
+                        f"Auto-starting Docker ({preferred.display_name}) "
+                        f"per docker_auto_start config"
+                    )
+                    task = asyncio.create_task(_auto_start_docker(preferred))
+                    _background_tasks.add(task)
+                    task.add_done_callback(_background_tasks.discard)
+                else:
+                    logger.warning("docker_auto_start enabled but no runtime detected")
+            else:
+                logger.info("docker_auto_start enabled but Docker already running")
+    except Exception as e:
+        logger.error(f"Docker auto-start check failed: {e}")
+
     yield
     logger.info("Supervisor shutting down...")
+
+
+async def _auto_start_docker(runtime: DockerRuntime) -> None:
+    """Background task: start Docker and log the result."""
+    try:
+        started = await _docker_registry.start(runtime)
+        if started:
+            ready = await _docker_registry.poll_ready(timeout=45.0)
+            if ready:
+                logger.info(f"Docker auto-started successfully ({runtime.display_name})")
+                _docker_cache.invalidate()
+            else:
+                logger.warning(f"Docker auto-start: {runtime.display_name} started but not ready after 45s")
+        else:
+            logger.error(f"Docker auto-start failed for {runtime.display_name}")
+    except Exception as e:
+        logger.error(f"Docker auto-start error: {e}")
 
 
 # === FastAPI App ===
@@ -97,9 +162,9 @@ class SupervisorStatusResponse(BaseModel):
     supervisor_version: str
     main_server_healthy: bool
     main_server_status: str  # "running" | "stopped" | "crashed"
-    main_server_uptime_seconds: Optional[int] = None  # None if stopped
-    main_server_version: Optional[str] = None
-    main_server_port: Optional[int] = None
+    main_server_uptime_seconds: int | None = None  # None if stopped
+    main_server_version: str | None = None
+    main_server_port: int | None = None
     config_loaded: bool  # False if config.yaml corrupted
 
 
@@ -123,6 +188,80 @@ class ConfigUpdateResponse(BaseModel):
     success: bool
     updated_keys: list[str]
     server_restarted: bool
+
+
+class DockerStatusResponse(BaseModel):
+    """Response from GET /supervisor/docker/status."""
+    daemon_running: bool
+    runtime: str | None = None  # "orbstack", "colima", etc.
+    runtime_display: str | None = None  # "OrbStack", "Colima", etc.
+    detected_runtimes: list[str] = []  # All installed runtime names
+    image_exists: bool = False
+    auto_start_enabled: bool = False
+
+
+# === Docker Runtime Registry ===
+_docker_registry = DockerRuntimeRegistry()
+
+
+# === Docker Status Cache ===
+class DockerStatusCache:
+    """TTL cache for Docker status checks."""
+
+    def __init__(self, ttl: float = 5.0):
+        self._ttl = ttl
+        self._cache: DockerStatusResponse | None = None
+        self._cached_at: float = 0
+
+    async def get_status(self, force: bool = False) -> DockerStatusResponse:
+        """Get Docker status with TTL caching."""
+        now = time.time()
+        if not force and self._cache and (now - self._cached_at) < self._ttl:
+            return self._cache
+
+        # Read config once (blocking I/O wrapped properly)
+        config_override, auto_start = await asyncio.to_thread(_read_docker_config)
+
+        # Detect runtimes and daemon status
+        all_runtimes = await _docker_registry.detect_all()
+        daemon_running = await _docker_registry.is_daemon_running()
+
+        detected = [rt.name for rt in all_runtimes if rt.available]
+
+        # Find the preferred runtime
+        preferred = await _docker_registry.detect_preferred(config_override)
+
+        # Check sandbox image
+        image_exists = False
+        if daemon_running:
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    "docker", "image", "inspect", "parachute-sandbox:latest",
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
+                await asyncio.wait_for(proc.wait(), timeout=5.0)
+                image_exists = proc.returncode == 0
+            except (asyncio.TimeoutError, OSError):
+                pass
+
+        self._cache = DockerStatusResponse(
+            daemon_running=daemon_running,
+            runtime=preferred.name if preferred else None,
+            runtime_display=preferred.display_name if preferred else None,
+            detected_runtimes=detected,
+            image_exists=image_exists,
+            auto_start_enabled=auto_start,
+        )
+        self._cached_at = now
+        return self._cache
+
+    def invalidate(self):
+        """Force next call to refresh."""
+        self._cached_at = 0
+
+
+_docker_cache = DockerStatusCache(ttl=5.0)
 
 
 # === Helper Functions ===
@@ -423,3 +562,88 @@ async def get_available_models(show_all: bool = False):
         raise HTTPException(status_code=500, detail=f"Models API error: {e}")
 
 
+# === Docker Management Endpoints ===
+
+@app.get("/supervisor/docker/status", response_model=DockerStatusResponse, status_code=200)
+async def get_docker_status() -> DockerStatusResponse:
+    """Check Docker daemon status, detected runtimes, and sandbox readiness."""
+    try:
+        return await _docker_cache.get_status()
+    except Exception as e:
+        logger.error(f"Docker status check failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Docker status check failed: {e}")
+
+
+@app.post("/supervisor/docker/start", response_model=ServerActionResponse, status_code=200)
+async def start_docker() -> ServerActionResponse:
+    """Start the preferred Docker runtime and poll until the daemon is ready."""
+    config_override, _ = await asyncio.to_thread(_read_docker_config)
+
+    # Already running?
+    if await _docker_registry.is_daemon_running():
+        _docker_cache.invalidate()
+        return ServerActionResponse(success=True, message="Docker is already running")
+
+    # Find preferred runtime
+    preferred = await _docker_registry.detect_preferred(config_override)
+    if preferred is None:
+        raise HTTPException(
+            status_code=400,
+            detail="No Docker runtime detected. Install OrbStack, Colima, or Docker Desktop."
+        )
+
+    # Start it
+    started = await _docker_registry.start(preferred)
+    if not started:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to start {preferred.display_name}"
+        )
+
+    # Poll for readiness (blocks up to 45s)
+    ready = await _docker_registry.poll_ready(timeout=45.0, interval=1.0)
+    _docker_cache.invalidate()
+
+    if ready:
+        return ServerActionResponse(
+            success=True,
+            message=f"{preferred.display_name} started and Docker daemon is ready"
+        )
+    else:
+        return ServerActionResponse(
+            success=False,
+            message=f"{preferred.display_name} start command issued but daemon not ready after 45s"
+        )
+
+
+@app.post("/supervisor/docker/stop", response_model=ServerActionResponse, status_code=200)
+async def stop_docker() -> ServerActionResponse:
+    """Stop the running Docker runtime."""
+    config_override, _ = await asyncio.to_thread(_read_docker_config)
+
+    # Not running?
+    if not await _docker_registry.is_daemon_running():
+        _docker_cache.invalidate()
+        return ServerActionResponse(success=True, message="Docker is not running")
+
+    # Find the runtime to stop
+    preferred = await _docker_registry.detect_preferred(config_override)
+    if preferred is None:
+        raise HTTPException(
+            status_code=400,
+            detail="No Docker runtime detected to stop"
+        )
+
+    stopped = await _docker_registry.stop(preferred)
+    _docker_cache.invalidate()
+
+    if stopped:
+        return ServerActionResponse(
+            success=True,
+            message=f"{preferred.display_name} stopped"
+        )
+    else:
+        return ServerActionResponse(
+            success=False,
+            message=f"Failed to stop {preferred.display_name}"
+        )

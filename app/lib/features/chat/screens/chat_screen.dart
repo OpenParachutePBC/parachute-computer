@@ -12,6 +12,7 @@ import '../widgets/message_bubble.dart';
 import '../widgets/chat_input.dart';
 import '../widgets/session_selector.dart';
 import '../widgets/connection_status_banner.dart';
+import '../widgets/docker_status_banner.dart';
 import '../widgets/resume_marker.dart';
 import '../widgets/session_resume_banner.dart';
 import '../widgets/directory_picker.dart';
@@ -613,6 +614,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               Navigator.of(context).push(
                 MaterialPageRoute(builder: (context) => const SettingsScreen()),
               );
+            },
+          ),
+
+          // Docker status banner (shows when sandboxed session needs Docker)
+          DockerStatusBanner(
+            dockerRequired: chatState.trustLevel == 'sandboxed',
+            onDockerReady: () {
+              // Auto-retry the last message if one was queued
+              // (For now, just refresh — future: auto-send queued message)
             },
           ),
 
