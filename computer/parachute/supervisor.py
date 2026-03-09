@@ -19,7 +19,7 @@ import re
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
@@ -33,6 +33,9 @@ logger = logging.getLogger(__name__)
 
 # Track supervisor start time for uptime
 _start_time = time.time()
+
+# Track background tasks to prevent GC collection and silent exception loss
+_background_tasks: set[asyncio.Task] = set()
 
 # Defensive config loading (survives corrupted config.yaml)
 settings = None
@@ -50,7 +53,7 @@ class ServerHealthCache:
 
     def __init__(self, ttl: float = 5.0):
         self._ttl = ttl
-        self._cache: Optional[dict] = None
+        self._cache: dict | None = None
         self._cached_at: float = 0
 
     async def get_health(self) -> dict:
@@ -74,6 +77,28 @@ class ServerHealthCache:
 _health_cache = ServerHealthCache(ttl=5.0)
 
 
+# === Config Helper ===
+def _read_docker_config() -> tuple[str | None, bool]:
+    """Read docker_runtime and docker_auto_start from config.yaml.
+
+    Returns (config_override, auto_start). Handles missing/corrupt files gracefully.
+    Blocking I/O — call via asyncio.to_thread from async contexts.
+    """
+    if not settings:
+        return None, False
+    try:
+        import yaml
+        from parachute.config import get_config_path
+        config_path = get_config_path(settings.parachute_dir)
+        if not config_path.exists():
+            return None, False
+        with open(config_path) as f:
+            data = yaml.safe_load(f) or {}
+        return data.get("docker_runtime"), bool(data.get("docker_auto_start", False))
+    except Exception:
+        return None, False
+
+
 # === Lifespan ===
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -81,30 +106,25 @@ async def lifespan(app: FastAPI):
     logger.info("Supervisor starting...")
 
     # Auto-start Docker if configured (fire-and-forget — don't block startup)
-    if settings:
-        import yaml
-        from parachute.config import get_config_path
-        config_path = get_config_path(settings.parachute_dir)
-        if config_path.exists():
-            try:
-                with open(config_path) as f:
-                    config_data = yaml.safe_load(f) or {}
-                if config_data.get("docker_auto_start"):
-                    if not await _docker_registry.is_daemon_running():
-                        config_override = config_data.get("docker_runtime")
-                        preferred = await _docker_registry.detect_preferred(config_override)
-                        if preferred:
-                            logger.info(
-                                f"Auto-starting Docker ({preferred.display_name}) "
-                                f"per docker_auto_start config"
-                            )
-                            asyncio.create_task(_auto_start_docker(preferred))
-                        else:
-                            logger.warning("docker_auto_start enabled but no runtime detected")
-                    else:
-                        logger.info("docker_auto_start enabled but Docker already running")
-            except Exception as e:
-                logger.error(f"Docker auto-start check failed: {e}")
+    try:
+        config_override, auto_start = await asyncio.to_thread(_read_docker_config)
+        if auto_start:
+            if not await _docker_registry.is_daemon_running():
+                preferred = await _docker_registry.detect_preferred(config_override)
+                if preferred:
+                    logger.info(
+                        f"Auto-starting Docker ({preferred.display_name}) "
+                        f"per docker_auto_start config"
+                    )
+                    task = asyncio.create_task(_auto_start_docker(preferred))
+                    _background_tasks.add(task)
+                    task.add_done_callback(_background_tasks.discard)
+                else:
+                    logger.warning("docker_auto_start enabled but no runtime detected")
+            else:
+                logger.info("docker_auto_start enabled but Docker already running")
+    except Exception as e:
+        logger.error(f"Docker auto-start check failed: {e}")
 
     yield
     logger.info("Supervisor shutting down...")
@@ -142,9 +162,9 @@ class SupervisorStatusResponse(BaseModel):
     supervisor_version: str
     main_server_healthy: bool
     main_server_status: str  # "running" | "stopped" | "crashed"
-    main_server_uptime_seconds: Optional[int] = None  # None if stopped
-    main_server_version: Optional[str] = None
-    main_server_port: Optional[int] = None
+    main_server_uptime_seconds: int | None = None  # None if stopped
+    main_server_version: str | None = None
+    main_server_port: int | None = None
     config_loaded: bool  # False if config.yaml corrupted
 
 
@@ -173,8 +193,8 @@ class ConfigUpdateResponse(BaseModel):
 class DockerStatusResponse(BaseModel):
     """Response from GET /supervisor/docker/status."""
     daemon_running: bool
-    runtime: Optional[str] = None  # "orbstack", "colima", etc.
-    runtime_display: Optional[str] = None  # "OrbStack", "Colima", etc.
+    runtime: str | None = None  # "orbstack", "colima", etc.
+    runtime_display: str | None = None  # "OrbStack", "Colima", etc.
     detected_runtimes: list[str] = []  # All installed runtime names
     image_exists: bool = False
     auto_start_enabled: bool = False
@@ -190,7 +210,7 @@ class DockerStatusCache:
 
     def __init__(self, ttl: float = 5.0):
         self._ttl = ttl
-        self._cache: Optional[DockerStatusResponse] = None
+        self._cache: DockerStatusResponse | None = None
         self._cached_at: float = 0
 
     async def get_status(self, force: bool = False) -> DockerStatusResponse:
@@ -199,6 +219,9 @@ class DockerStatusCache:
         if not force and self._cache and (now - self._cached_at) < self._ttl:
             return self._cache
 
+        # Read config once (blocking I/O wrapped properly)
+        config_override, auto_start = await asyncio.to_thread(_read_docker_config)
+
         # Detect runtimes and daemon status
         all_runtimes = await _docker_registry.detect_all()
         daemon_running = await _docker_registry.is_daemon_running()
@@ -206,19 +229,6 @@ class DockerStatusCache:
         detected = [rt.name for rt in all_runtimes if rt.available]
 
         # Find the preferred runtime
-        config_override = None
-        if settings:
-            import yaml
-            from parachute.config import get_config_path
-            config_path = get_config_path(settings.parachute_dir)
-            if config_path.exists():
-                try:
-                    with open(config_path) as f:
-                        config_data = yaml.safe_load(f) or {}
-                    config_override = config_data.get("docker_runtime")
-                except Exception:
-                    pass
-
         preferred = await _docker_registry.detect_preferred(config_override)
 
         # Check sandbox image
@@ -234,20 +244,6 @@ class DockerStatusCache:
                 image_exists = proc.returncode == 0
             except (asyncio.TimeoutError, OSError):
                 pass
-
-        # Check auto-start config
-        auto_start = False
-        if settings:
-            import yaml
-            from parachute.config import get_config_path
-            config_path = get_config_path(settings.parachute_dir)
-            if config_path.exists():
-                try:
-                    with open(config_path) as f:
-                        config_data = yaml.safe_load(f) or {}
-                    auto_start = bool(config_data.get("docker_auto_start", False))
-                except Exception:
-                    pass
 
         self._cache = DockerStatusResponse(
             daemon_running=daemon_running,
@@ -581,19 +577,7 @@ async def get_docker_status() -> DockerStatusResponse:
 @app.post("/supervisor/docker/start", response_model=ServerActionResponse, status_code=200)
 async def start_docker() -> ServerActionResponse:
     """Start the preferred Docker runtime and poll until the daemon is ready."""
-    # Read config override
-    config_override = None
-    if settings:
-        import yaml
-        from parachute.config import get_config_path
-        config_path = get_config_path(settings.parachute_dir)
-        if config_path.exists():
-            try:
-                with open(config_path) as f:
-                    config_data = yaml.safe_load(f) or {}
-                config_override = config_data.get("docker_runtime")
-            except Exception:
-                pass
+    config_override, _ = await asyncio.to_thread(_read_docker_config)
 
     # Already running?
     if await _docker_registry.is_daemon_running():
@@ -635,19 +619,7 @@ async def start_docker() -> ServerActionResponse:
 @app.post("/supervisor/docker/stop", response_model=ServerActionResponse, status_code=200)
 async def stop_docker() -> ServerActionResponse:
     """Stop the running Docker runtime."""
-    # Read config override
-    config_override = None
-    if settings:
-        import yaml
-        from parachute.config import get_config_path
-        config_path = get_config_path(settings.parachute_dir)
-        if config_path.exists():
-            try:
-                with open(config_path) as f:
-                    config_data = yaml.safe_load(f) or {}
-                config_override = config_data.get("docker_runtime")
-            except Exception:
-                pass
+    config_override, _ = await asyncio.to_thread(_read_docker_config)
 
     # Not running?
     if not await _docker_registry.is_daemon_running():

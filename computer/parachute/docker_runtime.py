@@ -13,7 +13,7 @@ import logging
 import shutil
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Callable, TypedDict
 
 from pydantic import BaseModel
 
@@ -39,9 +39,18 @@ class DockerRuntime(BaseModel):
     running: bool = False  # Daemon is responding to `docker info`
 
 
+class RuntimeSpec(TypedDict):
+    """Typed spec for a Docker runtime entry."""
+
+    name: str
+    display_name: str
+    detect: Callable[[], bool]
+    start_cmd: list[str]
+    stop_cmd: list[str]
+
+
 # Registry of known runtimes in preference order.
-# Each entry: (name, display_name, detection_fn, start_cmd, stop_cmd)
-_RUNTIME_SPECS: list[dict] = [
+_RUNTIME_SPECS: list[RuntimeSpec] = [
     {
         "name": "orbstack",
         "display_name": "OrbStack",
@@ -79,7 +88,7 @@ class DockerRuntimeRegistry:
     Thread-safe: all methods use asyncio.to_thread for blocking subprocess calls.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._specs = _RUNTIME_SPECS
 
     async def detect_all(self) -> list[DockerRuntime]:
@@ -99,8 +108,8 @@ class DockerRuntimeRegistry:
         return runtimes
 
     async def detect_preferred(
-        self, config_override: Optional[str] = None
-    ) -> Optional[DockerRuntime]:
+        self, config_override: str | None = None
+    ) -> DockerRuntime | None:
         """Detect the preferred available runtime.
 
         If config_override is set (e.g., "orbstack"), use that runtime if available.
@@ -161,7 +170,7 @@ class DockerRuntimeRegistry:
             # Colima blocks until ready, so we use a generous timeout.
             stdout, stderr = await asyncio.wait_for(
                 proc.communicate(), timeout=_START_TIMEOUT
-            )
+)
             if proc.returncode != 0:
                 logger.error(
                     f"Failed to start {runtime.display_name}: "
@@ -173,8 +182,17 @@ class DockerRuntimeRegistry:
         except asyncio.TimeoutError:
             # For non-blocking start commands this shouldn't happen.
             # For colima, timeout means it's still starting — that's OK,
-            # poll_ready() will handle the rest.
-            logger.warning(f"Start command timed out for {runtime.display_name} — may still be starting")
+            # poll_ready() will handle the rest. Kill the subprocess to
+            # avoid leaking file descriptors (the runtime itself continues).
+            logger.warning(
+                f"Start command timed out for {runtime.display_name} "
+                f"— may still be starting, polling for readiness"
+            )
+            try:
+                proc.kill()
+                await proc.wait()
+            except ProcessLookupError:
+                pass  # Already exited
             return True
         except (OSError, FileNotFoundError) as e:
             logger.error(f"Failed to start {runtime.display_name}: {e}")
@@ -194,19 +212,11 @@ class DockerRuntimeRegistry:
         logger.info(f"Stopping Docker runtime: {runtime.display_name}")
 
         try:
-            # For osascript commands, we need shell=True
-            if stop_cmd[0] == "osascript":
-                proc = await asyncio.create_subprocess_shell(
-                    " ".join(stop_cmd),
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-            else:
-                proc = await asyncio.create_subprocess_exec(
-                    *stop_cmd,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
+            proc = await asyncio.create_subprocess_exec(
+                *stop_cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
             await asyncio.wait_for(proc.communicate(), timeout=_START_TIMEOUT)
             return proc.returncode == 0
         except (asyncio.TimeoutError, OSError, FileNotFoundError) as e:
@@ -232,7 +242,7 @@ class DockerRuntimeRegistry:
         logger.warning(f"Docker readiness timeout after {timeout}s")
         return False
 
-    def _get_spec(self, name: str) -> Optional[dict]:
+    def _get_spec(self, name: str) -> RuntimeSpec | None:
         """Get the runtime spec by name."""
         for spec in self._specs:
             if spec["name"] == name:

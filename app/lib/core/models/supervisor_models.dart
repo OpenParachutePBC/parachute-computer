@@ -1,3 +1,4 @@
+import 'package:collection/collection.dart';
 import 'package:flutter/foundation.dart';
 
 @immutable
@@ -132,8 +133,13 @@ class DockerStatus {
       other is DockerStatus &&
           daemonRunning == other.daemonRunning &&
           runtime == other.runtime &&
-          imageExists == other.imageExists;
+          imageExists == other.imageExists &&
+          autoStartEnabled == other.autoStartEnabled &&
+          const DeepCollectionEquality()
+              .equals(detectedRuntimes, other.detectedRuntimes);
 
   @override
-  int get hashCode => Object.hash(daemonRunning, runtime, imageExists);
+  int get hashCode => Object.hash(
+      daemonRunning, runtime, imageExists, autoStartEnabled,
+      const DeepCollectionEquality().hash(detectedRuntimes));
 }

@@ -193,12 +193,14 @@ class DockerStatusNotifier extends _$DockerStatusNotifier {
       final success = await service.startDocker();
       // Refresh immediately after start completes
       await refresh();
-      return success;
-    } catch (_) {
-      return false;
-    } finally {
-      // Revert to steady-state polling
+      // Revert to steady-state polling on success
       _startPolling(const Duration(seconds: 30));
+      return success;
+    } catch (e) {
+      // Refresh to get accurate error state, then revert polling
+      await refresh();
+      _startPolling(const Duration(seconds: 30));
+      return false;
     }
   }
 
