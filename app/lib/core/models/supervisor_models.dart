@@ -82,3 +82,58 @@ class ModelInfo {
   @override
   int get hashCode => Object.hash(id, displayName);
 }
+
+@immutable
+class DockerStatus {
+  const DockerStatus({
+    required this.daemonRunning,
+    this.runtime,
+    this.runtimeDisplay,
+    this.detectedRuntimes = const [],
+    this.imageExists = false,
+    this.autoStartEnabled = false,
+  });
+
+  final bool daemonRunning;
+  final String? runtime; // "orbstack", "colima", etc.
+  final String? runtimeDisplay; // "OrbStack", "Colima", etc.
+  final List<String> detectedRuntimes;
+  final bool imageExists;
+  final bool autoStartEnabled;
+
+  /// Whether any Docker runtime is installed (even if not running).
+  bool get hasRuntime => detectedRuntimes.isNotEmpty;
+
+  /// Whether everything is ready for sandboxed execution.
+  bool get isReady => daemonRunning && imageExists;
+
+  factory DockerStatus.fromJson(Map<String, dynamic> json) {
+    return DockerStatus(
+      daemonRunning: json['daemon_running'] as bool? ?? false,
+      runtime: json['runtime'] as String?,
+      runtimeDisplay: json['runtime_display'] as String?,
+      detectedRuntimes: (json['detected_runtimes'] as List<dynamic>?)
+              ?.map((e) => e as String)
+              .toList() ??
+          [],
+      imageExists: json['image_exists'] as bool? ?? false,
+      autoStartEnabled: json['auto_start_enabled'] as bool? ?? false,
+    );
+  }
+
+  /// Fallback for when supervisor is unreachable.
+  factory DockerStatus.unknown() {
+    return const DockerStatus(daemonRunning: false);
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is DockerStatus &&
+          daemonRunning == other.daemonRunning &&
+          runtime == other.runtime &&
+          imageExists == other.imageExists;
+
+  @override
+  int get hashCode => Object.hash(daemonRunning, runtime, imageExists);
+}

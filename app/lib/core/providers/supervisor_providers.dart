@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 import '../models/supervisor_models.dart';
@@ -141,6 +143,75 @@ class ServerControl extends _$ServerControl {
     });
 
     ref.invalidate(supervisorStatusNotifierProvider);
+  }
+}
+
+/// Docker status provider.
+///
+/// Polls supervisor every 30s in steady state.
+/// When Docker is starting, polls every 3s until ready or timeout.
+/// keepAlive: true — chat screen needs this even when settings tab disposes.
+@Riverpod(keepAlive: true)
+class DockerStatusNotifier extends _$DockerStatusNotifier {
+  Timer? _pollTimer;
+
+  @override
+  Future<DockerStatus> build() async {
+    ref.onDispose(() => _pollTimer?.cancel());
+
+    // Start steady-state polling (30s)
+    _startPolling(const Duration(seconds: 30));
+
+    final service = ref.watch(supervisorServiceProvider);
+    return service.getDockerStatus();
+  }
+
+  void _startPolling(Duration interval) {
+    _pollTimer?.cancel();
+    _pollTimer = Timer.periodic(interval, (_) => refresh());
+  }
+
+  /// Manual refresh (also called by polling timer).
+  Future<void> refresh() async {
+    state = await AsyncValue.guard(() async {
+      final service = ref.read(supervisorServiceProvider);
+      return service.getDockerStatus();
+    });
+  }
+
+  /// Start Docker and poll for readiness.
+  ///
+  /// Returns true if Docker became ready, false on failure/timeout.
+  /// Switches to fast polling (3s) during startup, reverts to 30s after.
+  Future<bool> startDocker() async {
+    final service = ref.read(supervisorServiceProvider);
+
+    // Switch to fast polling while starting
+    _startPolling(const Duration(seconds: 3));
+
+    try {
+      final success = await service.startDocker();
+      // Refresh immediately after start completes
+      await refresh();
+      return success;
+    } catch (_) {
+      return false;
+    } finally {
+      // Revert to steady-state polling
+      _startPolling(const Duration(seconds: 30));
+    }
+  }
+
+  /// Stop Docker runtime.
+  Future<bool> stopDocker() async {
+    final service = ref.read(supervisorServiceProvider);
+    try {
+      final success = await service.stopDocker();
+      await refresh();
+      return success;
+    } catch (_) {
+      return false;
+    }
   }
 }
 

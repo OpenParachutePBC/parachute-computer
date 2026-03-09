@@ -31,6 +31,9 @@ enum ErrorCode {
   // Transcription errors
   transcriptionFailed,
 
+  // Docker/sandbox errors
+  dockerUnavailable,
+
   // Session errors
   sessionNotFound,
   sessionUnavailable,
@@ -69,6 +72,8 @@ extension ErrorCodeExtension on ErrorCode {
         return 'tool_execution_failed';
       case ErrorCode.transcriptionFailed:
         return 'transcription_failed';
+      case ErrorCode.dockerUnavailable:
+        return 'docker_unavailable';
       case ErrorCode.sessionNotFound:
         return 'session_not_found';
       case ErrorCode.sessionUnavailable:
@@ -106,6 +111,8 @@ extension ErrorCodeExtension on ErrorCode {
         return ErrorCode.toolExecutionFailed;
       case 'transcription_failed':
         return ErrorCode.transcriptionFailed;
+      case 'docker_unavailable':
+        return ErrorCode.dockerUnavailable;
       case 'session_not_found':
         return ErrorCode.sessionNotFound;
       case 'session_unavailable':
@@ -123,6 +130,7 @@ enum RecoveryActionType {
   reauth,
   dismiss,
   newSession,
+  startDocker,
 }
 
 /// Extension to parse RecoveryActionType from string
@@ -139,6 +147,8 @@ extension RecoveryActionTypeExtension on RecoveryActionType {
         return 'dismiss';
       case RecoveryActionType.newSession:
         return 'new_session';
+      case RecoveryActionType.startDocker:
+        return 'start_docker';
     }
   }
 
@@ -154,6 +164,8 @@ extension RecoveryActionTypeExtension on RecoveryActionType {
         return RecoveryActionType.dismiss;
       case 'new_session':
         return RecoveryActionType.newSession;
+      case 'start_docker':
+        return RecoveryActionType.startDocker;
       default:
         return RecoveryActionType.dismiss;
     }
@@ -266,6 +278,9 @@ class TypedError {
   bool get isBillingError => code == ErrorCode.billingError ||
       code == ErrorCode.invalidApiKey ||
       code == ErrorCode.expiredToken;
+
+  /// Whether this is a Docker unavailable error (needs Docker start action)
+  bool get isDockerUnavailable => code == ErrorCode.dockerUnavailable;
 
   /// Whether this error can be automatically retried
   bool get canAutoRetry => canRetry && retryDelayMs != null;

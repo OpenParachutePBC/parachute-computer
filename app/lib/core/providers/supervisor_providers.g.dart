@@ -282,5 +282,28 @@ final serverControlProvider =
     );
 
 typedef _$ServerControl = AutoDisposeAsyncNotifier<void>;
+String _$dockerStatusNotifierHash() =>
+    r'aad05500ef80324ba9c45f81bd7a6b525952a9eb';
+
+/// Docker status provider.
+///
+/// Polls supervisor every 30s in steady state.
+/// When Docker is starting, polls every 3s until ready or timeout.
+/// keepAlive: true — chat screen needs this even when settings tab disposes.
+///
+/// Copied from [DockerStatusNotifier].
+@ProviderFor(DockerStatusNotifier)
+final dockerStatusNotifierProvider =
+    AsyncNotifierProvider<DockerStatusNotifier, DockerStatus>.internal(
+      DockerStatusNotifier.new,
+      name: r'dockerStatusNotifierProvider',
+      debugGetCreateSourceHash: const bool.fromEnvironment('dart.vm.product')
+          ? null
+          : _$dockerStatusNotifierHash,
+      dependencies: null,
+      allTransitiveDependencies: null,
+    );
+
+typedef _$DockerStatusNotifier = AsyncNotifier<DockerStatus>;
 // ignore_for_file: type=lint
 // ignore_for_file: subtype_of_sealed_class, invalid_use_of_internal_member, invalid_use_of_visible_for_testing_member, deprecated_member_use_from_same_package
