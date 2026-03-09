@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/core/providers/file_system_provider.dart';
@@ -75,6 +76,10 @@ class _JournalEntryRowState extends ConsumerState<JournalEntryRow> {
   // Cache truncation result to avoid regex on every build
   bool? _cachedLikelyTruncated;
   String? _cachedContentForTruncation;
+
+  // Cache markdown style sheet to avoid allocating per build in list scroll
+  MarkdownStyleSheet? _cachedMarkdownStyle;
+  bool? _cachedMarkdownIsDark;
 
   @override
   void initState() {
@@ -671,17 +676,12 @@ class _JournalEntryRowState extends ConsumerState<JournalEntryRow> {
       );
     }
 
-    // Truncate long content in list view (show 4 lines max)
-    // Use a simple character threshold to show "read more" hint
-    // This avoids expensive TextPainter layout calculations during scroll
-    const maxLines = 4;
-    const charThresholdForReadMore = 200; // Approximate chars before truncation likely
-    final contentStyle = theme.textTheme.bodyMedium?.copyWith(
-      color: isDark ? BrandColors.stone : BrandColors.charcoal,
-      height: 1.6,
-    );
-
+    // Truncate long content — use height constraint for markdown
+    // MarkdownBody doesn't support maxLines, so we clip at ~6 lines height
+    const maxHeight = 130.0; // ~6 lines at 1.6 line height
+    const charThresholdForReadMore = 200;
     final content = widget.entry.content;
+
     // Use cached truncation result if content hasn't changed
     final bool likelyTruncated;
     if (_cachedContentForTruncation == content && _cachedLikelyTruncated != null) {
@@ -689,19 +689,69 @@ class _JournalEntryRowState extends ConsumerState<JournalEntryRow> {
     } else {
       likelyTruncated = content.length > charThresholdForReadMore ||
           content.contains('\n\n') ||
-          '\n'.allMatches(content).length >= maxLines;
+          '\n'.allMatches(content).length >= 5;
       _cachedContentForTruncation = content;
       _cachedLikelyTruncated = likelyTruncated;
     }
 
+    // Cache style sheet — only rebuild when theme changes
+    if (_cachedMarkdownStyle == null || _cachedMarkdownIsDark != isDark) {
+      _cachedMarkdownIsDark = isDark;
+      _cachedMarkdownStyle = MarkdownStyleSheet(
+        p: theme.textTheme.bodyMedium?.copyWith(
+          color: isDark ? BrandColors.stone : BrandColors.charcoal,
+          height: 1.6,
+        ),
+        h1: theme.textTheme.titleMedium?.copyWith(
+          color: isDark ? BrandColors.softWhite : BrandColors.ink,
+          fontWeight: FontWeight.bold,
+        ),
+        h2: theme.textTheme.titleSmall?.copyWith(
+          color: isDark ? BrandColors.softWhite : BrandColors.ink,
+          fontWeight: FontWeight.w600,
+        ),
+        listBullet: theme.textTheme.bodyMedium?.copyWith(
+          color: isDark ? BrandColors.stone : BrandColors.charcoal,
+        ),
+        code: TextStyle(
+          fontFamily: 'monospace',
+          fontSize: 13,
+          backgroundColor: isDark
+              ? BrandColors.charcoal.withValues(alpha: 0.3)
+              : BrandColors.stone.withValues(alpha: 0.3),
+          color: isDark ? BrandColors.turquoise : BrandColors.turquoiseDeep,
+        ),
+        blockquoteDecoration: BoxDecoration(
+          border: Border(
+            left: BorderSide(
+              color: BrandColors.driftwood,
+              width: 3,
+            ),
+          ),
+        ),
+      );
+    }
+    final markdownStyle = _cachedMarkdownStyle!;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          content,
-          style: contentStyle,
-          maxLines: maxLines,
-          overflow: TextOverflow.ellipsis,
+        ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: likelyTruncated ? maxHeight : double.infinity,
+          ),
+          child: ClipRect(
+            child: SingleChildScrollView(
+              physics: const NeverScrollableScrollPhysics(),
+              child: MarkdownBody(
+                data: content,
+                shrinkWrap: true,
+                softLineBreak: true,
+                selectable: false,
+                styleSheet: markdownStyle,
+              ),
+            ),
+          ),
         ),
         if (likelyTruncated)
           Padding(

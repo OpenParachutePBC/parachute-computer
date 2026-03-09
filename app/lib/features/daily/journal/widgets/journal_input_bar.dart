@@ -8,6 +8,8 @@ import 'package:parachute/core/services/model_download_service.dart';
 import '../../capture/providers/capture_providers.dart';
 import '../../capture/screens/handwriting_screen.dart';
 import '../../recorder/providers/service_providers.dart';
+import '../screens/compose_screen.dart';
+import '../providers/compose_draft_provider.dart';
 import '../../recorder/providers/transcription_progress_provider.dart';
 import '../../recorder/providers/streaming_transcription_provider.dart';
 import '../../recorder/services/live_transcription_service_v3.dart';
@@ -27,6 +29,8 @@ class JournalInputBar extends ConsumerStatefulWidget {
   final Future<void> Function(String imagePath)? onPhotoCaptured;
   /// Called when handwriting canvas is saved
   final Future<void> Function(String imagePath, bool linedBackground)? onHandwritingCaptured;
+  /// Called when the full-screen compose screen saves an entry (title + content)
+  final Future<void> Function(String title, String content)? onComposeSubmitted;
 
   const JournalInputBar({
     super.key,
@@ -35,6 +39,7 @@ class JournalInputBar extends ConsumerStatefulWidget {
     this.onTranscriptReady,
     this.onPhotoCaptured,
     this.onHandwritingCaptured,
+    this.onComposeSubmitted,
   });
 
   @override
@@ -48,6 +53,7 @@ class _JournalInputBarState extends ConsumerState<JournalInputBar> {
   bool _isPaused = false;
   bool _isSubmitting = false;
   bool _isProcessing = false;
+  bool _hasPendingDraft = false;
   Duration _recordingDuration = Duration.zero;
   Timer? _durationTimer;
 
@@ -62,6 +68,15 @@ class _JournalInputBarState extends ConsumerState<JournalInputBar> {
     // Trigger transcription model initialization in background
     // so it's ready when user wants to record
     _initializeTranscriptionModel();
+
+    // Check for pending compose draft — show indicator if draft exists
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final draft = ref.read(composeDraftProvider);
+      if (draft.isNotEmpty) {
+        setState(() => _hasPendingDraft = true);
+      }
+    });
   }
 
   /// Initialize transcription model in background so it's ready for recording
@@ -946,6 +961,10 @@ class _JournalInputBarState extends ConsumerState<JournalInputBar> {
             ),
             const SizedBox(width: 8),
 
+            // Expand to full-screen compose
+            _buildExpandButton(isDark),
+            const SizedBox(width: 4),
+
             // Send button
             _buildSendButton(isDark),
           ],
@@ -1338,6 +1357,78 @@ class _JournalInputBarState extends ConsumerState<JournalInputBar> {
     );
 
     debugPrint('[JournalInputBar] Handwriting result: $result');
+  }
+
+  Widget _buildExpandButton(bool isDark) {
+    return SizedBox(
+      width: 44,
+      height: 44,
+      child: Stack(
+        children: [
+          IconButton(
+            onPressed: _isRecording || _isProcessing ? null : _openComposeScreen,
+            icon: Icon(
+              Icons.open_in_full,
+              color: isDark ? BrandColors.stone : BrandColors.charcoal,
+              size: 20,
+            ),
+            tooltip: 'Expand to full editor',
+          ),
+          // Draft indicator dot
+          if (_hasPendingDraft)
+            Positioned(
+              top: 8,
+              right: 8,
+              child: Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  color: BrandColors.forest,
+                  shape: BoxShape.circle,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// Open full-screen markdown compose editor
+  Future<void> _openComposeScreen() async {
+    // Transfer any text from the quick-capture bar to the compose screen
+    final currentText = _controller.text;
+    _controller.clear();
+    _focusNode.unfocus();
+
+    final result = await Navigator.push<ComposeResult>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ComposeScreen(
+          initialContent: currentText.isNotEmpty ? currentText : null,
+        ),
+      ),
+    );
+
+    if (result != null && mounted) {
+      // Compose returned content — submit it
+      final title = result.title;
+      final content = result.content;
+
+      if (widget.onComposeSubmitted != null) {
+        await widget.onComposeSubmitted!(title, content);
+      } else {
+        // Fallback: prepend title as heading if present
+        final fullContent = title.isNotEmpty ? '# $title\n\n$content' : content;
+        await widget.onTextSubmitted(fullContent);
+      }
+
+      // Clear draft indicator
+      setState(() => _hasPendingDraft = false);
+    } else if (mounted) {
+      // User discarded — check if draft was left behind
+      final draft = ref.read(composeDraftProvider);
+      setState(() => _hasPendingDraft = draft.isNotEmpty);
+    }
   }
 
   Widget _buildSendButton(bool isDark) {
