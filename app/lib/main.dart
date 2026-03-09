@@ -28,6 +28,7 @@ import 'features/daily/recorder/providers/omi_providers.dart';
 import 'features/chat/screens/chat_hub_screen.dart';
 import 'features/chat/screens/chat_shell.dart';
 import 'features/chat/screens/chat_screen.dart';
+import 'features/chat/providers/agent_completion_provider.dart';
 import 'features/chat/providers/chat_providers.dart';
 import 'features/chat/widgets/message_bubble.dart' show currentlyRenderingMarkdown, markMarkdownAsFailed;
 import 'features/daily/journal/providers/journal_providers.dart';
@@ -259,15 +260,17 @@ class _TabShellState extends ConsumerState<_TabShell> with WidgetsBindingObserve
 
   Widget _buildChatTabIcon(bool isDark, bool selected) {
     final pendingCount = ref.watch(pendingPairingCountProvider).valueOrNull ?? 0;
+    final completionCount = ref.watch(agentCompletionProvider).unreadCount;
+    final badgeCount = pendingCount + completionCount;
     final icon = Icon(
       selected ? Icons.chat_bubble : Icons.chat_bubble_outline,
       color: selected
           ? (isDark ? BrandColors.nightTurquoise : BrandColors.turquoise)
           : (isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood),
     );
-    if (pendingCount > 0) {
+    if (badgeCount > 0) {
       return Badge(
-        label: Text('$pendingCount'),
+        label: Text('$badgeCount'),
         child: icon,
       );
     }
@@ -451,6 +454,9 @@ class _TabShellState extends ConsumerState<_TabShell> with WidgetsBindingObserve
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Track lifecycle for agent completion notifications
+    ref.read(appLifecycleProvider.notifier).state = state;
+
     // Handle sync lifecycle
     final syncAvailable = ref.read(syncAvailableProvider);
     if (syncAvailable) {
@@ -540,6 +546,20 @@ class _TabShellState extends ConsumerState<_TabShell> with WidgetsBindingObserve
       next.whenData((target) {
         _handleDeepLink(target);
       });
+    });
+
+    // Listen for agent completion events to show toast
+    ref.listen<AgentCompletionState>(agentCompletionProvider, (previous, next) {
+      if (next.latestEvent != null &&
+          next.latestEvent != previous?.latestEvent) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('${next.latestEvent!.title} \u2014 finished'),
+            duration: const Duration(seconds: 3),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
     });
 
     final appMode = ref.watch(appModeProvider);
@@ -660,6 +680,12 @@ class _TabShellState extends ConsumerState<_TabShell> with WidgetsBindingObserve
                   // Map visual index back to actual tab index
                   final newActualIndex = showAllTabs ? index : 1;
                   ref.read(currentTabIndexProvider.notifier).state = newActualIndex;
+                  // Clear completion badge when switching to Chat tab
+                  final visibleTabs = ref.read(visibleTabsProvider);
+                  if (newActualIndex < visibleTabs.length &&
+                      visibleTabs[newActualIndex] == AppTab.chat) {
+                    ref.read(agentCompletionProvider.notifier).clearUnread();
+                  }
                 },
                 backgroundColor: isDark ? BrandColors.nightSurfaceElevated : BrandColors.softWhite,
                 indicatorColor: isDark

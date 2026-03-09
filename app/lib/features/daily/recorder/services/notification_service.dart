@@ -4,7 +4,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 /// Service for managing local notifications
 ///
-/// Used to show recording status when app is in background.
+/// Used to show recording status and agent completion alerts.
 /// Note: Only available on iOS and Android, gracefully degrades on macOS.
 class NotificationService {
   static final NotificationService _instance = NotificationService._internal();
@@ -76,17 +76,25 @@ class NotificationService {
   Future<void> _createNotificationChannels() async {
     if (!Platform.isAndroid) return;
 
-    const channel = AndroidNotificationChannel(
+    final androidPlugin = _notifications
+        .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>();
+
+    const recordingChannel = AndroidNotificationChannel(
       'omi_recording',
       'Omi Recording',
       description: 'Notifications for Omi device recording status',
       importance: Importance.high,
     );
+    await androidPlugin?.createNotificationChannel(recordingChannel);
 
-    await _notifications
-        .resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin>()
-        ?.createNotificationChannel(channel);
+    const agentChannel = AndroidNotificationChannel(
+      'agent_completion',
+      'Agent Updates',
+      description: 'Notifications when chat agents finish responding',
+      importance: Importance.defaultImportance,
+    );
+    await androidPlugin?.createNotificationChannel(agentChannel);
   }
 
   /// Handle notification tap
@@ -160,6 +168,25 @@ class NotificationService {
     }
   }
 
+  /// Show agent completion notification
+  Future<void> showAgentCompleted(String sessionTitle, {String? sessionId}) async {
+    if (!_isSupported || !_isInitialized) return;
+
+    try {
+      // Use session ID hash for notification ID so each session gets its own notification
+      final notificationId = sessionId?.hashCode.abs() ?? 100;
+      await _notifications.show(
+        notificationId,
+        '$sessionTitle \u2014 finished',
+        'Tap to return to chat',
+        _agentCompletionDetails(),
+        payload: sessionId,
+      );
+    } catch (e) {
+      debugPrint('[NotificationService] Error showing agent notification: $e');
+    }
+  }
+
   /// Cancel all notifications
   Future<void> cancelAll() async {
     if (!_isSupported || !_isInitialized) return;
@@ -182,7 +209,26 @@ class NotificationService {
     }
   }
 
-  /// Build notification details
+  /// Build notification details for agent completion
+  NotificationDetails _agentCompletionDetails() {
+    return const NotificationDetails(
+      android: AndroidNotificationDetails(
+        'agent_completion',
+        'Agent Updates',
+        channelDescription: 'Notifications when chat agents finish responding',
+        importance: Importance.defaultImportance,
+        priority: Priority.defaultPriority,
+        autoCancel: true,
+      ),
+      iOS: DarwinNotificationDetails(
+        presentAlert: true,
+        presentBadge: true,
+        presentSound: false,
+      ),
+    );
+  }
+
+  /// Build notification details for recording
   NotificationDetails _notificationDetails({bool ongoing = false}) {
     return NotificationDetails(
       android: AndroidNotificationDetails(

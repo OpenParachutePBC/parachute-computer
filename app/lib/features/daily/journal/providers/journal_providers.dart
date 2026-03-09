@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/providers/file_system_provider.dart';
 import 'package:parachute/core/providers/feature_flags_provider.dart' show aiServerUrlProvider;
