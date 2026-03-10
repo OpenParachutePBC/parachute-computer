@@ -101,35 +101,21 @@ class AgentCompletionNotifier extends Notifier<AgentCompletionState> {
     );
 
     if (isBackgrounded) {
-      // App is backgrounded — fire OS notification + mark unread
       _fireOsNotification(displayTitle, sessionId);
-      state = AgentCompletionState(
-        unreadSessionIds: {...state.unreadSessionIds, sessionId},
-        latestEvent: event,
-      );
-    } else if (!isOnChatTab) {
-      // On a different tab — mark unread + toast
-      state = AgentCompletionState(
-        unreadSessionIds: {...state.unreadSessionIds, sessionId},
-        latestEvent: event,
-      );
-    } else {
-      // On chat tab but different session — mark unread + toast
-      state = AgentCompletionState(
-        unreadSessionIds: {...state.unreadSessionIds, sessionId},
-        latestEvent: event,
-      );
     }
+
+    // Mark unread + set latest event (triggers toast via listener in main.dart)
+    state = state.copyWith(
+      unreadSessionIds: {...state.unreadSessionIds, sessionId},
+      latestEvent: event,
+    );
   }
 
   /// Mark a specific session as read (called when user opens that session).
   void markRead(String sessionId) {
     if (state.unreadSessionIds.contains(sessionId)) {
       final updated = Set<String>.of(state.unreadSessionIds)..remove(sessionId);
-      state = AgentCompletionState(
-        unreadSessionIds: updated,
-        latestEvent: state.latestEvent,
-      );
+      state = state.copyWith(unreadSessionIds: updated);
     }
   }
 

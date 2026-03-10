@@ -572,7 +572,9 @@ class _ChatHubScreenState extends ConsumerState<ChatHubScreen> {
           return _buildEmptyState(context, isDark, serverUrl);
         }
 
-        final unreadSessionIds = ref.watch(agentCompletionProvider).unreadSessionIds;
+        final unreadSessionIds = ref.watch(
+          agentCompletionProvider.select((s) => s.unreadSessionIds),
+        );
 
         return RefreshIndicator(
           onRefresh: () async {
