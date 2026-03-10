@@ -236,23 +236,32 @@ class ChatMessage {
   factory ChatMessage.fromJson(Map<String, dynamic> json) {
     final role = json['role'] == 'user' ? MessageRole.user : MessageRole.assistant;
 
-    // Parse content - could be string or structured
+    // Parse content - could be string or structured list of blocks
     List<MessageContent> content = [];
     if (json['content'] is String) {
       content = [MessageContent.text(json['content'] as String)];
     } else if (json['content'] is List) {
-      content = (json['content'] as List).map((c) {
+      // Server merges tool_result into tool_use (with result/isError fields),
+      // so we only need a single pass here.
+      for (final c in json['content'] as List) {
         if (c is String) {
-          return MessageContent.text(c);
+          content.add(MessageContent.text(c));
         } else if (c is Map<String, dynamic>) {
-          if (c['type'] == 'tool_use') {
-            return MessageContent.toolUse(ToolCall.fromJson(c));
-          } else {
-            return MessageContent.text(c['text'] as String? ?? '');
+          final blockType = c['type'] as String? ?? '';
+          if (blockType == 'tool_use') {
+            content.add(MessageContent.toolUse(ToolCall.fromJson(c)));
+          } else if (blockType == 'thinking') {
+            final text = c['text'] as String? ?? '';
+            if (text.isNotEmpty) {
+              content.add(MessageContent.thinking(text));
+            }
+          } else if (blockType == 'text') {
+            content.add(MessageContent.text(c['text'] as String? ?? ''));
           }
+          // Unknown block types: skip silently
         }
-        return MessageContent.text('');
-      }).toList();
+        // Non-string, non-map entries: skip silently
+      }
     }
 
     return ChatMessage(

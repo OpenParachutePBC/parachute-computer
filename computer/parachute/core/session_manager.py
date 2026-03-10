@@ -526,7 +526,6 @@ class SessionManager:
         self,
         session_id: str,
         working_directory: Optional[str] = None,
-        include_tool_calls: bool = True,
     ) -> list[dict[str, Any]]:
         """
         Load messages from SDK JSONL file by session ID.
@@ -535,13 +534,16 @@ class SessionManager:
         session, including daily agent sessions that don't have a corresponding
         database entry.
 
+        Returns structured content blocks for assistant messages, preserving
+        thinking and text blocks.  tool_result blocks are merged into their
+        matching tool_use blocks (with ``result`` and ``isError`` fields).
+
         Args:
             session_id: The SDK session UUID
             working_directory: Optional working directory for path resolution
-            include_tool_calls: Whether to include tool use details
 
         Returns:
-            List of message dicts with role, content, timestamp, and optionally tools
+            List of message dicts with role, content (str or list[dict]), timestamp
         """
         transcript_path = self.get_sdk_transcript_path(session_id, working_directory)
 
@@ -552,7 +554,8 @@ class SessionManager:
         if not transcript_path or not transcript_path.exists():
             return []
 
-        messages = []
+        messages: list[dict[str, Any]] = []
+        last_was_assistant = False
         try:
             with open(transcript_path, "r", encoding="utf-8") as f:
                 for line in f:
@@ -561,9 +564,10 @@ class SessionManager:
                         continue
                     try:
                         event = json.loads(line)
+                        event_type = event.get("type")
 
-                        # Extract user and assistant messages
-                        if event.get("type") == "user":
+                        if event_type == "user":
+                            last_was_assistant = False
                             content = self._extract_message_content(event.get("message", {}))
                             if content:
                                 messages.append({
@@ -571,26 +575,26 @@ class SessionManager:
                                     "content": content,
                                     "timestamp": event.get("timestamp"),
                                 })
-                        elif event.get("type") == "assistant":
-                            msg = event.get("message", {})
-                            content = self._extract_message_content(msg)
-                            tool_calls = self._extract_tool_calls(msg) if include_tool_calls else []
-
-                            if content or tool_calls:
-                                message_entry = {
+                        elif event_type == "assistant":
+                            last_was_assistant = True
+                            blocks = self._extract_message_blocks(event.get("message", {}))
+                            if blocks:
+                                messages.append({
                                     "role": "assistant",
-                                    "content": content or "",
+                                    "content": blocks,
                                     "timestamp": event.get("timestamp"),
-                                }
-                                if tool_calls:
-                                    message_entry["tool_calls"] = tool_calls
-                                messages.append(message_entry)
-                        elif event.get("type") == "result":
-                            # Final result message
+                                })
+                        elif event_type == "result":
+                            # Skip result if we already captured the structured
+                            # assistant event (avoids duplicate messages)
+                            if last_was_assistant:
+                                last_was_assistant = False
+                                continue
+                            # Fallback: result without preceding assistant event
                             if event.get("result"):
                                 messages.append({
                                     "role": "assistant",
-                                    "content": event["result"],
+                                    "content": [{"type": "text", "text": event["result"]}],
                                     "timestamp": event.get("timestamp"),
                                 })
 
@@ -602,34 +606,25 @@ class SessionManager:
 
         return messages
 
-    def _extract_tool_calls(self, message: dict[str, Any]) -> list[dict[str, Any]]:
-        """Extract tool call info from an SDK message."""
-        content = message.get("content", [])
-        if not isinstance(content, list):
-            return []
-
-        tool_calls = []
-        for block in content:
-            if isinstance(block, dict) and block.get("type") == "tool_use":
-                tool_calls.append({
-                    "id": block.get("id"),
-                    "name": block.get("name"),
-                    "input": block.get("input", {}),
-                })
-        return tool_calls
-
     def write_sandbox_transcript(
         self,
         session_id: str,
         user_message: str,
-        assistant_response: str,
+        content_blocks: list[dict[str, Any]],
         working_directory: Optional[str] = None,
     ) -> None:
         """Write a synthetic JSONL transcript for a sandbox session.
 
         Docker container transcripts are lost when the container exits.
-        This writes a minimal transcript to the host filesystem so messages
-        persist across app restarts and session reloads.
+        This writes a structured transcript to the host filesystem so messages
+        persist across app restarts and session reloads — including thinking
+        blocks, tool calls, and tool results.
+
+        Args:
+            session_id: The SDK session ID
+            user_message: The user's message text
+            content_blocks: Structured content blocks (thinking, tool_use, tool_result, text)
+            working_directory: Optional working directory for path resolution
         """
         transcript_path = self.get_sdk_transcript_path(session_id, working_directory)
         if not transcript_path:
@@ -639,11 +634,17 @@ class SessionManager:
         try:
             transcript_path.parent.mkdir(parents=True, exist_ok=True)
 
-            now = datetime.utcnow().isoformat() + "Z"
+            now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+            # Extract text-only content for the result event (SDK resume compat)
+            text_only = " ".join(
+                b.get("text", "") for b in content_blocks if b.get("type") == "text"
+            ).strip()
+
             events = [
                 {"type": "user", "message": {"role": "user", "content": user_message}, "timestamp": now},
-                {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": assistant_response}]}, "timestamp": now},
-                {"type": "result", "result": assistant_response, "session_id": session_id, "timestamp": now},
+                {"type": "assistant", "message": {"role": "assistant", "content": content_blocks}, "timestamp": now},
+                {"type": "result", "result": text_only, "session_id": session_id, "timestamp": now},
             ]
 
             # Append to existing transcript (supports multi-turn sandbox sessions)
@@ -762,78 +763,89 @@ class SessionManager:
             logger.error(f"Failed to write SDK transcript: {e}")
 
     async def _load_sdk_messages(self, session: Session) -> list[dict[str, Any]]:
-        """Load messages from SDK JSONL file."""
-        transcript_path = self.get_sdk_transcript_path(
+        """Load messages from SDK JSONL file for a Session object.
+
+        Delegates to :meth:`load_sdk_messages_by_id` — see that method for
+        full documentation on the returned format.
+        """
+        return await self.load_sdk_messages_by_id(
             session.id, session.working_directory
         )
 
-        # Fallback: search all project directories if not found at expected path
-        # This handles old sessions with different path encodings (e.g., -vault- vs -Users-)
-        if not transcript_path or not transcript_path.exists():
-            transcript_path = self._find_sdk_transcript(session.id)
+    def _extract_message_blocks(self, message: dict[str, Any]) -> list[dict[str, Any]]:
+        """Extract all content blocks from an SDK message.
 
-        if not transcript_path or not transcript_path.exists():
-            return []
+        Preserves thinking, tool_use, and text blocks.  tool_result blocks are
+        merged into their matching tool_use block (adding ``result`` and
+        ``isError`` fields) so that consumers get a single, self-contained
+        representation of each tool call.
 
-        messages = []
-        try:
-            with open(transcript_path, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        event = json.loads(line)
+        The ``result`` value is normalized to a string — the SDK may return it
+        as a list of content blocks, which we join here.
 
-                        # Extract user and assistant messages
-                        if event.get("type") == "user":
-                            content = self._extract_message_content(event.get("message", {}))
-                            if content:
-                                messages.append({
-                                    "role": "user",
-                                    "content": content,
-                                    "timestamp": event.get("timestamp"),
-                                })
-                        elif event.get("type") == "assistant":
-                            content = self._extract_message_content(event.get("message", {}))
-                            if content:
-                                messages.append({
-                                    "role": "assistant",
-                                    "content": content,
-                                    "timestamp": event.get("timestamp"),
-                                })
-                        elif event.get("type") == "result":
-                            # Final result message
-                            if event.get("result"):
-                                messages.append({
-                                    "role": "assistant",
-                                    "content": event["result"],
-                                    "timestamp": event.get("timestamp"),
-                                })
+        For backward compatibility, plain string content is wrapped in a text
+        block.
 
-                    except json.JSONDecodeError:
-                        continue
-
-        except Exception as e:
-            logger.error(f"Error loading SDK transcript: {e}")
-
-        return messages
-
-    def _extract_message_content(self, message: dict[str, Any]) -> Optional[str]:
-        """Extract text content from an SDK message."""
+        Returns:
+            List of content block dicts, never None.
+        """
         content = message.get("content", [])
         if isinstance(content, str):
-            return content
+            return [{"type": "text", "text": content}] if content else []
 
         if isinstance(content, list):
-            text_parts = []
-            for block in content:
-                if isinstance(block, dict) and block.get("type") == "text":
-                    text_parts.append(block.get("text", ""))
-            if text_parts:
-                return "\n".join(text_parts)
+            blocks: list[dict[str, Any]] = []
+            tool_results: dict[str, dict[str, Any]] = {}
 
-        return None
+            # First pass: collect tool_result blocks and non-result blocks
+            for block in content:
+                if isinstance(block, dict):
+                    block_type = block.get("type", "")
+                    if block_type == "tool_result":
+                        use_id = block.get("toolUseId", "")
+                        if use_id:
+                            tool_results[use_id] = block
+                    elif block_type in ("text", "thinking", "tool_use"):
+                        blocks.append(block)
+                elif isinstance(block, str):
+                    # Legacy: bare strings in content array
+                    blocks.append({"type": "text", "text": block})
+
+            # Second pass: merge tool_result into matching tool_use
+            if tool_results:
+                for i, block in enumerate(blocks):
+                    if block.get("type") == "tool_use":
+                        result = tool_results.get(block.get("id", ""))
+                        if result:
+                            raw = result.get("content", "")
+                            if isinstance(raw, list):
+                                raw = "\n".join(
+                                    item.get("text", str(item))
+                                    if isinstance(item, dict)
+                                    else str(item)
+                                    for item in raw
+                                )
+                            elif not isinstance(raw, str):
+                                raw = str(raw)
+                            blocks[i] = {
+                                **block,
+                                "result": raw,
+                                "isError": result.get("isError", False),
+                            }
+
+            return blocks
+
+        return []
+
+    def _extract_message_content(self, message: dict[str, Any]) -> Optional[str]:
+        """Extract text-only content from an SDK message.
+
+        Used by prior-conversation loading and other text-only consumers.
+        For structured content, use _extract_message_blocks() instead.
+        """
+        blocks = self._extract_message_blocks(message)
+        text_parts = [b.get("text", "") for b in blocks if b.get("type") == "text"]
+        return "\n".join(text_parts) if text_parts else None
 
     async def get_prior_conversation(self, session: Session) -> Optional[str]:
         """
