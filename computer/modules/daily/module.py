@@ -1493,14 +1493,6 @@ class DailyModule:
                     "date": date_str,
                 },
             )
-            # Link to Day node
-            await graph.execute_cypher(
-                "MERGE (d:Day {date: $date}) "
-                "WITH d "
-                "MATCH (c:Card {card_id: $card_id}) "
-                "MERGE (d)-[:HAS_CARD]->(c)",
-                {"date": date_str, "card_id": card_id},
-            )
             return {"card_id": card_id, "status": "done", "date": date_str}
 
         # ── Callers (agent definitions) ──────────────────────────────────────

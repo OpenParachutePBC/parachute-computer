@@ -261,15 +261,6 @@ def create_daily_agent_tools(
                 },
             )
 
-            # Link to Day node (MERGE Day for idempotency)
-            await graph.execute_cypher(
-                "MERGE (d:Day {date: $date}) "
-                "WITH d "
-                "MATCH (c:Card {card_id: $card_id}) "
-                "MERGE (d)-[:HAS_CARD]->(c)",
-                {"date": date_str, "card_id": card_id},
-            )
-
             logger.info(f"Agent '{config.name}' wrote Card to graph for {date_str}")
             return {
                 "content": [{"type": "text", "text": f"Successfully wrote output to graph (card_id: {card_id})"}]

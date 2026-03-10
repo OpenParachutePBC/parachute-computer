@@ -348,13 +348,6 @@ async def _write_initial_card(graph, agent_name: str, display_name: str, output_
                     "date": output_date,
                 },
             )
-            await graph.execute_cypher(
-                "MERGE (d:Day {date: $date}) "
-                "WITH d "
-                "MATCH (c:Card {card_id: $card_id}) "
-                "MERGE (d)-[:HAS_CARD]->(c)",
-                {"date": output_date, "card_id": card_id},
-            )
         except Exception as e:
             logger.warning(f"Could not write initial running card for '{agent_name}': {e}")
     return card_id
