@@ -39,7 +39,7 @@ HOST_URL = os.environ.get("PARACHUTE_HOST_URL", "http://host.docker.internal:333
 TOOLS = [
     {
         "name": "read_journal",
-        "description": "Read journal entries for a specific date. Returns the full content of thatday's journal.",
+        "description": "Read journal entries for a specific date. Returns the full content of that day's journal.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -279,24 +279,26 @@ TOOL_HANDLERS = {
 
 # ── MCP stdio protocol ─────────────────────────────────────────────────────
 
-def send_response(id, result):
+def _send(payload: dict) -> None:
+    """Write a JSON-RPC message using LSP framing (Content-Length in bytes)."""
+    encoded = json.dumps(payload, ensure_ascii=True).encode("utf-8")
+    header = f"Content-Length: {len(encoded)}\r\n\r\n".encode("ascii")
+    sys.stdout.buffer.write(header + encoded)
+    sys.stdout.buffer.flush()
+
+
+def send_response(request_id: int | str | None, result: dict) -> None:
     """Send a JSON-RPC response."""
-    msg = {"jsonrpc": JSONRPC_VERSION, "id": id, "result": result}
-    out = json.dumps(msg)
-    sys.stdout.write(f"Content-Length: {len(out)}\r\n\r\n{out}")
-    sys.stdout.flush()
+    _send({"jsonrpc": JSONRPC_VERSION, "id": request_id, "result": result})
 
 
-def send_error(id, code, message):
+def send_error(request_id: int | str | None, code: int, message: str) -> None:
     """Send a JSON-RPC error response."""
-    msg = {
+    _send({
         "jsonrpc": JSONRPC_VERSION,
-        "id": id,
+        "id": request_id,
         "error": {"code": code, "message": message},
-    }
-    out = json.dumps(msg)
-    sys.stdout.write(f"Content-Length: {len(out)}\r\n\r\n{out}")
-    sys.stdout.flush()
+    })
 
 
 def read_message() -> dict | None:

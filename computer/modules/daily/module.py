@@ -1462,8 +1462,17 @@ class DailyModule:
                     status_code=400,
                     content={"error": "agent_name, date, and content are required"},
                 )
+            if not re.fullmatch(r"[a-z0-9][a-z0-9\-]{0,63}", agent_name):
+                return JSONResponse(status_code=400, content={"error": "invalid agent_name format"})
             if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_str):
                 return JSONResponse(status_code=400, content={"error": "invalid date format"})
+            # Verify agent_name corresponds to a known Caller
+            caller_rows = await graph.execute_cypher(
+                "MATCH (c:Caller {name: $name}) RETURN c.name",
+                {"name": agent_name},
+            )
+            if not caller_rows:
+                return JSONResponse(status_code=403, content={"error": "unknown caller"})
             card_id = f"{agent_name}:{date_str}"
             display_name = body.get("display_name") or agent_name.replace("-", " ").title()
             generated_at = datetime.now(timezone.utc).isoformat()

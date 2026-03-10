@@ -10,6 +10,7 @@ Agents can have custom tools and share common tools like reading journals
 and chat logs. Output is written to configurable paths.
 """
 
+import asyncio
 import json
 import logging
 import sys
@@ -162,6 +163,7 @@ class DailyAgentConfig:
                 tools=metadata.get("tools"),
                 source_file=agent_file,
                 raw_metadata=metadata,
+                trust_level=metadata.get("trust_level", "sandboxed"),
             )
 
         except Exception as e:
@@ -207,7 +209,7 @@ class DailyAgentConfig:
             return (3, 0)
 
 
-def _get_graph():
+def _get_graph() -> Any | None:
     """Get BrainDB from the service registry, or None if unavailable."""
     try:
         from parachute.core.interfaces import get_registry
@@ -316,7 +318,7 @@ def load_user_context(vault_path: Path) -> tuple[str, str]:
     return user_name, context_text
 
 
-def _get_sandbox():
+def _get_sandbox() -> Any | None:
     """Get DockerSandbox from the service registry, or None if unavailable."""
     try:
         from parachute.core.interfaces import get_registry
@@ -414,11 +416,8 @@ async def _run_sandboxed(
         **filtered_mcps,
     }
 
-    # Deterministic session ID for resume support
-    session_id = f"caller-{agent_name}"
-
-    # Project slug for persistent container
-    project_slug = f"caller-{agent_name}"
+    # Slug used as both session ID (for resume) and project slug (for container)
+    slug = f"caller-{agent_name}"
 
     # Ensure project record exists in session store
     try:
@@ -426,10 +425,10 @@ async def _run_sandboxed(
         session_store = get_registry().get("SessionStore")
         if session_store is not None:
             # Check if project already exists before creating
-            existing = await session_store.get_project(project_slug)
+            existing = await session_store.get_project(slug)
             if not existing:
                 await session_store.create_project(
-                    slug=project_slug,
+                    slug=slug,
                     display_name=f"Caller: {config.display_name}",
                 )
                 logger.info(f"Created project record for caller '{agent_name}'")
@@ -438,7 +437,7 @@ async def _run_sandboxed(
 
     # Build sandbox config
     sandbox_config = AgentSandboxConfig(
-        session_id=session_id,
+        session_id=slug,
         agent_type="caller",
         allowed_paths=[],  # Callers get read-only vault access (default)
         network_enabled=True,  # Needs to reach host API for daily tools
@@ -449,7 +448,7 @@ async def _run_sandboxed(
     )
 
     logger.info(
-        f"Running caller '{agent_name}' in sandbox (container=parachute-env-{project_slug}, "
+        f"Running caller '{agent_name}' in sandbox (container=parachute-env-{slug}, "
         f"mcps={list(all_mcp_servers.keys())})"
     )
 
@@ -469,17 +468,16 @@ async def _run_sandboxed(
         mcp_script = Path(__file__).parent.parent / "docker" / "daily_tools_mcp.py"
         if mcp_script.exists():
             # Ensure container exists first
-            await sandbox.ensure_container(project_slug, sandbox_config)
-            container_name = f"parachute-env-{project_slug}"
+            await sandbox.ensure_container(slug, sandbox_config)
+            container_name = f"parachute-env-{slug}"
 
             # Copy MCP script into container
-            import asyncio as _asyncio
-            copy_proc = await _asyncio.create_subprocess_exec(
+            copy_proc = await asyncio.create_subprocess_exec(
                 "docker", "cp",
                 str(mcp_script),
                 f"{container_name}:/workspace/daily_tools_mcp.py",
-                stdout=_asyncio.subprocess.DEVNULL,
-                stderr=_asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE,
             )
             _, stderr = await copy_proc.communicate()
             if copy_proc.returncode != 0:
@@ -490,11 +488,11 @@ async def _run_sandboxed(
         captured_model = None
 
         async for event in sandbox.run_session(
-            session_id=session_id,
+            session_id=slug,
             config=sandbox_config,
             message=prompt_text,
             resume_session_id=state.sdk_session_id if state.sdk_session_id else None,
-            project_slug=project_slug,
+            project_slug=slug,
         ):
             event_type = event.get("type", "")
 
@@ -582,7 +580,6 @@ async def _run_direct(
 
     # Wrap prompt in async generator with delay
     async def generate_prompt():
-        import asyncio
         await asyncio.sleep(1.0)
         yield {"type": "user", "message": {"role": "user", "content": prompt_text}}
 
