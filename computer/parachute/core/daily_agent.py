@@ -10,6 +10,7 @@ Agents can have custom tools and share common tools like reading journals
 and chat logs. Output is written to configurable paths.
 """
 
+import asyncio
 import json
 import logging
 import sys
@@ -103,6 +104,7 @@ class DailyAgentConfig:
         tools: list[str] | None = None,
         source_file: Path | None = None,
         raw_metadata: dict[str, Any] | None = None,
+        trust_level: str = "sandboxed",
     ):
         self.name = name
         self.display_name = display_name
@@ -114,6 +116,7 @@ class DailyAgentConfig:
         self.tools = tools or ["read_journal", "read_chat_log", "read_recent_journals"]
         self.source_file = source_file
         self.raw_metadata = raw_metadata or {}
+        self.trust_level = trust_level if trust_level in ("sandboxed", "direct") else "sandboxed"
 
     @classmethod
     def from_file(cls, agent_file: Path) -> Optional["DailyAgentConfig"]:
@@ -160,6 +163,7 @@ class DailyAgentConfig:
                 tools=metadata.get("tools"),
                 source_file=agent_file,
                 raw_metadata=metadata,
+                trust_level=metadata.get("trust_level", "sandboxed"),
             )
 
         except Exception as e:
@@ -186,6 +190,7 @@ class DailyAgentConfig:
             schedule_time=row.get("schedule_time") or "3:00",
             tools=tools,
             raw_metadata={"model": row.get("model", "")},
+            trust_level=row.get("trust_level") or "sandboxed",
         )
 
     def get_output_path(self, date: str) -> str:
@@ -204,7 +209,7 @@ class DailyAgentConfig:
             return (3, 0)
 
 
-def _get_graph():
+def _get_graph() -> Any | None:
     """Get BrainDB from the service registry, or None if unavailable."""
     try:
         from parachute.core.interfaces import get_registry
@@ -313,6 +318,364 @@ def load_user_context(vault_path: Path) -> tuple[str, str]:
     return user_name, context_text
 
 
+def _get_sandbox() -> Any | None:
+    """Get DockerSandbox from the service registry, or None if unavailable."""
+    try:
+        from parachute.core.interfaces import get_registry
+        return get_registry().get("DockerSandbox")
+    except Exception:
+        return None
+
+
+async def _write_initial_card(graph, agent_name: str, display_name: str, output_date: str) -> str:
+    """Write an initial 'running' Card to the graph. Returns card_id."""
+    card_id = f"{agent_name}:{output_date}"
+    if graph is not None:
+        try:
+            await graph.execute_cypher(
+                "MERGE (c:Card {card_id: $card_id}) "
+                "SET c.agent_name = $agent_name, "
+                "    c.display_name = $display_name, "
+                "    c.content = '', "
+                "    c.generated_at = $generated_at, "
+                "    c.status = 'running', "
+                "    c.date = $date",
+                {
+                    "card_id": card_id,
+                    "agent_name": agent_name,
+                    "display_name": display_name,
+                    "generated_at": datetime.now(timezone.utc).isoformat(),
+                    "date": output_date,
+                },
+            )
+        except Exception as e:
+            logger.warning(f"Could not write initial running card for '{agent_name}': {e}")
+    return card_id
+
+
+async def _mark_card_failed(graph, card_id: str) -> None:
+    """Mark a Card as failed in the graph."""
+    if graph is not None:
+        try:
+            await graph.execute_cypher(
+                "MATCH (c:Card {card_id: $card_id}) SET c.status = 'failed'",
+                {"card_id": card_id},
+            )
+        except Exception:
+            pass
+
+
+def _build_daily_tools_mcp_config(agent_name: str) -> dict[str, Any]:
+    """Build the MCP server config for daily_tools_mcp.py inside the container."""
+    # The script is mounted at /workspace/daily_tools_mcp.py inside the container
+    return {
+        "command": "python",
+        "args": ["/workspace/daily_tools_mcp.py"],
+        "env": {
+            "PARACHUTE_CALLER_NAME": agent_name,
+            "PARACHUTE_HOST_URL": "http://host.docker.internal:3333",
+        },
+    }
+
+
+async def _run_sandboxed(
+    sandbox,
+    config: DailyAgentConfig,
+    system_prompt: str,
+    prompt_text: str,
+    state: DailyAgentState,
+    card_id: str,
+    date: str,
+    output_date: str,
+    vault_path: Path,
+    graph,
+) -> dict[str, Any]:
+    """Run a daily agent inside a Docker sandbox container."""
+    from parachute.core.sandbox import AgentSandboxConfig
+    from parachute.core.capability_filter import filter_by_trust_level
+
+    agent_name = config.name
+
+    # Build daily tools MCP config (runs inside the container)
+    daily_tools_mcp = _build_daily_tools_mcp_config(agent_name)
+
+    # Load and filter vault MCPs for sandboxed trust level
+    vault_mcps = await load_vault_mcps(vault_path)
+    filtered_mcps = filter_by_trust_level(vault_mcps, "sandboxed")
+
+    # Combine daily tools MCP with filtered vault MCPs
+    all_mcp_servers = {
+        f"daily_{agent_name}": daily_tools_mcp,
+        **filtered_mcps,
+    }
+
+    # Slug used as both session ID (for resume) and project slug (for container)
+    slug = f"caller-{agent_name}"
+
+    # Ensure project record exists in session store
+    try:
+        from parachute.core.interfaces import get_registry
+        session_store = get_registry().get("SessionStore")
+        if session_store is not None:
+            # Check if project already exists before creating
+            existing = await session_store.get_project(slug)
+            if not existing:
+                await session_store.create_project(
+                    slug=slug,
+                    display_name=f"Caller: {config.display_name}",
+                )
+                logger.info(f"Created project record for caller '{agent_name}'")
+    except Exception as e:
+        logger.warning(f"Could not ensure project record for caller '{agent_name}': {e}")
+
+    # Build sandbox config
+    sandbox_config = AgentSandboxConfig(
+        session_id=slug,
+        agent_type="caller",
+        allowed_paths=[],  # Callers get read-only vault access (default)
+        network_enabled=True,  # Needs to reach host API for daily tools
+        mcp_servers=all_mcp_servers,
+        system_prompt=system_prompt,
+        model=config.raw_metadata.get("model") or None,
+        session_source=None,  # No credential injection for Callers
+    )
+
+    logger.info(
+        f"Running caller '{agent_name}' in sandbox (container=parachute-env-{slug}, "
+        f"mcps={list(all_mcp_servers.keys())})"
+    )
+
+    result: dict[str, Any] = {
+        "status": "running",
+        "agent": agent_name,
+        "date": date,
+        "output_date": output_date,
+        "execution_mode": "sandboxed",
+        "mcp_servers": list(all_mcp_servers.keys()),
+    }
+
+    try:
+        # Mount the daily_tools_mcp.py script into the container
+        # The sandbox run_session uses docker exec, so we need to copy the script
+        # into the container's workspace on first use
+        mcp_script = Path(__file__).parent.parent / "docker" / "daily_tools_mcp.py"
+        if mcp_script.exists():
+            # Ensure container exists first
+            await sandbox.ensure_container(slug, sandbox_config)
+            container_name = f"parachute-env-{slug}"
+
+            # Copy MCP script into container
+            copy_proc = await asyncio.create_subprocess_exec(
+                "docker", "cp",
+                str(mcp_script),
+                f"{container_name}:/workspace/daily_tools_mcp.py",
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            _, stderr = await copy_proc.communicate()
+            if copy_proc.returncode != 0:
+                logger.warning(f"Failed to copy daily_tools_mcp.py to container: {stderr.decode()}")
+
+        output_written = False
+        captured_session_id = None
+        captured_model = None
+
+        async for event in sandbox.run_session(
+            session_id=slug,
+            config=sandbox_config,
+            message=prompt_text,
+            resume_session_id=state.sdk_session_id if state.sdk_session_id else None,
+            project_slug=slug,
+        ):
+            event_type = event.get("type", "")
+
+            if event_type == "session":
+                captured_session_id = event.get("sessionId")
+            elif event_type == "model":
+                captured_model = event.get("model")
+            elif event_type == "tool_use":
+                tool = event.get("tool", {})
+                if tool.get("name") == "write_output":
+                    output_written = True
+            elif event_type == "error":
+                error_msg = event.get("error", "Unknown sandbox error")
+                logger.error(f"Caller '{agent_name}' sandbox error: {error_msg}")
+                result["status"] = "error"
+                result["error"] = error_msg
+                await _mark_card_failed(graph, card_id)
+                return result
+            elif event_type == "resume_failed":
+                # Clear stale session and retry will happen via container's entrypoint
+                logger.warning(
+                    f"Caller '{agent_name}' resume failed, container will retry fresh"
+                )
+                state.sdk_session_id = None
+                state.save()
+
+        # Update state
+        state.record_run(date, captured_session_id, captured_model)
+
+        result["status"] = "completed" if output_written else "completed_no_output"
+        result["sdk_session_id"] = captured_session_id
+        result["model"] = captured_model
+        result["output_written"] = output_written
+        result["card_id"] = card_id if output_written else None
+        result["journal_date"] = date
+
+        logger.info(
+            f"Caller '{agent_name}' completed (sandboxed) for {date}: "
+            f"output_written={output_written}"
+        )
+
+    except Exception as e:
+        logger.error(f"Caller '{agent_name}' sandbox error: {e}", exc_info=True)
+        result["status"] = "error"
+        result["error"] = str(e)
+        await _mark_card_failed(graph, card_id)
+
+    return result
+
+
+async def _run_direct(
+    config: DailyAgentConfig,
+    system_prompt: str,
+    prompt_text: str,
+    state: DailyAgentState,
+    card_id: str,
+    date: str,
+    output_date: str,
+    vault_path: Path,
+    graph,
+    create_tools_fn: Optional[Callable] = None,
+) -> dict[str, Any]:
+    """Run a daily agent directly in the server process (no Docker container)."""
+    from claude_agent_sdk import ClaudeAgentOptions, query as sdk_query
+    from parachute.core.daily_agent_tools import create_daily_agent_tools
+
+    agent_name = config.name
+
+    # Create tools for this agent
+    if create_tools_fn:
+        _tools, agent_mcp_config = await create_tools_fn(vault_path, config)
+    else:
+        _tools, agent_mcp_config = create_daily_agent_tools(vault_path, config, graph=graph)
+
+    # Load vault MCPs
+    vault_mcps = await load_vault_mcps(vault_path)
+
+    # Combine all MCP servers
+    all_mcp_servers = {
+        f"daily_{agent_name}": agent_mcp_config,
+        **vault_mcps,
+    }
+
+    logger.info(f"Running agent '{agent_name}' directly with MCPs: {list(all_mcp_servers.keys())}")
+
+    # Wrap prompt in async generator with delay
+    async def generate_prompt():
+        await asyncio.sleep(1.0)
+        yield {"type": "user", "message": {"role": "user", "content": prompt_text}}
+
+    # Build options
+    options_kwargs = {
+        "system_prompt": system_prompt,
+        "max_turns": 20,
+        "mcp_servers": all_mcp_servers,
+        "permission_mode": "bypassPermissions",
+        "stderr": lambda msg: logger.error(f"CLI STDERR: {msg}"),
+        "debug_stderr": sys.stderr,
+    }
+
+    if state.sdk_session_id:
+        options_kwargs["resume"] = state.sdk_session_id
+
+    options = ClaudeAgentOptions(**options_kwargs)
+
+    result: dict[str, Any] = {
+        "status": "running",
+        "agent": agent_name,
+        "date": date,
+        "output_date": output_date,
+        "execution_mode": "direct",
+        "sdk_session_id": state.sdk_session_id,
+        "mcp_servers": list(all_mcp_servers.keys()),
+    }
+
+    async def run_query_with_retry(opts: ClaudeAgentOptions, retry_on_stale: bool = True):
+        nonlocal state
+        try:
+            response_text = ""
+            new_session_id = None
+            model_used = None
+            output_written = False
+
+            async for event in sdk_query(prompt=generate_prompt(), options=opts):
+                if hasattr(event, "session_id") and event.session_id:
+                    new_session_id = event.session_id
+                if hasattr(event, "model") and event.model:
+                    model_used = event.model
+                if hasattr(event, "content"):
+                    for block in event.content:
+                        if hasattr(block, "text"):
+                            response_text += block.text
+                        if hasattr(block, "name") and "write_output" in str(getattr(block, "name", "")):
+                            output_written = True
+
+            return {
+                "success": True,
+                "response_text": response_text,
+                "new_session_id": new_session_id,
+                "model_used": model_used,
+                "output_written": output_written,
+            }
+
+        except Exception as e:
+            error_str = str(e).lower()
+            if retry_on_stale and ("no conversation found" in error_str or "session" in error_str and "not found" in error_str):
+                logger.warning(
+                    f"Agent '{agent_name}' session expired (id={opts.resume}), "
+                    "clearing and retrying with fresh session"
+                )
+                state.sdk_session_id = None
+                state.save()
+                fresh_opts_kwargs = {
+                    "system_prompt": opts.system_prompt,
+                    "max_turns": opts.max_turns,
+                    "mcp_servers": opts.mcp_servers,
+                    "permission_mode": opts.permission_mode,
+                }
+                fresh_opts = ClaudeAgentOptions(**fresh_opts_kwargs)
+                return await run_query_with_retry(fresh_opts, retry_on_stale=False)
+            raise
+
+    try:
+        query_result = await run_query_with_retry(options)
+
+        new_session_id = query_result["new_session_id"]
+        model_used = query_result["model_used"]
+        output_written = query_result["output_written"]
+
+        state.record_run(date, new_session_id, model_used)
+
+        result["status"] = "completed" if output_written else "completed_no_output"
+        result["sdk_session_id"] = new_session_id
+        result["model"] = model_used
+        result["output_written"] = output_written
+        result["card_id"] = card_id if output_written else None
+        result["journal_date"] = date
+        result["output_date"] = output_date
+
+        logger.info(f"Agent '{agent_name}' completed (direct) for {date}: output_written={output_written}")
+
+    except Exception as e:
+        logger.error(f"Agent '{agent_name}' error: {e}", exc_info=True)
+        result["status"] = "error"
+        result["error"] = str(e)
+        await _mark_card_failed(graph, card_id)
+
+    return result
+
+
 async def run_daily_agent(
     vault_path: Path,
     agent_name: str,
@@ -323,6 +686,9 @@ async def run_daily_agent(
 ) -> dict[str, Any]:
     """
     Run a daily agent for a specific date.
+
+    Routes through Docker sandbox when the Caller's trust_level is "sandboxed"
+    and Docker is available. Falls back to direct (in-process) execution otherwise.
 
     Args:
         vault_path: Path to the vault
@@ -383,68 +749,18 @@ async def run_daily_agent(
                 "reason": f"No journal found for {date}",
             }
 
-    # Load user context
+    # Load user context and format system prompt
     user_name, user_context = load_user_context(vault_path)
-
-    # Format system prompt with user context
     system_prompt = config.system_prompt
     if "{user_name}" in system_prompt or "{user_context}" in system_prompt:
         system_prompt = system_prompt.format(user_name=user_name, user_context=user_context)
     elif user_context:
         system_prompt = system_prompt + f"\n\n## User Context\n\n{user_context}"
 
-    # Import SDK and create tools
-    from claude_agent_sdk import ClaudeAgentOptions, query as sdk_query
-    from parachute.core.daily_agent_tools import create_daily_agent_tools
-
     graph = _get_graph()
 
     # Write initial "running" Card to graph so Flutter can poll status
-    card_id = f"{agent_name}:{output_date}"
-    if graph is not None:
-        try:
-            await graph.execute_cypher(
-                "MERGE (c:Card {card_id: $card_id}) "
-                "SET c.agent_name = $agent_name, "
-                "    c.display_name = $display_name, "
-                "    c.content = '', "
-                "    c.generated_at = $generated_at, "
-                "    c.status = 'running', "
-                "    c.date = $date",
-                {
-                    "card_id": card_id,
-                    "agent_name": agent_name,
-                    "display_name": config.display_name,
-                    "generated_at": datetime.now(timezone.utc).isoformat(),
-                    "date": output_date,
-                },
-            )
-            await graph.execute_cypher(
-                "MERGE (d:Day {date: $date}) "
-                "WITH d "
-                "MATCH (c:Card {card_id: $card_id}) "
-                "MERGE (d)-[:HAS_CARD]->(c)",
-                {"date": output_date, "card_id": card_id},
-            )
-        except Exception as e:
-            logger.warning(f"Could not write initial running card for '{agent_name}': {e}")
-
-    # Create tools for this agent
-    if create_tools_fn:
-        _tools, agent_mcp_config = await create_tools_fn(vault_path, config)
-    else:
-        _tools, agent_mcp_config = create_daily_agent_tools(vault_path, config, graph=graph)
-
-    # Load vault MCPs
-    vault_mcps = await load_vault_mcps(vault_path)
-
-    # Combine all MCP servers
-    all_mcp_servers = {
-        f"daily_{agent_name}": agent_mcp_config,
-        **vault_mcps,
-    }
-
-    logger.info(f"Running agent '{agent_name}' with MCPs: {list(all_mcp_servers.keys())}")
+    card_id = await _write_initial_card(graph, agent_name, config.display_name, output_date)
 
     # Build the prompt
     if build_prompt_fn:
@@ -452,134 +768,46 @@ async def run_daily_agent(
     else:
         prompt_text = _default_prompt(config, date, output_date)
 
-    # Wrap prompt in async generator with delay
-    # The delay ensures the SDK transport and MCP servers are ready
-    # before the first message is sent (workaround for SDK timing issue)
-    async def generate_prompt():
-        import asyncio
-        await asyncio.sleep(1.0)  # Wait for transport/MCP initialization
-        yield {"type": "user", "message": {"role": "user", "content": prompt_text}}
+    # Route: sandboxed vs direct execution
+    use_sandbox = config.trust_level == "sandboxed"
+    sandbox = _get_sandbox() if use_sandbox else None
 
-    # Build options
-    options_kwargs = {
-        "system_prompt": system_prompt,
-        "max_turns": 20,
-        "mcp_servers": all_mcp_servers,
-        "permission_mode": "bypassPermissions",
-        "stderr": lambda msg: logger.error(f"CLI STDERR: {msg}"),
-        "debug_stderr": sys.stderr,  # Also write to actual stderr for debugging
-    }
+    if use_sandbox and sandbox is not None:
+        # Check Docker availability
+        if await sandbox.is_available() and await sandbox.image_exists():
+            logger.info(f"Caller '{agent_name}' routing to sandbox (trust_level=sandboxed)")
+            return await _run_sandboxed(
+                sandbox=sandbox,
+                config=config,
+                system_prompt=system_prompt,
+                prompt_text=prompt_text,
+                state=state,
+                card_id=card_id,
+                date=date,
+                output_date=output_date,
+                vault_path=vault_path,
+                graph=graph,
+            )
+        else:
+            logger.warning(
+                f"Caller '{agent_name}' trust_level=sandboxed but Docker unavailable, "
+                f"falling back to direct execution"
+            )
 
-    # Resume existing session if available
-    if state.sdk_session_id:
-        options_kwargs["resume"] = state.sdk_session_id
-
-    options = ClaudeAgentOptions(**options_kwargs)
-
-    result = {
-        "status": "running",
-        "agent": agent_name,
-        "date": date,
-        "output_date": output_date,
-        "sdk_session_id": state.sdk_session_id,
-        "mcp_servers": list(all_mcp_servers.keys()),
-    }
-
-    # Helper to run the query with retry logic for stale sessions
-    async def run_query_with_retry(opts: ClaudeAgentOptions, retry_on_stale: bool = True):
-        nonlocal state
-        try:
-            response_text = ""
-            new_session_id = None
-            model_used = None
-            output_written = False
-
-            async for event in sdk_query(prompt=generate_prompt(), options=opts):
-                if hasattr(event, "session_id") and event.session_id:
-                    new_session_id = event.session_id
-
-                if hasattr(event, "model") and event.model:
-                    model_used = event.model
-
-                if hasattr(event, "content"):
-                    for block in event.content:
-                        if hasattr(block, "text"):
-                            response_text += block.text
-
-                        # Track if output was written
-                        if hasattr(block, "name") and "write_output" in str(getattr(block, "name", "")):
-                            output_written = True
-
-            return {
-                "success": True,
-                "response_text": response_text,
-                "new_session_id": new_session_id,
-                "model_used": model_used,
-                "output_written": output_written,
-            }
-
-        except Exception as e:
-            error_str = str(e).lower()
-            # Check for stale session errors - retry without resume
-            if retry_on_stale and ("no conversation found" in error_str or "session" in error_str and "not found" in error_str):
-                logger.warning(
-                    f"Agent '{agent_name}' session expired (id={opts.resume}), "
-                    "clearing and retrying with fresh session"
-                )
-                # Clear the stale session from state
-                state.sdk_session_id = None
-                state.save()
-
-                # Create new options without resume
-                fresh_opts_kwargs = {
-                    "system_prompt": opts.system_prompt,
-                    "max_turns": opts.max_turns,
-                    "mcp_servers": opts.mcp_servers,
-                    "permission_mode": opts.permission_mode,
-                }
-                fresh_opts = ClaudeAgentOptions(**fresh_opts_kwargs)
-
-                # Retry without resume (don't retry again on failure)
-                return await run_query_with_retry(fresh_opts, retry_on_stale=False)
-
-            # Re-raise other errors
-            raise
-
-    try:
-        query_result = await run_query_with_retry(options)
-
-        new_session_id = query_result["new_session_id"]
-        model_used = query_result["model_used"]
-        output_written = query_result["output_written"]
-
-        # Update state
-        state.record_run(date, new_session_id, model_used)
-
-        result["status"] = "completed" if output_written else "completed_no_output"
-        result["sdk_session_id"] = new_session_id
-        result["model"] = model_used
-        result["output_written"] = output_written
-        result["card_id"] = card_id if output_written else None
-        result["journal_date"] = date
-        result["output_date"] = output_date
-
-        logger.info(f"Agent '{agent_name}' completed for {date}: output_written={output_written}")
-
-    except Exception as e:
-        logger.error(f"Agent '{agent_name}' error: {e}", exc_info=True)
-        result["status"] = "error"
-        result["error"] = str(e)
-        # Mark Card as failed so Flutter shows the right status
-        if graph is not None:
-            try:
-                await graph.execute_cypher(
-                    "MATCH (c:Card {card_id: $card_id}) SET c.status = 'failed'",
-                    {"card_id": card_id},
-                )
-            except Exception:
-                pass
-
-    return result
+    # Direct execution (trust_level=direct, Docker unavailable, or no sandbox instance)
+    logger.info(f"Caller '{agent_name}' running directly (trust_level={config.trust_level})")
+    return await _run_direct(
+        config=config,
+        system_prompt=system_prompt,
+        prompt_text=prompt_text,
+        state=state,
+        card_id=card_id,
+        date=date,
+        output_date=output_date,
+        vault_path=vault_path,
+        graph=graph,
+        create_tools_fn=create_tools_fn,
+    )
 
 
 def _default_prompt(config: DailyAgentConfig, journal_date: str, output_date: str) -> str:

@@ -239,6 +239,7 @@ class DailyModule:
                 "schedule_enabled": "STRING",  # "true" / "false"
                 "schedule_time": "STRING",  # "HH:MM"
                 "enabled": "STRING",        # "true" / "false"
+                "trust_level": "STRING",    # "sandboxed" (default) | "direct"
                 "created_at": "STRING",
                 "updated_at": "STRING",
             },
@@ -275,14 +276,25 @@ class DailyModule:
             "brain_links_json": "STRING",
         }
         missing = {col: typ for col, typ in new_cols.items() if col not in existing}
-        if not missing:
-            return
-        async with graph.write_lock:
-            for col, typ in missing.items():
-                await graph.execute_cypher(
-                    f"ALTER TABLE Note ADD {col} {typ} DEFAULT NULL"
-                )
-                logger.info(f"Daily: added column Note.{col}")
+        if missing:
+            async with graph.write_lock:
+                for col, typ in missing.items():
+                    await graph.execute_cypher(
+                        f"ALTER TABLE Note ADD {col} {typ} DEFAULT NULL"
+                    )
+                    logger.info(f"Daily: added column Note.{col}")
+
+        # Caller table migrations
+        try:
+            caller_cols = await graph.get_table_columns("Caller")
+            if "trust_level" not in caller_cols:
+                async with graph.write_lock:
+                    await graph.execute_cypher(
+                        "ALTER TABLE Caller ADD trust_level STRING DEFAULT 'sandboxed'"
+                    )
+                    logger.info("Daily: added column Caller.trust_level")
+        except Exception:
+            pass  # Caller table may not exist yet on first run
 
     async def _migrate_audio_paths_to_absolute(self, graph) -> None:
         """One-time: convert relative audio_path values in graph to absolute.
@@ -1433,6 +1445,56 @@ class DailyModule:
             )
             return {"status": "started", "agent": agent_name, "date": date}
 
+        @router.post("/cards/write", status_code=201)
+        async def write_card(body: dict):
+            """Write a Card to the graph (used by container-side daily tools MCP).
+
+            Body: { agent_name, date, content, display_name? }
+            """
+            graph = self._get_graph()
+            if graph is None:
+                return JSONResponse(status_code=503, content={"error": "BrainDB not available"})
+            agent_name = body.get("agent_name", "").strip()
+            date_str = body.get("date", "").strip()
+            content = body.get("content", "").strip()
+            if not agent_name or not date_str or not content:
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": "agent_name, date, and content are required"},
+                )
+            if not re.fullmatch(r"[a-z0-9][a-z0-9\-]{0,63}", agent_name):
+                return JSONResponse(status_code=400, content={"error": "invalid agent_name format"})
+            if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_str):
+                return JSONResponse(status_code=400, content={"error": "invalid date format"})
+            # Verify agent_name corresponds to a known Caller
+            caller_rows = await graph.execute_cypher(
+                "MATCH (c:Caller {name: $name}) RETURN c.name",
+                {"name": agent_name},
+            )
+            if not caller_rows:
+                return JSONResponse(status_code=403, content={"error": "unknown caller"})
+            card_id = f"{agent_name}:{date_str}"
+            display_name = body.get("display_name") or agent_name.replace("-", " ").title()
+            generated_at = datetime.now(timezone.utc).isoformat()
+            await graph.execute_cypher(
+                "MERGE (c:Card {card_id: $card_id}) "
+                "SET c.agent_name = $agent_name, "
+                "    c.display_name = $display_name, "
+                "    c.content = $content, "
+                "    c.generated_at = $generated_at, "
+                "    c.status = 'done', "
+                "    c.date = $date",
+                {
+                    "card_id": card_id,
+                    "agent_name": agent_name,
+                    "display_name": display_name,
+                    "content": content,
+                    "generated_at": generated_at,
+                    "date": date_str,
+                },
+            )
+            return {"card_id": card_id, "status": "done", "date": date_str}
+
         # ── Callers (agent definitions) ──────────────────────────────────────
 
         @router.get("/callers")
@@ -1471,12 +1533,16 @@ class DailyModule:
             if not name:
                 return JSONResponse(status_code=400, content={"error": "name required"})
             now = datetime.now(timezone.utc).isoformat()
+            trust_level = body.get("trust_level", "sandboxed")
+            if trust_level not in ("sandboxed", "direct"):
+                trust_level = "sandboxed"
             await graph.execute_cypher(
                 "MERGE (c:Caller {name: $name}) "
                 "SET c.display_name = $display_name, c.description = $description, "
                 "    c.system_prompt = $system_prompt, c.tools = $tools, "
                 "    c.model = $model, c.schedule_enabled = $schedule_enabled, "
                 "    c.schedule_time = $schedule_time, c.enabled = $enabled, "
+                "    c.trust_level = $trust_level, "
                 "    c.updated_at = $now",
                 {
                     "name": name,
@@ -1488,6 +1554,7 @@ class DailyModule:
                     "schedule_enabled": "true" if body.get("schedule_enabled", True) else "false",
                     "schedule_time": body.get("schedule_time") or "3:00",
                     "enabled": "true" if body.get("enabled", True) else "false",
+                    "trust_level": trust_level,
                     "now": now,
                 },
             )
@@ -1510,12 +1577,16 @@ class DailyModule:
             if not rows:
                 return JSONResponse(status_code=404, content={"error": "not found"})
             existing = rows[0]
+            trust_level = body.get("trust_level", existing.get("trust_level") or "sandboxed")
+            if trust_level not in ("sandboxed", "direct"):
+                trust_level = "sandboxed"
             await graph.execute_cypher(
                 "MATCH (c:Caller {name: $name}) "
                 "SET c.display_name = $display_name, c.description = $description, "
                 "    c.system_prompt = $system_prompt, c.tools = $tools, "
                 "    c.model = $model, c.schedule_enabled = $schedule_enabled, "
                 "    c.schedule_time = $schedule_time, c.enabled = $enabled, "
+                "    c.trust_level = $trust_level, "
                 "    c.updated_at = $now",
                 {
                     "name": name,
@@ -1527,6 +1598,7 @@ class DailyModule:
                     "schedule_enabled": "true" if body.get("schedule_enabled", existing.get("schedule_enabled") == "true") else "false",
                     "schedule_time": body.get("schedule_time", existing.get("schedule_time") or "3:00"),
                     "enabled": "true" if body.get("enabled", existing.get("enabled") == "true") else "false",
+                    "trust_level": trust_level,
                     "now": now,
                 },
             )
