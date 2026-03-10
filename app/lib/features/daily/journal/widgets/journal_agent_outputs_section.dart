@@ -1,13 +1,17 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
 import '../models/agent_card.dart';
+import '../providers/journal_providers.dart';
+import '../utils/agent_theme.dart';
 import 'agent_output_header.dart';
 
 /// Section showing agent output cards (reflections, content ideas, etc.)
 ///
-/// Accepts [AgentCard] objects from the graph. Running cards show a spinner;
-/// done cards show the expandable [AgentOutputHeader].
-class JournalAgentOutputsSection extends StatelessWidget {
+/// Accepts [AgentCard] objects from the graph. Routes each card to the
+/// appropriate widget based on status: running → shimmer, failed → retry,
+/// done → expandable [AgentOutputHeader].
+class JournalAgentOutputsSection extends ConsumerWidget {
   final List<AgentCard> cards;
 
   const JournalAgentOutputsSection({
@@ -16,73 +20,249 @@ class JournalAgentOutputsSection extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final doneCards = cards.where((c) => c.isDone).toList();
+
     return Column(
       children: cards.map((card) {
         if (card.isRunning) {
           return _AgentRunningCard(card: card);
         }
-        return AgentOutputHeader(card: card);
+        if (card.isFailed) {
+          return _AgentFailedCard(
+            card: card,
+            onRetry: () => _retryAgent(ref, card),
+          );
+        }
+        return AgentOutputHeader(
+          card: card,
+          initiallyExpanded: doneCards.length == 1 && card == doneCards.first,
+        );
       }).toList(),
     );
   }
+
+  void _retryAgent(WidgetRef ref, AgentCard card) {
+    final api = ref.read(dailyApiServiceProvider);
+    api.triggerAgentRun(card.agentName, date: card.date);
+    ref.read(journalRefreshTriggerProvider.notifier).state++;
+  }
 }
 
-/// Loading card for an agent currently running
-class _AgentRunningCard extends StatelessWidget {
+// ─────────────────────────────────────────────────────────────────────────────
+// Running Card — shimmer animation with per-agent theming
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _AgentRunningCard extends StatefulWidget {
   final AgentCard card;
 
   const _AgentRunningCard({required this.card});
 
   @override
-  Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+  State<_AgentRunningCard> createState() => _AgentRunningCardState();
+}
 
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: isDark ? BrandColors.nightSurfaceElevated : Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: isDark
-              ? BrandColors.driftwood.withValues(alpha: 0.3)
-              : BrandColors.driftwood.withValues(alpha: 0.2),
-        ),
-      ),
-      child: Row(
-        children: [
-          SizedBox(
-            width: 20,
-            height: 20,
-            child: CircularProgressIndicator(
-              strokeWidth: 2,
-              color: BrandColors.forest,
+class _AgentRunningCardState extends State<_AgentRunningCard>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _shimmerController;
+
+  @override
+  void initState() {
+    super.initState();
+    _shimmerController = AnimationController(
+      vsync: this,
+      duration: Motion.breathing,
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _shimmerController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final agentTheme = AgentTheme.forAgent(widget.card.agentName);
+
+    return AnimatedBuilder(
+      animation: _shimmerController,
+      builder: (context, child) {
+        // Shimmer sweep position: moves from -1.0 to 2.0 across the card
+        final shimmerPosition = _shimmerController.value * 3.0 - 1.0;
+
+        return Container(
+          margin: EdgeInsets.symmetric(
+            horizontal: Spacing.lg,
+            vertical: Spacing.sm,
+          ),
+          padding: EdgeInsets.all(Spacing.lg),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment(shimmerPosition - 0.5, 0),
+              end: Alignment(shimmerPosition + 0.5, 0),
+              colors: isDark
+                  ? [
+                      BrandColors.nightSurfaceElevated,
+                      agentTheme.color.withValues(alpha: 0.08),
+                      BrandColors.nightSurfaceElevated,
+                    ]
+                  : [
+                      BrandColors.softWhite,
+                      agentTheme.color.withValues(alpha: 0.06),
+                      BrandColors.softWhite,
+                    ],
+              stops: const [0.0, 0.5, 1.0],
+            ),
+            borderRadius: Radii.card,
+            border: Border.all(
+              color: agentTheme.color.withValues(alpha: isDark ? 0.3 : 0.2),
             ),
           ),
-          const SizedBox(width: 12),
+          child: child,
+        );
+      },
+      child: Row(
+        children: [
+          // Agent icon with subtle pulse
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: agentTheme.color.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(Radii.md),
+            ),
+            child: Icon(
+              agentTheme.icon,
+              size: 24,
+              color: agentTheme.color,
+            ),
+          ),
+          SizedBox(width: Spacing.md + Spacing.xxs),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  card.displayName,
-                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                        fontWeight: FontWeight.w600,
-                        color: isDark ? BrandColors.driftwood : BrandColors.charcoal,
-                      ),
+                  widget.card.displayName,
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: isDark ? BrandColors.softWhite : BrandColors.ink,
+                  ),
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  'Running...',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: BrandColors.driftwood,
-                      ),
+                  agentTheme.runningMessage,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: BrandColors.driftwood,
+                  ),
                 ),
               ],
             ),
           ),
+          SizedBox(
+            width: 18,
+            height: 18,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              color: agentTheme.color.withValues(alpha: 0.6),
+            ),
+          ),
         ],
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Failed Card — gentle error state with tap-to-retry
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _AgentFailedCard extends StatelessWidget {
+  final AgentCard card;
+  final VoidCallback onRetry;
+
+  const _AgentFailedCard({
+    required this.card,
+    required this.onRetry,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final agentTheme = AgentTheme.forAgent(card.agentName);
+
+    return Padding(
+      padding: EdgeInsets.symmetric(
+        horizontal: Spacing.lg,
+        vertical: Spacing.sm,
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onRetry,
+          borderRadius: Radii.card,
+          child: Container(
+            padding: EdgeInsets.all(Spacing.lg),
+            decoration: BoxDecoration(
+              color: isDark
+                  ? BrandColors.nightSurfaceElevated
+                  : BrandColors.softWhite,
+              borderRadius: Radii.card,
+              border: Border.all(
+                color: BrandColors.error.withValues(alpha: isDark ? 0.3 : 0.2),
+              ),
+            ),
+            child: Row(
+              children: [
+                // Agent icon with warning tint
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: BrandColors.error.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(Radii.md),
+                  ),
+                  child: Icon(
+                    agentTheme.icon,
+                    size: 24,
+                    color: BrandColors.error.withValues(alpha: 0.7),
+                  ),
+                ),
+                SizedBox(width: Spacing.md + Spacing.xxs),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        "Couldn\u2019t generate today\u2019s ${card.displayName.toLowerCase()}",
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w600,
+                          color: isDark
+                              ? BrandColors.softWhite
+                              : BrandColors.ink,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'Tap to try again',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: BrandColors.driftwood,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Icon(
+                  Icons.refresh,
+                  size: 20,
+                  color: BrandColors.driftwood,
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
