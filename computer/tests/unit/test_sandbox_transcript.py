@@ -79,13 +79,42 @@ class TestExtractMessageBlocks:
         assert blocks[0]["type"] == "tool_use"
         assert blocks[0]["name"] == "Bash"
 
-    def test_list_with_tool_result(self, session_manager: SessionManager):
-        msg = {"content": [{"type": "tool_result", "toolUseId": "t1", "content": "output", "isError": False}]}
+    def test_tool_result_merged_into_tool_use(self, session_manager: SessionManager):
+        """tool_result blocks are merged into matching tool_use blocks."""
+        msg = {"content": [
+            {"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "ls"}},
+            {"type": "tool_result", "toolUseId": "t1", "content": "file.txt", "isError": False},
+        ]}
+        blocks = session_manager._extract_message_blocks(msg)
+        assert len(blocks) == 1  # tool_result is folded, not separate
+        assert blocks[0]["type"] == "tool_use"
+        assert blocks[0]["result"] == "file.txt"
+        assert blocks[0]["isError"] is False
+
+    def test_tool_result_list_content_normalized(self, session_manager: SessionManager):
+        """tool_result with list content (multi-part) is joined to string."""
+        msg = {"content": [
+            {"type": "tool_use", "id": "t1", "name": "Read", "input": {}},
+            {"type": "tool_result", "toolUseId": "t1", "content": [
+                {"type": "text", "text": "line 1"},
+                {"type": "text", "text": "line 2"},
+            ], "isError": False},
+        ]}
         blocks = session_manager._extract_message_blocks(msg)
         assert len(blocks) == 1
-        assert blocks[0]["type"] == "tool_result"
+        assert blocks[0]["result"] == "line 1\nline 2"
 
-    def test_mixed_blocks(self, session_manager: SessionManager):
+    def test_orphaned_tool_result_dropped(self, session_manager: SessionManager):
+        """tool_result with no matching tool_use is silently dropped."""
+        msg = {"content": [
+            {"type": "tool_result", "toolUseId": "no-match", "content": "orphan", "isError": False},
+            {"type": "text", "text": "hello"},
+        ]}
+        blocks = session_manager._extract_message_blocks(msg)
+        assert len(blocks) == 1
+        assert blocks[0]["type"] == "text"
+
+    def test_mixed_blocks_with_merge(self, session_manager: SessionManager):
         msg = {"content": [
             {"type": "thinking", "text": "hmm"},
             {"type": "tool_use", "id": "t1", "name": "Read", "input": {}},
@@ -93,9 +122,10 @@ class TestExtractMessageBlocks:
             {"type": "text", "text": "done"},
         ]}
         blocks = session_manager._extract_message_blocks(msg)
-        assert len(blocks) == 4
+        assert len(blocks) == 3  # thinking, tool_use(+result), text
         types = [b["type"] for b in blocks]
-        assert types == ["thinking", "tool_use", "tool_result", "text"]
+        assert types == ["thinking", "tool_use", "text"]
+        assert blocks[1]["result"] == "file data"
 
     def test_bare_strings_in_list(self, session_manager: SessionManager):
         msg = {"content": ["hello", "world"]}
@@ -139,7 +169,7 @@ class TestExtractMessageContentBackcompat:
 class TestSandboxTranscriptRoundTrip:
     """Structured content survives write → load."""
 
-    def _write_and_load(self, session_manager, session, user_msg, content_blocks):
+    async def _write_and_load(self, session_manager, session, user_msg, content_blocks):
         """Helper: write transcript then load messages."""
         session_manager.write_sandbox_transcript(
             session.id,
@@ -147,15 +177,12 @@ class TestSandboxTranscriptRoundTrip:
             content_blocks,
             working_directory=session.working_directory,
         )
-        import asyncio
-        return asyncio.get_event_loop().run_until_complete(
-            session_manager._load_sdk_messages(session)
-        )
+        return await session_manager._load_sdk_messages(session)
 
-    def test_text_only(self, session_manager, tmp_session_dir):
+    async def test_text_only(self, session_manager, tmp_session_dir):
         session = _make_session(wd=str(tmp_session_dir))
         blocks = [{"type": "text", "text": "Hello!"}]
-        messages = self._write_and_load(session_manager, session, "hi", blocks)
+        messages = await self._write_and_load(session_manager, session, "hi", blocks)
 
         assert len(messages) == 2  # user + assistant (result deduped)
         assert messages[0]["role"] == "user"
@@ -163,13 +190,13 @@ class TestSandboxTranscriptRoundTrip:
         assert messages[1]["role"] == "assistant"
         assert messages[1]["content"] == [{"type": "text", "text": "Hello!"}]
 
-    def test_thinking_and_text(self, session_manager, tmp_session_dir):
+    async def test_thinking_and_text(self, session_manager, tmp_session_dir):
         session = _make_session(wd=str(tmp_session_dir))
         blocks = [
             {"type": "thinking", "text": "Let me think..."},
             {"type": "text", "text": "Here's my answer"},
         ]
-        messages = self._write_and_load(session_manager, session, "question?", blocks)
+        messages = await self._write_and_load(session_manager, session, "question?", blocks)
 
         assistant = messages[1]
         assert assistant["role"] == "assistant"
@@ -179,7 +206,7 @@ class TestSandboxTranscriptRoundTrip:
         assert content[0]["text"] == "Let me think..."
         assert content[1]["type"] == "text"
 
-    def test_full_structured_content(self, session_manager, tmp_session_dir):
+    async def test_full_structured_content(self, session_manager, tmp_session_dir):
         session = _make_session(wd=str(tmp_session_dir))
         blocks = [
             {"type": "thinking", "text": "Analyzing request..."},
@@ -187,17 +214,19 @@ class TestSandboxTranscriptRoundTrip:
             {"type": "tool_result", "toolUseId": "t1", "content": "file.txt", "isError": False},
             {"type": "text", "text": "Found file.txt"},
         ]
-        messages = self._write_and_load(session_manager, session, "list files", blocks)
+        messages = await self._write_and_load(session_manager, session, "list files", blocks)
 
         assistant = messages[1]
         content = assistant["content"]
-        assert len(content) == 4
+        # tool_result merged into tool_use → 3 blocks, not 4
+        assert len(content) == 3
         types = [b["type"] for b in content]
-        assert types == ["thinking", "tool_use", "tool_result", "text"]
+        assert types == ["thinking", "tool_use", "text"]
         assert content[1]["name"] == "Bash"
-        assert content[2]["content"] == "file.txt"
+        assert content[1]["result"] == "file.txt"
+        assert content[1]["isError"] is False
 
-    def test_multi_turn(self, session_manager, tmp_session_dir):
+    async def test_multi_turn(self, session_manager, tmp_session_dir):
         """Multiple write calls append correctly."""
         session = _make_session(wd=str(tmp_session_dir))
 
@@ -214,13 +243,29 @@ class TestSandboxTranscriptRoundTrip:
             working_directory=session.working_directory,
         )
 
-        import asyncio
-        messages = asyncio.get_event_loop().run_until_complete(
-            session_manager._load_sdk_messages(session)
-        )
+        messages = await session_manager._load_sdk_messages(session)
         assert len(messages) == 4  # user1, asst1, user2, asst2
         # Second assistant message has thinking block
         assert messages[3]["content"][0]["type"] == "thinking"
+
+    async def test_tool_result_list_content_round_trip(self, session_manager, tmp_session_dir):
+        """tool_result with list content survives write → load → merge."""
+        session = _make_session(wd=str(tmp_session_dir))
+        blocks = [
+            {"type": "tool_use", "id": "t1", "name": "Read", "input": {"path": "/tmp/f"}},
+            {"type": "tool_result", "toolUseId": "t1", "content": [
+                {"type": "text", "text": "first line"},
+                {"type": "text", "text": "second line"},
+            ], "isError": False},
+            {"type": "text", "text": "Done reading"},
+        ]
+        messages = await self._write_and_load(session_manager, session, "read it", blocks)
+
+        assistant = messages[1]
+        content = assistant["content"]
+        assert len(content) == 2  # tool_use(+result), text
+        assert content[0]["type"] == "tool_use"
+        assert content[0]["result"] == "first line\nsecond line"
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -230,7 +275,7 @@ class TestSandboxTranscriptRoundTrip:
 class TestBackwardCompatibility:
     """Old transcripts with plain text content still load."""
 
-    def test_old_format_loads(self, session_manager, tmp_session_dir):
+    async def test_old_format_loads(self, session_manager, tmp_session_dir):
         """Transcripts from before this fix (text-only) still work."""
         session = _make_session(wd=str(tmp_session_dir))
         transcript_path = session_manager.get_sdk_transcript_path(session.id, session.working_directory)
@@ -247,15 +292,12 @@ class TestBackwardCompatibility:
             for ev in old_events:
                 f.write(json.dumps(ev) + "\n")
 
-        import asyncio
-        messages = asyncio.get_event_loop().run_until_complete(
-            session_manager._load_sdk_messages(session)
-        )
+        messages = await session_manager._load_sdk_messages(session)
 
         assert len(messages) == 2  # user + assistant (result deduped)
         assert messages[1]["content"] == [{"type": "text", "text": "Hi!"}]
 
-    def test_result_only_no_assistant(self, session_manager, tmp_session_dir):
+    async def test_result_only_no_assistant(self, session_manager, tmp_session_dir):
         """Very old format: only result event, no assistant event."""
         session = _make_session(wd=str(tmp_session_dir))
         transcript_path = session_manager.get_sdk_transcript_path(session.id, session.working_directory)
@@ -270,15 +312,12 @@ class TestBackwardCompatibility:
             for ev in old_events:
                 f.write(json.dumps(ev) + "\n")
 
-        import asyncio
-        messages = asyncio.get_event_loop().run_until_complete(
-            session_manager._load_sdk_messages(session)
-        )
+        messages = await session_manager._load_sdk_messages(session)
 
         assert len(messages) == 2
         assert messages[1]["content"] == [{"type": "text", "text": "Hi!"}]
 
-    def test_string_content_message(self, session_manager, tmp_session_dir):
+    async def test_string_content_message(self, session_manager, tmp_session_dir):
         """Old format where assistant content is a bare string."""
         session = _make_session(wd=str(tmp_session_dir))
         transcript_path = session_manager.get_sdk_transcript_path(session.id, session.working_directory)
@@ -294,10 +333,7 @@ class TestBackwardCompatibility:
             for ev in old_events:
                 f.write(json.dumps(ev) + "\n")
 
-        import asyncio
-        messages = asyncio.get_event_loop().run_until_complete(
-            session_manager._load_sdk_messages(session)
-        )
+        messages = await session_manager._load_sdk_messages(session)
 
         assert len(messages) == 2  # result deduped
         assert messages[1]["content"] == [{"type": "text", "text": "Hi there!"}]

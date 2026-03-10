@@ -170,11 +170,26 @@ class CapabilityBundle:
     warnings: list[dict] = field(default_factory=list)  # Serialized WarningEvent dicts
 
 
+def _content_as_text(content: Any) -> str:
+    """Format message content (str or list[dict]) as plain text for history injection."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                text = block.get("text", "")
+                if text:
+                    parts.append(text)
+        return " ".join(parts) if parts else ""
+    return str(content)
+
+
 @dataclass
 class _SandboxCallContext:
     """Per-call state for sandbox event processing (replaces 9-variable closure)."""
 
-    sbx: dict  # mutable state bag — contains "message", "session", "had_text", etc.
+    sbx: dict  # mutable state bag — contains "message", "session", "had_content", etc.
     sandbox_sid: str
     effective_trust: str
     is_new: bool
@@ -1263,13 +1278,13 @@ class Orchestrator:
         elif event_type == "text":
             ctx.sbx["had_content"] = True
             text_content = event.get("content", "")
-            # Merge consecutive text blocks
+            # SDK text events carry the full accumulated text, not a delta.
+            # Replace the previous text block to avoid duplication.
             blocks = ctx.sbx["content_blocks"]
             if blocks and blocks[-1].get("type") == "text":
                 blocks[-1]["text"] = text_content
             else:
                 blocks.append({"type": "text", "text": text_content})
-            ctx.sbx["response_text"] = text_content
 
         # Finalize BEFORE yielding "done" to prevent race condition
         if event_type == "done":
@@ -1392,7 +1407,7 @@ class Orchestrator:
                 history_lines = []
                 for msg in prior_messages:
                     role = msg["role"].upper()
-                    history_lines.append(f"[{role}]: {msg['content']}")
+                    history_lines.append(f"[{role}]: {_content_as_text(msg['content'])}")
                 history_block = "\n".join(history_lines)
                 sandbox_message = (
                     f"<conversation_history>\n{history_block}\n"
@@ -1440,7 +1455,6 @@ class Orchestrator:
 
         sbx = {
             "had_content": False,
-            "response_text": "",
             "content_blocks": [],
             "finalized": False,
             "session": session,
@@ -1483,7 +1497,7 @@ class Orchestrator:
                 history_lines = []
                 for msg in prior_messages:
                     role = msg["role"].upper()
-                    history_lines.append(f"[{role}]: {msg['content']}")
+                    history_lines.append(f"[{role}]: {_content_as_text(msg['content'])}")
                 history_block = "\n".join(history_lines)
                 retry_message = (
                     f"<conversation_history>\n{history_block}\n"

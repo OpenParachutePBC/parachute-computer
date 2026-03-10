@@ -241,51 +241,26 @@ class ChatMessage {
     if (json['content'] is String) {
       content = [MessageContent.text(json['content'] as String)];
     } else if (json['content'] is List) {
-      final rawBlocks = json['content'] as List;
-
-      // First pass: collect tool_result data keyed by toolUseId
-      // so we can merge results into their tool_use blocks
-      final Map<String, Map<String, dynamic>> toolResults = {};
-      for (final c in rawBlocks) {
-        if (c is Map<String, dynamic> && c['type'] == 'tool_result') {
-          final useId = c['toolUseId'] as String? ?? '';
-          if (useId.isNotEmpty) {
-            toolResults[useId] = c;
-          }
-        }
-      }
-
-      // Second pass: build content list, skipping tool_result (merged above)
-      for (final c in rawBlocks) {
+      // Server merges tool_result into tool_use (with result/isError fields),
+      // so we only need a single pass here.
+      for (final c in json['content'] as List) {
         if (c is String) {
           content.add(MessageContent.text(c));
         } else if (c is Map<String, dynamic>) {
           final blockType = c['type'] as String? ?? '';
           if (blockType == 'tool_use') {
-            final toolId = c['id'] as String? ?? '';
-            final result = toolResults[toolId];
-            final toolCall = result != null
-                ? ToolCall.fromJson(c).withResult(
-                    result['content'] as String? ?? '',
-                    isError: result['isError'] as bool? ?? false,
-                  )
-                : ToolCall.fromJson(c);
-            content.add(MessageContent.toolUse(toolCall));
+            content.add(MessageContent.toolUse(ToolCall.fromJson(c)));
           } else if (blockType == 'thinking') {
             final text = c['text'] as String? ?? '';
             if (text.isNotEmpty) {
               content.add(MessageContent.thinking(text));
             }
-          } else if (blockType == 'tool_result') {
-            // Already merged into tool_use above — skip standalone
-            continue;
-          } else {
-            // text or unknown type — treat as text
+          } else if (blockType == 'text') {
             content.add(MessageContent.text(c['text'] as String? ?? ''));
           }
-        } else {
-          content.add(MessageContent.text(''));
+          // Unknown block types: skip silently
         }
+        // Non-string, non-map entries: skip silently
       }
     }
 
