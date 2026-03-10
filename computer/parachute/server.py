@@ -91,6 +91,7 @@ async def lifespan(app: FastAPI):
     )
     app.state.orchestrator = orchestrator
     app.state.sandbox = orchestrator.sandbox  # Shared DockerSandbox for health checks
+    get_registry().publish("DockerSandbox", orchestrator.sandbox)
 
     # Discover existing persistent container env containers
     await orchestrator.reconcile_containers()
