@@ -236,23 +236,57 @@ class ChatMessage {
   factory ChatMessage.fromJson(Map<String, dynamic> json) {
     final role = json['role'] == 'user' ? MessageRole.user : MessageRole.assistant;
 
-    // Parse content - could be string or structured
+    // Parse content - could be string or structured list of blocks
     List<MessageContent> content = [];
     if (json['content'] is String) {
       content = [MessageContent.text(json['content'] as String)];
     } else if (json['content'] is List) {
-      content = (json['content'] as List).map((c) {
-        if (c is String) {
-          return MessageContent.text(c);
-        } else if (c is Map<String, dynamic>) {
-          if (c['type'] == 'tool_use') {
-            return MessageContent.toolUse(ToolCall.fromJson(c));
-          } else {
-            return MessageContent.text(c['text'] as String? ?? '');
+      final rawBlocks = json['content'] as List;
+
+      // First pass: collect tool_result data keyed by toolUseId
+      // so we can merge results into their tool_use blocks
+      final Map<String, Map<String, dynamic>> toolResults = {};
+      for (final c in rawBlocks) {
+        if (c is Map<String, dynamic> && c['type'] == 'tool_result') {
+          final useId = c['toolUseId'] as String? ?? '';
+          if (useId.isNotEmpty) {
+            toolResults[useId] = c;
           }
         }
-        return MessageContent.text('');
-      }).toList();
+      }
+
+      // Second pass: build content list, skipping tool_result (merged above)
+      for (final c in rawBlocks) {
+        if (c is String) {
+          content.add(MessageContent.text(c));
+        } else if (c is Map<String, dynamic>) {
+          final blockType = c['type'] as String? ?? '';
+          if (blockType == 'tool_use') {
+            final toolId = c['id'] as String? ?? '';
+            final result = toolResults[toolId];
+            final toolCall = result != null
+                ? ToolCall.fromJson(c).withResult(
+                    result['content'] as String? ?? '',
+                    isError: result['isError'] as bool? ?? false,
+                  )
+                : ToolCall.fromJson(c);
+            content.add(MessageContent.toolUse(toolCall));
+          } else if (blockType == 'thinking') {
+            final text = c['text'] as String? ?? '';
+            if (text.isNotEmpty) {
+              content.add(MessageContent.thinking(text));
+            }
+          } else if (blockType == 'tool_result') {
+            // Already merged into tool_use above — skip standalone
+            continue;
+          } else {
+            // text or unknown type — treat as text
+            content.add(MessageContent.text(c['text'] as String? ?? ''));
+          }
+        } else {
+          content.add(MessageContent.text(''));
+        }
+      }
     }
 
     return ChatMessage(

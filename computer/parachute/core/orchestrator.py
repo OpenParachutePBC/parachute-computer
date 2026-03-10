@@ -1239,9 +1239,37 @@ class Orchestrator:
                 "sessionId": ctx.sandbox_sid,
                 "trustLevel": ctx.effective_trust,
             }
-        if event_type == "text":
-            ctx.sbx["had_text"] = True
-            ctx.sbx["response_text"] = event.get("content", ctx.sbx["response_text"])
+        if event_type == "thinking":
+            ctx.sbx["had_content"] = True
+            ctx.sbx["content_blocks"].append(
+                {"type": "thinking", "text": event.get("content", "")}
+            )
+        elif event_type == "tool_use":
+            ctx.sbx["had_content"] = True
+            ctx.sbx["content_blocks"].append({
+                "type": "tool_use",
+                "id": event.get("id", ""),
+                "name": event.get("name", ""),
+                "input": event.get("input", {}),
+            })
+        elif event_type == "tool_result":
+            ctx.sbx["had_content"] = True
+            ctx.sbx["content_blocks"].append({
+                "type": "tool_result",
+                "toolUseId": event.get("toolUseId", ""),
+                "content": event.get("content", ""),
+                "isError": event.get("isError", False),
+            })
+        elif event_type == "text":
+            ctx.sbx["had_content"] = True
+            text_content = event.get("content", "")
+            # Merge consecutive text blocks
+            blocks = ctx.sbx["content_blocks"]
+            if blocks and blocks[-1].get("type") == "text":
+                blocks[-1]["text"] = text_content
+            else:
+                blocks.append({"type": "text", "text": text_content})
+            ctx.sbx["response_text"] = text_content
 
         # Finalize BEFORE yielding "done" to prevent race condition
         if event_type == "done":
@@ -1272,11 +1300,11 @@ class Orchestrator:
                     )
 
             # Write synthetic transcript (fallback for host-side session search/list)
-            if ctx.sbx["had_text"]:
+            if ctx.sbx["had_content"]:
                 self.session_manager.write_sandbox_transcript(
                     ctx.sandbox_sid,
                     ctx.sbx["message"],
-                    ctx.sbx["response_text"],
+                    ctx.sbx["content_blocks"],
                     working_directory=ctx.effective_working_dir,
                 )
 
@@ -1411,8 +1439,9 @@ class Orchestrator:
         )
 
         sbx = {
-            "had_text": False,
+            "had_content": False,
             "response_text": "",
+            "content_blocks": [],
             "finalized": False,
             "session": session,
             "message": message,
@@ -1472,11 +1501,11 @@ class Orchestrator:
 
         session = sbx["session"]
 
-        if not sbx["had_text"]:
-            logger.warning("Sandbox produced no text output")
+        if not sbx["had_content"]:
+            logger.warning("Sandbox produced no content output")
 
         # Increment message count for sandbox sessions
-        if sbx["had_text"] and sandbox_sid:
+        if sbx["had_content"] and sandbox_sid:
             try:
                 await self.session_manager.increment_message_count(sandbox_sid, 2)
             except Exception as e:
