@@ -260,8 +260,8 @@ class _TabShellState extends ConsumerState<_TabShell> with WidgetsBindingObserve
 
   Widget _buildChatTabIcon(bool isDark, bool selected) {
     final pendingCount = ref.watch(pendingPairingCountProvider).valueOrNull ?? 0;
-    final completionCount = ref.watch(agentCompletionProvider).unreadCount;
-    final badgeCount = pendingCount + completionCount;
+    final unreadCount = ref.watch(agentCompletionProvider).unreadSessionIds.length;
+    final badgeCount = pendingCount + unreadCount;
     final icon = Icon(
       selected ? Icons.chat_bubble : Icons.chat_bubble_outline,
       color: selected
@@ -680,12 +680,6 @@ class _TabShellState extends ConsumerState<_TabShell> with WidgetsBindingObserve
                   // Map visual index back to actual tab index
                   final newActualIndex = showAllTabs ? index : 1;
                   ref.read(currentTabIndexProvider.notifier).state = newActualIndex;
-                  // Clear completion badge when switching to Chat tab
-                  final visibleTabs = ref.read(visibleTabsProvider);
-                  if (newActualIndex < visibleTabs.length &&
-                      visibleTabs[newActualIndex] == AppTab.chat) {
-                    ref.read(agentCompletionProvider.notifier).clearUnread();
-                  }
                 },
                 backgroundColor: isDark ? BrandColors.nightSurfaceElevated : BrandColors.softWhite,
                 indicatorColor: isDark

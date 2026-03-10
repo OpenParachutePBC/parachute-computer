@@ -8,6 +8,7 @@ import 'package:parachute/core/providers/app_state_provider.dart';
 import 'package:parachute/core/providers/feature_flags_provider.dart';
 import 'package:parachute/features/settings/models/trust_level.dart';
 import 'package:parachute/features/settings/screens/settings_screen.dart';
+import '../providers/agent_completion_provider.dart';
 import '../providers/chat_providers.dart';
 import '../providers/session_search_provider.dart';
 import '../models/chat_session.dart';
@@ -571,6 +572,8 @@ class _ChatHubScreenState extends ConsumerState<ChatHubScreen> {
           return _buildEmptyState(context, isDark, serverUrl);
         }
 
+        final unreadSessionIds = ref.watch(agentCompletionProvider).unreadSessionIds;
+
         return RefreshIndicator(
           onRefresh: () async {
             try {
@@ -588,6 +591,7 @@ class _ChatHubScreenState extends ConsumerState<ChatHubScreen> {
           child: DateGroupedSessionList(
             sessions: sessions,
             onTap: (session) => _openSession(context, session),
+            unreadSessionIds: unreadSessionIds,
             isDark: isDark,
           ),
         );

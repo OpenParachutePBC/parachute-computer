@@ -34,20 +34,20 @@ class AgentCompletionEvent {
 
 /// State for agent completion notifications.
 class AgentCompletionState {
-  final int unreadCount;
+  final Set<String> unreadSessionIds;
   final AgentCompletionEvent? latestEvent;
 
   const AgentCompletionState({
-    this.unreadCount = 0,
+    this.unreadSessionIds = const {},
     this.latestEvent,
   });
 
   AgentCompletionState copyWith({
-    int? unreadCount,
+    Set<String>? unreadSessionIds,
     AgentCompletionEvent? latestEvent,
   }) {
     return AgentCompletionState(
-      unreadCount: unreadCount ?? this.unreadCount,
+      unreadSessionIds: unreadSessionIds ?? this.unreadSessionIds,
       latestEvent: latestEvent ?? this.latestEvent,
     );
   }
@@ -101,33 +101,33 @@ class AgentCompletionNotifier extends Notifier<AgentCompletionState> {
     );
 
     if (isBackgrounded) {
-      // App is backgrounded — fire OS notification
+      // App is backgrounded — fire OS notification + mark unread
       _fireOsNotification(displayTitle, sessionId);
-      // Also increment badge for when they return
       state = AgentCompletionState(
-        unreadCount: state.unreadCount + 1,
+        unreadSessionIds: {...state.unreadSessionIds, sessionId},
         latestEvent: event,
       );
     } else if (!isOnChatTab) {
-      // On a different tab — badge + toast
+      // On a different tab — mark unread + toast
       state = AgentCompletionState(
-        unreadCount: state.unreadCount + 1,
+        unreadSessionIds: {...state.unreadSessionIds, sessionId},
         latestEvent: event,
       );
     } else {
-      // On chat tab but different session — toast only
+      // On chat tab but different session — mark unread + toast
       state = AgentCompletionState(
-        unreadCount: state.unreadCount,
+        unreadSessionIds: {...state.unreadSessionIds, sessionId},
         latestEvent: event,
       );
     }
   }
 
-  /// Clear unread count (called when user switches to Chat tab).
-  void clearUnread() {
-    if (state.unreadCount > 0) {
+  /// Mark a specific session as read (called when user opens that session).
+  void markRead(String sessionId) {
+    if (state.unreadSessionIds.contains(sessionId)) {
+      final updated = Set<String>.of(state.unreadSessionIds)..remove(sessionId);
       state = AgentCompletionState(
-        unreadCount: 0,
+        unreadSessionIds: updated,
         latestEvent: state.latestEvent,
       );
     }
