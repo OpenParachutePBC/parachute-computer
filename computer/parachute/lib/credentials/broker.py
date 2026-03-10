@@ -10,7 +10,7 @@ The broker is the single entry point for all credential operations:
 
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Any
 
 from parachute.lib.credentials.base import (
     CredentialProvider,
@@ -54,7 +54,7 @@ class CredentialBroker:
     async def mint_token(
         self,
         provider_name: str,
-        scope: dict,
+        scope: dict[str, Any],
     ) -> CredentialToken:
         """Mint a token via the named provider.
 
@@ -81,6 +81,14 @@ class CredentialBroker:
                 f"Unknown credential provider: {provider_name}"
             )
         return await provider.verify()
+
+    async def close_all(self) -> None:
+        """Close all provider resources (called during server shutdown)."""
+        for provider in self._providers.values():
+            try:
+                await provider.close()
+            except Exception as e:
+                logger.warning(f"Error closing provider {provider.name}: {e}")
 
     def get_all_scripts(self) -> dict[str, str]:
         """Collect scripts from all providers for tools volume deployment.
@@ -163,7 +171,7 @@ class CredentialBroker:
 
 
 # Module-level singleton, initialized lazily
-_broker: Optional[CredentialBroker] = None
+_broker: CredentialBroker | None = None
 
 
 def get_broker() -> CredentialBroker:

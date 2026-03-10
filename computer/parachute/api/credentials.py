@@ -24,6 +24,8 @@ router = APIRouter(prefix="/credentials", tags=["credentials"])
 
 # Org names: alphanumeric start, then alphanumeric/hyphens/underscores, max 39 chars
 _ORG_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,38}$")
+# Provider names: lowercase alphanumeric with hyphens/underscores, max 32 chars
+_PROVIDER_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 
 
 class TokenResponse(BaseModel):
@@ -37,7 +39,7 @@ class BrokerStatusResponse(BaseModel):
     """Response containing broker configuration status."""
 
     configured: bool
-    providers: dict[str, dict] = Field(default_factory=dict)
+    providers: dict[str, dict[str, str]] = Field(default_factory=dict)
 
 
 def _validate_broker_secret(request: Request) -> None:
@@ -66,7 +68,13 @@ def _validate_org(org: str) -> None:
     GitHub org names: alphanumeric start, alphanumeric/hyphens/underscores, max 39 chars.
     """
     if not _ORG_RE.match(org):
-        raise HTTPException(status_code=400, detail=f"Invalid org name: {org}")
+        raise HTTPException(status_code=400, detail="Invalid org name format")
+
+
+def _validate_provider(provider: str) -> None:
+    """Validate provider name format to prevent log injection and enumeration."""
+    if not _PROVIDER_RE.match(provider):
+        raise HTTPException(status_code=400, detail="Invalid provider name")
 
 
 def _handle_provider_error(e: CredentialProviderError, provider: str) -> HTTPException:
@@ -130,6 +138,7 @@ async def mint_token(request: Request, provider: str, org: str | None = None):
     Requires Bearer authentication with the broker secret.
     """
     _validate_broker_secret(request)
+    _validate_provider(provider)
 
     if org:
         _validate_org(org)
@@ -138,7 +147,7 @@ async def mint_token(request: Request, provider: str, org: str | None = None):
     if not broker.has_provider(provider):
         raise HTTPException(
             status_code=503,
-            detail=f"Provider '{provider}' not configured",
+            detail="Requested provider not configured",
         )
 
     # Build scope from query params

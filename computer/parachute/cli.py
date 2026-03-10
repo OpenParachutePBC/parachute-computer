@@ -1340,8 +1340,7 @@ def _setup_cloudflare() -> None:
     print("Next steps:")
     print("  1. Restart the server: parachute server restart")
     print("  2. Cloudflare tokens are injected as CLOUDFLARE_API_TOKEN")
-    print("     when agents need them (env-based, no scripts needed).")
-    print("transparently in sandboxed sessions.")
+    print("     transparently in sandboxed sessions.")
 
 
 def cmd_sandbox(args: argparse.Namespace) -> None:

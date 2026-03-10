@@ -946,8 +946,12 @@ class DockerSandbox:
             env_lines.append(f"BROKER_SECRET={broker_secret}")
 
         # Git config via env vars (replaces git config --system in Dockerfile)
+        from parachute.lib.credentials.cloudflare_provider import CloudflareProvider
+        from parachute.lib.credentials.github_provider import GitHubProvider
+
         cred_broker = get_credential_broker()
-        if cred_broker.has_provider("github"):
+        github = cred_broker.get_provider("github")
+        if isinstance(github, GitHubProvider):
             env_lines.extend([
                 "GIT_CONFIG_COUNT=2",
                 "GIT_CONFIG_KEY_0=credential.helper",
@@ -955,21 +959,18 @@ class DockerSandbox:
                 "GIT_CONFIG_KEY_1=credential.useHttpPath",
                 "GIT_CONFIG_VALUE_1=true",
             ])
-            github = cred_broker.get_provider("github")
-            if github and hasattr(github, "get_default_org"):
-                default_org = github.get_default_org()
-                if default_org:
-                    env_lines.append(f"GH_DEFAULT_ORG={default_org}")
+            default_org = github.get_default_org()
+            if default_org:
+                env_lines.append(f"GH_DEFAULT_ORG={default_org}")
 
         # Cloudflare: inject parent token as CLOUDFLARE_API_TOKEN.
         # Tools like wrangler read this env var for authentication.
-        # Future: mint scoped child tokens via per-project grants.
-        if cred_broker.has_provider("cloudflare"):
-            cf = cred_broker.get_provider("cloudflare")
-            if cf and hasattr(cf, "parent_token"):
-                env_lines.append(f"CLOUDFLARE_API_TOKEN={cf.parent_token}")
-                if hasattr(cf, "account_id") and cf.account_id:
-                    env_lines.append(f"CLOUDFLARE_ACCOUNT_ID={cf.account_id}")
+        # Future: mint scoped child tokens via per-project grants (issue #225).
+        cf = cred_broker.get_provider("cloudflare")
+        if isinstance(cf, CloudflareProvider):
+            env_lines.append(f"CLOUDFLARE_API_TOKEN={cf.parent_token}")
+            if cf.account_id:
+                env_lines.append(f"CLOUDFLARE_ACCOUNT_ID={cf.account_id}")
 
         return env_lines
 

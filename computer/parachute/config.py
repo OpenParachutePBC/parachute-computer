@@ -77,12 +77,26 @@ def _load_token(parachute_dir: Path) -> Optional[str]:
 
 
 def save_yaml_config(parachute_dir: Path, data: dict[str, Any]) -> Path:
-    """Write config values to ~/.parachute/config.yaml with restricted permissions."""
+    """Write config values to ~/.parachute/config.yaml with restricted permissions.
+
+    Uses mkstemp + atomic rename so the file is never world-readable, even
+    transiently (the temp file is created with 0o600 before rename).
+    """
+    import os
+    import tempfile
+
     config_file = parachute_dir / "config.yaml"
     config_file.parent.mkdir(parents=True, exist_ok=True)
-    with open(config_file, "w") as f:
-        yaml.safe_dump(data, f, default_flow_style=False, sort_keys=False)
-    config_file.chmod(0o600)
+
+    fd, tmp_path = tempfile.mkstemp(dir=config_file.parent, suffix=".yaml.tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            yaml.safe_dump(data, f, default_flow_style=False, sort_keys=False)
+        os.chmod(tmp_path, 0o600)
+        os.replace(tmp_path, str(config_file))
+    except Exception:
+        Path(tmp_path).unlink(missing_ok=True)
+        raise
     return config_file
 
 

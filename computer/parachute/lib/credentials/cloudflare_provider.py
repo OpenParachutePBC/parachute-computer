@@ -16,6 +16,8 @@ import logging
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
+from typing import Any
+
 import httpx
 
 from parachute.lib.credentials.base import (
@@ -75,6 +77,12 @@ class CloudflareProvider(CredentialProvider):
             )
         return self._client
 
+    async def close(self) -> None:
+        """Close the shared httpx client."""
+        if self._client is not None and not self._client.is_closed:
+            await self._client.aclose()
+            self._client = None
+
     @classmethod
     def from_config(cls, config: dict) -> "CloudflareProvider | None":
         """Create provider from config dict. Returns None if not configured.
@@ -96,25 +104,27 @@ class CloudflareProvider(CredentialProvider):
             default_permissions=config.get("default_permissions"),
         )
 
-    async def mint_token(self, scope: dict) -> CredentialToken:
+    async def mint_token(self, scope: dict[str, Any]) -> CredentialToken:
         """Mint a scoped child API token via Cloudflare API.
 
         Args:
             scope: {
-                "account": "abc123",  # optional, falls back to default
-                "permissions": [{"id": "...", "effect": "allow"}],  # optional
                 "ttl_hours": 8,  # optional, capped at MAX_TTL_HOURS
             }
+            Note: account and permissions are always taken from the provider's
+            configured defaults to prevent privilege escalation via scope injection.
 
         Raises:
             CredentialProviderError: If minting fails or no permissions configured.
         """
-        account_id = scope.get("account") or self.account_id
+        # Use configured defaults only — callers cannot override account or
+        # permissions to prevent privilege escalation via scope injection.
+        account_id = self.account_id
         ttl_hours = min(
             scope.get("ttl_hours", DEFAULT_TTL_HOURS),
             MAX_TTL_HOURS,
         )
-        permissions = scope.get("permissions") or self.default_permissions
+        permissions = self.default_permissions
 
         if not permissions:
             raise CredentialProviderError(
@@ -161,7 +171,12 @@ class CloudflareProvider(CredentialProvider):
                 f"Cloudflare API error: {errors}"
             )
 
-        token_value = data["result"]["value"]
+        try:
+            token_value = data["result"]["value"]
+        except (KeyError, TypeError) as e:
+            raise CredentialProviderError(
+                f"Unexpected Cloudflare API response shape: {e}"
+            ) from e
         expires_iso = expires.isoformat()
 
         logger.info(

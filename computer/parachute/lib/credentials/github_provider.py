@@ -20,6 +20,8 @@ import logging
 import time
 from pathlib import Path
 
+from typing import Any
+
 import httpx
 import jwt
 
@@ -76,6 +78,12 @@ class GitHubProvider(CredentialProvider):
             )
         return self._client
 
+    async def close(self) -> None:
+        """Close the shared httpx client."""
+        if self._client is not None and not self._client.is_closed:
+            await self._client.aclose()
+            self._client = None
+
     @classmethod
     def from_config(cls, config: dict, parachute_dir: Path) -> "GitHubProvider | None":
         """Create provider from config dict. Returns None if not configured.
@@ -126,7 +134,7 @@ class GitHubProvider(CredentialProvider):
         }
         return jwt.encode(payload, self.private_key_pem, algorithm="RS256")
 
-    async def mint_token(self, scope: dict) -> CredentialToken:
+    async def mint_token(self, scope: dict[str, Any]) -> CredentialToken:
         """Mint an installation token for a GitHub org.
 
         Args:
@@ -183,8 +191,13 @@ class GitHubProvider(CredentialProvider):
             raise CredentialProviderError(f"Network error: {e}") from e
 
         data = resp.json()
-        token = data["token"]
-        expires_at_iso = data["expires_at"]  # e.g. "2026-03-09T01:00:00Z"
+        try:
+            token = data["token"]
+            expires_at_iso = data["expires_at"]  # e.g. "2026-03-09T01:00:00Z"
+        except (KeyError, TypeError) as e:
+            raise CredentialProviderError(
+                f"Unexpected GitHub API response shape: {e}"
+            ) from e
 
         # Parse expiry to unix timestamp for cache comparison
         expires_at_unix = datetime.datetime.fromisoformat(

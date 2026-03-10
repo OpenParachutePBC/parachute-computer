@@ -9,6 +9,7 @@ Each provider knows how to:
 
 import logging
 from abc import ABC, abstractmethod
+from typing import Any
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
@@ -46,7 +47,7 @@ class CredentialProvider(ABC):
         ...
 
     @abstractmethod
-    async def mint_token(self, scope: dict) -> CredentialToken:
+    async def mint_token(self, scope: dict[str, Any]) -> CredentialToken:
         """Mint a scoped, short-lived token.
 
         Args:
@@ -71,6 +72,13 @@ class CredentialProvider(ABC):
             CredentialProviderError: If verification fails.
         """
         ...
+
+    async def close(self) -> None:
+        """Release resources (HTTP connections, etc.).
+
+        Called during server shutdown. Override if the provider holds
+        long-lived connections.
+        """
 
     def get_scripts(self) -> dict[str, str]:
         """Return scripts to deploy to the tools volume.
