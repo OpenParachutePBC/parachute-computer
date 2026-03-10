@@ -86,6 +86,7 @@ def _make_caps(**overrides) -> CapabilityBundle:
         plugin_dirs=[],
         agents_dict=None,
         effective_trust="direct",
+        tool_guidance="",
         warnings=[],
     )
     defaults.update(overrides)

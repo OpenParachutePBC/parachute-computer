@@ -28,6 +28,7 @@ from parachute.lib.context_loader import format_context_for_prompt, load_agent_c
 from parachute.lib.credentials import load_credentials
 from parachute.core.context_folders import ContextFolderService
 from parachute.core.capability_filter import filter_by_trust_level
+from parachute.core.tool_guidance import build_tool_guidance
 from parachute.lib.mcp_loader import (
     load_mcp_servers,
     resolve_mcp_servers,
@@ -107,19 +108,7 @@ This is a collaborative thinking relationship — not a task queue.
 - Make connections between what you know about their projects, interests, and past thinking
 - One question at a time — pick the best one, not all of them
 
-## Vault Context
-Search the vault when the user asks about their own thoughts, projects, or history,
-or when personalized context would improve your response.
-
-### Vault Tools (mcp__parachute__*)
-- **mcp__parachute__search_sessions** — search past conversations
-- **mcp__parachute__list_recent_sessions** — recent chat sessions
-- **mcp__parachute__get_session** — read a specific conversation
-- **mcp__parachute__search_journals** — search Daily voice journal entries
-- **mcp__parachute__list_recent_journals** — recent journal dates
-- **mcp__parachute__get_journal** — read a specific day's journal
-
-### Web Tools
+## Web Tools
 - **WebSearch** — current information, news, research
 - **WebFetch** — read a specific URL
 
@@ -138,10 +127,6 @@ COCREATE_PROMPT_APPEND = """## Parachute Context
 You are running as Parachute in cocreate mode — an agentic partner for building,
 writing, coding, and creating. The project's CLAUDE.md or AGENTS.md defines
 conventions and orientation for this specific context.
-
-## Vault Tools Available (mcp__parachute__*)
-The same vault tools from converse mode are available for personal context:
-search_sessions, search_journals, get_journal, list_recent_sessions, etc.
 
 ## Working Style
 - For multi-step tasks, use TodoWrite to track progress visibly
@@ -167,6 +152,7 @@ class CapabilityBundle:
     plugin_dirs: list[Path]
     agents_dict: dict | None
     effective_trust: str
+    tool_guidance: str  # Dynamic tool guidance markdown, filtered by trust level
     warnings: list[dict] = field(default_factory=list)  # Serialized WarningEvent dicts
 
 
@@ -401,6 +387,8 @@ class Orchestrator:
                 project_memory = project.core_memory[:4000]
 
         # Build system prompt (after loading prior conversation, with working dir)
+        # Note: tool guidance is injected later, after capability discovery resolves
+        # the trust level and generates the filtered tool guidance markdown.
         # Only surface credential discoverability for non-bot sessions — bot sessions
         # receive empty credentials, so advertising pre-authenticated tools would mislead the agent.
         prompt_cred_keys = (
@@ -490,6 +478,11 @@ class Orchestrator:
         try:
             # Phase 2: Capability discovery
             caps = await self._discover_capabilities(agent, session, trust_level)
+
+            # Inject trust-filtered tool guidance into the prompt
+            # (skipped for custom/agent prompts — those manage their own tool docs)
+            if caps.tool_guidance and prompt_metadata.get("prompt_source") not in ("custom", "agent"):
+                effective_prompt = f"{effective_prompt}\n\n{caps.tool_guidance}"
 
             # converse mode always uses a full replacement prompt (no Claude Code preset)
             is_full_prompt = prompt_metadata.get("prompt_source") in ("custom", "agent", "converse")
@@ -872,6 +865,7 @@ class Orchestrator:
             plugin_dirs=plugin_dirs,
             agents_dict=agents_dict,
             effective_trust=effective_trust,
+            tool_guidance=build_tool_guidance(effective_trust),
             warnings=warnings,
         )
 
@@ -1594,6 +1588,9 @@ class Orchestrator:
         - Vault-level CLAUDE.md (outside the project root)
         - Prior conversation history (runtime only)
         - Explicitly selected context files
+
+        Note: Dynamic tool guidance is injected separately by run_streaming()
+        after capability discovery resolves the trust level.
 
         For converse mode: returns CONVERSE_PROMPT as a full replacement (no preset).
         For cocreate mode: returns COCREATE_PROMPT_APPEND appended to Claude Code preset.
