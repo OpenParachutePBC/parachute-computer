@@ -961,6 +961,16 @@ class DockerSandbox:
                 if default_org:
                     env_lines.append(f"GH_DEFAULT_ORG={default_org}")
 
+        # Cloudflare: inject parent token as CLOUDFLARE_API_TOKEN.
+        # Tools like wrangler read this env var for authentication.
+        # Future: mint scoped child tokens via per-project grants.
+        if cred_broker.has_provider("cloudflare"):
+            cf = cred_broker.get_provider("cloudflare")
+            if cf and hasattr(cf, "parent_token"):
+                env_lines.append(f"CLOUDFLARE_API_TOKEN={cf.parent_token}")
+                if hasattr(cf, "account_id") and cf.account_id:
+                    env_lines.append(f"CLOUDFLARE_ACCOUNT_ID={cf.account_id}")
+
         return env_lines
 
     async def _ensure_tools_volume(self) -> None:

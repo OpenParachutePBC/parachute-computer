@@ -252,21 +252,32 @@ class GitHubProvider(CredentialProvider):
             })
         return results
 
+    # Source filename -> deployment filename on tools volume.
+    # gh-wrapper.sh is deployed as "gh" to shadow /usr/bin/gh via PATH ordering.
+    _SCRIPT_DEPLOY_NAMES = {
+        "github-token-helper.sh": "github-token-helper.sh",
+        "gh-wrapper.sh": "gh",
+    }
+
     def get_scripts(self) -> dict[str, str]:
-        """Return GitHub credential helper scripts for the tools volume."""
+        """Return GitHub credential helper scripts for the tools volume.
+
+        Returns scripts keyed by their deployment filename (not source filename).
+        gh-wrapper.sh is deployed as "gh" so it shadows /usr/bin/gh via PATH.
+        """
         scripts = {}
         try:
             files = importlib.resources.files(_SCRIPTS_PKG)
-            for script_name in ("github-token-helper.sh", "gh-wrapper.sh"):
-                resource = files.joinpath(script_name)
-                scripts[script_name] = resource.read_text(encoding="utf-8")
+            for source_name, deploy_name in self._SCRIPT_DEPLOY_NAMES.items():
+                resource = files.joinpath(source_name)
+                scripts[deploy_name] = resource.read_text(encoding="utf-8")
         except Exception:
             # Fall back to reading from docker/ directory (development)
             scripts_dir = Path(__file__).parent.parent.parent / "docker"
-            for script_name in ("github-token-helper.sh", "gh-wrapper.sh"):
-                script_path = scripts_dir / script_name
+            for source_name, deploy_name in self._SCRIPT_DEPLOY_NAMES.items():
+                script_path = scripts_dir / source_name
                 if script_path.exists():
-                    scripts[script_name] = script_path.read_text()
+                    scripts[deploy_name] = script_path.read_text()
         return scripts
 
     def get_default_org(self) -> str | None:
