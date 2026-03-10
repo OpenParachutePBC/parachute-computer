@@ -177,6 +177,12 @@ async def run():
     # Token: prefer stdin payload (persistent mode), fall back to env var (ephemeral mode)
     oauth_token = request.get("claude_token") or os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
 
+    # Broker secret: prefer stdin payload (persistent mode avoids docker exec -e exposure),
+    # fall back to env var (ephemeral mode uses --env-file which is safe)
+    broker_secret = request.get("broker_secret") or os.environ.get("BROKER_SECRET", "")
+    if broker_secret:
+        os.environ["BROKER_SECRET"] = broker_secret
+
     # Apply injected credentials to environment before SDK initialisation.
     # Values come from vault/.parachute/credentials.yaml (server-side) and are
     # forwarded via the stdin JSON payload — never via --env-file or -e flags.

@@ -52,27 +52,14 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     beautifulsoup4==4.12.3
 
 # GitHub CLI (for gh pr create, gh issue, etc. from sandboxed sessions)
+# Note: Credential scripts and git config are deployed via the tools volume
+# at server startup — not baked into the image. See sandbox._sync_credential_scripts().
 RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
     | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
     && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
        > /etc/apt/sources.list.d/github-cli.list \
     && apt-get update && apt-get install -y --no-install-recommends gh \
     && rm -rf /var/lib/apt/lists/*
-
-# GitHub credential broker integration
-# These scripts transparently authenticate git/gh via the Parachute credential broker.
-# The agent never sees tokens — they're fetched on-demand from the host server.
-COPY github-token-helper.sh /usr/local/bin/github-token-helper.sh
-COPY gh-wrapper.sh /usr/local/bin/gh-wrapper.sh
-RUN chmod +x /usr/local/bin/github-token-helper.sh /usr/local/bin/gh-wrapper.sh
-
-# Configure git to use the credential helper for github.com
-RUN git config --system credential.helper '!/usr/local/bin/github-token-helper.sh' \
-    && git config --system credential.useHttpPath true
-
-# Replace gh binary with wrapper that injects broker tokens
-RUN mv /usr/bin/gh /usr/bin/gh-real \
-    && ln -sf /usr/local/bin/gh-wrapper.sh /usr/bin/gh
 
 # OPTIONAL: Playwright + Chromium (enable via build arg)
 # Adds ~350MB to image size and browser attack surface

@@ -1028,29 +1028,34 @@ def cmd_setup(args: argparse.Namespace) -> None:
 
     if action == "github":
         _setup_github()
+    elif action == "cloudflare":
+        _setup_cloudflare()
     else:
-        print("Usage: parachute setup github")
-        print("\nAvailable integrations:")
-        print("  github  — Configure GitHub App for credential broker")
+        print("Usage: parachute setup <provider>")
+        print("\nAvailable providers:")
+        print("  github      — GitHub App for git push, gh CLI, PRs")
+        print("  cloudflare  — Cloudflare API tokens for wrangler, Workers")
 
 
 def _setup_github() -> None:
-    """Interactive setup for GitHub App credential broker."""
+    """Interactive setup for GitHub App credential provider."""
     import secrets
 
     parachute_dir = _get_parachute_dir()
     config = _load_yaml_config(parachute_dir)
+    providers = config.setdefault("credential_providers", {})
     pem_path = parachute_dir / "github-app.pem"
 
     print("=" * 60)
-    print("  GitHub App Credential Broker Setup")
+    print("  GitHub App Credential Provider Setup")
     print("=" * 60)
     print()
 
     # Check existing configuration
-    existing_app_id = config.get("github_app_id")
+    existing = providers.get("github", {})
+    existing_app_id = existing.get("app_id") or config.get("github_app_id")
     if existing_app_id and pem_path.exists():
-        existing_installations = config.get("github_installations", {})
+        existing_installations = existing.get("installations", config.get("github_installations", {}))
         print(f"GitHub App already configured (App ID: {existing_app_id})")
         print(f"Installations: {existing_installations}")
         response = input("\nReconfigure? [y/N]: ").strip().lower()
@@ -1082,7 +1087,7 @@ def _setup_github() -> None:
     print("     The .pem file will download automatically.")
     print()
 
-    # Step 2: Get App ID
+    # Get App ID
     app_id_str = input("Enter your GitHub App ID: ").strip()
     if not app_id_str:
         print("Cancelled.")
@@ -1093,25 +1098,23 @@ def _setup_github() -> None:
         print(f"Invalid App ID: {app_id_str}")
         return
 
-    # Step 3: Get PEM file
+    # Get PEM file
     print()
-    pem_input = input(f"Path to private key .pem file [or press Enter to paste]: ").strip()
+    pem_input = input("Path to private key .pem file [or press Enter to paste]: ").strip()
 
     if pem_input:
-        # File path provided
         source_pem = Path(pem_input).expanduser()
         if not source_pem.exists():
             print(f"File not found: {source_pem}")
             return
         pem_contents = source_pem.read_text()
     else:
-        # Paste PEM contents
         print("Paste your private key (end with an empty line):")
         lines = []
         while True:
             line = input()
             if not line and lines and lines[-1] == "":
-                lines.pop()  # Remove trailing empty line
+                lines.pop()
                 break
             lines.append(line)
         pem_contents = "\n".join(lines) + "\n"
@@ -1128,70 +1131,102 @@ def _setup_github() -> None:
     pem_path.chmod(0o600)
     print(f"  ✓ Private key saved to {pem_path}")
 
-    # Step 4: Configure installations
+    # Step 2: Verify app and discover installations
     print()
     print("Step 2: Install the App on your GitHub orgs/accounts")
     print("-" * 40)
-    print()
-    print("Go to: https://github.com/settings/installations")
-    print("Click 'Configure' next to your app, then choose which repos to grant access.")
-    print()
-    print("For each org/account, you need the installation ID.")
-    print("You can find it in the URL when configuring: github.com/settings/installations/<ID>")
-    print()
 
+    import asyncio
+    from parachute.lib.credentials.github_provider import GitHubProvider
+
+    provider = GitHubProvider(
+        app_id=app_id,
+        private_key_pem=pem_contents,
+        installations={},
+    )
+
+    # Verify the app first to get the slug
+    try:
+        info = asyncio.run(provider.verify())
+        app_name = info["app_name"]
+        app_slug = info["app_slug"]
+        print(f"  ✓ Verified GitHub App: {app_name}")
+    except Exception as e:
+        print(f"  ✗ Failed to verify app: {e}")
+        print("  Check your App ID and PEM file.")
+        return
+
+    print()
+    print(f"Install your app at: https://github.com/apps/{app_slug}/installations/new")
+    print("Select the repositories you want Parachute to access, then come back.")
+    print()
+    input("Press Enter when you've installed the app...")
+
+    # Auto-discover installations
     installations: dict[str, int] = {}
-    while True:
-        org = input("GitHub org or username (or press Enter when done): ").strip()
-        if not org:
-            break
-        install_id_str = input(f"  Installation ID for '{org}': ").strip()
-        try:
-            installations[org] = int(install_id_str)
-            print(f"  ✓ {org} → {install_id_str}")
-        except ValueError:
-            print(f"  Invalid installation ID: {install_id_str}")
+    try:
+        found = asyncio.run(provider.list_installations())
+        if found:
+            print(f"\n  Found {len(found)} installation(s):")
+            for inst in found:
+                login = inst["account_login"]
+                inst_id = inst["id"]
+                print(f"    {login} ({inst['account_type']}) → {inst_id}")
+                installations[login] = inst_id
 
-    if not installations:
-        print("No installations configured. You can add them later in config.yaml.")
+            if len(found) > 1:
+                response = input("\nUse all installations? [Y/n]: ").strip().lower()
+                if response in ("n", "no"):
+                    installations = {}
+                    for inst in found:
+                        login = inst["account_login"]
+                        response = input(f"  Include {login}? [Y/n]: ").strip().lower()
+                        if response not in ("n", "no"):
+                            installations[login] = inst["id"]
+        else:
+            print("  No installations found. Install the app first, then re-run setup.")
+    except Exception as e:
+        print(f"  Could not auto-discover installations: {e}")
+        print("  You can add them manually to config.yaml later.")
 
-    # Step 5: Generate broker secret
-    broker_secret = secrets.token_hex(32)
+    # Generate broker secret (or reuse existing)
+    broker_secret = config.get("credential_broker_secret") or config.get("github_broker_secret") or secrets.token_hex(32)
 
-    # Save everything to config
-    config["github_app_id"] = app_id
-    config["github_installations"] = installations
-    config["github_broker_secret"] = broker_secret
+    # Save to config using the new provider format
+    providers["github"] = {
+        "type": "github-app",
+        "app_id": app_id,
+        "installations": installations,
+    }
+    config["credential_providers"] = providers
+    config["credential_broker_secret"] = broker_secret
+
+    # Clean up legacy keys if present
+    config.pop("github_app_id", None)
+    config.pop("github_installations", None)
+    config.pop("github_broker_secret", None)
+
     save_yaml_config(parachute_dir, config)
 
+    # Step 3: Verify with a test token
     print()
     print("Step 3: Verify")
     print("-" * 40)
 
-    # Try to verify by minting a test token
     if installations:
-        print("Verifying GitHub App configuration...")
+        print("Minting a test token...")
         try:
-            import asyncio
-            from parachute.lib.github_app import GitHubAppBroker
-
-            broker = GitHubAppBroker(
+            provider = GitHubProvider(
                 app_id=app_id,
                 private_key_pem=pem_contents,
                 installations=installations,
             )
-            result = asyncio.run(broker.verify())
-            print(f"  ✓ Authenticated as GitHub App: {result['app_name']}")
-
-            # Try minting a token for the first installation
             first_org = next(iter(installations))
-            first_id = installations[first_org]
-            token_result = asyncio.run(broker.get_token(first_id))
-            print(f"  ✓ Minted test token for {first_org} (expires {token_result['expires_at']})")
-
+            token_result = asyncio.run(provider.mint_token({"org": first_org}))
+            print(f"  ✓ Minted test token for {first_org} (expires {token_result.expires_at})")
         except Exception as e:
-            print(f"  ✗ Verification failed: {e}")
-            print("  Configuration saved anyway — check your App ID and PEM file.")
+            print(f"  ✗ Token minting failed: {e}")
+            print("  Configuration saved — check your App ID and PEM file.")
 
     print()
     print("=" * 60)
@@ -1201,13 +1236,111 @@ def _setup_github() -> None:
     print("Configuration saved to ~/.parachute/config.yaml")
     print()
     print("Next steps:")
-    print("  1. Rebuild the sandbox image to include credential helpers:")
-    print("     parachute sandbox build")
-    print("  2. Restart the server to load the new config:")
+    print("  1. Restart the server to load the new config:")
     print("     parachute server restart")
+    print("  2. Credential scripts are deployed automatically on startup.")
     print()
     print("After that, `git push` and `gh pr create` will work")
     print("transparently in sandboxed sessions.")
+
+
+def _setup_cloudflare() -> None:
+    """Interactive setup for Cloudflare credential provider."""
+    import asyncio
+
+    parachute_dir = _get_parachute_dir()
+    config = _load_yaml_config(parachute_dir)
+    providers = config.setdefault("credential_providers", {})
+
+    print("=" * 60)
+    print("  Cloudflare Credential Provider Setup")
+    print("=" * 60)
+    print()
+
+    # Check existing configuration
+    existing = providers.get("cloudflare", {})
+    if existing.get("parent_token"):
+        print("Cloudflare provider already configured.")
+        response = input("Reconfigure? [y/N]: ").strip().lower()
+        if response not in ("y", "yes"):
+            print("Keeping existing configuration.")
+            return
+
+    # Step 1: Create a parent API token
+    print("Step 1: Create a Cloudflare API Token")
+    print("-" * 40)
+    print()
+    print("Go to: https://dash.cloudflare.com/profile/api-tokens")
+    print()
+    print("Click 'Create Token', then use 'Create Custom Token':")
+    print()
+    print("Recommended permissions:")
+    print("  - User > API Tokens > Edit     (required — creates child tokens)")
+    print("  - Account > Workers Scripts > Edit")
+    print("  - Account > D1 > Edit")
+    print("  - Zone > DNS > Edit             (if managing DNS)")
+    print("  - Account > Workers KV Storage > Edit  (if using KV)")
+    print("  - Account > Workers R2 Storage > Edit  (if using R2)")
+    print()
+    print("The parent token's permissions are the ceiling — child tokens")
+    print("minted for sandboxed agents can only have a subset of these.")
+    print()
+    print("Set an expiry (e.g., 1 year) for the parent token.")
+    print()
+
+    parent_token = input("Paste your Cloudflare API token: ").strip()
+    if not parent_token:
+        print("Cancelled.")
+        return
+
+    # Verify the token
+    print()
+    print("Verifying token...")
+
+    try:
+        from parachute.lib.credentials.cloudflare_provider import CloudflareProvider
+        provider = CloudflareProvider(parent_token=parent_token)
+        result = asyncio.run(provider.verify())
+        print(f"  ✓ Token verified (status: {result['status']})")
+        if result.get("expires_on"):
+            print(f"  Expires: {result['expires_on']}")
+    except Exception as e:
+        print(f"  ✗ Verification failed: {e}")
+        response = input("  Save anyway? [y/N]: ").strip().lower()
+        if response not in ("y", "yes"):
+            return
+
+    # Get optional account ID
+    account_id = input("\nCloudflare Account ID (optional, press Enter to skip): ").strip() or None
+
+    # Generate broker secret if not already set
+    if not config.get("credential_broker_secret"):
+        import secrets
+        config["credential_broker_secret"] = secrets.token_hex(32)
+
+    # Save to config
+    cf_config: dict = {
+        "type": "cloudflare-parent",
+        "parent_token": parent_token,
+    }
+    if account_id:
+        cf_config["account_id"] = account_id
+
+    providers["cloudflare"] = cf_config
+    config["credential_providers"] = providers
+    save_yaml_config(parachute_dir, config)
+
+    print()
+    print("=" * 60)
+    print("  Setup complete!")
+    print("=" * 60)
+    print()
+    print("Configuration saved to ~/.parachute/config.yaml")
+    print()
+    print("Next steps:")
+    print("  1. Restart the server: parachute server restart")
+    print("  2. Cloudflare tokens are injected as CLOUDFLARE_API_TOKEN")
+    print("     transparently in sandboxed sessions.")
 
 
 def cmd_sandbox(args: argparse.Namespace) -> None:
@@ -2337,9 +2470,10 @@ def main() -> None:
     supervisor_sub.add_parser("uninstall", help="Remove supervisor daemon")
 
     # setup subcommand
-    setup_parser = subparsers.add_parser("setup", help="Setup integrations")
+    setup_parser = subparsers.add_parser("setup", help="Setup credential providers")
     setup_sub = setup_parser.add_subparsers(dest="action")
-    setup_sub.add_parser("github", help="Configure GitHub App credential broker")
+    setup_sub.add_parser("github", help="Configure GitHub App for git push, gh CLI")
+    setup_sub.add_parser("cloudflare", help="Configure Cloudflare API tokens")
 
     # sandbox subcommand
     sandbox_parser = subparsers.add_parser("sandbox", help="Sandbox management")

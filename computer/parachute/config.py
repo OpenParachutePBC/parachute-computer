@@ -30,6 +30,8 @@ CONFIG_KEYS = {
     "port", "host", "default_model", "log_level",
     "cors_origins", "auth_mode", "debug",
     "docker_runtime", "docker_auto_start",
+    "credential_broker_secret",
+    # Legacy keys (backward compat — auto-migrated to credential_providers)
     "github_app_id", "github_broker_secret",
 }
 
@@ -75,11 +77,26 @@ def _load_token(parachute_dir: Path) -> Optional[str]:
 
 
 def save_yaml_config(parachute_dir: Path, data: dict[str, Any]) -> Path:
-    """Write config values to ~/.parachute/config.yaml."""
+    """Write config values to ~/.parachute/config.yaml with restricted permissions.
+
+    Uses mkstemp + atomic rename so the file is never world-readable, even
+    transiently (the temp file is created with 0o600 before rename).
+    """
+    import os
+    import tempfile
+
     config_file = parachute_dir / "config.yaml"
     config_file.parent.mkdir(parents=True, exist_ok=True)
-    with open(config_file, "w") as f:
-        yaml.safe_dump(data, f, default_flow_style=False, sort_keys=False)
+
+    fd, tmp_path = tempfile.mkstemp(dir=config_file.parent, suffix=".yaml.tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            yaml.safe_dump(data, f, default_flow_style=False, sort_keys=False)
+        os.chmod(tmp_path, 0o600)
+        os.replace(tmp_path, str(config_file))
+    except Exception:
+        Path(tmp_path).unlink(missing_ok=True)
+        raise
     return config_file
 
 
@@ -134,6 +151,8 @@ def save_yaml_config_atomic(parachute_dir: Path, updates: dict[str, Any]) -> Pat
                 with os.fdopen(fd, "w") as f:
                     yaml.safe_dump(current, f, default_flow_style=False, sort_keys=False)
 
+                # Restrict permissions before rename so file is never world-readable
+                os.chmod(temp_path, 0o600)
                 # Atomic rename (POSIX guarantee)
                 os.replace(temp_path, config_file)
             except Exception:
@@ -221,18 +240,28 @@ class Settings(BaseSettings):
         description="Optional model override. If not set, uses Claude Code default.",
     )
 
-    # GitHub App credential broker
+    # Credential broker
+    credential_providers: dict[str, dict] = Field(
+        default_factory=dict,
+        description="Provider configurations (github, cloudflare, etc.)",
+    )
+    credential_broker_secret: Optional[str] = Field(
+        default=None,
+        description="Bearer token for credential broker endpoint authentication",
+    )
+
+    # Legacy GitHub fields — auto-migrated to credential_providers on load
     github_app_id: Optional[int] = Field(
         default=None,
-        description="GitHub App ID for credential broker",
+        description="[Deprecated] GitHub App ID — use credential_providers.github",
     )
     github_installations: dict[str, int] = Field(
         default_factory=dict,
-        description="Mapping of GitHub org/account name to installation ID",
+        description="[Deprecated] GitHub installations — use credential_providers.github",
     )
     github_broker_secret: Optional[str] = Field(
         default=None,
-        description="Bearer token for credential broker endpoint authentication",
+        description="[Deprecated] Broker secret — use credential_broker_secret",
     )
 
     model_config = {
@@ -267,6 +296,20 @@ class Settings(BaseSettings):
                 token = _load_token(PARACHUTE_DIR)
                 if token:
                     data["claude_code_oauth_token"] = token
+
+        # Auto-migrate legacy GitHub fields → credential_providers
+        if data.get("github_app_id") and not data.get("credential_providers", {}).get("github"):
+            providers = data.setdefault("credential_providers", {})
+            providers["github"] = {
+                "type": "github-app",
+                "app_id": data["github_app_id"],
+            }
+            if data.get("github_installations"):
+                providers["github"]["installations"] = data["github_installations"]
+
+        # Migrate github_broker_secret → credential_broker_secret
+        if data.get("github_broker_secret") and not data.get("credential_broker_secret"):
+            data["credential_broker_secret"] = data["github_broker_secret"]
 
         return data
 
