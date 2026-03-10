@@ -4,6 +4,7 @@ import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
 import '../models/agent_card.dart';
+import '../utils/agent_theme.dart';
 import '../screens/agent_log_screen.dart';
 import '../../../chat/widgets/inline_audio_player.dart';
 
@@ -30,13 +31,15 @@ class _AgentOutputHeaderState extends State<AgentOutputHeader>
   late AnimationController _controller;
   late Animation<double> _heightFactor;
   late Animation<double> _iconRotation;
+  late String _preview;
 
   @override
   void initState() {
     super.initState();
     _isExpanded = widget.initiallyExpanded;
+    _preview = _contentPreview(widget.card.content);
     _controller = AnimationController(
-      duration: const Duration(milliseconds: 300),
+      duration: Motion.gentle,
       vsync: this,
     );
     _heightFactor = _controller.drive(CurveTween(curve: Curves.easeInOut));
@@ -44,6 +47,14 @@ class _AgentOutputHeaderState extends State<AgentOutputHeader>
 
     if (_isExpanded) {
       _controller.value = 1.0;
+    }
+  }
+
+  @override
+  void didUpdateWidget(AgentOutputHeader oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.card.content != widget.card.content) {
+      _preview = _contentPreview(widget.card.content);
     }
   }
 
@@ -69,11 +80,16 @@ class _AgentOutputHeaderState extends State<AgentOutputHeader>
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
 
-    // Get icon and color for this agent
-    final (icon, color) = _getAgentIconAndColor(widget.card.agentName);
+    // Get theming for this agent
+    final agentTheme = AgentTheme.forAgent(widget.card.agentName);
+    final icon = agentTheme.icon;
+    final color = agentTheme.color;
 
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      margin: EdgeInsets.symmetric(
+        horizontal: Spacing.lg,
+        vertical: Spacing.sm,
+      ),
       decoration: BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topLeft,
@@ -88,28 +104,29 @@ class _AgentOutputHeaderState extends State<AgentOutputHeader>
                   BrandColors.softWhite,
                 ],
         ),
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: Radii.card,
         border: Border.all(
           color: isDark
               ? color.withValues(alpha: 0.3)
               : color.withValues(alpha: 0.2),
         ),
+        boxShadow: isDark ? null : Elevation.cardShadow,
       ),
       child: Column(
         children: [
           // Header (always visible, tappable)
           InkWell(
             onTap: _toggle,
-            borderRadius: BorderRadius.circular(16),
+            borderRadius: Radii.card,
             child: Padding(
-              padding: const EdgeInsets.all(16),
+              padding: EdgeInsets.all(Spacing.lg),
               child: Row(
                 children: [
                   Container(
                     padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(
                       color: color.withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(12),
+                      borderRadius: BorderRadius.circular(Radii.md),
                     ),
                     child: Icon(
                       icon,
@@ -117,7 +134,7 @@ class _AgentOutputHeaderState extends State<AgentOutputHeader>
                       color: color,
                     ),
                   ),
-                  const SizedBox(width: 14),
+                  SizedBox(width: Spacing.md + Spacing.xxs),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -131,7 +148,11 @@ class _AgentOutputHeaderState extends State<AgentOutputHeader>
                         ),
                         const SizedBox(height: 2),
                         Text(
-                          _isExpanded ? 'Tap to collapse' : 'Tap to read',
+                          _isExpanded
+                              ? 'Tap to collapse'
+                              : _preview,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                           style: theme.textTheme.bodySmall?.copyWith(
                             color: BrandColors.driftwood,
                           ),
@@ -160,7 +181,7 @@ class _AgentOutputHeaderState extends State<AgentOutputHeader>
                     padding: EdgeInsets.zero,
                     constraints: const BoxConstraints(),
                   ),
-                  const SizedBox(width: 8),
+                  SizedBox(width: Spacing.sm),
                   RotationTransition(
                     turns: _iconRotation,
                     child: Icon(
@@ -183,7 +204,9 @@ class _AgentOutputHeaderState extends State<AgentOutputHeader>
                 child: child,
               ),
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                padding: EdgeInsets.fromLTRB(
+                  Spacing.lg, 0, Spacing.lg, Spacing.lg,
+                ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -192,7 +215,7 @@ class _AgentOutputHeaderState extends State<AgentOutputHeader>
                           ? BrandColors.charcoal.withValues(alpha: 0.5)
                           : BrandColors.stone.withValues(alpha: 0.5),
                     ),
-                    const SizedBox(height: 8),
+                    SizedBox(height: Spacing.sm),
                     MarkdownBody(
                       data: widget.card.content,
                       selectable: true,
@@ -264,18 +287,18 @@ class _AgentOutputHeaderState extends State<AgentOutputHeader>
     );
   }
 
-  /// Get icon and color for an agent based on its name
-  ///
-  /// In the future, this could be configurable via agent config
-  (IconData, Color) _getAgentIconAndColor(String agentName) {
-    switch (agentName) {
-      case 'reflection':
-        return (Icons.wb_twilight, BrandColors.forest);
-      case 'content-scout':
-        return (Icons.lightbulb_outline, BrandColors.turquoise);
-      default:
-        return (Icons.smart_toy_outlined, BrandColors.driftwood);
-    }
+  /// Extract a plain-text preview from markdown content.
+  String _contentPreview(String markdown) {
+    // Strip markdown syntax for a clean preview line
+    final stripped = markdown
+        .replaceAll(RegExp(r'^#{1,6}\s+', multiLine: true), '') // headings
+        .replaceAll(RegExp(r'\*{1,2}([^*]+)\*{1,2}'), r'$1') // bold/italic
+        .replaceAll(RegExp(r'`([^`]+)`'), r'$1') // inline code
+        .replaceAll(RegExp(r'\[([^\]]+)\]\([^)]+\)'), r'$1') // links
+        .replaceAll(RegExp(r'^\s*[-*>]\s+', multiLine: true), '') // bullets/quotes
+        .replaceAll(RegExp(r'\n+'), ' ') // collapse newlines
+        .trim();
+    return stripped.isEmpty ? 'Tap to read' : stripped;
   }
 
   /// Resolve a relative asset path to an absolute path

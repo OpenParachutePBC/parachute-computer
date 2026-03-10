@@ -5,6 +5,7 @@ import '../models/journal_day.dart';
 import '../models/journal_entry.dart';
 import '../providers/journal_providers.dart';
 import '../providers/journal_screen_state_provider.dart';
+import 'cards_empty_state.dart';
 import 'journal_agent_outputs_section.dart';
 import 'collapsible_chat_log_section.dart';
 import 'journal_entry_row.dart';
@@ -79,6 +80,10 @@ class JournalContentView extends ConsumerWidget {
             if (hasAgentOutputs)
               SliverToBoxAdapter(
                 child: JournalAgentOutputsSection(cards: agentCards),
+              )
+            else if (isToday)
+              const SliverToBoxAdapter(
+                child: CardsEmptyState(),
               ),
 
             // AI Conversations (if available) - collapsible section at top

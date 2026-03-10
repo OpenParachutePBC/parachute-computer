@@ -4,6 +4,7 @@ import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/core/providers/computer_provider.dart';
 import 'package:parachute/core/services/computer_service.dart';
 import '../providers/journal_providers.dart';
+import '../utils/agent_theme.dart';
 
 /// Provider for agent trigger state (per agent)
 final agentTriggerStateProvider = StateProvider.family<AsyncValue<AgentRunResult?>, String>(
@@ -46,7 +47,9 @@ class _AgentTriggerCardState extends ConsumerState<AgentTriggerCard> {
     final triggerState = ref.watch(agentTriggerStateProvider(widget.agent.name));
 
     // Choose icon and color based on agent type
-    final (icon, color) = _getAgentIconAndColor(widget.agent.name);
+    final agentTheme = AgentTheme.forAgent(widget.agent.name);
+    final icon = agentTheme.icon;
+    final color = agentTheme.color;
 
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -394,14 +397,4 @@ class _AgentTriggerCardState extends ConsumerState<AgentTriggerCard> {
     return '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
   }
 
-  (IconData, Color) _getAgentIconAndColor(String agentName) {
-    switch (agentName) {
-      case 'reflection':
-        return (Icons.wb_twilight, BrandColors.forest);
-      case 'content-scout':
-        return (Icons.lightbulb_outline, BrandColors.turquoise);
-      default:
-        return (Icons.smart_toy_outlined, BrandColors.driftwood);
-    }
-  }
 }
