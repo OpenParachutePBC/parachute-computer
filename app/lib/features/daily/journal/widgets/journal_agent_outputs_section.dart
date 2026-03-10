@@ -42,9 +42,13 @@ class JournalAgentOutputsSection extends ConsumerWidget {
     );
   }
 
-  void _retryAgent(WidgetRef ref, AgentCard card) {
+  Future<void> _retryAgent(WidgetRef ref, AgentCard card) async {
     final api = ref.read(dailyApiServiceProvider);
-    api.triggerAgentRun(card.agentName, date: card.date);
+    try {
+      await api.triggerAgentRun(card.agentName, date: card.date);
+    } catch (e) {
+      debugPrint('Retry failed for ${card.agentName}: $e');
+    }
     ref.read(journalRefreshTriggerProvider.notifier).state++;
   }
 }
@@ -65,10 +69,12 @@ class _AgentRunningCard extends StatefulWidget {
 class _AgentRunningCardState extends State<_AgentRunningCard>
     with SingleTickerProviderStateMixin {
   late final AnimationController _shimmerController;
+  late final AgentTheme _agentTheme;
 
   @override
   void initState() {
     super.initState();
+    _agentTheme = AgentTheme.forAgent(widget.card.agentName);
     _shimmerController = AnimationController(
       vsync: this,
       duration: Motion.breathing,
@@ -85,8 +91,6 @@ class _AgentRunningCardState extends State<_AgentRunningCard>
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
-    final agentTheme = AgentTheme.forAgent(widget.card.agentName);
-
     return AnimatedBuilder(
       animation: _shimmerController,
       builder: (context, child) {
@@ -106,19 +110,19 @@ class _AgentRunningCardState extends State<_AgentRunningCard>
               colors: isDark
                   ? [
                       BrandColors.nightSurfaceElevated,
-                      agentTheme.color.withValues(alpha: 0.08),
+                      _agentTheme.color.withValues(alpha: 0.08),
                       BrandColors.nightSurfaceElevated,
                     ]
                   : [
                       BrandColors.softWhite,
-                      agentTheme.color.withValues(alpha: 0.06),
+                      _agentTheme.color.withValues(alpha: 0.06),
                       BrandColors.softWhite,
                     ],
               stops: const [0.0, 0.5, 1.0],
             ),
             borderRadius: Radii.card,
             border: Border.all(
-              color: agentTheme.color.withValues(alpha: isDark ? 0.3 : 0.2),
+              color: _agentTheme.color.withValues(alpha: isDark ? 0.3 : 0.2),
             ),
           ),
           child: child,
@@ -130,13 +134,13 @@ class _AgentRunningCardState extends State<_AgentRunningCard>
           Container(
             padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
-              color: agentTheme.color.withValues(alpha: 0.15),
+              color: _agentTheme.color.withValues(alpha: 0.15),
               borderRadius: BorderRadius.circular(Radii.md),
             ),
             child: Icon(
-              agentTheme.icon,
+              _agentTheme.icon,
               size: 24,
-              color: agentTheme.color,
+              color: _agentTheme.color,
             ),
           ),
           SizedBox(width: Spacing.md + Spacing.xxs),
@@ -153,7 +157,7 @@ class _AgentRunningCardState extends State<_AgentRunningCard>
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  agentTheme.runningMessage,
+                  _agentTheme.runningMessage,
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: BrandColors.driftwood,
                   ),
@@ -166,7 +170,7 @@ class _AgentRunningCardState extends State<_AgentRunningCard>
             height: 18,
             child: CircularProgressIndicator(
               strokeWidth: 2,
-              color: agentTheme.color.withValues(alpha: 0.6),
+              color: _agentTheme.color.withValues(alpha: 0.6),
             ),
           ),
         ],

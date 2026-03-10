@@ -31,11 +31,13 @@ class _AgentOutputHeaderState extends State<AgentOutputHeader>
   late AnimationController _controller;
   late Animation<double> _heightFactor;
   late Animation<double> _iconRotation;
+  late String _preview;
 
   @override
   void initState() {
     super.initState();
     _isExpanded = widget.initiallyExpanded;
+    _preview = _contentPreview(widget.card.content);
     _controller = AnimationController(
       duration: Motion.gentle,
       vsync: this,
@@ -45,6 +47,14 @@ class _AgentOutputHeaderState extends State<AgentOutputHeader>
 
     if (_isExpanded) {
       _controller.value = 1.0;
+    }
+  }
+
+  @override
+  void didUpdateWidget(AgentOutputHeader oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.card.content != widget.card.content) {
+      _preview = _contentPreview(widget.card.content);
     }
   }
 
@@ -140,7 +150,7 @@ class _AgentOutputHeaderState extends State<AgentOutputHeader>
                         Text(
                           _isExpanded
                               ? 'Tap to collapse'
-                              : _contentPreview(widget.card.content),
+                              : _preview,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: theme.textTheme.bodySmall?.copyWith(
