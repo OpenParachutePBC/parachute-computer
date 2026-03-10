@@ -33,7 +33,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, AsyncGenerator
 
-from parachute.lib.credentials import load_credentials
 from parachute.models.session import BOT_SOURCES, SessionSource
 
 SANDBOX_DATA_DIR = "sandbox"
@@ -317,11 +316,30 @@ class DockerSandbox:
         if config.model:
             env_lines.append(f"PARACHUTE_MODEL={config.model}")
 
-        # Inject credential broker secret for GitHub App integration
+        # Inject credential broker env vars
         from parachute.config import get_settings
+        from parachute.lib.credentials import get_broker as get_credential_broker
         settings = get_settings()
-        if settings.github_broker_secret:
-            env_lines.append(f"BROKER_SECRET={settings.github_broker_secret}")
+        broker_secret = settings.credential_broker_secret
+        if broker_secret:
+            env_lines.append(f"BROKER_SECRET={broker_secret}")
+            # Git config via env vars (replaces git config --system in Dockerfile)
+            cred_broker = get_credential_broker()
+            if cred_broker.has_provider("github"):
+                env_lines.append("GIT_CONFIG_COUNT=2")
+                env_lines.append(
+                    "GIT_CONFIG_KEY_0=credential.helper"
+                )
+                env_lines.append(
+                    "GIT_CONFIG_VALUE_0=!/opt/parachute-tools/bin/github-token-helper.sh"
+                )
+                env_lines.append("GIT_CONFIG_KEY_1=credential.useHttpPath")
+                env_lines.append("GIT_CONFIG_VALUE_1=true")
+                github = cred_broker.get_provider("github")
+                if github and hasattr(github, "get_default_org"):
+                    default_org = github.get_default_org()
+                    if default_org:
+                        env_lines.append(f"GH_DEFAULT_ORG={default_org}")
 
         # Pass filtered MCP server names so the container knows what's allowed
         if config.mcp_servers is not None:
@@ -769,6 +787,28 @@ class DockerSandbox:
             mcp_names = ",".join(config.mcp_servers.keys())
             exec_args.extend(["-e", f"PARACHUTE_MCP_SERVERS={mcp_names}"])
 
+        # Inject credential broker env vars (same as ephemeral path)
+        from parachute.config import get_settings
+        from parachute.lib.credentials import get_broker as get_credential_broker
+        settings = get_settings()
+        broker_secret = settings.credential_broker_secret
+        if broker_secret:
+            exec_args.extend(["-e", f"BROKER_SECRET={broker_secret}"])
+            cred_broker = get_credential_broker()
+            if cred_broker.has_provider("github"):
+                exec_args.extend([
+                    "-e", "GIT_CONFIG_COUNT=2",
+                    "-e", "GIT_CONFIG_KEY_0=credential.helper",
+                    "-e", "GIT_CONFIG_VALUE_0=!/opt/parachute-tools/bin/github-token-helper.sh",
+                    "-e", "GIT_CONFIG_KEY_1=credential.useHttpPath",
+                    "-e", "GIT_CONFIG_VALUE_1=true",
+                ])
+                github = cred_broker.get_provider("github")
+                if github and hasattr(github, "get_default_org"):
+                    default_org = github.get_default_org()
+                    if default_org:
+                        exec_args.extend(["-e", f"GH_DEFAULT_ORG={default_org}"])
+
         exec_args.extend([
             container_name,
             "python", "/workspace/entrypoint.py",
@@ -810,6 +850,7 @@ class DockerSandbox:
             # Require explicit non-bot confirmation: None (unknown caller) gets no credentials.
             # Bot sessions (Telegram/Discord/Matrix) and unknown sources never receive host credentials.
             if config.session_source is not None and config.session_source not in BOT_SOURCES:
+                from parachute.lib.credentials import load_credentials
                 creds = load_credentials(Path.home())
                 if creds:
                     logger.debug(
@@ -926,7 +967,63 @@ class DockerSandbox:
             stderr=asyncio.subprocess.DEVNULL,
         )
         await proc.wait()
-        # returncode 0 = created, may also succeed if already exists
+
+    async def _sync_credential_scripts(self) -> None:
+        """Deploy credential helper scripts to the tools volume.
+
+        Runs a temporary alpine container with the volume mounted read-write,
+        writes scripts from all configured providers, then removes the container.
+        The tools volume is mounted read-only in persistent containers, so we
+        need this temporary write-capable container.
+
+        Called during reconcile() and after `parachute setup <provider>`.
+        """
+        from parachute.lib.credentials import get_broker as get_credential_broker
+
+        broker = get_credential_broker()
+        scripts = broker.get_all_scripts()
+        if not scripts:
+            logger.debug("No credential scripts to sync")
+            return
+
+        # Build a shell command that writes all scripts
+        write_commands = []
+        for filename, content in scripts.items():
+            # Escape content for heredoc
+            escaped = content.replace("'", "'\\''")
+            write_commands.append(
+                f"cat > /opt/parachute-tools/bin/{filename} << 'SCRIPT_EOF'\n"
+                f"{content}\n"
+                f"SCRIPT_EOF\n"
+                f"chmod +x /opt/parachute-tools/bin/{filename}"
+            )
+
+        shell_script = (
+            "mkdir -p /opt/parachute-tools/bin && "
+            + " && ".join(write_commands)
+        )
+
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "docker", "run", "--rm",
+                "--mount", f"source={TOOLS_VOLUME_NAME},target=/opt/parachute-tools",
+                "alpine:3.19",
+                "sh", "-c", shell_script,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            _, stderr = await proc.communicate()
+            if proc.returncode == 0:
+                logger.info(
+                    f"Synced {len(scripts)} credential script(s) to tools volume: "
+                    f"{', '.join(scripts.keys())}"
+                )
+            else:
+                logger.error(
+                    f"Failed to sync credential scripts: {stderr.decode()}"
+                )
+        except OSError as e:
+            logger.error(f"Failed to sync credential scripts: {e}")
 
     async def reconcile(self, active_slugs: set[str] | None = None) -> None:
         """Reconcile parachute containers on server startup.
@@ -944,8 +1041,9 @@ class DockerSandbox:
         if not await self.is_available():
             return
 
-        # Ensure shared tools volume exists
+        # Ensure shared tools volume exists and sync credential scripts
         await self._ensure_tools_volume()
+        await self._sync_credential_scripts()
 
         proc = await asyncio.create_subprocess_exec(
             "docker", "ps", "-a",
