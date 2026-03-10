@@ -34,20 +34,20 @@ class AgentCompletionEvent {
 
 /// State for agent completion notifications.
 class AgentCompletionState {
-  final int unreadCount;
+  final Set<String> unreadSessionIds;
   final AgentCompletionEvent? latestEvent;
 
   const AgentCompletionState({
-    this.unreadCount = 0,
+    this.unreadSessionIds = const {},
     this.latestEvent,
   });
 
   AgentCompletionState copyWith({
-    int? unreadCount,
+    Set<String>? unreadSessionIds,
     AgentCompletionEvent? latestEvent,
   }) {
     return AgentCompletionState(
-      unreadCount: unreadCount ?? this.unreadCount,
+      unreadSessionIds: unreadSessionIds ?? this.unreadSessionIds,
       latestEvent: latestEvent ?? this.latestEvent,
     );
   }
@@ -82,8 +82,8 @@ class AgentCompletionNotifier extends Notifier<AgentCompletionState> {
     final isOnChatTab = currentTab < visibleTabs.length &&
         visibleTabs[currentTab] == AppTab.chat;
 
-    final currentSessionId = ref.read(currentSessionIdProvider);
-    final isViewingSession = isOnChatTab && currentSessionId == sessionId;
+    final activeViewSessionId = ref.read(activeViewSessionIdProvider);
+    final isViewingSession = isOnChatTab && activeViewSessionId == sessionId;
 
     debugPrint('[AgentCompletion] onCompleted: session=$sessionId, '
         'title="$displayTitle", backgrounded=$isBackgrounded, '
@@ -101,35 +101,21 @@ class AgentCompletionNotifier extends Notifier<AgentCompletionState> {
     );
 
     if (isBackgrounded) {
-      // App is backgrounded — fire OS notification
       _fireOsNotification(displayTitle, sessionId);
-      // Also increment badge for when they return
-      state = AgentCompletionState(
-        unreadCount: state.unreadCount + 1,
-        latestEvent: event,
-      );
-    } else if (!isOnChatTab) {
-      // On a different tab — badge + toast
-      state = AgentCompletionState(
-        unreadCount: state.unreadCount + 1,
-        latestEvent: event,
-      );
-    } else {
-      // On chat tab but different session — toast only
-      state = AgentCompletionState(
-        unreadCount: state.unreadCount,
-        latestEvent: event,
-      );
     }
+
+    // Mark unread + set latest event (triggers toast via listener in main.dart)
+    state = state.copyWith(
+      unreadSessionIds: {...state.unreadSessionIds, sessionId},
+      latestEvent: event,
+    );
   }
 
-  /// Clear unread count (called when user switches to Chat tab).
-  void clearUnread() {
-    if (state.unreadCount > 0) {
-      state = AgentCompletionState(
-        unreadCount: 0,
-        latestEvent: state.latestEvent,
-      );
+  /// Mark a specific session as read (called when user opens that session).
+  void markRead(String sessionId) {
+    if (state.unreadSessionIds.contains(sessionId)) {
+      final updated = Set<String>.of(state.unreadSessionIds)..remove(sessionId);
+      state = state.copyWith(unreadSessionIds: updated);
     }
   }
 

@@ -13,6 +13,7 @@ class DateGroupedSessionList extends StatelessWidget {
   final Future<void> Function(ChatSession session)? onDelete;
   final Future<void> Function(ChatSession session)? onArchive;
   final Future<void> Function(ChatSession session)? onUnarchive;
+  final Set<String> unreadSessionIds;
   final bool isDark;
 
   const DateGroupedSessionList({
@@ -22,6 +23,7 @@ class DateGroupedSessionList extends StatelessWidget {
     this.onDelete,
     this.onArchive,
     this.onUnarchive,
+    this.unreadSessionIds = const {},
     this.isDark = false,
   });
 
@@ -52,6 +54,7 @@ class DateGroupedSessionList extends StatelessWidget {
                       ? () => onUnarchive!(session)
                       : null,
                   isDark: isDark,
+                  isUnread: unreadSessionIds.contains(session.id),
                 );
               },
             ),

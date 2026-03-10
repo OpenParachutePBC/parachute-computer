@@ -18,6 +18,7 @@ class SessionListItem extends StatelessWidget {
   final Future<void> Function()? onApprove;
   final Future<void> Function()? onDeny;
   final bool isDark;
+  final bool isUnread;
 
   const SessionListItem({
     super.key,
@@ -29,6 +30,7 @@ class SessionListItem extends StatelessWidget {
     this.onApprove,
     this.onDeny,
     this.isDark = false,
+    this.isUnread = false,
   });
 
   Future<bool> _confirmDelete(BuildContext context) async {
@@ -90,8 +92,8 @@ class SessionListItem extends StatelessWidget {
           ),
           child: Row(
             children: [
-              // Type icon
-              _buildTypeIcon(themeDark),
+              // Type icon with optional unread dot
+              _buildTypeIconWithUnread(themeDark),
 
               const SizedBox(width: Spacing.md),
 
@@ -400,6 +402,29 @@ class SessionListItem extends StatelessWidget {
         return false;
       },
       child: tileContent,
+    );
+  }
+
+  Widget _buildTypeIconWithUnread(bool isDark) {
+    final icon = _buildTypeIcon(isDark);
+    if (!isUnread) return icon;
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        icon,
+        Positioned(
+          top: -2,
+          right: -2,
+          child: Container(
+            width: 8,
+            height: 8,
+            decoration: BoxDecoration(
+              color: isDark ? BrandColors.nightTurquoise : BrandColors.turquoise,
+              shape: BoxShape.circle,
+            ),
+          ),
+        ),
+      ],
     );
   }
 

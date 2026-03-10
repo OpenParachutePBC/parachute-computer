@@ -2,6 +2,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/chat_session.dart';
 import '../services/chat_service.dart';
+import 'agent_completion_provider.dart';
 import 'chat_session_providers.dart';
 import 'chat_message_providers.dart';
 
@@ -86,6 +87,8 @@ final switchSessionProvider = Provider<Future<void> Function(String)>((ref) {
   return (String sessionId) async {
     // Exit new chat mode if active
     ref.read(newChatModeProvider.notifier).state = false;
+    // Clear unread badge for this session
+    ref.read(agentCompletionProvider.notifier).markRead(sessionId);
     // Immediately clear old messages and show loading state to prevent
     // showing stale content from previous session during async load
     ref.read(chatMessagesProvider.notifier).prepareForSessionSwitch(sessionId);
