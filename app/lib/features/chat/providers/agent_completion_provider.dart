@@ -82,8 +82,8 @@ class AgentCompletionNotifier extends Notifier<AgentCompletionState> {
     final isOnChatTab = currentTab < visibleTabs.length &&
         visibleTabs[currentTab] == AppTab.chat;
 
-    final currentSessionId = ref.read(currentSessionIdProvider);
-    final isViewingSession = isOnChatTab && currentSessionId == sessionId;
+    final activeViewSessionId = ref.read(activeViewSessionIdProvider);
+    final isViewingSession = isOnChatTab && activeViewSessionId == sessionId;
 
     debugPrint('[AgentCompletion] onCompleted: session=$sessionId, '
         'title="$displayTitle", backgrounded=$isBackgrounded, '

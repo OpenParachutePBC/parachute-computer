@@ -117,6 +117,14 @@ final archivedSessionsProvider = FutureProvider.autoDispose<List<ChatSession>>((
 /// null means no session is active (new chat mode)
 final currentSessionIdProvider = StateProvider<String?>((ref) => null);
 
+/// Tracks which session has a ChatScreen actively mounted.
+///
+/// Set by ChatScreen on mount, cleared on dispose. Unlike
+/// [currentSessionIdProvider] (which persists after navigation),
+/// this accurately reflects whether the user is currently *viewing*
+/// a session's messages on screen.
+final activeViewSessionIdProvider = StateProvider<String?>((ref) => null);
+
 /// Provider for session with full message history
 ///
 /// Returns the complete session data including all messages.

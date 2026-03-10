@@ -89,6 +89,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   /// Controlled listener subscription for chat messages
   ProviderSubscription<ChatMessagesState>? _chatMessagesSubscription;
 
+  /// Keeps activeViewSessionIdProvider in sync with currentSessionIdProvider
+  ProviderSubscription<String?>? _sessionIdSubscription;
+
   @override
   void initState() {
     super.initState();
@@ -113,6 +116,18 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       // Set up the chat messages listener after first frame
       // Using listenManual gives us control over the subscription lifecycle
       _setupChatMessagesListener();
+      // Track that this session's ChatScreen is actively mounted.
+      // Keep in sync as the session ID may arrive later (new chat flow).
+      final sessionId = ref.read(currentSessionIdProvider);
+      ref.read(activeViewSessionIdProvider.notifier).state = sessionId;
+      _sessionIdSubscription = ref.listenManual(
+        currentSessionIdProvider,
+        (_, next) {
+          if (mounted) {
+            ref.read(activeViewSessionIdProvider.notifier).state = next;
+          }
+        },
+      );
     });
   }
 
@@ -183,6 +198,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     // This prevents _dependents.isEmpty assertion errors
     _chatMessagesSubscription?.close();
     _chatMessagesSubscription = null;
+    _sessionIdSubscription?.close();
+    _sessionIdSubscription = null;
+
+    // Clear active view tracking — we're no longer viewing this session
+    ref.read(activeViewSessionIdProvider.notifier).state = null;
 
     _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
