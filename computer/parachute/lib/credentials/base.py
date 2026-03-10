@@ -80,19 +80,3 @@ class CredentialProvider(ABC):
             /opt/parachute-tools/bin/ and made executable.
         """
         return {}
-
-    def get_env_vars(self, scope: dict, token: CredentialToken) -> dict[str, str]:
-        """Return environment variables to inject for this provider.
-
-        Called after minting a token. Used for env-based injection
-        (e.g., CLOUDFLARE_API_TOKEN). Hook-based providers (GitHub)
-        may return empty here since injection happens via scripts.
-
-        Args:
-            scope: The scope that was used to mint the token.
-            token: The minted token.
-
-        Returns:
-            Mapping of env var name -> value to inject into containers.
-        """
-        return {}

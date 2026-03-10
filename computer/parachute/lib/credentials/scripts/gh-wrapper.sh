@@ -40,6 +40,13 @@ if [ -z "$ORG" ]; then
     exec "$GH_REAL" "$@"
 fi
 
+# Validate org name — alphanumeric, hyphens, underscores only.
+# Prevents URL injection via crafted git remote URLs.
+if ! [[ "$ORG" =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]{0,38}$ ]]; then
+    echo "Error: Invalid org name format: $ORG" >&2
+    exec "$GH_REAL" "$@"
+fi
+
 # Need broker secret
 if [ -z "${BROKER_SECRET:-}" ]; then
     echo "Error: BROKER_SECRET not set — credential broker unavailable" >&2

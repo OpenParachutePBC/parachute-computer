@@ -61,6 +61,20 @@ class GitHubProvider(CredentialProvider):
         self.private_key_pem = private_key_pem
         self.installations = installations  # org_name -> installation_id
         self._token_cache: dict[int, dict] = {}
+        self._client: httpx.AsyncClient | None = None
+
+    async def _get_client(self) -> httpx.AsyncClient:
+        """Get or create a shared httpx client for GitHub API calls."""
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(
+                base_url="https://api.github.com",
+                headers={
+                    "Accept": "application/vnd.github+json",
+                    "X-GitHub-Api-Version": "2022-11-28",
+                },
+                timeout=10.0,
+            )
+        return self._client
 
     @classmethod
     def from_config(cls, config: dict, parachute_dir: Path) -> "GitHubProvider | None":
@@ -145,20 +159,15 @@ class GitHubProvider(CredentialProvider):
 
         # Mint a new token
         app_jwt = self._make_jwt()
-        url = f"https://api.github.com/app/installations/{installation_id}/access_tokens"
+        url = f"/app/installations/{installation_id}/access_tokens"
 
         try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.post(
-                    url,
-                    headers={
-                        "Authorization": f"Bearer {app_jwt}",
-                        "Accept": "application/vnd.github+json",
-                        "X-GitHub-Api-Version": "2022-11-28",
-                    },
-                    timeout=10.0,
-                )
-                resp.raise_for_status()
+            client = await self._get_client()
+            resp = await client.post(
+                url,
+                headers={"Authorization": f"Bearer {app_jwt}"},
+            )
+            resp.raise_for_status()
         except httpx.HTTPStatusError as e:
             logger.error(
                 f"GitHub API error minting token for installation "
@@ -199,17 +208,12 @@ class GitHubProvider(CredentialProvider):
         """Verify the GitHub App configuration by checking the App identity."""
         app_jwt = self._make_jwt()
         try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.get(
-                    "https://api.github.com/app",
-                    headers={
-                        "Authorization": f"Bearer {app_jwt}",
-                        "Accept": "application/vnd.github+json",
-                        "X-GitHub-Api-Version": "2022-11-28",
-                    },
-                    timeout=10.0,
-                )
-                resp.raise_for_status()
+            client = await self._get_client()
+            resp = await client.get(
+                "/app",
+                headers={"Authorization": f"Bearer {app_jwt}"},
+            )
+            resp.raise_for_status()
         except httpx.HTTPError as e:
             raise CredentialProviderError(
                 f"Failed to verify GitHub App: {e}"
@@ -227,17 +231,12 @@ class GitHubProvider(CredentialProvider):
         """List all installations of this GitHub App."""
         app_jwt = self._make_jwt()
         try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.get(
-                    "https://api.github.com/app/installations",
-                    headers={
-                        "Authorization": f"Bearer {app_jwt}",
-                        "Accept": "application/vnd.github+json",
-                        "X-GitHub-Api-Version": "2022-11-28",
-                    },
-                    timeout=10.0,
-                )
-                resp.raise_for_status()
+            client = await self._get_client()
+            resp = await client.get(
+                "/app/installations",
+                headers={"Authorization": f"Bearer {app_jwt}"},
+            )
+            resp.raise_for_status()
         except httpx.HTTPError as e:
             raise CredentialProviderError(
                 f"Failed to list installations: {e}"

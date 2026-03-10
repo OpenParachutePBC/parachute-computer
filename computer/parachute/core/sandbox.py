@@ -316,30 +316,8 @@ class DockerSandbox:
         if config.model:
             env_lines.append(f"PARACHUTE_MODEL={config.model}")
 
-        # Inject credential broker env vars
-        from parachute.config import get_settings
-        from parachute.lib.credentials import get_broker as get_credential_broker
-        settings = get_settings()
-        broker_secret = settings.credential_broker_secret
-        if broker_secret:
-            env_lines.append(f"BROKER_SECRET={broker_secret}")
-            # Git config via env vars (replaces git config --system in Dockerfile)
-            cred_broker = get_credential_broker()
-            if cred_broker.has_provider("github"):
-                env_lines.append("GIT_CONFIG_COUNT=2")
-                env_lines.append(
-                    "GIT_CONFIG_KEY_0=credential.helper"
-                )
-                env_lines.append(
-                    "GIT_CONFIG_VALUE_0=!/opt/parachute-tools/bin/github-token-helper.sh"
-                )
-                env_lines.append("GIT_CONFIG_KEY_1=credential.useHttpPath")
-                env_lines.append("GIT_CONFIG_VALUE_1=true")
-                github = cred_broker.get_provider("github")
-                if github and hasattr(github, "get_default_org"):
-                    default_org = github.get_default_org()
-                    if default_org:
-                        env_lines.append(f"GH_DEFAULT_ORG={default_org}")
+        # Inject credential broker env vars (secret + git config)
+        env_lines.extend(self._build_credential_env_vars())
 
         # Pass filtered MCP server names so the container knows what's allowed
         if config.mcp_servers is not None:
@@ -787,27 +765,10 @@ class DockerSandbox:
             mcp_names = ",".join(config.mcp_servers.keys())
             exec_args.extend(["-e", f"PARACHUTE_MCP_SERVERS={mcp_names}"])
 
-        # Inject credential broker env vars (same as ephemeral path)
-        from parachute.config import get_settings
-        from parachute.lib.credentials import get_broker as get_credential_broker
-        settings = get_settings()
-        broker_secret = settings.credential_broker_secret
-        if broker_secret:
-            exec_args.extend(["-e", f"BROKER_SECRET={broker_secret}"])
-            cred_broker = get_credential_broker()
-            if cred_broker.has_provider("github"):
-                exec_args.extend([
-                    "-e", "GIT_CONFIG_COUNT=2",
-                    "-e", "GIT_CONFIG_KEY_0=credential.helper",
-                    "-e", "GIT_CONFIG_VALUE_0=!/opt/parachute-tools/bin/github-token-helper.sh",
-                    "-e", "GIT_CONFIG_KEY_1=credential.useHttpPath",
-                    "-e", "GIT_CONFIG_VALUE_1=true",
-                ])
-                github = cred_broker.get_provider("github")
-                if github and hasattr(github, "get_default_org"):
-                    default_org = github.get_default_org()
-                    if default_org:
-                        exec_args.extend(["-e", f"GH_DEFAULT_ORG={default_org}"])
+        # Inject non-sensitive credential config via -e flags (git config, default org).
+        # BROKER_SECRET is passed via stdin payload to avoid docker exec argument exposure.
+        for env_line in self._build_credential_env_vars(include_secret=False):
+            exec_args.extend(["-e", env_line])
 
         exec_args.extend([
             container_name,
@@ -831,6 +792,13 @@ class DockerSandbox:
                 stdin_payload["system_prompt"] = config.system_prompt
             if resume_session_id:
                 stdin_payload["resume_session_id"] = resume_session_id
+
+            # Pass broker secret via stdin (not -e flag) to avoid
+            # exposure in docker events / process table
+            from parachute.config import get_settings
+            broker_secret = get_settings().credential_broker_secret
+            if broker_secret:
+                stdin_payload["broker_secret"] = broker_secret
 
             # Capabilities
             capabilities: dict = {}
@@ -954,6 +922,47 @@ class DockerSandbox:
         )
         await proc.wait()
 
+    def _build_credential_env_vars(self, include_secret: bool = True) -> list[str]:
+        """Build environment variable lines for credential broker injection.
+
+        Used by both ephemeral (--env-file) and persistent (docker exec -e) paths.
+        Returns lines in KEY=VALUE format.
+
+        Args:
+            include_secret: Whether to include BROKER_SECRET. Set False for
+                            docker exec -e where secrets should go via stdin.
+        """
+        from parachute.config import get_settings
+        from parachute.lib.credentials import get_broker as get_credential_broker
+
+        settings = get_settings()
+        broker_secret = settings.credential_broker_secret
+        if not broker_secret:
+            return []
+
+        env_lines: list[str] = []
+
+        if include_secret:
+            env_lines.append(f"BROKER_SECRET={broker_secret}")
+
+        # Git config via env vars (replaces git config --system in Dockerfile)
+        cred_broker = get_credential_broker()
+        if cred_broker.has_provider("github"):
+            env_lines.extend([
+                "GIT_CONFIG_COUNT=2",
+                "GIT_CONFIG_KEY_0=credential.helper",
+                "GIT_CONFIG_VALUE_0=!/opt/parachute-tools/bin/github-token-helper.sh",
+                "GIT_CONFIG_KEY_1=credential.useHttpPath",
+                "GIT_CONFIG_VALUE_1=true",
+            ])
+            github = cred_broker.get_provider("github")
+            if github and hasattr(github, "get_default_org"):
+                default_org = github.get_default_org()
+                if default_org:
+                    env_lines.append(f"GH_DEFAULT_ORG={default_org}")
+
+        return env_lines
+
     async def _ensure_tools_volume(self) -> None:
         """Create the parachute-tools named volume if it doesn't exist.
 
@@ -978,6 +987,8 @@ class DockerSandbox:
 
         Called during reconcile() and after `parachute setup <provider>`.
         """
+        import base64
+
         from parachute.lib.credentials import get_broker as get_credential_broker
 
         broker = get_credential_broker()
@@ -986,15 +997,14 @@ class DockerSandbox:
             logger.debug("No credential scripts to sync")
             return
 
-        # Build a shell command that writes all scripts
+        # Build a shell command that writes all scripts.
+        # Use base64 encoding to avoid heredoc injection (SCRIPT_EOF collision,
+        # shell metacharacter interpretation, etc.).
         write_commands = []
         for filename, content in scripts.items():
-            # Escape content for heredoc
-            escaped = content.replace("'", "'\\''")
+            b64 = base64.b64encode(content.encode()).decode()
             write_commands.append(
-                f"cat > /opt/parachute-tools/bin/{filename} << 'SCRIPT_EOF'\n"
-                f"{content}\n"
-                f"SCRIPT_EOF\n"
+                f"echo '{b64}' | base64 -d > /opt/parachute-tools/bin/{filename} && "
                 f"chmod +x /opt/parachute-tools/bin/{filename}"
             )
 

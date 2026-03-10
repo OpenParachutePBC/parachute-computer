@@ -8,7 +8,7 @@ and expiry times.
 Flow:
   1. Parent token stored in config (long-lived, broad permissions)
   2. On request, mint a child token via POST /user/tokens
-  3. Child token has scoped permissions + TTL (default 8 hours)
+  3. Child token has scoped permissions + TTL (default 8 hours, max 24)
   4. Inject as CLOUDFLARE_API_TOKEN env var at docker exec time
 """
 
@@ -28,6 +28,8 @@ logger = logging.getLogger(__name__)
 
 # Default TTL for child tokens
 DEFAULT_TTL_HOURS = 8
+# Hard cap on TTL — prevents sandbox from requesting arbitrarily long-lived tokens
+MAX_TTL_HOURS = 24
 
 
 class CloudflareProvider(CredentialProvider):
@@ -40,15 +42,38 @@ class CloudflareProvider(CredentialProvider):
     name = "cloudflare"
     provider_type = "cloudflare-parent"
 
-    def __init__(self, parent_token: str, account_id: str | None = None):
+    def __init__(
+        self,
+        parent_token: str,
+        account_id: str | None = None,
+        default_permissions: list | None = None,
+    ):
         """
         Args:
             parent_token: Long-lived Cloudflare API token with permission
                           to create child tokens.
             account_id: Optional default account ID.
+            default_permissions: Default permission group IDs for child tokens.
+                                 Required — empty permissions would inherit parent's
+                                 full permission set.
         """
         self.parent_token = parent_token
         self.account_id = account_id
+        self.default_permissions = default_permissions or []
+        self._client: httpx.AsyncClient | None = None
+
+    async def _get_client(self) -> httpx.AsyncClient:
+        """Get or create a shared httpx client."""
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(
+                base_url="https://api.cloudflare.com/client/v4",
+                headers={
+                    "Authorization": f"Bearer {self.parent_token}",
+                    "Content-Type": "application/json",
+                },
+                timeout=15.0,
+            )
+        return self._client
 
     @classmethod
     def from_config(cls, config: dict) -> "CloudflareProvider | None":
@@ -58,6 +83,8 @@ class CloudflareProvider(CredentialProvider):
             type: cloudflare-parent
             parent_token: cf_xxxx
             account_id: abc123  # optional
+            default_permissions:  # optional but recommended
+              - "some-permission-group-id"
         """
         parent_token = config.get("parent_token")
         if not parent_token:
@@ -66,6 +93,7 @@ class CloudflareProvider(CredentialProvider):
         return cls(
             parent_token=parent_token,
             account_id=config.get("account_id"),
+            default_permissions=config.get("default_permissions"),
         )
 
     async def mint_token(self, scope: dict) -> CredentialToken:
@@ -75,15 +103,26 @@ class CloudflareProvider(CredentialProvider):
             scope: {
                 "account": "abc123",  # optional, falls back to default
                 "permissions": [{"id": "...", "effect": "allow"}],  # optional
-                "ttl_hours": 8,  # optional
+                "ttl_hours": 8,  # optional, capped at MAX_TTL_HOURS
             }
 
         Raises:
-            CredentialProviderError: If minting fails.
+            CredentialProviderError: If minting fails or no permissions configured.
         """
         account_id = scope.get("account") or self.account_id
-        ttl_hours = scope.get("ttl_hours", DEFAULT_TTL_HOURS)
-        permissions = scope.get("permissions", [])
+        ttl_hours = min(
+            scope.get("ttl_hours", DEFAULT_TTL_HOURS),
+            MAX_TTL_HOURS,
+        )
+        permissions = scope.get("permissions") or self.default_permissions
+
+        if not permissions:
+            raise CredentialProviderError(
+                "Cloudflare token minting requires explicit permissions — "
+                "configure default_permissions in credential_providers.cloudflare "
+                "or pass permissions in scope. Without explicit permissions, child "
+                "tokens would inherit the parent token's full permission set."
+            )
 
         now = datetime.now(timezone.utc)
         expires = now + timedelta(hours=ttl_hours)
@@ -96,22 +135,13 @@ class CloudflareProvider(CredentialProvider):
             "name": token_name,
             "not_before": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "expires_on": expires.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "policies": policies,
         }
-        if policies:
-            body["policies"] = policies
 
         try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.post(
-                    "https://api.cloudflare.com/client/v4/user/tokens",
-                    headers={
-                        "Authorization": f"Bearer {self.parent_token}",
-                        "Content-Type": "application/json",
-                    },
-                    json=body,
-                    timeout=15.0,
-                )
-                resp.raise_for_status()
+            client = await self._get_client()
+            resp = await client.post("/user/tokens", json=body)
+            resp.raise_for_status()
         except httpx.HTTPStatusError as e:
             logger.error(
                 f"Cloudflare API error minting token: "
@@ -143,15 +173,9 @@ class CloudflareProvider(CredentialProvider):
     async def verify(self) -> dict:
         """Verify the parent token by checking token status."""
         try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.get(
-                    "https://api.cloudflare.com/client/v4/user/tokens/verify",
-                    headers={
-                        "Authorization": f"Bearer {self.parent_token}",
-                    },
-                    timeout=10.0,
-                )
-                resp.raise_for_status()
+            client = await self._get_client()
+            resp = await client.get("/user/tokens/verify")
+            resp.raise_for_status()
         except httpx.HTTPError as e:
             raise CredentialProviderError(
                 f"Failed to verify Cloudflare token: {e}"
@@ -165,17 +189,13 @@ class CloudflareProvider(CredentialProvider):
             "account_id": self.account_id,
         }
 
-    def get_env_vars(self, scope: dict, token: CredentialToken) -> dict[str, str]:
-        """Return CLOUDFLARE_API_TOKEN for env-based injection."""
-        return {"CLOUDFLARE_API_TOKEN": token.token}
-
     def _build_policies(
         self, permissions: list, account_id: str | None
     ) -> list[dict]:
         """Build Cloudflare token policies from permission list.
 
-        If permissions is empty, returns an empty list (inherits parent
-        token's permissions, which Cloudflare scopes automatically).
+        Permissions must be explicitly provided — never mint tokens without
+        policies, as that would inherit the parent token's full permissions.
         """
         if not permissions:
             return []

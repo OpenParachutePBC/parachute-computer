@@ -31,6 +31,13 @@ if [ -z "$ORG" ]; then
   exit 1
 fi
 
+# Validate org name — alphanumeric, hyphens, underscores only.
+# Prevents URL injection via crafted git remote paths.
+if ! [[ "$ORG" =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]{0,38}$ ]]; then
+  echo "Error: Invalid org name format: $ORG" >&2
+  exit 1
+fi
+
 # Need broker secret
 if [ -z "${BROKER_SECRET:-}" ]; then
   exit 1

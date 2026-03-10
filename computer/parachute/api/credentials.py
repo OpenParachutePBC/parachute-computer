@@ -10,6 +10,7 @@ Endpoints are protected by a bearer secret shared between the host and container
 
 import hmac
 import logging
+import re
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -20,6 +21,9 @@ from parachute.lib.credentials import CredentialProviderError, get_broker
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/credentials", tags=["credentials"])
+
+# Org names: alphanumeric start, then alphanumeric/hyphens/underscores, max 39 chars
+_ORG_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,38}$")
 
 
 class TokenResponse(BaseModel):
@@ -56,6 +60,31 @@ def _validate_broker_secret(request: Request) -> None:
         raise HTTPException(status_code=401, detail="Invalid broker secret")
 
 
+def _validate_org(org: str) -> None:
+    """Validate org name format to prevent URL injection.
+
+    GitHub org names: alphanumeric start, alphanumeric/hyphens/underscores, max 39 chars.
+    """
+    if not _ORG_RE.match(org):
+        raise HTTPException(status_code=400, detail=f"Invalid org name: {org}")
+
+
+def _handle_provider_error(e: CredentialProviderError, provider: str) -> HTTPException:
+    """Map CredentialProviderError to appropriate HTTP status code.
+
+    - "No ... installation for org" / "scope must include" → 404 (not found / bad request)
+    - "Network error" / "Failed to mint" → 502 (upstream failure)
+    - Other → 500
+    """
+    msg = str(e)
+    if "installation for org" in msg or "scope must include" in msg:
+        return HTTPException(status_code=404, detail=msg)
+    elif "Network error" in msg or "Failed to mint" in msg or "API error" in msg:
+        return HTTPException(status_code=502, detail=msg)
+    else:
+        return HTTPException(status_code=500, detail=msg)
+
+
 # ── GitHub-specific endpoint (backward compat for existing scripts) ──────────
 
 
@@ -72,6 +101,7 @@ async def get_github_token(request: Request, org: str):
     /{provider}/token endpoint with scope={"org": org}.
     """
     _validate_broker_secret(request)
+    _validate_org(org)
 
     broker = get_broker()
     if not broker.has_provider("github"):
@@ -81,7 +111,7 @@ async def get_github_token(request: Request, org: str):
         result = await broker.mint_token("github", {"org": org})
     except CredentialProviderError as e:
         logger.error(f"Failed to mint GitHub token for org '{org}': {e}")
-        raise HTTPException(status_code=404, detail=str(e))
+        raise _handle_provider_error(e, "github")
 
     return TokenResponse(token=result.token, expires_at=result.expires_at)
 
@@ -101,6 +131,9 @@ async def mint_token(request: Request, provider: str, org: str | None = None):
     """
     _validate_broker_secret(request)
 
+    if org:
+        _validate_org(org)
+
     broker = get_broker()
     if not broker.has_provider(provider):
         raise HTTPException(
@@ -117,7 +150,7 @@ async def mint_token(request: Request, provider: str, org: str | None = None):
         result = await broker.mint_token(provider, scope)
     except CredentialProviderError as e:
         logger.error(f"Failed to mint {provider} token: {e}")
-        raise HTTPException(status_code=404, detail=str(e))
+        raise _handle_provider_error(e, provider)
 
     return TokenResponse(token=result.token, expires_at=result.expires_at)
 
@@ -131,7 +164,9 @@ async def get_broker_status(request: Request):
     Check credential broker configuration status.
 
     Returns which providers are configured. No sensitive data is exposed.
+    Requires authentication to prevent provider enumeration.
     """
+    _validate_broker_secret(request)
     broker = get_broker()
     status = broker.get_status()
     return BrokerStatusResponse(

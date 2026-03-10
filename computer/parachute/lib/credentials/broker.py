@@ -8,7 +8,6 @@ The broker is the single entry point for all credential operations:
   4. Collects scripts from all providers for tools volume deployment
 """
 
-import json
 import logging
 from pathlib import Path
 from typing import Optional
@@ -164,8 +163,7 @@ class CredentialBroker:
 
 
 # Module-level singleton, initialized lazily
-_UNSET = object()
-_broker: "CredentialBroker | object" = _UNSET
+_broker: Optional[CredentialBroker] = None
 
 
 def get_broker() -> CredentialBroker:
@@ -175,8 +173,8 @@ def get_broker() -> CredentialBroker:
     """
     global _broker
 
-    if _broker is not _UNSET:
-        return _broker  # type: ignore[return-value]
+    if _broker is not None:
+        return _broker
 
     from parachute.config import get_settings
 
@@ -201,4 +199,4 @@ def get_broker() -> CredentialBroker:
 def reset_broker() -> None:
     """Reset the broker singleton (for testing or config reload)."""
     global _broker
-    _broker = _UNSET
+    _broker = None
