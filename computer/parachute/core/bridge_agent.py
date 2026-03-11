@@ -491,16 +491,9 @@ async def observe(
             new_title = structured_data.get("title")
             new_summary = structured_data.get("summary")
 
-            # 1. Activity log (JSONL append)
-            if activity_summary:
-                actions.append("log_activity")
-                _write_activity_log(
-                    vault_path=vault_path,
-                    session_id=session_id,
-                    session_title=session_title,
-                    exchange_number=exchange_number,
-                    summary=activity_summary,
-                )
+            # Activity log removed — Exchange nodes in the brain graph
+            # are the canonical activity record now.
+            # (was: _write_activity_log(...))
 
             # 2. Session title/summary updates (SQLite)
             session_update = SessionUpdate()

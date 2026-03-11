@@ -346,7 +346,17 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
     // Cancel subscription to current stream (but let it continue in background)
     _currentStreamSubscription?.cancel();
     _currentStreamSubscription = null;
-    _activeStreamSessionId = null;
+
+    // Preserve the stream guard if we're reloading the SAME session that has
+    // an active sendMessage stream.  loadSession() can be triggered by the
+    // reattach-done handler, poll timer, or manual refresh — clearing the guard
+    // would cause _handleSendStreamEvent to silently drop all subsequent events.
+    final activeCtx = _sendStreamCtx;
+    if (activeCtx != null && activeCtx.displaySessionId == sessionId) {
+      debugPrint('[ChatMessagesNotifier] loadSession($sessionId) preserving active stream guard');
+    } else {
+      _activeStreamSessionId = null;
+    }
     _queuedMessages.clear();
 
     // Check if there's an active background stream for this session (in-memory)
@@ -1345,7 +1355,11 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
   /// and events continue to be consumed by BackgroundStreamManager silently.
   void _handleSendStreamEvent(StreamEvent event, _SendStreamContext ctx) {
     // Guard: only update UI if this session is still in foreground
-    if (_activeStreamSessionId != ctx.displaySessionId) return;
+    if (_activeStreamSessionId != ctx.displaySessionId) {
+      debugPrint('[ChatMessagesNotifier] DROPPED ${event.type} event: '
+        'active=$_activeStreamSessionId != ctx=${ctx.displaySessionId}');
+      return;
+    }
 
     switch (event.type) {
       case StreamEventType.session:

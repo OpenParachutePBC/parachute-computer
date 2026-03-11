@@ -183,6 +183,7 @@ class _SandboxCallContext:
     agent_type: str | None
     effective_working_dir: str | None
     mode: str = "converse"
+    start_time: float = 0.0
 
 
 class Orchestrator:
@@ -1255,11 +1256,13 @@ class Orchestrator:
             )
         elif event_type == "tool_use":
             ctx.sbx["had_content"] = True
+            # Entrypoint nests tool data under "tool" key; fall back to root
+            tool_data = event.get("tool", event)
             ctx.sbx["content_blocks"].append({
                 "type": "tool_use",
-                "id": event.get("id", ""),
-                "name": event.get("name", ""),
-                "input": event.get("input", {}),
+                "id": tool_data.get("id", ""),
+                "name": tool_data.get("name", ""),
+                "input": tool_data.get("input", {}),
             })
         elif event_type == "tool_result":
             ctx.sbx["had_content"] = True
@@ -1279,6 +1282,8 @@ class Orchestrator:
                 blocks[-1]["text"] = text_content
             else:
                 blocks.append({"type": "text", "text": text_content})
+        elif event_type == "model":
+            ctx.captured_model = event.get("model")
 
         # Finalize BEFORE yielding "done" to prevent race condition
         if event_type == "done":
@@ -1317,7 +1322,27 @@ class Orchestrator:
                     working_directory=ctx.effective_working_dir,
                 )
 
-        yield event
+        if event_type == "done":
+            # Build a proper DoneEvent instead of passing through the bare dict
+            result_parts = [
+                b.get("text", "") for b in ctx.sbx["content_blocks"]
+                if b.get("type") == "text"
+            ]
+            tool_calls_list = [
+                b for b in ctx.sbx["content_blocks"]
+                if b.get("type") == "tool_use"
+            ] or None
+            yield DoneEvent(
+                response="\n".join(result_parts),
+                session_id=ctx.sandbox_sid,
+                working_directory=ctx.effective_working_dir,
+                message_count=(ctx.sbx["session"].message_count or 0) + 2,
+                model=ctx.captured_model,
+                duration_ms=int((time.time() - ctx.start_time) * 1000),
+                tool_calls=tool_calls_list,
+            ).model_dump(by_alias=True)
+        else:
+            yield event
 
     async def _run_sandboxed(
         self,
@@ -1463,6 +1488,7 @@ class Orchestrator:
             agent_type=agent_type,
             effective_working_dir=effective_working_dir,
             mode=mode,
+            start_time=time.time(),
         )
 
         # Process sandbox events; retry with history injection if resume fails
@@ -1519,6 +1545,42 @@ class Orchestrator:
             except Exception as e:
                 logger.warning(
                     f"Failed to increment message count for {sandbox_sid[:8]}: {e}"
+                )
+
+        # Fire-and-forget bridge agent for sandbox sessions (auto-title, exchange nodes)
+        if sbx["had_content"] and sandbox_sid:
+            text_parts = [
+                b.get("text", "") for b in sbx["content_blocks"]
+                if b.get("type") == "text"
+            ]
+            tool_calls_list = [
+                {"name": b.get("name", ""), "input": b.get("input", {})}
+                for b in sbx["content_blocks"] if b.get("type") == "tool_use"
+            ]
+            result_text = "\n".join(text_parts)
+            if result_text and sbx["message"]:
+                from parachute.core.bridge_agent import observe as bridge_observe
+
+                final_session = sbx["session"]
+                session_metadata = final_session.metadata or {}
+                _bridge_task = asyncio.create_task(bridge_observe(
+                    session_id=sandbox_sid,
+                    message=sbx["message"],
+                    result_text=result_text,
+                    tool_calls=tool_calls_list,
+                    exchange_number=(final_session.message_count or 0) // 2 + 1,
+                    session_title=final_session.title,
+                    title_source=session_metadata.get("title_source"),
+                    session_store=self.session_store,
+                    vault_path=Path.home(),
+                    claude_token=self.settings.claude_code_oauth_token,
+                ))
+                _bridge_task.add_done_callback(
+                    lambda t: logger.warning(
+                        f"bridge_observe error (sandbox): {t.exception()}"
+                    )
+                    if not t.cancelled() and t.exception()
+                    else None
                 )
 
     async def abort_stream(self, session_id: str) -> bool:
