@@ -1,13 +1,9 @@
 """
 Generic Daily Agent Runner.
 
-A flexible system for running scheduled daily agents. Each agent is configured
-via a markdown file in Daily/.agents/{name}.md with:
-- YAML frontmatter for configuration (schedule, output path, tools, etc.)
-- Markdown body for the system prompt
-
-Agents can have custom tools and share common tools like reading journals
-and chat logs. Output is written to configurable paths.
+Runs scheduled daily agents (Callers). Each Caller is a node in the graph
+database with configuration (system_prompt, tools, schedule) and runtime state
+(sdk_session_id, last_run_at, run_count). Output is written as Card nodes.
 """
 
 import asyncio
@@ -17,76 +13,65 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional, Callable, Awaitable
-import frontmatter
 
 logger = logging.getLogger(__name__)
 
 
-class DailyAgentState:
-    """Manages state for a daily agent stored in Daily/.{agent_name}/state.json"""
+# ---------------------------------------------------------------------------
+# Caller state helpers — read/write runtime state on the Caller graph node
+# ---------------------------------------------------------------------------
 
-    def __init__(self, vault_path: Path, agent_name: str):
-        self.vault_path = vault_path
-        self.agent_name = agent_name
-        self.state_file = vault_path / "Daily" / f".{agent_name}" / "state.json"
-        self._state: dict[str, Any] = {}
+async def _load_caller_state(graph, agent_name: str) -> dict[str, Any]:
+    """Load runtime state fields from the Caller graph node."""
+    rows = await graph.execute_cypher(
+        "MATCH (c:Caller {name: $name}) "
+        "RETURN c.sdk_session_id AS sdk_session_id, "
+        "       c.last_run_at AS last_run_at, "
+        "       c.last_processed_date AS last_processed_date, "
+        "       c.run_count AS run_count",
+        {"name": agent_name},
+    )
+    if not rows:
+        return {"sdk_session_id": None, "last_run_at": None, "last_processed_date": None, "run_count": 0}
+    row = rows[0]
+    return {
+        "sdk_session_id": row.get("sdk_session_id") or None,
+        "last_run_at": row.get("last_run_at") or None,
+        "last_processed_date": row.get("last_processed_date") or None,
+        "run_count": row.get("run_count") or 0,
+    }
 
-    def load(self) -> dict[str, Any]:
-        """Load state from file."""
-        if self.state_file.exists():
-            try:
-                self._state = json.loads(self.state_file.read_text())
-            except json.JSONDecodeError:
-                logger.warning(f"Invalid state file for {self.agent_name}, resetting")
-                self._state = self._default_state()
-        else:
-            self._state = self._default_state()
-            self.save()
-        return self._state
 
-    def save(self) -> None:
-        """Save state to file."""
-        self.state_file.parent.mkdir(parents=True, exist_ok=True)
-        self.state_file.write_text(json.dumps(self._state, indent=2))
+async def _record_caller_run(graph, agent_name: str, date: str,
+                              session_id: str | None, model: str | None) -> None:
+    """Record a completed run on the Caller graph node."""
+    now = datetime.now(timezone.utc).isoformat()
+    # Read current run_count (Kuzu doesn't support c.run_count + 1 in SET)
+    rc_rows = await graph.execute_cypher(
+        "MATCH (c:Caller {name: $name}) RETURN c.run_count AS rc",
+        {"name": agent_name},
+    )
+    current_count = (rc_rows[0].get("rc") or 0) if rc_rows else 0
+    await graph.execute_cypher(
+        "MATCH (c:Caller {name: $name}) "
+        "SET c.sdk_session_id = $sid, c.last_run_at = $now, "
+        "    c.last_processed_date = $date, c.run_count = $rc",
+        {
+            "name": agent_name,
+            "sid": session_id or "",
+            "now": now,
+            "date": date,
+            "rc": current_count + 1,
+        },
+    )
 
-    def _default_state(self) -> dict[str, Any]:
-        return {
-            "agent": self.agent_name,
-            "backend": "claude-sdk",
-            "sdk_session_id": None,
-            "model": None,
-            "last_run_at": None,
-            "last_processed_date": None,
-            "run_count": 0,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-        }
 
-    @property
-    def sdk_session_id(self) -> Optional[str]:
-        return self._state.get("sdk_session_id")
-
-    @sdk_session_id.setter
-    def sdk_session_id(self, value: Optional[str]) -> None:
-        self._state["sdk_session_id"] = value
-
-    @property
-    def last_processed_date(self) -> Optional[str]:
-        return self._state.get("last_processed_date")
-
-    @last_processed_date.setter
-    def last_processed_date(self, value: Optional[str]) -> None:
-        self._state["last_processed_date"] = value
-
-    def record_run(self, date: str, session_id: Optional[str] = None, model: Optional[str] = None) -> None:
-        """Record a successful run."""
-        self._state["last_run_at"] = datetime.now(timezone.utc).isoformat()
-        self._state["last_processed_date"] = date
-        self._state["run_count"] = self._state.get("run_count", 0) + 1
-        if session_id:
-            self._state["sdk_session_id"] = session_id
-        if model:
-            self._state["model"] = model
-        self.save()
+async def _clear_caller_session(graph, agent_name: str) -> None:
+    """Clear sdk_session_id on resume failure so next run starts fresh."""
+    await graph.execute_cypher(
+        "MATCH (c:Caller {name: $name}) SET c.sdk_session_id = ''",
+        {"name": agent_name},
+    )
 
 
 class DailyAgentConfig:
@@ -100,9 +85,7 @@ class DailyAgentConfig:
         system_prompt: str,
         schedule_enabled: bool = True,
         schedule_time: str = "3:00",
-        output_path: str = "Daily/{name}/{date}.md",
         tools: list[str] | None = None,
-        source_file: Path | None = None,
         raw_metadata: dict[str, Any] | None = None,
         trust_level: str = "sandboxed",
     ):
@@ -112,63 +95,9 @@ class DailyAgentConfig:
         self.system_prompt = system_prompt
         self.schedule_enabled = schedule_enabled
         self.schedule_time = schedule_time
-        self.output_path = output_path
         self.tools = tools or ["read_journal", "read_chat_log", "read_recent_journals"]
-        self.source_file = source_file
         self.raw_metadata = raw_metadata or {}
         self.trust_level = trust_level if trust_level in ("sandboxed", "direct") else "sandboxed"
-
-    @classmethod
-    def from_file(cls, agent_file: Path) -> Optional["DailyAgentConfig"]:
-        """Load agent configuration from a markdown file."""
-        if not agent_file.exists():
-            return None
-
-        try:
-            post = frontmatter.loads(agent_file.read_text())
-            metadata = post.metadata
-
-            # Extract name from filename (e.g., "content-scout.md" -> "content-scout")
-            name = agent_file.stem
-
-            # Parse schedule
-            schedule = metadata.get("schedule", {})
-            if isinstance(schedule, str):
-                schedule_enabled = True
-                schedule_time = schedule
-            elif isinstance(schedule, dict):
-                schedule_enabled = schedule.get("enabled", True)
-                schedule_time = schedule.get("time", "3:00")
-            else:
-                schedule_enabled = True
-                schedule_time = "3:00"
-
-            # Parse output path
-            output_config = metadata.get("output", {})
-            if isinstance(output_config, str):
-                output_path = output_config
-            elif isinstance(output_config, dict):
-                output_path = output_config.get("path", f"Daily/{name}/{'{date}'}.md")
-            else:
-                output_path = f"Daily/{name}/{'{date}'}.md"
-
-            return cls(
-                name=name,
-                display_name=metadata.get("displayName", name.replace("-", " ").title()),
-                description=metadata.get("description", ""),
-                system_prompt=post.content,
-                schedule_enabled=schedule_enabled,
-                schedule_time=schedule_time,
-                output_path=output_path,
-                tools=metadata.get("tools"),
-                source_file=agent_file,
-                raw_metadata=metadata,
-                trust_level=metadata.get("trust_level", "sandboxed"),
-            )
-
-        except Exception as e:
-            logger.error(f"Error loading agent config from {agent_file}: {e}")
-            return None
 
     @classmethod
     def from_row(cls, row: dict) -> "DailyAgentConfig":
@@ -193,10 +122,6 @@ class DailyAgentConfig:
             trust_level=row.get("trust_level") or "sandboxed",
         )
 
-    def get_output_path(self, date: str) -> str:
-        """Get the output file path for a specific date."""
-        return self.output_path.format(name=self.name, date=date)
-
     def get_schedule_hour_minute(self) -> tuple[int, int]:
         """Parse schedule time into (hour, minute)."""
         try:
@@ -219,56 +144,42 @@ def _get_graph() -> Any | None:
 
 
 async def discover_daily_agents(vault_path: Path, graph=None) -> list[DailyAgentConfig]:
-    """
-    Discover all daily agents. Queries Caller nodes from the graph first;
-    falls back to vault file scan if the graph is unavailable.
+    """Discover all enabled Callers from the graph database.
 
-    Returns a list of agent configurations sorted by name.
+    Returns a list of agent configurations sorted by name, or empty if graph
+    is unavailable.
     """
     g = graph or _get_graph()
-    if g is not None:
-        try:
-            rows = await g.execute_cypher(
-                "MATCH (c:Caller) WHERE c.enabled = 'true' RETURN c ORDER BY c.name"
-            )
-            agents = [DailyAgentConfig.from_row(r) for r in rows]
-            logger.info(f"Discovered {len(agents)} callers from graph")
-            return agents
-        except Exception as e:
-            logger.warning(f"Graph discovery failed, falling back to vault files: {e}")
-
-    # Fallback: vault file scan (startup edge case before migration runs)
-    agents_dir = vault_path / "Daily" / ".agents"
-    if not agents_dir.exists():
+    if g is None:
+        logger.warning("discover_daily_agents: graph unavailable, returning empty")
         return []
-
-    agents = []
-    for agent_file in agents_dir.glob("*.md"):
-        config = DailyAgentConfig.from_file(agent_file)
-        if config:
-            agents.append(config)
-            logger.info(f"Discovered daily agent from file: {config.name} (enabled={config.schedule_enabled})")
-
-    return sorted(agents, key=lambda a: a.name)
+    try:
+        rows = await g.execute_cypher(
+            "MATCH (c:Caller) WHERE c.enabled = 'true' RETURN c ORDER BY c.name"
+        )
+        agents = [DailyAgentConfig.from_row(r) for r in rows]
+        logger.info(f"Discovered {len(agents)} callers from graph")
+        return agents
+    except Exception as e:
+        logger.warning(f"Graph discovery failed: {e}")
+        return []
 
 
 async def get_daily_agent_config(vault_path: Path, agent_name: str, graph=None) -> Optional[DailyAgentConfig]:
-    """Get configuration for a specific daily agent. Queries graph first, falls back to vault file."""
+    """Get configuration for a specific Caller from the graph database."""
     g = graph or _get_graph()
-    if g is not None:
-        try:
-            rows = await g.execute_cypher(
-                "MATCH (c:Caller {name: $name}) RETURN c",
-                {"name": agent_name},
-            )
-            if rows:
-                return DailyAgentConfig.from_row(rows[0])
-        except Exception as e:
-            logger.warning(f"Graph lookup for caller '{agent_name}' failed, falling back to vault file: {e}")
-
-    # Fallback: vault file
-    agent_file = vault_path / "Daily" / ".agents" / f"{agent_name}.md"
-    return DailyAgentConfig.from_file(agent_file)
+    if g is None:
+        return None
+    try:
+        rows = await g.execute_cypher(
+            "MATCH (c:Caller {name: $name}) RETURN c",
+            {"name": agent_name},
+        )
+        if rows:
+            return DailyAgentConfig.from_row(rows[0])
+    except Exception as e:
+        logger.warning(f"Graph lookup for caller '{agent_name}' failed: {e}")
+    return None
 
 
 async def load_vault_mcps(vault_path: Path) -> dict[str, dict[str, Any]]:
@@ -383,7 +294,7 @@ async def _run_sandboxed(
     config: DailyAgentConfig,
     system_prompt: str,
     prompt_text: str,
-    state: DailyAgentState,
+    caller_state: dict[str, Any],
     card_id: str,
     date: str,
     output_date: str,
@@ -484,7 +395,7 @@ async def _run_sandboxed(
             session_id=slug,
             config=sandbox_config,
             message=prompt_text,
-            resume_session_id=state.sdk_session_id if state.sdk_session_id else None,
+            resume_session_id=caller_state["sdk_session_id"] if caller_state["sdk_session_id"] else None,
             project_slug=slug,
         ):
             event_type = event.get("type", "")
@@ -509,11 +420,12 @@ async def _run_sandboxed(
                 logger.warning(
                     f"Caller '{agent_name}' resume failed, container will retry fresh"
                 )
-                state.sdk_session_id = None
-                state.save()
+                if graph is not None:
+                    await _clear_caller_session(graph, agent_name)
 
-        # Update state
-        state.record_run(date, captured_session_id, captured_model)
+        # Update state on Caller graph node
+        if graph is not None:
+            await _record_caller_run(graph, agent_name, date, captured_session_id, captured_model)
 
         result["status"] = "completed" if output_written else "completed_no_output"
         result["sdk_session_id"] = captured_session_id
@@ -540,7 +452,7 @@ async def _run_direct(
     config: DailyAgentConfig,
     system_prompt: str,
     prompt_text: str,
-    state: DailyAgentState,
+    caller_state: dict[str, Any],
     card_id: str,
     date: str,
     output_date: str,
@@ -586,8 +498,8 @@ async def _run_direct(
         "debug_stderr": sys.stderr,
     }
 
-    if state.sdk_session_id:
-        options_kwargs["resume"] = state.sdk_session_id
+    if caller_state["sdk_session_id"]:
+        options_kwargs["resume"] = caller_state["sdk_session_id"]
 
     options = ClaudeAgentOptions(**options_kwargs)
 
@@ -597,12 +509,11 @@ async def _run_direct(
         "date": date,
         "output_date": output_date,
         "execution_mode": "direct",
-        "sdk_session_id": state.sdk_session_id,
+        "sdk_session_id": caller_state["sdk_session_id"],
         "mcp_servers": list(all_mcp_servers.keys()),
     }
 
     async def run_query_with_retry(opts: ClaudeAgentOptions, retry_on_stale: bool = True):
-        nonlocal state
         try:
             response_text = ""
             new_session_id = None
@@ -636,8 +547,8 @@ async def _run_direct(
                     f"Agent '{agent_name}' session expired (id={opts.resume}), "
                     "clearing and retrying with fresh session"
                 )
-                state.sdk_session_id = None
-                state.save()
+                if graph is not None:
+                    await _clear_caller_session(graph, agent_name)
                 fresh_opts_kwargs = {
                     "system_prompt": opts.system_prompt,
                     "max_turns": opts.max_turns,
@@ -655,7 +566,8 @@ async def _run_direct(
         model_used = query_result["model_used"]
         output_written = query_result["output_written"]
 
-        state.record_run(date, new_session_id, model_used)
+        if graph is not None:
+            await _record_caller_run(graph, agent_name, date, new_session_id, model_used)
 
         result["status"] = "completed" if output_written else "completed_no_output"
         result["sdk_session_id"] = new_session_id
@@ -720,23 +632,26 @@ async def run_daily_agent(
         output_date_obj = journal_date_obj + timedelta(days=1)
         output_date = output_date_obj.strftime("%Y-%m-%d")
 
-    # Load state
-    state = DailyAgentState(vault_path, agent_name)
-    state.load()
+    graph = _get_graph()
+
+    # Load runtime state from the Caller graph node
+    if graph is not None:
+        caller_state = await _load_caller_state(graph, agent_name)
+    else:
+        caller_state = {"sdk_session_id": None, "last_run_at": None, "last_processed_date": None, "run_count": 0}
 
     # Check if already processed (unless forced)
-    if not force and state.last_processed_date == date:
+    if not force and caller_state["last_processed_date"] == date:
         return {
             "status": "skipped",
             "reason": f"Already processed {date}",
-            "last_run_at": state._state.get("last_run_at"),
+            "last_run_at": caller_state["last_run_at"],
         }
 
     # Check if journal entries exist for this date in the graph
     if "read_journal" in config.tools:
-        graph_for_check = _get_graph()
-        if graph_for_check is not None:
-            rows = await graph_for_check.execute_cypher(
+        if graph is not None:
+            rows = await graph.execute_cypher(
                 "MATCH (e:Note) WHERE e.date = $date RETURN count(e) AS cnt",
                 {"date": date},
             )
@@ -756,8 +671,6 @@ async def run_daily_agent(
         system_prompt = system_prompt.format(user_name=user_name, user_context=user_context)
     elif user_context:
         system_prompt = system_prompt + f"\n\n## User Context\n\n{user_context}"
-
-    graph = _get_graph()
 
     # Write initial "running" Card to graph so Flutter can poll status
     card_id = await _write_initial_card(graph, agent_name, config.display_name, output_date)
@@ -781,7 +694,7 @@ async def run_daily_agent(
                 config=config,
                 system_prompt=system_prompt,
                 prompt_text=prompt_text,
-                state=state,
+                caller_state=caller_state,
                 card_id=card_id,
                 date=date,
                 output_date=output_date,
@@ -800,7 +713,7 @@ async def run_daily_agent(
         config=config,
         system_prompt=system_prompt,
         prompt_text=prompt_text,
-        state=state,
+        caller_state=caller_state,
         card_id=card_id,
         date=date,
         output_date=output_date,

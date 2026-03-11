@@ -3,8 +3,7 @@ Scheduler management API endpoints.
 
 Provides endpoints to view scheduled tasks and reload configuration.
 
-Schedule configuration is read from daily agent files:
-- Daily agents: Daily/.agents/{name}.md (schedule field in frontmatter)
+Schedule configuration is read from Caller nodes in the graph database.
 """
 
 import logging
@@ -42,9 +41,9 @@ async def get_scheduler_info() -> dict[str, Any]:
 @router.post("/scheduler/reload")
 async def reload_scheduler_config() -> dict[str, Any]:
     """
-    Reload scheduler configuration from agent files.
+    Reload scheduler configuration from Caller graph nodes.
 
-    Call this after editing Daily/.agents/*.md to apply schedule changes.
+    Call this after updating Caller schedule settings to apply changes.
     """
     result = await reload_scheduler(Path.home())
 

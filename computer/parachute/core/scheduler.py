@@ -2,14 +2,11 @@
 Scheduler for automated tasks.
 
 Uses APScheduler to run background jobs like:
-- Daily agents at configured times (from Daily/.agents/*.md)
+- Daily agents (Callers) at configured times from the graph database
 - Future: Weekly summaries, cleanup tasks, etc.
 
-Configuration is read from agent markdown files with YAML frontmatter:
-- Daily agents: Daily/.agents/{name}.md (schedule field in frontmatter)
-
-Each agent can have its own schedule time. The scheduler discovers all
-agents and schedules them according to their configuration.
+Each Caller node has schedule_enabled and schedule_time fields. The scheduler
+discovers enabled Callers and schedules them accordingly.
 """
 
 import logging

@@ -10,7 +10,6 @@ Entry IDs are timestamp strings: "YYYY-MM-DD-HH-MM-SS-ffffff" (with microseconds
 Storage layout:
   ~/.parachute/graph/            ← Kuzu database (primary store, all modules share)
   ~/.parachute/daily/assets/     ← Audio/image files uploaded to server (absolute paths in graph)
-  ~/Parachute/Daily/journals/    ← Pre-restructure markdown files (importable on request)
 """
 
 import asyncio
@@ -132,49 +131,6 @@ class FlexibleImportRequest(BaseModel):
         return v
 
 
-async def _migrate_callers_from_vault(vault_path: Path, graph) -> None:
-    """Seed Caller nodes from vault .agents/*.md files.
-
-    Uses ON CREATE SET so existing graph edits (via /callers API) are not
-    overwritten on every server restart. Only newly-discovered agents are
-    seeded; existing nodes only get their updated_at timestamp refreshed.
-    """
-    from parachute.core.daily_agent import DailyAgentConfig
-    agents_dir = vault_path / "Daily" / ".agents"
-    if not agents_dir.exists():
-        return
-    for md_file in agents_dir.glob("*.md"):
-        config = DailyAgentConfig.from_file(md_file)
-        if config is None:
-            continue
-        now = datetime.now(timezone.utc).isoformat()
-        try:
-            await graph.execute_cypher(
-                "MERGE (c:Caller {name: $name}) "
-                "ON CREATE SET "
-                "    c.display_name = $display_name, c.description = $description, "
-                "    c.system_prompt = $system_prompt, c.tools = $tools, "
-                "    c.model = $model, c.schedule_enabled = $schedule_enabled, "
-                "    c.schedule_time = $schedule_time, c.enabled = 'true', "
-                "    c.created_at = $now "
-                "SET c.updated_at = $now",
-                {
-                    "name": config.name,
-                    "display_name": config.display_name,
-                    "description": config.description,
-                    "system_prompt": config.system_prompt,
-                    "tools": json.dumps(config.tools),
-                    "model": config.raw_metadata.get("model", ""),
-                    "schedule_enabled": "true" if config.schedule_enabled else "false",
-                    "schedule_time": config.schedule_time,
-                    "now": now,
-                },
-            )
-            logger.info(f"Daily: migrated caller from vault: {config.name}")
-        except Exception as e:
-            logger.warning(f"Daily: failed to migrate caller '{config.name}': {e}")
-
-
 class DailyModule:
     """Daily module for journal entry management. Kuzu graph is primary storage."""
 
@@ -242,6 +198,11 @@ class DailyModule:
                 "trust_level": "STRING",    # "sandboxed" (default) | "direct"
                 "created_at": "STRING",
                 "updated_at": "STRING",
+                # Runtime state (previously in DailyAgentState JSON files)
+                "sdk_session_id": "STRING",      # Claude SDK session ID for resume
+                "last_run_at": "STRING",         # ISO timestamp of last completed run
+                "last_processed_date": "STRING", # YYYY-MM-DD of last processed journal date
+                "run_count": "INT64",            # Total number of completed runs
             },
             primary_key="name",
         )
@@ -251,9 +212,6 @@ class DailyModule:
 
         # Migrate relative audio paths to absolute (one-time, idempotent)
         await self._migrate_audio_paths_to_absolute(graph)
-
-        # Migrate vault agent files → Caller graph nodes (idempotent MERGE)
-        await _migrate_callers_from_vault(self.vault_path, graph)
 
         # Trim redo log (90-day rolling), then replay any entries missing from graph
         redo_records = _trim_redo_log()
@@ -287,12 +245,20 @@ class DailyModule:
         # Caller table migrations
         try:
             caller_cols = await graph.get_table_columns("Caller")
-            if "trust_level" not in caller_cols:
-                async with graph.write_lock:
-                    await graph.execute_cypher(
-                        "ALTER TABLE Caller ADD trust_level STRING DEFAULT 'sandboxed'"
-                    )
-                    logger.info("Daily: added column Caller.trust_level")
+            caller_new = {
+                "trust_level": ("STRING", "'sandboxed'"),
+                "sdk_session_id": ("STRING", "''"),
+                "last_run_at": ("STRING", "''"),
+                "last_processed_date": ("STRING", "''"),
+                "run_count": ("INT64", "0"),
+            }
+            for col, (typ, default) in caller_new.items():
+                if col not in caller_cols:
+                    async with graph.write_lock:
+                        await graph.execute_cypher(
+                            f"ALTER TABLE Caller ADD {col} {typ} DEFAULT {default}"
+                        )
+                        logger.info(f"Daily: added column Caller.{col}")
         except Exception:
             pass  # Caller table may not exist yet on first run
 
@@ -401,31 +367,6 @@ class DailyModule:
         logger.warning(
             f"Daily: redo log recovery complete — {recovered}/{len(missing_records)} entries recovered"
         )
-
-    def _find_legacy_md_files(self) -> list:
-        """
-        Find all legacy markdown journal files across known locations.
-
-        Checks:
-          - vault/Daily/journals/*.md         (current location — vault_path = ~/))
-          - vault/Parachute/Daily/journals/   (legacy location before storage restructure)
-          - vault/Daily/entries/*.md          (new entries dir, for frontmatter-style files)
-
-        Only includes files whose stem looks like a date or timestamped entry ID
-        so agent/config .md files aren't accidentally imported.
-        """
-        import re
-        date_pattern = re.compile(r'^\d{4}-\d{2}-\d{2}')
-        candidates = []
-        for search_dir in [
-            self.vault_path / "Daily" / "journals",
-            self.vault_path / "Parachute" / "Daily" / "journals",  # pre-restructure legacy path
-        ]:
-            if search_dir.exists():
-                for f in search_dir.glob("*.md"):
-                    if date_pattern.match(f.stem):
-                        candidates.append(f)
-        return candidates
 
     @staticmethod
     def _sanitize_fm_value(v: Any) -> Any:
@@ -543,90 +484,6 @@ class DailyModule:
             })
 
         return result
-
-    async def _migrate_from_markdown(self, graph) -> None:
-        """
-        Migrate existing .md files into graph. Idempotent — safe to call on every
-        startup and from the /import endpoint.
-
-        For multi-section files that were previously imported as a single blob
-        (entry_id == file stem), the blob is deleted and replaced with proper
-        per-section entries so each para_id becomes its own Note node.
-        """
-        md_files = self._find_legacy_md_files()
-        if not md_files:
-            return
-
-        rows = await graph.execute_cypher(
-            "MATCH (e:Note) RETURN e.entry_id AS entry_id"
-        )
-        existing_ids = {r["entry_id"] for r in rows}
-
-        imported = 0
-        errors = 0
-
-        for md_file in sorted(md_files):
-            try:
-                entries = self._parse_md_file(md_file)
-            except Exception as e:
-                logger.error(f"Daily: parse failed for {md_file.name}: {e}", exc_info=True)
-                errors += 1
-                continue
-
-            if not entries:
-                continue
-
-            # If this file produces multiple entries AND the only graph entry
-            # for this file is a single stem-keyed blob, that blob is a wrong
-            # import — delete it so we can replace it with proper sections.
-            stem = md_file.stem
-            if len(entries) > 1 and stem in existing_ids:
-                any_section_in_graph = any(
-                    e["entry_id"] in existing_ids and e["entry_id"] != stem
-                    for e in entries
-                )
-                if not any_section_in_graph:
-                    async with graph.write_lock:
-                        await graph.execute_cypher(
-                            "MATCH (e:Note {entry_id: $id}) DETACH DELETE e",
-                            {"id": stem},
-                        )
-                    existing_ids.discard(stem)
-                    logger.info(
-                        f"Daily: removed single-blob import of {stem!r} — "
-                        f"re-importing as {len(entries)} section(s)"
-                    )
-
-            for entry in entries:
-                eid = entry["entry_id"]
-                if eid in existing_ids:
-                    # Backfill title if we now have one but graph entry may not
-                    if entry.get("title"):
-                        try:
-                            async with graph.write_lock:
-                                await graph.execute_cypher(
-                                    "MATCH (e:Note {entry_id: $id}) "
-                                    "WHERE e.title IS NULL OR e.title = '' "
-                                    "SET e.title = $title",
-                                    {"id": eid, "title": entry["title"]},
-                                )
-                        except Exception:
-                            pass
-                    continue
-                try:
-                    await self._write_to_graph(graph, **entry)
-                    existing_ids.add(eid)
-                    imported += 1
-                except Exception as e:
-                    logger.error(
-                        f"Daily: write failed for {md_file.name} "
-                        f"entry {eid!r}: {e}",
-                        exc_info=True,
-                    )
-                    errors += 1
-
-        if imported > 0 or errors > 0:
-            logger.info(f"Daily: migrated {imported} entries ({errors} errors)")
 
     # ── Graph helpers ─────────────────────────────────────────────────────────
 
@@ -1227,50 +1084,6 @@ class DailyModule:
 
         # ── Import ────────────────────────────────────────────────────────────
 
-        def _section_counts(md_files: list, existing_ids: set) -> tuple[int, int]:
-            """Return (total_sections, imported_sections) across all md files."""
-            total = 0
-            done = 0
-            for f in md_files:
-                try:
-                    entries = self._parse_md_file(f)
-                except Exception:
-                    entries = []
-                total += len(entries)
-                done += sum(1 for e in entries if e["entry_id"] in existing_ids)
-            return total, done
-
-        @router.get("/import/status")
-        async def import_status():
-            """Return markdown import status: section-level counts across all .md files."""
-            graph = self._get_graph()
-            md_files = self._find_legacy_md_files()
-            total_md = len(md_files)
-            search_dirs = [
-                str(self.vault_path / "Daily" / "journals"),
-                str(self.vault_path / "Parachute" / "Daily" / "journals"),
-            ]
-            if graph is None or total_md == 0:
-                return {
-                    "total_md_files": total_md,
-                    "total_sections": 0,
-                    "imported": 0,
-                    "pending": 0,
-                    "search_dirs": search_dirs,
-                }
-            rows = await graph.execute_cypher(
-                "MATCH (e:Note) RETURN e.entry_id AS entry_id"
-            )
-            existing_ids = {r["entry_id"] for r in rows}
-            total_sections, imported_sections = _section_counts(md_files, existing_ids)
-            return {
-                "total_md_files": total_md,
-                "total_sections": total_sections,
-                "imported": imported_sections,
-                "pending": total_sections - imported_sections,
-                "search_dirs": search_dirs,
-            }
-
         @router.delete("/import/all", status_code=200)
         async def clear_all_entries():
             """Delete ALL Note nodes from the graph.
@@ -1332,36 +1145,6 @@ class DailyModule:
             if not full_path.exists():
                 return JSONResponse(status_code=404, content={"error": "not found"})
             return FileResponse(full_path)
-
-        @router.post("/import")
-        async def trigger_import():
-            """Manually trigger markdown-to-graph migration. Safe to call multiple times."""
-            graph = self._get_graph()
-            if graph is None:
-                return JSONResponse(
-                    status_code=503,
-                    content={"error": "BrainDB not available"},
-                )
-            md_files = self._find_legacy_md_files()
-            if not md_files:
-                return {"imported": 0, "pending": 0, "message": "No markdown files found"}
-            rows = await graph.execute_cypher(
-                "MATCH (e:Note) RETURN e.entry_id AS entry_id"
-            )
-            existing_ids_before = {r["entry_id"] for r in rows}
-            await self._migrate_from_markdown(graph)
-            rows_after = await graph.execute_cypher(
-                "MATCH (e:Note) RETURN e.entry_id AS entry_id"
-            )
-            existing_after = {r["entry_id"] for r in rows_after}
-            total_sections, imported_sections = _section_counts(md_files, existing_after)
-            still_pending = total_sections - imported_sections
-            newly_imported = len(existing_after) - len(existing_ids_before)
-            return {
-                "imported": newly_imported,
-                "pending": still_pending,
-                "message": f"Imported {newly_imported} entries ({still_pending} remaining)",
-            }
 
         @router.post("/import/flexible")
         async def flexible_import(body: FlexibleImportRequest):
@@ -1623,17 +1406,10 @@ class DailyModule:
             if not rows:
                 return JSONResponse(status_code=404, content={"error": "not found"})
             # Clear the agent's SDK session so next run starts fresh
-            from parachute.core.daily_agent import DailyAgentState
-
-            vault_path = self.vault_path
-
-            def _reset_state():
-                state = DailyAgentState(vault_path, name)
-                state.load()
-                state.sdk_session_id = None
-                state.save()
-
-            await asyncio.to_thread(_reset_state)
+            await graph.execute_cypher(
+                "MATCH (c:Caller {name: $name}) SET c.sdk_session_id = ''",
+                {"name": name},
+            )
             return {"status": "reset", "agent": name}
 
         @router.delete("/callers/{name}", status_code=204)
