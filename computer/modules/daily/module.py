@@ -1607,6 +1607,27 @@ class DailyModule:
             )
             return rows[0] if rows else {"name": name}
 
+        @router.post("/callers/{name}/reset")
+        async def reset_caller(name: str):
+            """Reset a Caller's session state so its next run starts fresh."""
+            graph = self._get_graph()
+            if graph is None:
+                return JSONResponse(status_code=503, content={"error": "BrainDB not available"})
+            # Verify Caller exists
+            rows = await graph.execute_cypher(
+                "MATCH (c:Caller {name: $name}) RETURN c", {"name": name}
+            )
+            if not rows:
+                return JSONResponse(status_code=404, content={"error": "not found"})
+            # Clear the agent's SDK session so next run starts fresh
+            from parachute.core.daily_agent import DailyAgentState
+
+            state = DailyAgentState(self.vault_path, name)
+            state.load()
+            state.sdk_session_id = None
+            state.save()
+            return {"status": "reset", "agent": name}
+
         @router.delete("/callers/{name}", status_code=204)
         async def delete_caller(name: str):
             """Delete a Caller node."""

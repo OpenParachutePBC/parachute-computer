@@ -413,5 +413,62 @@ class DailyApiService {
     }
   }
 
+  /// Update fields on an existing Caller node.
+  ///
+  /// [fields] is a map of field names to new values, e.g.
+  /// `{'schedule_enabled': true, 'schedule_time': '08:00'}`.
+  /// Returns true on success.
+  Future<bool> updateCaller(String name, Map<String, dynamic> fields) async {
+    final uri = Uri.parse('$baseUrl/api/daily/callers/$name');
+    debugPrint('[DailyApiService] PUT $uri $fields');
+    try {
+      final response = await _client
+          .put(uri, headers: _headers, body: jsonEncode(fields))
+          .timeout(_timeout);
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return true;
+      }
+      debugPrint('[DailyApiService] updateCaller ${response.statusCode}');
+      return false;
+    } catch (e) {
+      debugPrint('[DailyApiService] updateCaller error: $e');
+      return false;
+    }
+  }
+
+  /// Reset a Caller's session so the next run starts fresh.
+  ///
+  /// Returns true on success.
+  Future<bool> resetCaller(String name) async {
+    final uri = Uri.parse('$baseUrl/api/daily/callers/$name/reset');
+    debugPrint('[DailyApiService] POST $uri');
+    try {
+      final response = await _client
+          .post(uri, headers: _headers)
+          .timeout(_timeout);
+      return response.statusCode >= 200 && response.statusCode < 300;
+    } catch (e) {
+      debugPrint('[DailyApiService] resetCaller error: $e');
+      return false;
+    }
+  }
+
+  /// Reload the server scheduler configuration.
+  ///
+  /// Call after toggling schedule_enabled or changing schedule_time.
+  Future<bool> reloadScheduler() async {
+    final uri = Uri.parse('$baseUrl/api/scheduler/reload');
+    debugPrint('[DailyApiService] POST $uri');
+    try {
+      final response = await _client
+          .post(uri, headers: _headers)
+          .timeout(_timeout);
+      return response.statusCode >= 200 && response.statusCode < 300;
+    } catch (e) {
+      debugPrint('[DailyApiService] reloadScheduler error: $e');
+      return false;
+    }
+  }
+
   void dispose() => _client.close();
 }
