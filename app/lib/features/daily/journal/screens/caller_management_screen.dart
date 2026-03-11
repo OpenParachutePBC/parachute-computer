@@ -169,7 +169,7 @@ class _CallerCard extends ConsumerWidget {
                 // Schedule toggle
                 Switch.adaptive(
                   value: caller.scheduleEnabled,
-                  onChanged: (enabled) => _toggleSchedule(ref, enabled),
+                  onChanged: (enabled) => _toggleSchedule(context, ref, enabled),
                   activeColor:
                       isDark ? BrandColors.nightForest : BrandColors.forest,
                 ),
@@ -181,14 +181,22 @@ class _CallerCard extends ConsumerWidget {
     );
   }
 
-  Future<void> _toggleSchedule(WidgetRef ref, bool enabled) async {
+  Future<void> _toggleSchedule(BuildContext context, WidgetRef ref, bool enabled) async {
     final api = ref.read(dailyApiServiceProvider);
     final success =
         await api.updateCaller(caller.name, {'schedule_enabled': enabled});
     if (success) {
       await api.reloadScheduler();
-      ref.invalidate(callersProvider);
+    } else if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to update ${caller.displayName}'),
+          backgroundColor: BrandColors.error,
+        ),
+      );
     }
+    // Always refresh to sync UI with server state
+    ref.invalidate(callersProvider);
   }
 
   void _openDetail(BuildContext context, WidgetRef ref) {

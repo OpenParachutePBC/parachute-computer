@@ -33,7 +33,7 @@ class _CallerDetailSheetState extends ConsumerState<CallerDetailSheet> {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     final agentTheme = AgentTheme.forAgent(widget.caller.name);
-    final maxHeight = MediaQuery.of(context).size.height * 0.85;
+    final maxHeight = MediaQuery.sizeOf(context).height * 0.85;
 
     return ConstrainedBox(
       constraints: BoxConstraints(maxHeight: maxHeight),
@@ -186,12 +186,13 @@ class _CallerDetailSheetState extends ConsumerState<CallerDetailSheet> {
       widget.caller.name,
       {'schedule_enabled': enabled},
     );
+    if (!mounted) return;
     if (success) {
       await api.reloadScheduler();
-      ref.invalidate(callersProvider);
+      if (mounted) ref.invalidate(callersProvider);
     } else {
       // Revert on failure
-      if (mounted) setState(() => _scheduleEnabled = !enabled);
+      setState(() => _scheduleEnabled = !enabled);
     }
   }
 
@@ -216,9 +217,10 @@ class _CallerDetailSheetState extends ConsumerState<CallerDetailSheet> {
       widget.caller.name,
       {'schedule_time': newTime},
     );
+    if (!mounted) return;
     if (success) {
       await api.reloadScheduler();
-      ref.invalidate(callersProvider);
+      if (mounted) ref.invalidate(callersProvider);
     }
   }
 

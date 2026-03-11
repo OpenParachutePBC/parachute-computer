@@ -365,10 +365,8 @@ class DailyApiService {
       final List<dynamic> data = decoded['callers'] as List<dynamic>? ?? [];
       return data.map((raw) {
         final j = raw as Map<String, dynamic>;
-        final scheduleEnabledRaw = j['schedule_enabled'];
-        final scheduleEnabled = scheduleEnabledRaw is bool
-            ? scheduleEnabledRaw
-            : scheduleEnabledRaw?.toString().toLowerCase() == 'true';
+        final scheduleEnabled =
+            j['schedule_enabled']?.toString().toLowerCase() == 'true';
         return DailyAgentInfo(
           name: j['name'] as String? ?? '',
           displayName: j['display_name'] as String? ?? j['name'] as String? ?? '',

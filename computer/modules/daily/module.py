@@ -1607,9 +1607,12 @@ class DailyModule:
             )
             return rows[0] if rows else {"name": name}
 
-        @router.post("/callers/{name}/reset")
+        @router.post("/callers/{name}/reset", status_code=200)
         async def reset_caller(name: str):
             """Reset a Caller's session state so its next run starts fresh."""
+            # Validate name to prevent path traversal
+            if not re.fullmatch(r"[a-z0-9][a-z0-9\-]{0,63}", name):
+                return JSONResponse(status_code=400, content={"error": "invalid caller name format"})
             graph = self._get_graph()
             if graph is None:
                 return JSONResponse(status_code=503, content={"error": "BrainDB not available"})
@@ -1622,10 +1625,15 @@ class DailyModule:
             # Clear the agent's SDK session so next run starts fresh
             from parachute.core.daily_agent import DailyAgentState
 
-            state = DailyAgentState(self.vault_path, name)
-            state.load()
-            state.sdk_session_id = None
-            state.save()
+            vault_path = self.vault_path
+
+            def _reset_state():
+                state = DailyAgentState(vault_path, name)
+                state.load()
+                state.sdk_session_id = None
+                state.save()
+
+            await asyncio.to_thread(_reset_state)
             return {"status": "reset", "agent": name}
 
         @router.delete("/callers/{name}", status_code=204)
