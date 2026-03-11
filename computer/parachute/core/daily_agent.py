@@ -43,35 +43,31 @@ async def _load_caller_state(graph, agent_name: str) -> dict[str, Any]:
 
 
 async def _record_caller_run(graph, agent_name: str, date: str,
-                              session_id: str | None, model: str | None) -> None:
+                              session_id: str | None, run_count: int) -> None:
     """Record a completed run on the Caller graph node."""
     now = datetime.now(timezone.utc).isoformat()
-    # Read current run_count (Kuzu doesn't support c.run_count + 1 in SET)
-    rc_rows = await graph.execute_cypher(
-        "MATCH (c:Caller {name: $name}) RETURN c.run_count AS rc",
-        {"name": agent_name},
-    )
-    current_count = (rc_rows[0].get("rc") or 0) if rc_rows else 0
-    await graph.execute_cypher(
-        "MATCH (c:Caller {name: $name}) "
-        "SET c.sdk_session_id = $sid, c.last_run_at = $now, "
-        "    c.last_processed_date = $date, c.run_count = $rc",
-        {
-            "name": agent_name,
-            "sid": session_id or "",
-            "now": now,
-            "date": date,
-            "rc": current_count + 1,
-        },
-    )
+    async with graph.write_lock:
+        await graph.execute_cypher(
+            "MATCH (c:Caller {name: $name}) "
+            "SET c.sdk_session_id = $sid, c.last_run_at = $now, "
+            "    c.last_processed_date = $date, c.run_count = $rc",
+            {
+                "name": agent_name,
+                "sid": session_id or "",
+                "now": now,
+                "date": date,
+                "rc": run_count + 1,
+            },
+        )
 
 
 async def _clear_caller_session(graph, agent_name: str) -> None:
     """Clear sdk_session_id on resume failure so next run starts fresh."""
-    await graph.execute_cypher(
-        "MATCH (c:Caller {name: $name}) SET c.sdk_session_id = ''",
-        {"name": agent_name},
-    )
+    async with graph.write_lock:
+        await graph.execute_cypher(
+            "MATCH (c:Caller {name: $name}) SET c.sdk_session_id = ''",
+            {"name": agent_name},
+        )
 
 
 class DailyAgentConfig:
@@ -422,10 +418,11 @@ async def _run_sandboxed(
                 )
                 if graph is not None:
                     await _clear_caller_session(graph, agent_name)
+                    caller_state["sdk_session_id"] = None
 
         # Update state on Caller graph node
         if graph is not None:
-            await _record_caller_run(graph, agent_name, date, captured_session_id, captured_model)
+            await _record_caller_run(graph, agent_name, date, captured_session_id, caller_state["run_count"])
 
         result["status"] = "completed" if output_written else "completed_no_output"
         result["sdk_session_id"] = captured_session_id
@@ -549,6 +546,7 @@ async def _run_direct(
                 )
                 if graph is not None:
                     await _clear_caller_session(graph, agent_name)
+                    caller_state["sdk_session_id"] = None
                 fresh_opts_kwargs = {
                     "system_prompt": opts.system_prompt,
                     "max_turns": opts.max_turns,
@@ -567,7 +565,7 @@ async def _run_direct(
         output_written = query_result["output_written"]
 
         if graph is not None:
-            await _record_caller_run(graph, agent_name, date, new_session_id, model_used)
+            await _record_caller_run(graph, agent_name, date, new_session_id, caller_state["run_count"])
 
         result["status"] = "completed" if output_written else "completed_no_output"
         result["sdk_session_id"] = new_session_id

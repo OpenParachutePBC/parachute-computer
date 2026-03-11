@@ -4,7 +4,9 @@ import 'package:parachute/core/theme/design_tokens.dart';
 import '../providers/journal_providers.dart';
 import '../utils/agent_theme.dart';
 import '../widgets/caller_detail_sheet.dart';
-import 'package:parachute/core/services/computer_service.dart' show DailyAgentInfo;
+import 'agent_log_screen.dart';
+import 'package:parachute/core/services/computer_service.dart'
+    show DailyAgentInfo;
 
 /// Full-screen Caller management — browse, enable/disable, and configure agents.
 class CallerManagementScreen extends ConsumerWidget {
@@ -20,7 +22,9 @@ class CallerManagementScreen extends ConsumerWidget {
       backgroundColor: isDark ? BrandColors.nightSurface : BrandColors.cream,
       appBar: AppBar(
         title: const Text('Daily Agents'),
-        backgroundColor: isDark ? BrandColors.nightSurface : BrandColors.softWhite,
+        backgroundColor: isDark
+            ? BrandColors.nightSurface
+            : BrandColors.softWhite,
         foregroundColor: isDark ? BrandColors.softWhite : BrandColors.ink,
         elevation: 0,
         scrolledUnderElevation: 1,
@@ -48,10 +52,8 @@ class CallerManagementScreen extends ConsumerWidget {
                 vertical: Spacing.md,
               ),
               itemCount: callers.length,
-              itemBuilder: (context, index) => _CallerCard(
-                caller: callers[index],
-                isDark: isDark,
-              ),
+              itemBuilder: (context, index) =>
+                  _CallerCard(caller: callers[index], isDark: isDark),
             ),
           );
         },
@@ -167,11 +169,16 @@ class _CallerCard extends ConsumerWidget {
                   ),
                 ),
                 // Schedule toggle
-                Switch.adaptive(
-                  value: caller.scheduleEnabled,
-                  onChanged: (enabled) => _toggleSchedule(context, ref, enabled),
-                  activeColor:
-                      isDark ? BrandColors.nightForest : BrandColors.forest,
+                Semantics(
+                  label: 'Schedule ${caller.displayName}',
+                  child: Switch.adaptive(
+                    value: caller.scheduleEnabled,
+                    onChanged: (enabled) =>
+                        _toggleSchedule(context, ref, enabled),
+                    activeColor: isDark
+                        ? BrandColors.nightForest
+                        : BrandColors.forest,
+                  ),
                 ),
               ],
             ),
@@ -181,10 +188,15 @@ class _CallerCard extends ConsumerWidget {
     );
   }
 
-  Future<void> _toggleSchedule(BuildContext context, WidgetRef ref, bool enabled) async {
+  Future<void> _toggleSchedule(
+    BuildContext context,
+    WidgetRef ref,
+    bool enabled,
+  ) async {
     final api = ref.read(dailyApiServiceProvider);
-    final success =
-        await api.updateCaller(caller.name, {'schedule_enabled': enabled});
+    final success = await api.updateCaller(caller.name, {
+      'schedule_enabled': enabled,
+    });
     if (success) {
       await api.reloadScheduler();
     } else if (context.mounted) {
@@ -204,7 +216,20 @@ class _CallerCard extends ConsumerWidget {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => CallerDetailSheet(caller: caller),
+      builder: (_) => CallerDetailSheet(
+        caller: caller,
+        onViewHistory: () {
+          Navigator.push(
+            context, // parent screen's context — safe after sheet pops
+            MaterialPageRoute(
+              builder: (_) => AgentLogScreen(
+                agentName: caller.name,
+                displayName: caller.displayName,
+              ),
+            ),
+          );
+        },
+      ),
     );
   }
 }
@@ -279,10 +304,9 @@ class _ErrorView extends StatelessWidget {
             Text(
               message,
               textAlign: TextAlign.center,
-              style: Theme.of(context)
-                  .textTheme
-                  .bodySmall
-                  ?.copyWith(color: BrandColors.driftwood),
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: BrandColors.driftwood),
             ),
             SizedBox(height: Spacing.lg),
             FilledButton.icon(

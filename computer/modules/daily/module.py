@@ -252,9 +252,10 @@ class DailyModule:
                 "last_processed_date": ("STRING", "''"),
                 "run_count": ("INT64", "0"),
             }
-            for col, (typ, default) in caller_new.items():
-                if col not in caller_cols:
-                    async with graph.write_lock:
+            missing = {col: v for col, v in caller_new.items() if col not in caller_cols}
+            if missing:
+                async with graph.write_lock:
+                    for col, (typ, default) in missing.items():
                         await graph.execute_cypher(
                             f"ALTER TABLE Caller ADD {col} {typ} DEFAULT {default}"
                         )
@@ -1406,10 +1407,11 @@ class DailyModule:
             if not rows:
                 return JSONResponse(status_code=404, content={"error": "not found"})
             # Clear the agent's SDK session so next run starts fresh
-            await graph.execute_cypher(
-                "MATCH (c:Caller {name: $name}) SET c.sdk_session_id = ''",
-                {"name": name},
-            )
+            async with graph.write_lock:
+                await graph.execute_cypher(
+                    "MATCH (c:Caller {name: $name}) SET c.sdk_session_id = ''",
+                    {"name": name},
+                )
             return {"status": "reset", "agent": name}
 
         @router.delete("/callers/{name}", status_code=204)

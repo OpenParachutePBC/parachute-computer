@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
-import 'package:parachute/core/services/computer_service.dart' show DailyAgentInfo;
+import 'package:parachute/core/services/computer_service.dart'
+    show DailyAgentInfo;
 import '../providers/journal_providers.dart';
 import '../screens/agent_log_screen.dart';
 import '../utils/agent_theme.dart';
@@ -10,7 +11,15 @@ import '../utils/agent_theme.dart';
 class CallerDetailSheet extends ConsumerStatefulWidget {
   final DailyAgentInfo caller;
 
-  const CallerDetailSheet({super.key, required this.caller});
+  /// Called when the user taps "View history". The sheet pops itself first,
+  /// then invokes this callback so navigation uses the parent's context.
+  final VoidCallback? onViewHistory;
+
+  const CallerDetailSheet({
+    super.key,
+    required this.caller,
+    this.onViewHistory,
+  });
 
   @override
   ConsumerState<CallerDetailSheet> createState() => _CallerDetailSheetState();
@@ -63,7 +72,10 @@ class _CallerDetailSheetState extends ConsumerState<CallerDetailSheet> {
             Flexible(
               child: SingleChildScrollView(
                 padding: EdgeInsets.fromLTRB(
-                  Spacing.xl, Spacing.lg, Spacing.xl, Spacing.xl,
+                  Spacing.xl,
+                  Spacing.lg,
+                  Spacing.xl,
+                  Spacing.xl,
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -118,9 +130,7 @@ class _CallerDetailSheetState extends ConsumerState<CallerDetailSheet> {
                       'Schedule',
                       style: theme.textTheme.titleSmall?.copyWith(
                         fontWeight: FontWeight.w600,
-                        color: isDark
-                            ? BrandColors.softWhite
-                            : BrandColors.ink,
+                        color: isDark ? BrandColors.softWhite : BrandColors.ink,
                       ),
                     ),
                     SizedBox(height: Spacing.sm),
@@ -129,6 +139,7 @@ class _CallerDetailSheetState extends ConsumerState<CallerDetailSheet> {
                       time: _scheduleTime,
                       isDark: isDark,
                       agentColor: agentTheme.color,
+                      callerName: widget.caller.displayName,
                       onToggle: _toggleSchedule,
                       onTimeTap: _pickTime,
                     ),
@@ -139,16 +150,16 @@ class _CallerDetailSheetState extends ConsumerState<CallerDetailSheet> {
                       'Actions',
                       style: theme.textTheme.titleSmall?.copyWith(
                         fontWeight: FontWeight.w600,
-                        color: isDark
-                            ? BrandColors.softWhite
-                            : BrandColors.ink,
+                        color: isDark ? BrandColors.softWhite : BrandColors.ink,
                       ),
                     ),
                     SizedBox(height: Spacing.sm),
                     _ActionButton(
                       icon: Icons.play_arrow,
                       label: _isRunning ? 'Running...' : 'Run now',
-                      color: isDark ? BrandColors.nightForest : BrandColors.forest,
+                      color: isDark
+                          ? BrandColors.nightForest
+                          : BrandColors.forest,
                       isDark: isDark,
                       enabled: !_isRunning,
                       onTap: _runNow,
@@ -157,8 +168,11 @@ class _CallerDetailSheetState extends ConsumerState<CallerDetailSheet> {
                     _ActionButton(
                       icon: Icons.history,
                       label: 'View history',
-                      color: isDark ? BrandColors.nightTurquoise : BrandColors.turquoise,
+                      color: isDark
+                          ? BrandColors.nightTurquoise
+                          : BrandColors.turquoise,
                       isDark: isDark,
+                      showChevron: true,
                       onTap: () => _viewHistory(context),
                     ),
                     SizedBox(height: Spacing.sm),
@@ -182,10 +196,9 @@ class _CallerDetailSheetState extends ConsumerState<CallerDetailSheet> {
   Future<void> _toggleSchedule(bool enabled) async {
     setState(() => _scheduleEnabled = enabled);
     final api = ref.read(dailyApiServiceProvider);
-    final success = await api.updateCaller(
-      widget.caller.name,
-      {'schedule_enabled': enabled},
-    );
+    final success = await api.updateCaller(widget.caller.name, {
+      'schedule_enabled': enabled,
+    });
     if (!mounted) return;
     if (success) {
       await api.reloadScheduler();
@@ -213,10 +226,9 @@ class _CallerDetailSheetState extends ConsumerState<CallerDetailSheet> {
     setState(() => _scheduleTime = newTime);
 
     final api = ref.read(dailyApiServiceProvider);
-    final success = await api.updateCaller(
-      widget.caller.name,
-      {'schedule_time': newTime},
-    );
+    final success = await api.updateCaller(widget.caller.name, {
+      'schedule_time': newTime,
+    });
     if (!mounted) return;
     if (success) {
       await api.reloadScheduler();
@@ -256,15 +268,7 @@ class _CallerDetailSheetState extends ConsumerState<CallerDetailSheet> {
 
   void _viewHistory(BuildContext context) {
     Navigator.pop(context); // Close sheet first
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => AgentLogScreen(
-          agentName: widget.caller.name,
-          displayName: widget.caller.displayName,
-        ),
-      ),
-    );
+    widget.onViewHistory?.call();
   }
 
   Future<void> _resetCaller(BuildContext context) async {
@@ -316,6 +320,7 @@ class _ScheduleRow extends StatelessWidget {
   final String time;
   final bool isDark;
   final Color agentColor;
+  final String callerName;
   final ValueChanged<bool> onToggle;
   final VoidCallback onTimeTap;
 
@@ -324,6 +329,7 @@ class _ScheduleRow extends StatelessWidget {
     required this.time,
     required this.isDark,
     required this.agentColor,
+    required this.callerName,
     required this.onToggle,
     required this.onTimeTap,
   });
@@ -338,9 +344,7 @@ class _ScheduleRow extends StatelessWidget {
         vertical: Spacing.sm,
       ),
       decoration: BoxDecoration(
-        color: isDark
-            ? BrandColors.nightSurfaceElevated
-            : BrandColors.cream,
+        color: isDark ? BrandColors.nightSurfaceElevated : BrandColors.cream,
         borderRadius: Radii.card,
       ),
       child: Row(
@@ -362,24 +366,36 @@ class _ScheduleRow extends StatelessWidget {
                   ),
                 ),
                 if (enabled)
-                  GestureDetector(
+                  InkWell(
                     onTap: onTimeTap,
-                    child: Text(
-                      'Every day at $time',
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: agentColor,
-                        decoration: TextDecoration.underline,
-                        decorationColor: agentColor,
+                    borderRadius: BorderRadius.circular(4),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        vertical: 4,
+                        horizontal: 2,
+                      ),
+                      child: Text(
+                        'Every day at $time',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: agentColor,
+                          decoration: TextDecoration.underline,
+                          decorationColor: agentColor,
+                        ),
                       ),
                     ),
                   ),
               ],
             ),
           ),
-          Switch.adaptive(
-            value: enabled,
-            onChanged: onToggle,
-            activeColor: isDark ? BrandColors.nightForest : BrandColors.forest,
+          Semantics(
+            label: 'Schedule ${callerName}',
+            child: Switch.adaptive(
+              value: enabled,
+              onChanged: onToggle,
+              activeColor: isDark
+                  ? BrandColors.nightForest
+                  : BrandColors.forest,
+            ),
           ),
         ],
       ),
@@ -397,6 +413,7 @@ class _ActionButton extends StatelessWidget {
   final Color color;
   final bool isDark;
   final bool enabled;
+  final bool showChevron;
   final VoidCallback onTap;
 
   const _ActionButton({
@@ -405,6 +422,7 @@ class _ActionButton extends StatelessWidget {
     required this.color,
     required this.isDark,
     this.enabled = true,
+    this.showChevron = false,
     required this.onTap,
   });
 
@@ -444,12 +462,14 @@ class _ActionButton extends StatelessWidget {
                       : BrandColors.driftwood,
                 ),
               ),
-              const Spacer(),
-              Icon(
-                Icons.chevron_right,
-                size: 20,
-color: BrandColors.driftwood,
-              ),
+              if (showChevron) ...[
+                const Spacer(),
+                Icon(
+                  Icons.chevron_right,
+                  size: 20,
+                  color: BrandColors.driftwood,
+                ),
+              ],
             ],
           ),
         ),
