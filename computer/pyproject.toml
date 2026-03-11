@@ -18,6 +18,7 @@ dependencies = [
     "python-telegram-bot>=21.0",
     "discord.py>=2.3.0",
     "real-ladybug>=0.14.0",
+    "PyJWT[crypto]>=2.8.0",
 ]
 
 [project.optional-dependencies]

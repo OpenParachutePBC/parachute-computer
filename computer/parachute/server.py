@@ -202,6 +202,14 @@ async def lifespan(app: FastAPI):
                 logger.warning("Error cleaning permissions for %s during shutdown: %s", session_id, e)
         app.state.orchestrator.pending_permissions.clear()
 
+    # Close credential broker HTTP clients
+    try:
+        from parachute.lib.credentials import get_broker
+        broker = get_broker()
+        await broker.close_all()
+    except Exception as e:
+        logger.warning(f"Error closing credential broker: {e}")
+
     await stop_scheduler()
     if hasattr(app.state, "brain") and app.state.brain:
         await app.state.brain.close()

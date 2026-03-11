@@ -90,6 +90,7 @@ class BrainSessionStore:
                 "slug": "STRING",
                 "display_name": "STRING",
                 "core_memory": "STRING",
+                "credential_grants_json": "STRING",
                 "created_at": "STRING",
             },
             primary_key="slug",
@@ -984,9 +985,19 @@ class BrainSessionStore:
 
     def _node_to_project(self, row: dict[str, Any]) -> Project:
         """Convert a Kuzu node dict to a Project model."""
+        # Parse credential_grants from JSON string
+        grants_json = row.get("credential_grants_json")
+        grants = []
+        if grants_json:
+            try:
+                grants = json.loads(grants_json)
+            except (json.JSONDecodeError, TypeError):
+                pass
+
         return Project(
             slug=row["slug"],
             display_name=row["display_name"],
             core_memory=row.get("core_memory"),
+            credential_grants=grants,
             created_at=datetime.fromisoformat(row["created_at"]),
         )

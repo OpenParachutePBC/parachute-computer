@@ -51,6 +51,16 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     requests==2.32.3 \
     beautifulsoup4==4.12.3
 
+# GitHub CLI (for gh pr create, gh issue, etc. from sandboxed sessions)
+# Note: Credential scripts and git config are deployed via the tools volume
+# at server startup — not baked into the image. See sandbox._sync_credential_scripts().
+RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+    | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+       > /etc/apt/sources.list.d/github-cli.list \
+    && apt-get update && apt-get install -y --no-install-recommends gh \
+    && rm -rf /var/lib/apt/lists/*
+
 # OPTIONAL: Playwright + Chromium (enable via build arg)
 # Adds ~350MB to image size and browser attack surface
 ARG INCLUDE_PLAYWRIGHT=false

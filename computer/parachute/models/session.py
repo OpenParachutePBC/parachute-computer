@@ -302,6 +302,12 @@ class Project(BaseModel):
         serialization_alias="coreMemory",
         description="Markdown context injected into system prompt for all conversations in this project",
     )
+    credential_grants: list[dict] = Field(
+        default_factory=list,
+        alias="credentialGrants",
+        serialization_alias="credentialGrants",
+        description="Per-project credential grants (provider, scope, granted_at)",
+    )
     created_at: datetime = Field(
         alias="createdAt",
         serialization_alias="createdAt",
