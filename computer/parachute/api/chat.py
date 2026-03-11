@@ -32,6 +32,42 @@ def get_orchestrator(request: Request):
     return orchestrator
 
 
+async def _with_heartbeat(stream, request: Request, interval: float = 15.0):
+    """Wrap an async stream with SSE heartbeats during long pauses.
+
+    Yields events from the stream, inserting None sentinels (heartbeats)
+    when no event arrives within ``interval`` seconds.  SSE comment lines
+    (": heartbeat\\n\\n") keep TCP connections alive over mobile networks
+    and reverse proxies that time-out idle connections.
+
+    Uses asyncio.wait instead of wait_for to avoid cancelling the
+    __anext__() coroutine on timeout, which would corrupt the generator.
+    """
+    aiter = stream.__aiter__()
+    next_task: asyncio.Task | None = None
+    try:
+        while True:
+            if next_task is None:
+                next_task = asyncio.ensure_future(aiter.__anext__())
+            done, _ = await asyncio.wait({next_task}, timeout=interval)
+            if done:
+                try:
+                    event = next_task.result()
+                    next_task = None
+                    yield event
+                except StopAsyncIteration:
+                    break
+            else:
+                # Timeout — the __anext__ task is still pending (not cancelled)
+                if await request.is_disconnected():
+                    next_task.cancel()
+                    return
+                yield None  # heartbeat sentinel
+    finally:
+        if next_task is not None and not next_task.done():
+            next_task.cancel()
+
+
 async def event_generator(request: Request, chat_request: ChatRequest):
     """
     Generate SSE events from orchestrator.
@@ -72,8 +108,8 @@ async def event_generator(request: Request, chat_request: ChatRequest):
         if chat_request.attachments:
             attachments_data = [att.model_dump() for att in chat_request.attachments]
 
-        # Stream directly from orchestrator
-        async for event in orchestrator.run_streaming(
+        # Stream from orchestrator with heartbeat wrapper to keep connections alive
+        stream = orchestrator.run_streaming(
             message=chat_request.message,
             session_id=session_id,
             module=chat_request.module,
@@ -90,13 +126,17 @@ async def event_generator(request: Request, chat_request: ChatRequest):
             mode=chat_request.mode,
             model=chat_request.model,
             container_id=chat_request.container_id,
-        ):
-            # Check if client disconnected
-            if await request.is_disconnected():
-                logger.info(f"Client disconnected, stopping stream")
-                return
+        )
 
-            yield f"data: {json.dumps(event)}\n\n"
+        async for event in _with_heartbeat(stream, request):
+            if event is None:
+                yield ": heartbeat\n\n"
+            else:
+                # Check if client disconnected
+                if await request.is_disconnected():
+                    logger.info("Client disconnected, stopping stream")
+                    return
+                yield f"data: {json.dumps(event)}\n\n"
 
     except Exception as e:
         logger.error(f"Stream error: {e}", exc_info=True)
