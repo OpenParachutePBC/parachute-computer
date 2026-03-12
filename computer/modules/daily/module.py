@@ -22,7 +22,7 @@ import tempfile
 import uuid
 from datetime import date as _date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Literal, Optional
+from typing import Any, Literal, Optional, TypedDict
 
 from fastapi import APIRouter, Query, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
@@ -35,6 +35,56 @@ ASSETS_DIR = Path.home() / ".parachute" / "daily" / "assets"
 REDO_LOG_PATH = Path.home() / ".parachute" / "daily" / "entries.jsonl"
 
 logger = logging.getLogger(__name__)
+
+# ── Caller templates ─────────────────────────────────────────────────────────
+# Starter definitions returned by GET /callers/templates. Each has the same
+# shape as the POST /callers body so the client can create directly from them.
+
+
+class CallerTemplateDict(TypedDict):
+    name: str
+    display_name: str
+    description: str
+    system_prompt: str
+    tools: list[str]
+    schedule_time: str
+    trust_level: str
+
+
+CALLER_TEMPLATES: list[CallerTemplateDict] = [
+    {
+        "name": "daily-reflection",
+        "display_name": "Daily Reflection",
+        "description": "Reviews your journal entries and offers a thoughtful daily reflection",
+        "system_prompt": (
+            "You are a thoughtful, perceptive reflection partner for {user_name}.\n\n"
+            "## Your Role\n\n"
+            "Read today's journal entries and recent journals to understand what's on "
+            "their mind. Then write a short, meaningful reflection — something that "
+            "helps them see their day clearly.\n\n"
+            "## Guidelines\n\n"
+            "- **Be genuine, not performative.** No empty affirmations. Reflect what "
+            "you actually notice.\n"
+            "- **Make connections.** Link today's entries to patterns from recent days "
+            "when relevant.\n"
+            "- **Keep it concise.** 3-5 paragraphs. Quality over quantity.\n"
+            "- **Match their energy.** If the day was hard, acknowledge it honestly. "
+            "If it was good, celebrate without overdoing it.\n"
+            "- **One insight, well-developed** is better than five shallow observations.\n"
+            "- Write in second person (\"you\") — this is for them.\n\n"
+            "## Process\n\n"
+            "1. Read today's journal entries with `read_journal`\n"
+            "2. Read recent journals with `read_recent_journals` for context\n"
+            "3. Optionally read chat logs with `read_chat_log` for additional context\n"
+            "4. Write your reflection using `write_output`\n\n"
+            "## User Context\n\n"
+            "{user_context}"
+        ),
+        "tools": ["read_journal", "read_chat_log", "read_recent_journals"],
+        "schedule_time": "21:00",
+        "trust_level": "sandboxed",
+    },
+]
 
 
 def _append_redo_log(
@@ -1280,6 +1330,17 @@ class DailyModule:
             return {"card_id": card_id, "status": "done", "date": date_str}
 
         # ── Callers (agent definitions) ──────────────────────────────────────
+        # IMPORTANT: /callers/templates must be registered before /callers/{name}
+        # so FastAPI matches the literal path before the path parameter.
+
+        @router.get("/callers/templates")
+        def list_caller_templates() -> dict[str, list[CallerTemplateDict]]:
+            """Return starter Caller templates for onboarding.
+
+            Templates have the same shape as POST /callers bodies so the
+            client can create a caller directly from a template.
+            """
+            return {"templates": CALLER_TEMPLATES}
 
         @router.get("/callers")
         @router.get("/agents")  # backward-compat alias

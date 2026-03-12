@@ -1,10 +1,14 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/providers/file_system_provider.dart';
-import 'package:parachute/core/providers/feature_flags_provider.dart' show aiServerUrlProvider;
-import 'package:parachute/core/providers/app_state_provider.dart' show apiKeyProvider;
-import 'package:parachute/core/providers/backend_health_provider.dart' show periodicServerHealthProvider;
-import 'package:parachute/core/services/computer_service.dart' show DailyAgentInfo;
+import 'package:parachute/core/providers/feature_flags_provider.dart'
+    show aiServerUrlProvider;
+import 'package:parachute/core/providers/app_state_provider.dart'
+    show apiKeyProvider;
+import 'package:parachute/core/providers/backend_health_provider.dart'
+    show periodicServerHealthProvider;
+import 'package:parachute/core/services/computer_service.dart'
+    show CallerTemplate, DailyAgentInfo;
 import '../models/chat_log.dart';
 import '../models/journal_entry.dart';
 import '../models/journal_day.dart';
@@ -34,7 +38,9 @@ final dailyApiServiceProvider = Provider<DailyApiService>((ref) {
 ///
 /// Opens once per app session; disposed when no longer referenced.
 /// Falls back to in-memory database if documents directory is unavailable.
-final journalLocalCacheProvider = FutureProvider<JournalLocalCache>((ref) async {
+final journalLocalCacheProvider = FutureProvider<JournalLocalCache>((
+  ref,
+) async {
   final cache = await JournalLocalCache.open();
   ref.onDispose(cache.dispose);
   return cache;
@@ -69,8 +75,8 @@ String _formatDateForApi(DateTime date) {
 /// Phase 2: fetches from server, updates cache, emits fresh data.
 final todayJournalProvider =
     AsyncNotifierProvider.autoDispose<_TodayJournalNotifier, JournalDay>(
-  _TodayJournalNotifier.new,
-);
+      _TodayJournalNotifier.new,
+    );
 
 class _TodayJournalNotifier extends AutoDisposeAsyncNotifier<JournalDay> {
   @override
@@ -100,7 +106,9 @@ class _TodayJournalNotifier extends AutoDisposeAsyncNotifier<JournalDay> {
             // _loadJournal already calls flush on every build; no need to increment
             // the refresh trigger here — that would cause a redundant rebuild cycle.
           } catch (e) {
-            debugPrint('[_TodayJournalNotifier] Error flushing on reconnect: $e');
+            debugPrint(
+              '[_TodayJournalNotifier] Error flushing on reconnect: $e',
+            );
           }
         });
       }
@@ -113,8 +121,8 @@ class _TodayJournalNotifier extends AutoDisposeAsyncNotifier<JournalDay> {
 /// Provider for a specific date's journal — cache-first, then server.
 final selectedJournalProvider =
     AsyncNotifierProvider.autoDispose<_SelectedJournalNotifier, JournalDay>(
-  _SelectedJournalNotifier.new,
-);
+      _SelectedJournalNotifier.new,
+    );
 
 class _SelectedJournalNotifier extends AutoDisposeAsyncNotifier<JournalDay> {
   @override
@@ -200,7 +208,10 @@ bool _flushPendingOpsActive = false;
 ///
 /// Called during Phase 2 of every journal load and on network reconnect.
 /// Re-entrant calls are dropped — the in-flight flush covers them.
-Future<void> _flushPendingOps(DailyApiService api, JournalLocalCache cache) async {
+Future<void> _flushPendingOps(
+  DailyApiService api,
+  JournalLocalCache cache,
+) async {
   if (_flushPendingOpsActive) return;
   _flushPendingOpsActive = true;
   try {
@@ -225,7 +236,11 @@ Future<void> _flushPendingOps(DailyApiService api, JournalLocalCache cache) asyn
       );
       if (updated != null) {
         // Update cache with the server's authoritative response and clear the flag.
-        cache.markSynced(entry.id, content: updated.content, title: updated.title);
+        cache.markSynced(
+          entry.id,
+          content: updated.content,
+          title: updated.title,
+        );
       }
       // If null (offline or server error), leave as pending_edit for next flush.
     }
@@ -244,14 +259,18 @@ List<JournalEntry> _pendingForDate(PendingEntryQueue queue, String dateStr) =>
 // ============================================================================
 
 /// Async provider for ChatLogService
-final chatLogServiceFutureProvider = FutureProvider.autoDispose<ChatLogService>((ref) async {
-  final fileSystemService = ref.watch(fileSystemServiceProvider);
-  await fileSystemService.initialize();
-  return ChatLogService.create(fileSystemService: fileSystemService);
-});
+final chatLogServiceFutureProvider = FutureProvider.autoDispose<ChatLogService>(
+  (ref) async {
+    final fileSystemService = ref.watch(fileSystemServiceProvider);
+    await fileSystemService.initialize();
+    return ChatLogService.create(fileSystemService: fileSystemService);
+  },
+);
 
 /// Provider for the selected date's chat log
-final selectedChatLogProvider = FutureProvider.autoDispose<ChatLog?>((ref) async {
+final selectedChatLogProvider = FutureProvider.autoDispose<ChatLog?>((
+  ref,
+) async {
   final date = ref.watch(selectedJournalDateProvider);
   ref.watch(journalRefreshTriggerProvider);
 
@@ -267,19 +286,29 @@ final selectedChatLogProvider = FutureProvider.autoDispose<ChatLog?>((ref) async
 ///
 /// Family parameter: YYYY-MM-DD date string.
 /// Returns empty list if offline or server unavailable.
-final cardsProvider =
-    FutureProvider.autoDispose.family<List<AgentCard>, String>((ref, dateStr) async {
-  ref.watch(journalRefreshTriggerProvider);
-  final api = ref.watch(dailyApiServiceProvider);
-  return api.fetchCards(dateStr);
-});
+final cardsProvider = FutureProvider.autoDispose
+    .family<List<AgentCard>, String>((ref, dateStr) async {
+      ref.watch(journalRefreshTriggerProvider);
+      final api = ref.watch(dailyApiServiceProvider);
+      return api.fetchCards(dateStr);
+    });
 
 /// Fetch registered Caller (agent definition) nodes from the server.
 ///
 /// Used by [AgentTriggerCard] to enumerate agents without local file reads.
-final callersProvider =
-    FutureProvider.autoDispose<List<DailyAgentInfo>>((ref) async {
+final callersProvider = FutureProvider.autoDispose<List<DailyAgentInfo>>((
+  ref,
+) async {
   ref.watch(journalRefreshTriggerProvider);
   final api = ref.watch(dailyApiServiceProvider);
   return api.fetchCallers();
 });
+
+/// Fetch starter Caller templates for onboarding.
+///
+/// Used by the empty state in [CallerManagementScreen] to offer one-tap creation.
+final callerTemplatesProvider =
+    FutureProvider.autoDispose<List<CallerTemplate>>((ref) async {
+      final api = ref.watch(dailyApiServiceProvider);
+      return api.fetchTemplates();
+    });

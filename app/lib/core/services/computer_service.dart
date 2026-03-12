@@ -56,7 +56,9 @@ class ComputerService {
     _apiKey = prefs.getString(_apiKeyKey);
     _isInitialized = true;
     // Security: Only log presence of API key, not the key itself
-    debugPrint('[ComputerService] Initialized with URL: $_serverUrl, hasApiKey: ${_apiKey != null && _apiKey!.isNotEmpty}');
+    debugPrint(
+      '[ComputerService] Initialized with URL: $_serverUrl, hasApiKey: ${_apiKey != null && _apiKey!.isNotEmpty}',
+    );
   }
 
   /// Set a custom server URL
@@ -133,76 +135,36 @@ class ComputerService {
   ///
   /// Returns the recent messages from the agent's session,
   /// including tool calls and responses.
-  Future<AgentTranscript?> getAgentTranscript(String agentName, {int limit = 50}) async {
+  Future<AgentTranscript?> getAgentTranscript(
+    String agentName, {
+    int limit = 50,
+  }) async {
     try {
-      final url = '${await getServerUrl()}/api/modules/daily/agents/$agentName/transcript?limit=$limit';
+      final url =
+          '${await getServerUrl()}/api/modules/daily/agents/$agentName/transcript?limit=$limit';
       debugPrint('[ComputerService] Fetching agent transcript from: $url');
 
       final response = await http
           .get(Uri.parse(url), headers: await _getHeaders())
           .timeout(const Duration(seconds: 15));
 
-      debugPrint('[ComputerService] Agent transcript response: ${response.statusCode}');
+      debugPrint(
+        '[ComputerService] Agent transcript response: ${response.statusCode}',
+      );
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body) as Map<String, dynamic>;
-        debugPrint('[ComputerService] Agent transcript data: hasTranscript=${data['hasTranscript']}, messages=${(data['messages'] as List?)?.length ?? 0}');
+        debugPrint(
+          '[ComputerService] Agent transcript data: hasTranscript=${data['hasTranscript']}, messages=${(data['messages'] as List?)?.length ?? 0}',
+        );
         return AgentTranscript.fromJson(data);
       }
-      debugPrint('[ComputerService] Agent transcript error: ${response.statusCode} - ${response.body}');
+      debugPrint(
+        '[ComputerService] Agent transcript error: ${response.statusCode} - ${response.body}',
+      );
       return null;
     } catch (e) {
       debugPrint('[ComputerService] Error getting agent transcript: $e');
-      return null;
-    }
-  }
-
-  // ============================================================
-  // Daily Agents
-  // ============================================================
-
-  /// Get the list of configured daily agents
-  ///
-  /// Returns all agents discovered in Daily/.agents/ with their
-  /// configuration and state.
-  Future<List<DailyAgentInfo>?> getDailyAgents() async {
-    try {
-      final response = await http
-          .get(Uri.parse('${await getServerUrl()}/api/modules/daily/agents'),
-              headers: await _getHeaders())
-          .timeout(const Duration(seconds: 10));
-
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body) as Map<String, dynamic>;
-        final agentsList = data['agents'] as List<dynamic>? ?? [];
-        return agentsList
-            .map((a) => DailyAgentInfo.fromJson(a as Map<String, dynamic>))
-            .toList();
-      }
-      debugPrint('[ComputerService] Get agents error: ${response.statusCode}');
-      return null;
-    } catch (e) {
-      debugPrint('[ComputerService] Error getting daily agents: $e');
-      return null;
-    }
-  }
-
-  /// Get details for a specific daily agent
-  Future<DailyAgentInfo?> getDailyAgent(String agentName) async {
-    try {
-      final response = await http
-          .get(Uri.parse('${await getServerUrl()}/api/modules/daily/agents/$agentName'),
-              headers: await _getHeaders())
-          .timeout(const Duration(seconds: 10));
-
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body) as Map<String, dynamic>;
-        return DailyAgentInfo.fromJson(data);
-      }
-      debugPrint('[ComputerService] Get agent error: ${response.statusCode}');
-      return null;
-    } catch (e) {
-      debugPrint('[ComputerService] Error getting agent $agentName: $e');
       return null;
     }
   }
@@ -225,7 +187,9 @@ class ComputerService {
 
       final response = await http
           .post(
-            Uri.parse('${await getServerUrl()}/api/modules/daily/agents/$agentName/run'),
+            Uri.parse(
+              '${await getServerUrl()}/api/modules/daily/agents/$agentName/run',
+            ),
             headers: await _getHeaders(json: true),
             body: json.encode(body),
           )
@@ -239,11 +203,23 @@ class ComputerService {
         return AgentRunResult(success: false, status: 'error', error: error);
       }
     } on SocketException catch (e) {
-      return AgentRunResult(success: false, status: 'error', error: 'Server not reachable: $e');
+      return AgentRunResult(
+        success: false,
+        status: 'error',
+        error: 'Server not reachable: $e',
+      );
     } on http.ClientException catch (e) {
-      return AgentRunResult(success: false, status: 'error', error: 'Connection error: $e');
+      return AgentRunResult(
+        success: false,
+        status: 'error',
+        error: 'Connection error: $e',
+      );
     } catch (e) {
-      return AgentRunResult(success: false, status: 'error', error: 'Error triggering agent: $e');
+      return AgentRunResult(
+        success: false,
+        status: 'error',
+        error: 'Error triggering agent: $e',
+      );
     }
   }
 
@@ -257,8 +233,9 @@ class ComputerService {
       final queryParams = <String, String>{};
       if (date != null) queryParams['date'] = date;
 
-      final uri = Uri.parse('${await getServerUrl()}/api/modules/daily/agents/status')
-          .replace(queryParameters: queryParams.isNotEmpty ? queryParams : null);
+      final uri = Uri.parse(
+        '${await getServerUrl()}/api/modules/daily/agents/status',
+      ).replace(queryParameters: queryParams.isNotEmpty ? queryParams : null);
 
       final response = await http
           .get(uri, headers: await _getHeaders())
@@ -278,7 +255,8 @@ class ComputerService {
   String _parseError(http.Response response) {
     try {
       final data = json.decode(response.body) as Map<String, dynamic>;
-      return data['detail'] as String? ?? 'Unknown error (${response.statusCode})';
+      return data['detail'] as String? ??
+          'Unknown error (${response.statusCode})';
     } catch (_) {
       return 'Error ${response.statusCode}: ${response.body}';
     }
@@ -387,14 +365,16 @@ class TranscriptBlock {
 // Daily Agent Models
 // ============================================================
 
-/// Configuration for a daily agent
+/// Configuration for a daily agent (Caller node from the graph database).
 class DailyAgentInfo {
   final String name;
   final String displayName;
   final String description;
+  final String systemPrompt;
+  final List<String> tools;
+  final String trustLevel;
   final bool scheduleEnabled;
   final String scheduleTime;
-  final String outputPath;
   final String? lastRunAt;
   final String? lastProcessedDate;
   final int runCount;
@@ -403,38 +383,53 @@ class DailyAgentInfo {
     required this.name,
     required this.displayName,
     required this.description,
+    this.systemPrompt = '',
+    this.tools = const [],
+    this.trustLevel = 'sandboxed',
     required this.scheduleEnabled,
     required this.scheduleTime,
-    required this.outputPath,
     this.lastRunAt,
     this.lastProcessedDate,
     this.runCount = 0,
   });
+}
 
-  factory DailyAgentInfo.fromJson(Map<String, dynamic> json) {
-    final schedule = json['schedule'] as Map<String, dynamic>? ?? {};
-    final state = json['state'] as Map<String, dynamic>? ?? {};
+/// Starter caller template returned by the templates endpoint.
+class CallerTemplate {
+  final String name;
+  final String displayName;
+  final String description;
+  final String systemPrompt;
+  final List<String> tools;
+  final String scheduleTime;
+  final String trustLevel;
 
-    return DailyAgentInfo(
-      name: json['name'] as String? ?? '',
-      displayName: json['displayName'] as String? ?? json['name'] as String? ?? '',
-      description: json['description'] as String? ?? '',
-      scheduleEnabled: schedule['enabled'] as bool? ?? true,
-      scheduleTime: schedule['time'] as String? ?? '03:00',
-      outputPath: json['outputPath'] as String? ?? '',
-      lastRunAt: state['lastRunAt'] as String?,
-      lastProcessedDate: state['lastProcessedDate'] as String?,
-      runCount: state['runCount'] as int? ?? 0,
-    );
-  }
+  const CallerTemplate({
+    required this.name,
+    required this.displayName,
+    required this.description,
+    required this.systemPrompt,
+    required this.tools,
+    this.scheduleTime = '21:00',
+    this.trustLevel = 'sandboxed',
+  });
 
-  /// Get the output directory name from the output path (e.g., "reflections" from "Daily/reflections/{date}.md")
-  String get outputDirectory {
-    final parts = outputPath.split('/');
-    if (parts.length >= 2) {
-      return parts[1];
+  factory CallerTemplate.fromJson(Map<String, dynamic> json) {
+    final rawTools = json['tools'];
+    List<String> tools = [];
+    if (rawTools is List) {
+      tools = rawTools.cast<String>();
     }
-    return name;
+    return CallerTemplate(
+      name: json['name'] as String? ?? '',
+      displayName:
+          json['display_name'] as String? ?? json['name'] as String? ?? '',
+      description: json['description'] as String? ?? '',
+      systemPrompt: json['system_prompt'] as String? ?? '',
+      tools: tools,
+      scheduleTime: json['schedule_time'] as String? ?? '21:00',
+      trustLevel: json['trust_level'] as String? ?? 'sandboxed',
+    );
   }
 }
 
@@ -459,7 +454,10 @@ class AgentRunResult {
   factory AgentRunResult.fromJson(Map<String, dynamic> json) {
     final status = json['status'] as String? ?? 'unknown';
     return AgentRunResult(
-      success: status == 'completed' || status == 'completed_no_output' || status == 'skipped',
+      success:
+          status == 'completed' ||
+          status == 'completed_no_output' ||
+          status == 'skipped',
       status: status,
       outputPath: json['output_path'] as String?,
       error: json['error'] as String?,
@@ -474,10 +472,7 @@ class DailyAgentsStatusResult {
   final String date;
   final List<AgentStatusInfo> agents;
 
-  DailyAgentsStatusResult({
-    required this.date,
-    required this.agents,
-  });
+  DailyAgentsStatusResult({required this.date, required this.agents});
 
   factory DailyAgentsStatusResult.fromJson(Map<String, dynamic> json) {
     final agentsList = json['agents'] as List<dynamic>? ?? [];
@@ -523,7 +518,8 @@ class AgentStatusInfo {
   factory AgentStatusInfo.fromJson(Map<String, dynamic> json) {
     return AgentStatusInfo(
       name: json['name'] as String? ?? '',
-      displayName: json['displayName'] as String? ?? json['name'] as String? ?? '',
+      displayName:
+          json['displayName'] as String? ?? json['name'] as String? ?? '',
       hasOutput: json['hasOutput'] as bool? ?? false,
       outputPath: json['outputPath'] as String?,
       lastRunAt: json['lastRunAt'] as String?,

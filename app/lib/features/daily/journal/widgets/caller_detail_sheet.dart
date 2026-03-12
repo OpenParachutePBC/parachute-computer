@@ -4,8 +4,8 @@ import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/core/services/computer_service.dart'
     show DailyAgentInfo;
 import '../providers/journal_providers.dart';
-import '../screens/agent_log_screen.dart';
 import '../utils/agent_theme.dart';
+import '../utils/time_helpers.dart';
 
 /// Bottom sheet showing Caller details with schedule config and actions.
 class CallerDetailSheet extends ConsumerStatefulWidget {
@@ -15,10 +15,15 @@ class CallerDetailSheet extends ConsumerStatefulWidget {
   /// then invokes this callback so navigation uses the parent's context.
   final VoidCallback? onViewHistory;
 
+  /// Called when the user taps "Edit". The sheet pops itself first,
+  /// then invokes this callback so navigation uses the parent's context.
+  final VoidCallback? onEdit;
+
   const CallerDetailSheet({
     super.key,
     required this.caller,
     this.onViewHistory,
+    this.onEdit,
   });
 
   @override
@@ -155,6 +160,17 @@ class _CallerDetailSheetState extends ConsumerState<CallerDetailSheet> {
                     ),
                     SizedBox(height: Spacing.sm),
                     _ActionButton(
+                      icon: Icons.edit_outlined,
+                      label: 'Edit caller',
+                      color: isDark
+                          ? BrandColors.nightTurquoise
+                          : BrandColors.turquoise,
+                      isDark: isDark,
+                      showChevron: true,
+                      onTap: () => _editCaller(context),
+                    ),
+                    SizedBox(height: Spacing.sm),
+                    _ActionButton(
                       icon: Icons.play_arrow,
                       label: _isRunning ? 'Running...' : 'Run now',
                       color: isDark
@@ -210,19 +226,16 @@ class _CallerDetailSheetState extends ConsumerState<CallerDetailSheet> {
   }
 
   Future<void> _pickTime() async {
-    // Parse current time
-    final parts = _scheduleTime.split(':');
-    final hour = int.tryParse(parts.firstOrNull ?? '') ?? 3;
-    final minute = int.tryParse(parts.length > 1 ? parts[1] : '') ?? 0;
-
     final picked = await showTimePicker(
       context: context,
-      initialTime: TimeOfDay(hour: hour, minute: minute),
+      initialTime: parseHHMM(
+        _scheduleTime,
+        fallback: const TimeOfDay(hour: 3, minute: 0),
+      ),
     );
     if (picked == null || !mounted) return;
 
-    final newTime =
-        '${picked.hour.toString().padLeft(2, '0')}:${picked.minute.toString().padLeft(2, '0')}';
+    final newTime = formatTimeOfDay(picked);
     setState(() => _scheduleTime = newTime);
 
     final api = ref.read(dailyApiServiceProvider);
@@ -269,6 +282,11 @@ class _CallerDetailSheetState extends ConsumerState<CallerDetailSheet> {
   void _viewHistory(BuildContext context) {
     Navigator.pop(context); // Close sheet first
     widget.onViewHistory?.call();
+  }
+
+  void _editCaller(BuildContext context) {
+    Navigator.pop(context); // Close sheet first
+    widget.onEdit?.call();
   }
 
   Future<void> _resetCaller(BuildContext context) async {
