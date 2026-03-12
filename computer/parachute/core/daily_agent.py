@@ -308,23 +308,23 @@ async def _run_sandboxed(
     from parachute.lib.sandbox_tokens import SandboxTokenContext
 
     token_store = get_registry().get("SandboxTokenStore")
-    sandbox_token = None
-    if token_store is not None:
-        token_ctx = SandboxTokenContext(
-            session_id=f"caller-{agent_name}",
-            trust_level="sandboxed",
-            agent_name=agent_name,
-            allowed_writes=["write_output"],
+    if token_store is None:
+        raise RuntimeError(
+            f"SandboxTokenStore not available — cannot run caller '{agent_name}' "
+            f"in sandbox without MCP tools"
         )
-        sandbox_token = token_store.create_token(token_ctx)
+
+    token_ctx = SandboxTokenContext(
+        session_id=f"caller-{agent_name}",
+        trust_level="sandboxed",
+        agent_name=agent_name,
+        allowed_writes=["write_output"],
+    )
+    sandbox_token = token_store.create_token(token_ctx)
 
     # Build HTTP MCP config pointing to host's MCP bridge
-    if sandbox_token:
-        mcp_config = _build_http_mcp_config(sandbox_token)
-        all_mcp_servers = {"parachute": mcp_config}
-    else:
-        logger.warning(f"SandboxTokenStore not available, caller '{agent_name}' will have no MCP tools")
-        all_mcp_servers = {}
+    mcp_config = _build_http_mcp_config(sandbox_token)
+    all_mcp_servers = {"parachute": mcp_config}
 
     # Slug used as both session ID (for resume) and project slug (for container)
     slug = f"caller-{agent_name}"

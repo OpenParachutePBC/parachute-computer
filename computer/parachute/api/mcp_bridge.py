@@ -11,7 +11,7 @@ tracking on the MCP side.
 
 import logging
 from contextvars import ContextVar
-from typing import Any, Optional
+from typing import Any
 
 from mcp.server import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
@@ -23,12 +23,12 @@ logger = logging.getLogger(__name__)
 
 # ContextVar carries auth context from ASGI wrapper into MCP tool handlers.
 # Set before session_manager.handle_request(), read inside tool callbacks.
-_current_sandbox_ctx: ContextVar[Optional[SandboxTokenContext]] = ContextVar(
+_current_sandbox_ctx: ContextVar[SandboxTokenContext | None] = ContextVar(
     "_current_sandbox_ctx", default=None
 )
 
 
-def get_sandbox_context() -> Optional[SandboxTokenContext]:
+def get_sandbox_context() -> SandboxTokenContext | None:
     """Get the current sandbox token context (for use in tool handlers)."""
     return _current_sandbox_ctx.get()
 

@@ -13,7 +13,7 @@ import logging
 import secrets
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Optional
+
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +24,7 @@ class SandboxTokenContext:
 
     session_id: str
     trust_level: str  # "sandboxed"
-    agent_name: Optional[str] = None  # For callers
+    agent_name: str | None = None  # For callers
     allowed_writes: list[str] = field(default_factory=list)
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -48,7 +48,7 @@ class SandboxTokenStore:
         )
         return token
 
-    def validate_token(self, token: str) -> Optional[SandboxTokenContext]:
+    def validate_token(self, token: str) -> SandboxTokenContext | None:
         """Validate a token and return its context, or None if invalid."""
         return self._tokens.get(token)
 

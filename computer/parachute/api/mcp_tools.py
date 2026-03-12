@@ -25,7 +25,8 @@ def _get_graph():
     try:
         from parachute.core.interfaces import get_registry
         return get_registry().get("BrainDB")
-    except Exception:
+    except Exception as e:
+        logger.warning(f"Failed to get BrainDB from registry: {e}")
         return None
 
 
@@ -34,7 +35,8 @@ def _get_session_store():
     try:
         from parachute.core.interfaces import get_registry
         return get_registry().get("SessionStore")
-    except Exception:
+    except Exception as e:
+        logger.warning(f"Failed to get SessionStore from registry: {e}")
         return None
 
 
@@ -234,8 +236,10 @@ async def _handle_search_memory(arguments: dict[str, Any]) -> str:
     )
     for row in note_rows:
         content = row.get("content", "")
-        # Extract snippet around the match
-        idx = content.lower().find(query.lower())
+        # Extract snippet around the match (CONTAINS is case-sensitive)
+        idx = content.find(query)
+        if idx == -1:
+            idx = 0  # Fallback: show beginning if exact match not found
         start = max(0, idx - 100)
         end = min(len(content), idx + len(query) + 100)
         snippet = ("..." if start > 0 else "") + content[start:end] + ("..." if end < len(content) else "")
@@ -406,6 +410,6 @@ def register_tools(server: Server) -> None:
                 result = await handler(arguments)
             except Exception as e:
                 logger.error(f"MCP tool error ({name}): {e}", exc_info=True)
-                result = json.dumps({"error": str(e)})
+                result = json.dumps({"error": f"Internal error processing {name}"})
 
         return [TextContent(type="text", text=result)]

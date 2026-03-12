@@ -185,6 +185,7 @@ async def lifespan(app: FastAPI):
     mcp_run_ctx = mcp_session_manager.run()
     await mcp_run_ctx.__aenter__()
     app.state.mcp_session_manager = mcp_session_manager
+    app.state.mcp_run_ctx = mcp_run_ctx
 
     mcp_asgi_app = create_mcp_asgi_app(mcp_session_manager, token_store)
     app.mount("/mcp/v1", mcp_asgi_app)
@@ -233,11 +234,12 @@ async def lifespan(app: FastAPI):
         logger.warning(f"Error closing credential broker: {e}")
 
     # Shut down MCP HTTP bridge
-    if hasattr(app.state, "mcp_session_manager"):
+    if hasattr(app.state, "mcp_run_ctx") and app.state.mcp_run_ctx is not None:
         try:
-            await mcp_run_ctx.__aexit__(None, None, None)
+            await app.state.mcp_run_ctx.__aexit__(None, None, None)
         except Exception as e:
             logger.warning(f"Error shutting down MCP bridge: {e}")
+        app.state.mcp_run_ctx = None
         app.state.mcp_session_manager = None
         app.state.sandbox_token_store = None
 
