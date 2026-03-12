@@ -281,7 +281,7 @@ def _build_http_mcp_config(token: str) -> dict[str, Any]:
     """
     return {
         "type": "http",
-        "url": "http://host.docker.internal:3333/mcp/v1",
+        "url": "http://host.docker.internal:3333/mcp/v1/",
         "headers": {"Authorization": f"Bearer {token}"},
     }
 

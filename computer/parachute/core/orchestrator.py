@@ -1417,7 +1417,7 @@ class Orchestrator:
                 sandbox_token = token_store.create_token(token_ctx)
                 sandbox_mcps["parachute"] = {
                     "type": "http",
-                    "url": "http://host.docker.internal:3333/mcp/v1",
+                    "url": "http://host.docker.internal:3333/mcp/v1/",
                     "headers": {"Authorization": f"Bearer {sandbox_token}"},
                 }
                 logger.info(
