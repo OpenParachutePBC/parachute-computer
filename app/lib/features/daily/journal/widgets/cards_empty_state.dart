@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
+import '../screens/caller_management_screen.dart';
 
 /// Compact empty state shown on today's journal when no agent cards exist.
 ///
-/// Encourages the user to set up Callers (daily agents) via Settings.
+/// Encourages the user to set up Callers (daily agents) via the management screen.
 class CardsEmptyState extends StatelessWidget {
   const CardsEmptyState({super.key});
 
@@ -69,7 +70,11 @@ class CardsEmptyState extends StatelessWidget {
             ),
             SizedBox(width: Spacing.sm),
             TextButton(
-              onPressed: () => Navigator.of(context).pushNamed('/settings'),
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => const CallerManagementScreen(),
+                ),
+              ),
               style: TextButton.styleFrom(
                 foregroundColor:
                     isDark ? BrandColors.nightForest : BrandColors.forest,

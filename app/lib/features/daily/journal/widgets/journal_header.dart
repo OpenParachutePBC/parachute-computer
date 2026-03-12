@@ -5,6 +5,7 @@ import 'package:parachute/core/providers/sync_provider.dart';
 import 'package:parachute/core/services/sync_service.dart' show SyncStatus;
 import '../models/journal_day.dart';
 import '../providers/journal_providers.dart';
+import '../screens/caller_management_screen.dart';
 import 'package:parachute/features/settings/screens/settings_screen.dart';
 
 /// Journal screen header with date navigation and sync controls
@@ -104,6 +105,23 @@ class JournalHeader extends ConsumerWidget {
 
           // Sync/Refresh button with status indicator
           _SyncButton(isDark: isDark, onRefresh: onRefresh),
+
+          // Daily agents button
+          IconButton(
+            icon: Icon(
+              Icons.auto_awesome_outlined,
+              color: isDark ? BrandColors.driftwood : BrandColors.charcoal,
+            ),
+            tooltip: 'Daily agents',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const CallerManagementScreen(),
+                ),
+              );
+            },
+          ),
 
           // Settings button
           IconButton(
