@@ -1,11 +1,12 @@
-import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/core/services/computer_service.dart'
-    show DailyAgentInfo;
+    show CallerTemplate, DailyAgentInfo;
 import '../providers/journal_providers.dart';
 import '../utils/agent_theme.dart';
+import '../utils/time_helpers.dart';
 
 /// Tool definition for the context sources UI.
 class _ToolDef {
@@ -52,7 +53,7 @@ class CallerEditScreen extends ConsumerStatefulWidget {
   final DailyAgentInfo? caller;
 
   /// Non-null when creating from a template.
-  final Map<String, dynamic>? template;
+  final CallerTemplate? template;
 
   const CallerEditScreen({super.key, this.caller, this.template});
 
@@ -89,19 +90,12 @@ class _CallerEditScreenState extends ConsumerState<CallerEditScreen> {
     } else if (widget.template != null) {
       // Template mode — populate from template
       final t = widget.template!;
-      _nameController = TextEditingController(
-        text: t['display_name'] as String? ?? '',
-      );
-      _descriptionController = TextEditingController(
-        text: t['description'] as String? ?? '',
-      );
-      _promptController = TextEditingController(
-        text: t['system_prompt'] as String? ?? '',
-      );
-      final tools = t['tools'];
-      _enabledTools = tools is List ? Set.from(tools.cast<String>()) : {};
+      _nameController = TextEditingController(text: t.displayName);
+      _descriptionController = TextEditingController(text: t.description);
+      _promptController = TextEditingController(text: t.systemPrompt);
+      _enabledTools = Set.from(t.tools);
       _scheduleEnabled = false; // Templates start unscheduled
-      _scheduleTime = t['schedule_time'] as String? ?? '21:00';
+      _scheduleTime = t.scheduleTime;
     } else {
       // Blank creation
       _nameController = TextEditingController();
@@ -174,7 +168,13 @@ class _CallerEditScreenState extends ConsumerState<CallerEditScreen> {
           ),
           children: [
             // ── Name & Description ────────────────────────────────────
-            _SectionHeader(title: 'Identity', isDark: isDark),
+            Text(
+              'Identity',
+              style: theme.textTheme.titleSmall?.copyWith(
+                fontWeight: FontWeight.w600,
+                color: isDark ? BrandColors.softWhite : BrandColors.ink,
+              ),
+            ),
             SizedBox(height: Spacing.sm),
             TextFormField(
               controller: _nameController,
@@ -207,7 +207,13 @@ class _CallerEditScreenState extends ConsumerState<CallerEditScreen> {
 
             // ── System Prompt ─────────────────────────────────────────
             SizedBox(height: Spacing.xl),
-            _SectionHeader(title: 'System Prompt', isDark: isDark),
+            Text(
+              'System Prompt',
+              style: theme.textTheme.titleSmall?.copyWith(
+                fontWeight: FontWeight.w600,
+                color: isDark ? BrandColors.softWhite : BrandColors.ink,
+              ),
+            ),
             SizedBox(height: Spacing.xs),
             Text(
               'Use {user_name} and {user_context} as template variables.',
@@ -238,7 +244,13 @@ class _CallerEditScreenState extends ConsumerState<CallerEditScreen> {
 
             // ── Context Sources ───────────────────────────────────────
             SizedBox(height: Spacing.xl),
-            _SectionHeader(title: 'Context Sources', isDark: isDark),
+            Text(
+              'Context Sources',
+              style: theme.textTheme.titleSmall?.copyWith(
+                fontWeight: FontWeight.w600,
+                color: isDark ? BrandColors.softWhite : BrandColors.ink,
+              ),
+            ),
             SizedBox(height: Spacing.xs),
             Text(
               'Choose what information this caller can access.',
@@ -266,7 +278,13 @@ class _CallerEditScreenState extends ConsumerState<CallerEditScreen> {
 
             // ── Schedule ──────────────────────────────────────────────
             SizedBox(height: Spacing.xl),
-            _SectionHeader(title: 'Schedule', isDark: isDark),
+            Text(
+              'Schedule',
+              style: theme.textTheme.titleSmall?.copyWith(
+                fontWeight: FontWeight.w600,
+                color: isDark ? BrandColors.softWhite : BrandColors.ink,
+              ),
+            ),
             SizedBox(height: Spacing.sm),
             _ScheduleConfig(
               enabled: _scheduleEnabled,
@@ -285,20 +303,13 @@ class _CallerEditScreenState extends ConsumerState<CallerEditScreen> {
   }
 
   Future<void> _pickTime() async {
-    final parts = _scheduleTime.split(':');
-    final hour = int.tryParse(parts.firstOrNull ?? '') ?? 21;
-    final minute = int.tryParse(parts.length > 1 ? parts[1] : '') ?? 0;
-
     final picked = await showTimePicker(
       context: context,
-      initialTime: TimeOfDay(hour: hour, minute: minute),
+      initialTime: parseHHMM(_scheduleTime),
     );
     if (picked == null || !mounted) return;
 
-    setState(() {
-      _scheduleTime =
-          '${picked.hour.toString().padLeft(2, '0')}:${picked.minute.toString().padLeft(2, '0')}';
-    });
+    setState(() => _scheduleTime = formatTimeOfDay(picked));
   }
 
   Future<void> _save() async {
@@ -326,7 +337,7 @@ class _CallerEditScreenState extends ConsumerState<CallerEditScreen> {
       });
     } else {
       // Create new caller
-      final name = widget.template?['name'] as String? ?? _toSlug(displayName);
+      final name = widget.template?.name ?? _toSlug(displayName);
       if (name.isEmpty) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -354,7 +365,10 @@ class _CallerEditScreenState extends ConsumerState<CallerEditScreen> {
     if (!mounted) return;
 
     if (success) {
-      await api.reloadScheduler();
+      final reloaded = await api.reloadScheduler();
+      if (!reloaded) {
+        debugPrint('[CallerEditScreen] reloadScheduler failed');
+      }
       ref.invalidate(callersProvider);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -380,28 +394,6 @@ class _CallerEditScreenState extends ConsumerState<CallerEditScreen> {
         ),
       );
     }
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Section header
-// ─────────────────────────────────────────────────────────────────────────────
-
-class _SectionHeader extends StatelessWidget {
-  final String title;
-  final bool isDark;
-
-  const _SectionHeader({required this.title, required this.isDark});
-
-  @override
-  Widget build(BuildContext context) {
-    return Text(
-      title,
-      style: Theme.of(context).textTheme.titleSmall?.copyWith(
-        fontWeight: FontWeight.w600,
-        color: isDark ? BrandColors.softWhite : BrandColors.ink,
-      ),
-    );
   }
 }
 

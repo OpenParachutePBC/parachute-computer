@@ -394,6 +394,45 @@ class DailyAgentInfo {
   });
 }
 
+/// Starter caller template returned by the templates endpoint.
+class CallerTemplate {
+  final String name;
+  final String displayName;
+  final String description;
+  final String systemPrompt;
+  final List<String> tools;
+  final String scheduleTime;
+  final String trustLevel;
+
+  const CallerTemplate({
+    required this.name,
+    required this.displayName,
+    required this.description,
+    required this.systemPrompt,
+    required this.tools,
+    this.scheduleTime = '21:00',
+    this.trustLevel = 'sandboxed',
+  });
+
+  factory CallerTemplate.fromJson(Map<String, dynamic> json) {
+    final rawTools = json['tools'];
+    List<String> tools = [];
+    if (rawTools is List) {
+      tools = rawTools.cast<String>();
+    }
+    return CallerTemplate(
+      name: json['name'] as String? ?? '',
+      displayName:
+          json['display_name'] as String? ?? json['name'] as String? ?? '',
+      description: json['description'] as String? ?? '',
+      systemPrompt: json['system_prompt'] as String? ?? '',
+      tools: tools,
+      scheduleTime: json['schedule_time'] as String? ?? '21:00',
+      trustLevel: json['trust_level'] as String? ?? 'sandboxed',
+    );
+  }
+}
+
 /// Result of triggering a daily agent
 class AgentRunResult {
   final bool success;
