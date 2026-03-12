@@ -55,7 +55,8 @@ class DailyApiService {
 
   static const _timeout = Duration(seconds: 15);
 
-  DailyApiService({required this.baseUrl, this.apiKey}) : _client = http.Client();
+  DailyApiService({required this.baseUrl, this.apiKey})
+    : _client = http.Client();
 
   Map<String, String> get _headers => {
     'Content-Type': 'application/json',
@@ -70,9 +71,9 @@ class DailyApiService {
   /// Returns `[]` when the server responds HTTP 200 with no entries — this IS
   /// authoritative: the date genuinely has nothing and the cache should be cleared.
   Future<List<JournalEntry>?> getEntries({required String date}) async {
-    final uri = Uri.parse('$baseUrl/api/daily/entries').replace(
-      queryParameters: {'date': date, 'limit': '100'},
-    );
+    final uri = Uri.parse(
+      '$baseUrl/api/daily/entries',
+    ).replace(queryParameters: {'date': date, 'limit': '100'});
     debugPrint('[DailyApiService] GET $uri');
     try {
       final response = await _client
@@ -87,7 +88,9 @@ class DailyApiService {
       final decoded = jsonDecode(response.body) as Map<String, dynamic>;
       final List<dynamic> data = decoded['entries'] as List<dynamic>? ?? [];
       return data
-          .map((json) => JournalEntry.fromServerJson(json as Map<String, dynamic>))
+          .map(
+            (json) => JournalEntry.fromServerJson(json as Map<String, dynamic>),
+          )
           .toList();
     } catch (e) {
       debugPrint('[DailyApiService] getEntries error (offline?): $e');
@@ -158,7 +161,9 @@ class DailyApiService {
           .timeout(_timeout);
 
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        debugPrint('[DailyApiService] PATCH entries/$entryId ${response.statusCode}');
+        debugPrint(
+          '[DailyApiService] PATCH entries/$entryId ${response.statusCode}',
+        );
         return null;
       }
 
@@ -179,11 +184,14 @@ class DailyApiService {
           .delete(uri, headers: _headers)
           .timeout(_timeout);
 
-      if (response.statusCode == 404 || response.statusCode == 204 ||
+      if (response.statusCode == 404 ||
+          response.statusCode == 204 ||
           (response.statusCode >= 200 && response.statusCode < 300)) {
         return true;
       }
-      debugPrint('[DailyApiService] DELETE entries/$entryId ${response.statusCode}');
+      debugPrint(
+        '[DailyApiService] DELETE entries/$entryId ${response.statusCode}',
+      );
       return false;
     } catch (e) {
       debugPrint('[DailyApiService] deleteEntry error: $e');
@@ -205,9 +213,13 @@ class DailyApiService {
       if (apiKey != null && apiKey!.isNotEmpty) {
         request.headers['X-API-Key'] = apiKey!;
       }
-      final streamed = await request.send().timeout(const Duration(seconds: 30));
+      final streamed = await request.send().timeout(
+        const Duration(seconds: 30),
+      );
       if (streamed.statusCode == 201) {
-        final body = jsonDecode(await streamed.stream.bytesToString()) as Map<String, dynamic>;
+        final body =
+            jsonDecode(await streamed.stream.bytesToString())
+                as Map<String, dynamic>;
         return body['path'] as String?;
       }
       debugPrint('[DailyApiService] uploadAudio ${streamed.statusCode}');
@@ -229,11 +241,14 @@ class DailyApiService {
   /// Keyword search across all entries.
   ///
   /// Returns empty list on error or when offline.
-  Future<List<ApiSearchResult>> searchEntries(String query, {int limit = 30}) async {
+  Future<List<ApiSearchResult>> searchEntries(
+    String query, {
+    int limit = 30,
+  }) async {
     if (query.trim().isEmpty) return [];
-    final uri = Uri.parse('$baseUrl/api/daily/entries/search').replace(
-      queryParameters: {'q': query, 'limit': '$limit'},
-    );
+    final uri = Uri.parse(
+      '$baseUrl/api/daily/entries/search',
+    ).replace(queryParameters: {'q': query, 'limit': '$limit'});
     debugPrint('[DailyApiService] GET $uri');
     try {
       final response = await _client
@@ -295,7 +310,9 @@ class DailyApiService {
           .post(uri, headers: _headers, body: body)
           .timeout(const Duration(minutes: 5));
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        debugPrint('[DailyApiService] flexibleImport ${response.statusCode}: ${response.body}');
+        debugPrint(
+          '[DailyApiService] flexibleImport ${response.statusCode}: ${response.body}',
+        );
         return null;
       }
       return jsonDecode(response.body) as Map<String, dynamic>;
@@ -324,9 +341,9 @@ class DailyApiService {
   ///
   /// Returns an empty list on error or if the server is unreachable.
   Future<List<AgentCard>> fetchCards(String date) async {
-    final uri = Uri.parse('$baseUrl/api/daily/cards').replace(
-      queryParameters: {'date': date},
-    );
+    final uri = Uri.parse(
+      '$baseUrl/api/daily/cards',
+    ).replace(queryParameters: {'date': date});
     debugPrint('[DailyApiService] GET $uri');
     try {
       final response = await _client
@@ -367,13 +384,29 @@ class DailyApiService {
         final j = raw as Map<String, dynamic>;
         final scheduleEnabled =
             j['schedule_enabled']?.toString().toLowerCase() == 'true';
+        // Parse tools from JSON string or list
+        List<String> tools = [];
+        final rawTools = j['tools'];
+        if (rawTools is String && rawTools.isNotEmpty) {
+          try {
+            final parsed = jsonDecode(rawTools);
+            if (parsed is List) {
+              tools = parsed.cast<String>();
+            }
+          } catch (_) {}
+        } else if (rawTools is List) {
+          tools = rawTools.cast<String>();
+        }
         return DailyAgentInfo(
           name: j['name'] as String? ?? '',
-          displayName: j['display_name'] as String? ?? j['name'] as String? ?? '',
+          displayName:
+              j['display_name'] as String? ?? j['name'] as String? ?? '',
           description: j['description'] as String? ?? '',
+          systemPrompt: j['system_prompt'] as String? ?? '',
+          tools: tools,
+          trustLevel: j['trust_level'] as String? ?? 'sandboxed',
           scheduleEnabled: scheduleEnabled,
           scheduleTime: j['schedule_time'] as String? ?? '03:00',
-          outputPath: '',
         );
       }).toList();
     } catch (e) {
@@ -382,15 +415,79 @@ class DailyApiService {
     }
   }
 
+  /// Fetch starter Caller templates for onboarding.
+  ///
+  /// Returns a list of template maps with the same shape as POST /callers body.
+  Future<List<Map<String, dynamic>>> fetchTemplates() async {
+    final uri = Uri.parse('$baseUrl/api/daily/callers/templates');
+    debugPrint('[DailyApiService] GET $uri');
+    try {
+      final response = await _client
+          .get(uri, headers: _headers)
+          .timeout(_timeout);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        debugPrint('[DailyApiService] fetchTemplates ${response.statusCode}');
+        return [];
+      }
+      final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+      final List<dynamic> data = decoded['templates'] as List<dynamic>? ?? [];
+      return data.cast<Map<String, dynamic>>();
+    } catch (e) {
+      debugPrint('[DailyApiService] fetchTemplates error: $e');
+      return [];
+    }
+  }
+
+  /// Create a new Caller node on the server.
+  ///
+  /// [body] has the same shape as the Caller graph node fields.
+  /// Returns the created caller data on success, or null on error.
+  Future<Map<String, dynamic>?> createCaller(Map<String, dynamic> body) async {
+    final uri = Uri.parse('$baseUrl/api/daily/callers');
+    debugPrint('[DailyApiService] POST $uri');
+    try {
+      final response = await _client
+          .post(uri, headers: _headers, body: jsonEncode(body))
+          .timeout(_timeout);
+      if (response.statusCode == 201 ||
+          (response.statusCode >= 200 && response.statusCode < 300)) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      }
+      debugPrint('[DailyApiService] createCaller ${response.statusCode}');
+      return null;
+    } catch (e) {
+      debugPrint('[DailyApiService] createCaller error: $e');
+      return null;
+    }
+  }
+
+  /// Delete a Caller node. Returns true on success.
+  Future<bool> deleteCaller(String name) async {
+    final uri = Uri.parse('$baseUrl/api/daily/callers/$name');
+    debugPrint('[DailyApiService] DELETE $uri');
+    try {
+      final response = await _client
+          .delete(uri, headers: _headers)
+          .timeout(_timeout);
+      return response.statusCode == 204 ||
+          (response.statusCode >= 200 && response.statusCode < 300);
+    } catch (e) {
+      debugPrint('[DailyApiService] deleteCaller error: $e');
+      return false;
+    }
+  }
+
   /// Trigger an agent run for a date (202 Accepted — runs in background).
   ///
   /// Returns an [AgentRunResult] with status "started" on success, or error on failure.
-  Future<AgentRunResult> triggerAgentRun(String agentName, {String? date}) async {
-    final queryParams = <String, String>{
-      if (date != null) 'date': date,
-    };
-    final uri = Uri.parse('$baseUrl/api/daily/cards/$agentName/run')
-        .replace(queryParameters: queryParams.isEmpty ? null : queryParams);
+  Future<AgentRunResult> triggerAgentRun(
+    String agentName, {
+    String? date,
+  }) async {
+    final queryParams = <String, String>{if (date != null) 'date': date};
+    final uri = Uri.parse(
+      '$baseUrl/api/daily/cards/$agentName/run',
+    ).replace(queryParameters: queryParams.isEmpty ? null : queryParams);
     debugPrint('[DailyApiService] POST $uri');
     try {
       final response = await _client
@@ -407,7 +504,11 @@ class DailyApiService {
       );
     } catch (e) {
       debugPrint('[DailyApiService] triggerAgentRun error: $e');
-      return AgentRunResult(success: false, status: 'error', error: e.toString());
+      return AgentRunResult(
+        success: false,
+        status: 'error',
+        error: e.toString(),
+      );
     }
   }
 
