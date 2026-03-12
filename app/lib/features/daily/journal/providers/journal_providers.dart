@@ -8,7 +8,7 @@ import 'package:parachute/core/providers/app_state_provider.dart'
 import 'package:parachute/core/providers/backend_health_provider.dart'
     show periodicServerHealthProvider;
 import 'package:parachute/core/services/computer_service.dart'
-    show DailyAgentInfo;
+    show CallerTemplate, DailyAgentInfo;
 import '../models/chat_log.dart';
 import '../models/journal_entry.dart';
 import '../models/journal_day.dart';
@@ -308,7 +308,7 @@ final callersProvider = FutureProvider.autoDispose<List<DailyAgentInfo>>((
 ///
 /// Used by the empty state in [CallerManagementScreen] to offer one-tap creation.
 final callerTemplatesProvider =
-    FutureProvider.autoDispose<List<Map<String, dynamic>>>((ref) async {
+    FutureProvider.autoDispose<List<CallerTemplate>>((ref) async {
       final api = ref.watch(dailyApiServiceProvider);
       return api.fetchTemplates();
     });

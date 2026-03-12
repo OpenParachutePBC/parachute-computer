@@ -7,7 +7,7 @@ import '../widgets/caller_detail_sheet.dart';
 import 'agent_log_screen.dart';
 import 'caller_edit_screen.dart';
 import 'package:parachute/core/services/computer_service.dart'
-    show DailyAgentInfo;
+    show CallerTemplate, DailyAgentInfo;
 
 /// Full-screen Caller management — browse, enable/disable, and configure agents.
 class CallerManagementScreen extends ConsumerWidget {
@@ -213,9 +213,10 @@ class _CallerCard extends ConsumerWidget {
     final success = await api.updateCaller(caller.name, {
       'schedule_enabled': enabled,
     });
+    if (!context.mounted) return;
     if (success) {
       await api.reloadScheduler();
-    } else if (context.mounted) {
+    } else {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Failed to update ${caller.displayName}'),
@@ -358,7 +359,7 @@ class _EmptyCallersView extends ConsumerWidget {
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _TemplateCard extends StatelessWidget {
-  final Map<String, dynamic> template;
+  final CallerTemplate template;
   final bool isDark;
 
   const _TemplateCard({required this.template, required this.isDark});
@@ -366,10 +367,7 @@ class _TemplateCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final name = template['name'] as String? ?? '';
-    final displayName = template['display_name'] as String? ?? name;
-    final description = template['description'] as String? ?? '';
-    final agentTheme = AgentTheme.forAgent(name);
+    final agentTheme = AgentTheme.forAgent(template.name);
 
     return Padding(
       padding: EdgeInsets.only(bottom: Spacing.md),
@@ -418,7 +416,7 @@ class _TemplateCard extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        displayName,
+                        template.displayName,
                         style: theme.textTheme.titleSmall?.copyWith(
                           fontWeight: FontWeight.w600,
                           color: isDark
@@ -426,10 +424,10 @@ class _TemplateCard extends StatelessWidget {
                               : BrandColors.ink,
                         ),
                       ),
-                      if (description.isNotEmpty) ...[
+                      if (template.description.isNotEmpty) ...[
                         SizedBox(height: Spacing.xs),
                         Text(
-                          description,
+                          template.description,
                           style: theme.textTheme.bodySmall?.copyWith(
                             color: BrandColors.driftwood,
                           ),

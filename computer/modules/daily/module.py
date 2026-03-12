@@ -22,7 +22,7 @@ import tempfile
 import uuid
 from datetime import date as _date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Literal, Optional
+from typing import Any, Literal, Optional, TypedDict
 
 from fastapi import APIRouter, Query, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
@@ -40,7 +40,18 @@ logger = logging.getLogger(__name__)
 # Starter definitions returned by GET /callers/templates. Each has the same
 # shape as the POST /callers body so the client can create directly from them.
 
-CALLER_TEMPLATES = [
+
+class CallerTemplateDict(TypedDict):
+    name: str
+    display_name: str
+    description: str
+    system_prompt: str
+    tools: list[str]
+    schedule_time: str
+    trust_level: str
+
+
+CALLER_TEMPLATES: list[CallerTemplateDict] = [
     {
         "name": "daily-reflection",
         "display_name": "Daily Reflection",
@@ -1319,9 +1330,11 @@ class DailyModule:
             return {"card_id": card_id, "status": "done", "date": date_str}
 
         # ── Callers (agent definitions) ──────────────────────────────────────
+        # IMPORTANT: /callers/templates must be registered before /callers/{name}
+        # so FastAPI matches the literal path before the path parameter.
 
         @router.get("/callers/templates")
-        async def list_caller_templates():
+        def list_caller_templates() -> dict[str, list[CallerTemplateDict]]:
             """Return starter Caller templates for onboarding.
 
             Templates have the same shape as POST /callers bodies so the

@@ -5,7 +5,7 @@ import 'package:http/http.dart' as http;
 import '../models/journal_entry.dart';
 import '../models/agent_card.dart';
 import 'package:parachute/core/services/computer_service.dart'
-    show DailyAgentInfo, AgentRunResult;
+    show DailyAgentInfo, AgentRunResult, CallerTemplate;
 
 /// Raw search result from the server API.
 ///
@@ -417,8 +417,8 @@ class DailyApiService {
 
   /// Fetch starter Caller templates for onboarding.
   ///
-  /// Returns a list of template maps with the same shape as POST /callers body.
-  Future<List<Map<String, dynamic>>> fetchTemplates() async {
+  /// Returns typed [CallerTemplate] objects parsed from the server response.
+  Future<List<CallerTemplate>> fetchTemplates() async {
     final uri = Uri.parse('$baseUrl/api/daily/callers/templates');
     debugPrint('[DailyApiService] GET $uri');
     try {
@@ -431,7 +431,9 @@ class DailyApiService {
       }
       final decoded = jsonDecode(response.body) as Map<String, dynamic>;
       final List<dynamic> data = decoded['templates'] as List<dynamic>? ?? [];
-      return data.cast<Map<String, dynamic>>();
+      return data
+          .map((json) => CallerTemplate.fromJson(json as Map<String, dynamic>))
+          .toList();
     } catch (e) {
       debugPrint('[DailyApiService] fetchTemplates error: $e');
       return [];
