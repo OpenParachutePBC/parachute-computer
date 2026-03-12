@@ -180,9 +180,10 @@ async def get_daily_agent_config(vault_path: Path, agent_name: str, graph=None) 
 
 async def load_vault_mcps(vault_path: Path) -> dict[str, dict[str, Any]]:
     """
-    Load MCP servers from the vault's .mcp.json.
+    Load stdio MCP servers from the vault's .mcp.json.
 
-    Only returns stdio servers since the Claude SDK doesn't support HTTP MCPs.
+    Used by direct-mode (non-sandboxed) callers. Filters to stdio-only since
+    direct callers run in-process and don't need the HTTP MCP bridge.
     """
     from parachute.lib.mcp_loader import load_mcp_servers, filter_stdio_servers
 
@@ -272,16 +273,16 @@ async def _mark_card_failed(graph, card_id: str) -> None:
             pass
 
 
-def _build_daily_tools_mcp_config(agent_name: str) -> dict[str, Any]:
-    """Build the MCP server config for daily_tools_mcp.py inside the container."""
-    # The script is mounted at /workspace/daily_tools_mcp.py inside the container
+def _build_http_mcp_config(token: str) -> dict[str, Any]:
+    """Build HTTP MCP server config pointing to the host's MCP bridge.
+
+    The container connects over the Docker network to the host's Streamable
+    HTTP MCP endpoint. Auth is via session-scoped bearer token.
+    """
     return {
-        "command": "python",
-        "args": ["/workspace/daily_tools_mcp.py"],
-        "env": {
-            "PARACHUTE_CALLER_NAME": agent_name,
-            "PARACHUTE_HOST_URL": "http://host.docker.internal:3333",
-        },
+        "type": "http",
+        "url": "http://host.docker.internal:3333/mcp/v1",
+        "headers": {"Authorization": f"Bearer {token}"},
     }
 
 
@@ -299,22 +300,31 @@ async def _run_sandboxed(
 ) -> dict[str, Any]:
     """Run a daily agent inside a Docker sandbox container."""
     from parachute.core.sandbox import AgentSandboxConfig
-    from parachute.core.capability_filter import filter_by_trust_level
 
     agent_name = config.name
 
-    # Build daily tools MCP config (runs inside the container)
-    daily_tools_mcp = _build_daily_tools_mcp_config(agent_name)
+    # Create a sandbox token for this caller session
+    from parachute.core.interfaces import get_registry
+    from parachute.lib.sandbox_tokens import SandboxTokenContext
 
-    # Load and filter vault MCPs for sandboxed trust level
-    vault_mcps = await load_vault_mcps(vault_path)
-    filtered_mcps = filter_by_trust_level(vault_mcps, "sandboxed")
+    token_store = get_registry().get("SandboxTokenStore")
+    sandbox_token = None
+    if token_store is not None:
+        token_ctx = SandboxTokenContext(
+            session_id=f"caller-{agent_name}",
+            trust_level="sandboxed",
+            agent_name=agent_name,
+            allowed_writes=["write_output"],
+        )
+        sandbox_token = token_store.create_token(token_ctx)
 
-    # Combine daily tools MCP with filtered vault MCPs
-    all_mcp_servers = {
-        f"daily_{agent_name}": daily_tools_mcp,
-        **filtered_mcps,
-    }
+    # Build HTTP MCP config pointing to host's MCP bridge
+    if sandbox_token:
+        mcp_config = _build_http_mcp_config(sandbox_token)
+        all_mcp_servers = {"parachute": mcp_config}
+    else:
+        logger.warning(f"SandboxTokenStore not available, caller '{agent_name}' will have no MCP tools")
+        all_mcp_servers = {}
 
     # Slug used as both session ID (for resume) and project slug (for container)
     slug = f"caller-{agent_name}"
@@ -362,27 +372,6 @@ async def _run_sandboxed(
     }
 
     try:
-        # Mount the daily_tools_mcp.py script into the container
-        # The sandbox run_session uses docker exec, so we need to copy the script
-        # into the container's workspace on first use
-        mcp_script = Path(__file__).parent.parent / "docker" / "daily_tools_mcp.py"
-        if mcp_script.exists():
-            # Ensure container exists first
-            await sandbox.ensure_container(slug, sandbox_config)
-            container_name = f"parachute-env-{slug}"
-
-            # Copy MCP script into container
-            copy_proc = await asyncio.create_subprocess_exec(
-                "docker", "cp",
-                str(mcp_script),
-                f"{container_name}:/workspace/daily_tools_mcp.py",
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            _, stderr = await copy_proc.communicate()
-            if copy_proc.returncode != 0:
-                logger.warning(f"Failed to copy daily_tools_mcp.py to container: {stderr.decode()}")
-
         output_written = False
         captured_session_id = None
         captured_model = None
@@ -402,7 +391,9 @@ async def _run_sandboxed(
                 captured_model = event.get("model")
             elif event_type == "tool_use":
                 tool = event.get("tool", {})
-                if tool.get("name") == "write_output":
+                tool_name = tool.get("name", "")
+                # Tool name may be bare or MCP-prefixed (mcp__parachute__write_output)
+                if tool_name == "write_output" or tool_name.endswith("__write_output"):
                     output_written = True
             elif event_type == "error":
                 error_msg = event.get("error", "Unknown sandbox error")
@@ -441,6 +432,10 @@ async def _run_sandboxed(
         result["status"] = "error"
         result["error"] = str(e)
         await _mark_card_failed(graph, card_id)
+    finally:
+        # Revoke sandbox token after run completes
+        if sandbox_token and token_store is not None:
+            token_store.revoke_token(sandbox_token)
 
     return result
 
