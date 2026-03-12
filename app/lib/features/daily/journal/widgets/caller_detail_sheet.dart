@@ -4,7 +4,6 @@ import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/core/services/computer_service.dart'
     show DailyAgentInfo;
 import '../providers/journal_providers.dart';
-import '../screens/agent_log_screen.dart';
 import '../utils/agent_theme.dart';
 
 /// Bottom sheet showing Caller details with schedule config and actions.
@@ -15,10 +14,15 @@ class CallerDetailSheet extends ConsumerStatefulWidget {
   /// then invokes this callback so navigation uses the parent's context.
   final VoidCallback? onViewHistory;
 
+  /// Called when the user taps "Edit". The sheet pops itself first,
+  /// then invokes this callback so navigation uses the parent's context.
+  final VoidCallback? onEdit;
+
   const CallerDetailSheet({
     super.key,
     required this.caller,
     this.onViewHistory,
+    this.onEdit,
   });
 
   @override
@@ -155,6 +159,17 @@ class _CallerDetailSheetState extends ConsumerState<CallerDetailSheet> {
                     ),
                     SizedBox(height: Spacing.sm),
                     _ActionButton(
+                      icon: Icons.edit_outlined,
+                      label: 'Edit caller',
+                      color: isDark
+                          ? BrandColors.nightTurquoise
+                          : BrandColors.turquoise,
+                      isDark: isDark,
+                      showChevron: true,
+                      onTap: () => _editCaller(context),
+                    ),
+                    SizedBox(height: Spacing.sm),
+                    _ActionButton(
                       icon: Icons.play_arrow,
                       label: _isRunning ? 'Running...' : 'Run now',
                       color: isDark
@@ -269,6 +284,11 @@ class _CallerDetailSheetState extends ConsumerState<CallerDetailSheet> {
   void _viewHistory(BuildContext context) {
     Navigator.pop(context); // Close sheet first
     widget.onViewHistory?.call();
+  }
+
+  void _editCaller(BuildContext context) {
+    Navigator.pop(context); // Close sheet first
+    widget.onEdit?.call();
   }
 
   Future<void> _resetCaller(BuildContext context) async {
