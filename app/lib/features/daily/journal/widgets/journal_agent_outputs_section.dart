@@ -14,10 +14,7 @@ import 'agent_output_header.dart';
 class JournalAgentOutputsSection extends ConsumerWidget {
   final List<AgentCard> cards;
 
-  const JournalAgentOutputsSection({
-    super.key,
-    required this.cards,
-  });
+  const JournalAgentOutputsSection({super.key, required this.cards});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -46,6 +43,9 @@ class JournalAgentOutputsSection extends ConsumerWidget {
     final api = ref.read(dailyApiServiceProvider);
     try {
       await api.triggerAgentRun(card.agentName, date: card.date);
+      // Brief pause so the server has time to write the "running" card
+      // before we refresh — otherwise we re-fetch the stale "failed" card.
+      await Future<void>.delayed(const Duration(seconds: 2));
     } catch (e) {
       debugPrint('Retry failed for ${card.agentName}: $e');
     }
@@ -137,11 +137,7 @@ class _AgentRunningCardState extends State<_AgentRunningCard>
               color: _agentTheme.color.withValues(alpha: 0.15),
               borderRadius: BorderRadius.circular(Radii.md),
             ),
-            child: Icon(
-              _agentTheme.icon,
-              size: 24,
-              color: _agentTheme.color,
-            ),
+            child: Icon(_agentTheme.icon, size: 24, color: _agentTheme.color),
           ),
           SizedBox(width: Spacing.md + Spacing.xxs),
           Expanded(
@@ -183,20 +179,43 @@ class _AgentRunningCardState extends State<_AgentRunningCard>
 // Failed Card — gentle error state with tap-to-retry
 // ─────────────────────────────────────────────────────────────────────────────
 
-class _AgentFailedCard extends StatelessWidget {
+class _AgentFailedCard extends StatefulWidget {
   final AgentCard card;
-  final VoidCallback onRetry;
+  final Future<void> Function() onRetry;
 
-  const _AgentFailedCard({
-    required this.card,
-    required this.onRetry,
-  });
+  const _AgentFailedCard({required this.card, required this.onRetry});
+
+  @override
+  State<_AgentFailedCard> createState() => _AgentFailedCardState();
+}
+
+class _AgentFailedCardState extends State<_AgentFailedCard> {
+  bool _retrying = false;
+
+  Future<void> _handleTap() async {
+    if (_retrying) return;
+    setState(() => _retrying = true);
+    try {
+      await widget.onRetry();
+    } finally {
+      // Reset after the API call completes (success or failure).
+      // The card will either disappear (replaced by running card on
+      // next refresh) or stay failed — either way, re-enable the button.
+      if (mounted) setState(() => _retrying = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
-    final agentTheme = AgentTheme.forAgent(card.agentName);
+    final agentTheme = AgentTheme.forAgent(widget.card.agentName);
+
+    // Once retrying, show the same style as the running card
+    final accentColor = _retrying ? agentTheme.color : BrandColors.error;
+    final borderColor = _retrying
+        ? agentTheme.color.withValues(alpha: isDark ? 0.3 : 0.2)
+        : BrandColors.error.withValues(alpha: isDark ? 0.3 : 0.2);
 
     return Padding(
       padding: EdgeInsets.symmetric(
@@ -206,7 +225,7 @@ class _AgentFailedCard extends StatelessWidget {
       child: Material(
         color: Colors.transparent,
         child: InkWell(
-          onTap: onRetry,
+          onTap: _retrying ? null : _handleTap,
           borderRadius: Radii.card,
           child: Container(
             padding: EdgeInsets.all(Spacing.lg),
@@ -215,23 +234,24 @@ class _AgentFailedCard extends StatelessWidget {
                   ? BrandColors.nightSurfaceElevated
                   : BrandColors.softWhite,
               borderRadius: Radii.card,
-              border: Border.all(
-                color: BrandColors.error.withValues(alpha: isDark ? 0.3 : 0.2),
-              ),
+              border: Border.all(color: borderColor),
             ),
             child: Row(
               children: [
-                // Agent icon with warning tint
                 Container(
                   padding: const EdgeInsets.all(10),
                   decoration: BoxDecoration(
-                    color: BrandColors.error.withValues(alpha: 0.1),
+                    color: accentColor.withValues(
+                      alpha: _retrying ? 0.15 : 0.1,
+                    ),
                     borderRadius: BorderRadius.circular(Radii.md),
                   ),
                   child: Icon(
                     agentTheme.icon,
                     size: 24,
-                    color: BrandColors.error.withValues(alpha: 0.7),
+                    color: _retrying
+                        ? accentColor
+                        : accentColor.withValues(alpha: 0.7),
                   ),
                 ),
                 SizedBox(width: Spacing.md + Spacing.xxs),
@@ -240,7 +260,9 @@ class _AgentFailedCard extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        "Couldn\u2019t generate today\u2019s ${card.displayName.toLowerCase()}",
+                        _retrying
+                            ? widget.card.displayName
+                            : "Couldn\u2019t generate today\u2019s ${widget.card.displayName.toLowerCase()}",
                         style: theme.textTheme.titleSmall?.copyWith(
                           fontWeight: FontWeight.w600,
                           color: isDark
@@ -250,7 +272,9 @@ class _AgentFailedCard extends StatelessWidget {
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        'Tap to try again',
+                        _retrying
+                            ? 'Retrying\u2026 this may take a few minutes'
+                            : 'Tap to try again',
                         style: theme.textTheme.bodySmall?.copyWith(
                           color: BrandColors.driftwood,
                         ),
@@ -258,11 +282,17 @@ class _AgentFailedCard extends StatelessWidget {
                     ],
                   ),
                 ),
-                Icon(
-                  Icons.refresh,
-                  size: 20,
-                  color: BrandColors.driftwood,
-                ),
+                if (_retrying)
+                  SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: agentTheme.color.withValues(alpha: 0.6),
+                    ),
+                  )
+                else
+                  Icon(Icons.refresh, size: 20, color: BrandColors.driftwood),
               ],
             ),
           ),
