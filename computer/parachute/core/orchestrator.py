@@ -1111,6 +1111,21 @@ class Orchestrator:
                     if event.get("session_id"):
                         captured_session_id = event["session_id"]
 
+                elif event_type == "event_timeout":
+                    timeout_s = event.get("timeout_seconds", "?")
+                    end_reason = f"event_timeout ({timeout_s}s)"
+                    logger.warning(
+                        f"SDK event timeout after {timeout_s}s: "
+                        f"session={captured_session_id or session.id[:8]}"
+                    )
+                    typed = parse_error(
+                        f"Response timed out after {timeout_s}s of inactivity"
+                    )
+                    yield TypedErrorEvent.from_typed_error(
+                        typed, session_id=captured_session_id or session.id
+                    ).model_dump(by_alias=True)
+                    return
+
                 elif event_type == "error":
                     error_msg = event.get("error", "Unknown SDK error")
                     logger.error(f"SDK error event received: {error_msg}")

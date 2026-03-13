@@ -352,6 +352,11 @@ async def query_streaming(
                     f"Event queue timeout after {event_timeout}s — "
                     f"consumer_alive={consumer_alive}"
                 )
+                yield {
+                    "type": "event_timeout",
+                    "timeout_seconds": event_timeout,
+                    "consumer_alive": consumer_alive,
+                }
                 break
             if event_dict is None:
                 break

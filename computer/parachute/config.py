@@ -243,6 +243,7 @@ class Settings(BaseSettings):
     # Trusted path timeouts
     trusted_event_timeout: int = Field(
         default=300,
+        ge=1,
         description="Per-event timeout for trusted SDK event queue in seconds (default: 300 = 5 min)",
     )
 
