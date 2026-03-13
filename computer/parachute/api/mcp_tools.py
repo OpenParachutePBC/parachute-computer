@@ -142,6 +142,82 @@ TOOLS = [
             "required": ["content", "date"],
         },
     ),
+    # Chat Memory Tools (shared handlers — same in direct MCP and sandbox bridge)
+    Tool(
+        name="search_chats",
+        description=(
+            "Search across all past chat conversations by keyword. "
+            "Returns chats with matching exchanges bundled underneath — "
+            "shows what was actually said, not just session-level pointers. "
+            "Each matching exchange includes user/AI snippets for quick review. "
+            "Use get_exchange to drill into full content of a specific exchange."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Keyword or phrase to search for",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max chats to return (default: 10)",
+                    "default": 10,
+                },
+                "module": {
+                    "type": "string",
+                    "description": "Optional: filter by module (e.g. 'chat', 'daily')",
+                },
+            },
+            "required": ["query"],
+        },
+    ),
+    Tool(
+        name="get_chat",
+        description=(
+            "Browse a specific chat conversation. Returns chat metadata "
+            "plus its exchanges (most recent N, truncated). Use get_exchange "
+            "to see full untruncated content of any specific exchange."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "session_id": {
+                    "type": "string",
+                    "description": "The chat's session_id",
+                },
+                "exchange_limit": {
+                    "type": "integer",
+                    "description": "Max exchanges to return (default: 25, most recent)",
+                    "default": 25,
+                },
+                "max_chars": {
+                    "type": "integer",
+                    "description": "Max chars per message before truncation (default: 2000)",
+                    "default": 2000,
+                },
+            },
+            "required": ["session_id"],
+        },
+    ),
+    Tool(
+        name="get_exchange",
+        description=(
+            "Get a single exchange by ID with full message content "
+            "(user message + AI response, untruncated). "
+            "Use after search_chats or get_chat identifies a specific exchange of interest."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "exchange_id": {
+                    "type": "string",
+                    "description": "Exchange ID (format: session_id_prefix:ex:N)",
+                },
+            },
+            "required": ["exchange_id"],
+        },
+    ),
 ]
 
 
@@ -383,6 +459,55 @@ async def _handle_write_output(arguments: dict[str, Any]) -> str:
     return json.dumps({"card_id": card_id, "status": "done", "date": date_str})
 
 
+# ── Chat Memory Handlers (shared with direct MCP server) ─────────────────────
+
+
+async def _handle_search_chats(arguments: dict[str, Any]) -> str:
+    """Search across all chats with bundled exchange results."""
+    graph = _get_graph()
+    if graph is None:
+        return json.dumps({"error": "BrainDB not available"})
+
+    from parachute.core.chat_memory import search_chats
+    result = await search_chats(
+        graph,
+        query=arguments.get("query", ""),
+        limit=arguments.get("limit", 10),
+        module=arguments.get("module"),
+    )
+    return json.dumps(result, default=str)
+
+
+async def _handle_get_chat(arguments: dict[str, Any]) -> str:
+    """Browse a specific chat with paginated exchanges."""
+    graph = _get_graph()
+    if graph is None:
+        return json.dumps({"error": "BrainDB not available"})
+
+    from parachute.core.chat_memory import get_chat
+    result = await get_chat(
+        graph,
+        session_id=arguments.get("session_id", ""),
+        exchange_limit=arguments.get("exchange_limit", 25),
+        max_chars=arguments.get("max_chars", 2000),
+    )
+    return json.dumps(result, default=str)
+
+
+async def _handle_get_exchange(arguments: dict[str, Any]) -> str:
+    """Get a single exchange with full untruncated content."""
+    graph = _get_graph()
+    if graph is None:
+        return json.dumps({"error": "BrainDB not available"})
+
+    from parachute.core.chat_memory import get_exchange
+    result = await get_exchange(
+        graph,
+        exchange_id=arguments.get("exchange_id", ""),
+    )
+    return json.dumps(result, default=str)
+
+
 # ── Handler Dispatch ──────────────────────────────────────────────────────────
 
 _HANDLERS = {
@@ -392,6 +517,10 @@ _HANDLERS = {
     "list_recent_sessions": _handle_list_recent_sessions,
     "read_brain_entity": _handle_read_brain_entity,
     "write_output": _handle_write_output,
+    # Chat memory (shared handlers)
+    "search_chats": _handle_search_chats,
+    "get_chat": _handle_get_chat,
+    "get_exchange": _handle_get_exchange,
 }
 
 

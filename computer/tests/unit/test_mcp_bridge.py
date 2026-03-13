@@ -92,6 +92,10 @@ class TestMcpToolRegistration:
         assert "list_recent_sessions" in tool_names
         assert "read_brain_entity" in tool_names
         assert "write_output" in tool_names
+        # Chat memory tools (shared handlers)
+        assert "search_chats" in tool_names
+        assert "get_chat" in tool_names
+        assert "get_exchange" in tool_names
 
     def test_all_tools_have_handlers(self):
         from parachute.api.mcp_tools import TOOLS, _HANDLERS
