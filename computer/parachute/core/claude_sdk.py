@@ -359,14 +359,10 @@ async def query_streaming(
             except (asyncio.CancelledError, Exception):
                 pass
         # Log queue drain state for debugging stream lifecycle
-        queue_remaining = event_queue.qsize() if consumer_task is not None else 0
-        consumer_state = (
-            consumer_task.done() if consumer_task is not None else "no_task"
-        )
-        logger.info(
-            f"query_streaming cleanup: queue_remaining={queue_remaining}, "
-            f"consumer_done={consumer_state}"
-        )
+        if consumer_task is not None:
+            logger.info(
+                f"query_streaming cleanup: queue_remaining={event_queue.qsize()}"
+            )
 
 
 def _event_to_dict(event: Any) -> dict[str, Any]:

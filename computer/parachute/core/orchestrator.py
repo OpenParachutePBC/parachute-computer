@@ -1138,8 +1138,9 @@ class Orchestrator:
 
             # Stream ended — log lifecycle info
             end_reason = "interrupted" if interrupt.is_interrupted else "normal"
+            session_label = captured_session_id or (session.id[:8] if session.id else "unknown")
             logger.info(
-                f"Stream ended: session={captured_session_id or session.id[:8] if session.id else 'unknown'}, "
+                f"Stream ended: session={session_label}, "
                 f"reason={end_reason}, result_len={len(result_text)}, "
                 f"model={captured_model}"
             )

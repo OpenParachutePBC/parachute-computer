@@ -562,9 +562,11 @@ class _TabShellState extends ConsumerState<_TabShell> with WidgetsBindingObserve
       }
     });
 
-    // Listen for agent question events to show toast
+    // Listen for agent question events to show toast (skip if viewing that session)
     ref.listen<AgentQuestionEvent?>(agentQuestionProvider, (previous, next) {
       if (next != null && next != previous) {
+        final activeViewSessionId = ref.read(activeViewSessionIdProvider);
+        if (next.sessionId == activeViewSessionId) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('${next.title} \u2014 has a question'),
