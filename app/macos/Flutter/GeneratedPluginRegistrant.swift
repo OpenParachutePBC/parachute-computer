@@ -14,7 +14,6 @@ import flutter_blue_plus_darwin
 import flutter_local_notifications
 import flutter_secure_storage_macos
 import just_audio
-import macos_secure_bookmarks
 import nordic_dfu
 import package_info_plus
 import path_provider_foundation
@@ -35,7 +34,6 @@ func RegisterGeneratedPlugins(registry: FlutterPluginRegistry) {
   FlutterLocalNotificationsPlugin.register(with: registry.registrar(forPlugin: "FlutterLocalNotificationsPlugin"))
   FlutterSecureStoragePlugin.register(with: registry.registrar(forPlugin: "FlutterSecureStoragePlugin"))
   JustAudioPlugin.register(with: registry.registrar(forPlugin: "JustAudioPlugin"))
-  SecureBookmarksPlugin.register(with: registry.registrar(forPlugin: "SecureBookmarksPlugin"))
   NordicDfuPlugin.register(with: registry.registrar(forPlugin: "NordicDfuPlugin"))
   FPPPackageInfoPlusPlugin.register(with: registry.registrar(forPlugin: "FPPPackageInfoPlusPlugin"))
   PathProviderPlugin.register(with: registry.registrar(forPlugin: "PathProviderPlugin"))

@@ -177,7 +177,7 @@ async def get_manifest(
         return ManifestResponse(
             root=root,
             files=[],
-            generated_at=datetime.now(timezone.utc).isoformat() + "Z",
+            generated_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
         )
 
     if not sync_root.is_dir():
@@ -283,7 +283,7 @@ async def get_manifest(
     return ManifestResponse(
         root=root,
         files=files,
-        generated_at=datetime.now(timezone.utc).isoformat() + "Z",
+        generated_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
     )
 
 
@@ -320,7 +320,7 @@ async def get_changes(
             root=root,
             files=[],
             since=since,
-            generated_at=datetime.now(timezone.utc).isoformat() + "Z",
+            generated_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
         )
 
     files: list[FileInfo] = []
@@ -364,7 +364,7 @@ async def get_changes(
         root=root,
         files=files,
         since=since,
-        generated_at=datetime.now(timezone.utc).isoformat() + "Z",
+        generated_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
     )
 
 

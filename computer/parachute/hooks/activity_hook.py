@@ -226,7 +226,7 @@ async def append_activity_log(
     log_file = log_dir / f"{today}.jsonl"
 
     entry = {
-        "ts": datetime.now(timezone.utc).isoformat() + "Z",
+        "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
         "session_id": session_id,
         "session_title": session_title,
         "agent_type": agent_type,

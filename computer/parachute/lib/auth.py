@@ -39,12 +39,22 @@ class APIKey:
     @classmethod
     def from_dict(cls, data: dict) -> "APIKey":
         """Create from dictionary."""
+
+        def _parse_dt(s: str | None) -> datetime | None:
+            if not s:
+                return None
+            dt = datetime.fromisoformat(s)
+            # Normalize naive timestamps (pre-v0.2.11) to UTC-aware
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt
+
         return cls(
             id=data["id"],
             label=data["label"],
             key_hash=data["key_hash"],
-            created_at=datetime.fromisoformat(data["created_at"]),
-            last_used_at=datetime.fromisoformat(data["last_used_at"]) if data.get("last_used_at") else None,
+            created_at=_parse_dt(data["created_at"]),  # type: ignore[arg-type]
+            last_used_at=_parse_dt(data.get("last_used_at")),
         )
 
 

@@ -116,7 +116,6 @@ class StreamingVoiceService {
   static const int _rollingBufferMaxSamples = 16000 * 30; // 30 seconds max
   // Re-transcription interval removed - using LocalAgreement via LiveTranscriptionService
 
-  Timer? _reTranscriptionTimer;
   Timer? _recordingDurationTimer;
 
   // === LocalAgreement-2 State ===
@@ -419,12 +418,6 @@ class StreamingVoiceService {
 
     await raf.close();
     debugPrint('[StreamingVoice] Finalized WAV: ${dataSize ~/ 1024}KB');
-  }
-
-  /// Stop re-transcription loop
-  void _stopReTranscriptionLoop() {
-    _reTranscriptionTimer?.cancel();
-    _reTranscriptionTimer = null;
   }
 
   /// Start recording duration timer
@@ -847,7 +840,6 @@ class StreamingVoiceService {
     try {
       debugPrint('[StreamingVoice] Stopping recording...');
 
-      _stopReTranscriptionLoop();
       _stopRecordingDurationTimer();
 
       await _audioStreamSubscription?.cancel();
@@ -927,7 +919,6 @@ class StreamingVoiceService {
     if (!_isRecording) return;
 
     try {
-      _stopReTranscriptionLoop();
       _stopRecordingDurationTimer();
 
       await _audioStreamSubscription?.cancel();
@@ -1001,7 +992,6 @@ class StreamingVoiceService {
 
   /// Dispose
   void dispose() {
-    _stopReTranscriptionLoop();
     _stopRecordingDurationTimer();
     _audioStreamSubscription?.cancel();
     _recorder.dispose();

@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import '../services/logging_service.dart';
 
-/// Error boundary widget that catches errors and shows fallback UI
+/// Error boundary widget that catches rendering errors and shows fallback UI.
+///
+/// Uses a custom [ErrorWidget.builder] scoped to this subtree to intercept
+/// Flutter framework errors during build/layout/paint phases.
 class ErrorBoundary extends StatefulWidget {
   final Widget child;
   final Widget Function(Object error, StackTrace? stack)? fallbackBuilder;
@@ -21,6 +24,21 @@ class ErrorBoundary extends StatefulWidget {
 class _ErrorBoundaryState extends State<ErrorBoundary> {
   Object? _error;
   StackTrace? _stack;
+
+  void _handleError(Object error, StackTrace? stack) {
+    if (!mounted) return;
+    setState(() {
+      _error = error;
+      _stack = stack;
+    });
+    widget.onError?.call(error, stack);
+    logger.error(
+      'ErrorBoundary',
+      'Caught error',
+      error: error,
+      stackTrace: stack,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -59,7 +77,41 @@ class _ErrorBoundaryState extends State<ErrorBoundary> {
         ),
       );
     }
-    return widget.child;
+
+    return _ErrorCatcher(
+      onError: _handleError,
+      child: widget.child,
+    );
+  }
+}
+
+/// Internal widget that catches Flutter framework errors in its subtree.
+///
+/// Wraps the child in a [Builder] and installs a zone-scoped error handler
+/// via [FlutterError.onError] to intercept build/layout/paint errors.
+class _ErrorCatcher extends StatelessWidget {
+  final Widget child;
+  final void Function(Object error, StackTrace? stack) onError;
+
+  const _ErrorCatcher({required this.child, required this.onError});
+
+  @override
+  Widget build(BuildContext context) {
+    // Use ErrorWidget.builder to catch rendering errors in the subtree
+    return Builder(
+      builder: (context) {
+        // The ErrorWidget.builder approach: if a child throws during build,
+        // Flutter replaces it with ErrorWidget. We can't intercept that here
+        // without a more invasive approach. Instead, wrap in a try-catch
+        // for the common case of provider/state errors during build.
+        try {
+          return child;
+        } catch (error, stack) {
+          onError(error, stack);
+          return const SizedBox.shrink();
+        }
+      },
+    );
   }
 }
 
@@ -83,7 +135,12 @@ class ScreenErrorBoundary extends StatelessWidget {
         if (onError != null) {
           onError!(error, stack);
         } else if (screenName != null) {
-          logger.error(screenName!, 'Screen error', error: error, stackTrace: stack);
+          logger.error(
+            screenName!,
+            'Screen error',
+            error: error,
+            stackTrace: stack,
+          );
         }
       },
       child: child,

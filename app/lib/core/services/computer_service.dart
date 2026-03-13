@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../config/app_config.dart';
@@ -48,13 +49,27 @@ class ComputerService {
     return headers;
   }
 
+  static const _secureStorage = FlutterSecureStorage();
+
   /// Initialize the service
   Future<void> initialize() async {
     if (_isInitialized) return;
 
     final prefs = await SharedPreferences.getInstance();
     _serverUrl = prefs.getString(_serverUrlKey) ?? _defaultServerUrl;
-    _apiKey = prefs.getString(_apiKeyKey);
+
+    // Read API key from secure storage (migrated from SharedPreferences
+    // by ApiKeyNotifier in app_state_provider.dart)
+    _apiKey = await _secureStorage.read(key: _apiKeyKey);
+
+    // Fallback: check SharedPreferences for pre-migration keys
+    if (_apiKey == null || _apiKey!.isEmpty) {
+      final legacyKey = prefs.getString(_apiKeyKey);
+      if (legacyKey != null && legacyKey.isNotEmpty) {
+        _apiKey = legacyKey;
+      }
+    }
+
     _isInitialized = true;
     // Security: Only log presence of API key, not the key itself
     debugPrint(
