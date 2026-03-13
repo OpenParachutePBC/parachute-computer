@@ -270,11 +270,7 @@ async def run():
                     "append": system_prompt,
                 }
             else:
-                options_kwargs["system_prompt"] = {
-                    "type": "preset",
-                    "preset": "claude_code",
-                    "append": system_prompt,
-                }
+                options_kwargs["system_prompt"] = system_prompt
 
         # Pass capabilities to SDK if available
         if capabilities.get("mcp_servers"):
