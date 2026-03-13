@@ -91,7 +91,9 @@ APK_PATH="build/app/outputs/flutter-apk/app-${FLAVOR}-${BUILD_TYPE}.apk"
 # Build if needed
 if [[ "$SKIP_BUILD" == false ]]; then
     echo "Building $FLAVOR $BUILD_TYPE APK..."
+    echo "(First build or after dependency changes may take 5-10 minutes)"
     flutter build apk --$BUILD_TYPE --flavor $FLAVOR
+    echo "Build complete."
 fi
 
 # Check APK exists
