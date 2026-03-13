@@ -16,7 +16,12 @@ from typing import Any
 
 from mcp.server import Server
 from mcp.types import TextContent, Tool
-from parachute.core.chat_memory import CHAT_MEMORY_TOOLS
+from parachute.core.chat_memory import (
+    CHAT_MEMORY_TOOLS,
+    search_chats as _search_chats,
+    get_chat as _get_chat,
+    get_exchange as _get_exchange,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -393,8 +398,7 @@ async def _handle_search_chats(arguments: dict[str, Any]) -> str:
     if graph is None:
         return json.dumps({"error": "BrainDB not available"})
 
-    from parachute.core.chat_memory import search_chats
-    result = await search_chats(
+    result = await _search_chats(
         graph,
         query=arguments["query"],
         limit=arguments.get("limit", 10),
@@ -409,8 +413,7 @@ async def _handle_get_chat(arguments: dict[str, Any]) -> str:
     if graph is None:
         return json.dumps({"error": "BrainDB not available"})
 
-    from parachute.core.chat_memory import get_chat
-    result = await get_chat(
+    result = await _get_chat(
         graph,
         session_id=arguments["session_id"],
         exchange_limit=arguments.get("exchange_limit", 25),
@@ -425,8 +428,7 @@ async def _handle_get_exchange(arguments: dict[str, Any]) -> str:
     if graph is None:
         return json.dumps({"error": "BrainDB not available"})
 
-    from parachute.core.chat_memory import get_exchange
-    result = await get_exchange(
+    result = await _get_exchange(
         graph,
         exchange_id=arguments["exchange_id"],
     )

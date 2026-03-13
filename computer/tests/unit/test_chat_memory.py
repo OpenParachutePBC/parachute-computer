@@ -13,7 +13,10 @@ from parachute.core.chat_memory import (
 )
 
 
-def _make_graph(side_effects: list | None = None, return_value: list | None = None):
+def _make_graph(
+    side_effects: list | None = None,
+    return_value: list | None = None,
+) -> MagicMock:
     """Create a mock BrainService with execute_cypher."""
     graph = MagicMock()
     if side_effects is not None:
@@ -92,6 +95,14 @@ class TestDetermineMatchField:
 
 
 class TestSearchChats:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("bad_query", ["", "   ", "\t"])
+    async def test_empty_or_whitespace_query_returns_error(self, bad_query):
+        graph = _make_graph()
+        result = await search_chats(graph, bad_query)
+        assert "error" in result
+        assert "empty" in result["error"].lower()
+
     @pytest.mark.asyncio
     async def test_empty_query_returns_error(self):
         graph = _make_graph()

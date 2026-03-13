@@ -229,9 +229,12 @@ async def get_chat(
     exchange_limit = max(1, min(exchange_limit, 200))
     max_chars = max(100, min(max_chars, 50000))
 
-    # Fetch chat node
+    # Fetch chat node (explicit projections — avoid node-return unwrapping)
     chat_rows = await graph.execute_cypher(
-        "MATCH (s:Chat {session_id: $session_id}) RETURN s",
+        "MATCH (s:Chat {session_id: $session_id}) "
+        "RETURN s.session_id AS session_id, s.title AS title, s.summary AS summary, "
+        "       s.module AS module, s.created_at AS created_at, "
+        "       s.last_accessed AS last_accessed, s.message_count AS message_count",
         {"session_id": session_id},
     )
     if not chat_rows:
@@ -302,7 +305,12 @@ async def get_exchange(
         return {"error": "exchange_id is required"}
 
     rows = await graph.execute_cypher(
-        "MATCH (e:Exchange {exchange_id: $exchange_id}) RETURN e",
+        "MATCH (e:Exchange {exchange_id: $exchange_id}) "
+        "RETURN e.exchange_id AS exchange_id, e.session_id AS session_id, "
+        "       e.exchange_number AS exchange_number, e.description AS description, "
+        "       e.user_message AS user_message, e.ai_response AS ai_response, "
+        "       e.context AS context, e.tools_used AS tools_used, "
+        "       e.created_at AS created_at",
         {"exchange_id": exchange_id},
     )
     if not rows:
