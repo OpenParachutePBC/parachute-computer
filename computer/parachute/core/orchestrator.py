@@ -588,6 +588,7 @@ class Orchestrator:
                         agent_type=agent_type,
                         captured_model=None,
                         mode=effective_mode,
+                        interrupt=interrupt,
                     ):
                         yield event
                 elif session.source in BOT_SOURCES:
@@ -1358,6 +1359,7 @@ class Orchestrator:
         agent_type: Optional[str],
         captured_model: Optional[str],
         mode: str = "converse",
+        interrupt: "QueryInterrupt | None" = None,
     ) -> AsyncGenerator[dict, None]:
         """Run the sandboxed (Docker container) execution path.
 
@@ -1396,12 +1398,43 @@ class Orchestrator:
             effective_prompt if not is_full_prompt and effective_prompt else None
         )
 
+        # Inject HTTP MCP bridge so sandbox containers can access vault tools
+        # (search_memory, read_journal, etc.) via the host's MCP endpoint.
+        sandbox_mcps = dict(caps.resolved_mcps) if caps.resolved_mcps else {}
+        sandbox_token: str | None = None
+        try:
+            from parachute.core.interfaces import get_registry
+            from parachute.lib.sandbox_tokens import SandboxTokenContext
+
+            token_store = get_registry().get("SandboxTokenStore")
+            if token_store is not None:
+                from parachute.api.mcp_bridge import build_http_mcp_config
+
+                token_ctx = SandboxTokenContext(
+                    session_id=sandbox_sid,
+                    trust_level="sandboxed",
+                    agent_name=None,  # Chat sessions, not callers
+                    allowed_writes=[],  # Read-only for chat sessions
+                )
+                sandbox_token = token_store.create_token(token_ctx)
+                sandbox_mcps["parachute"] = build_http_mcp_config(sandbox_token)
+                logger.info(
+                    f"Injected HTTP MCP bridge for sandbox session {sandbox_sid[:8]}"
+                )
+            else:
+                logger.warning(
+                    f"SandboxTokenStore not available — sandbox session "
+                    f"{sandbox_sid[:8]} will have no vault MCP tools"
+                )
+        except Exception as e:
+            logger.warning(f"Failed to inject MCP bridge for sandbox: {e}")
+
         sandbox_config = AgentSandboxConfig(
             session_id=sandbox_sid,
             agent_type=agent_type or "chat",
             allowed_paths=sandbox_paths,
             network_enabled=True,
-            mcp_servers=caps.resolved_mcps,
+            mcp_servers=sandbox_mcps,
             plugin_dirs=caps.plugin_dirs,
             agents=caps.agents_dict,
             working_directory=sandbox_wd,
@@ -1493,45 +1526,76 @@ class Orchestrator:
 
         # Process sandbox events; retry with history injection if resume fails
         retry_with_history = False
-        async for event in sandbox_stream:
-            event_type = event.get("type", "")
-            if event_type == "resume_failed":
-                logger.warning(
-                    f"SDK resume failed for {sandbox_sid[:8]}: "
-                    f"{event.get('error', 'unknown')}, "
-                    f"will retry with history injection"
-                )
-                retry_with_history = True
-            elif event_type == "done" and retry_with_history:
-                pass  # Suppress done from failed resume stream
-            else:
-                async for yielded in self._process_sandbox_event(event, ctx):
-                    yield yielded
+        interrupted = False
+        try:
+            async for event in sandbox_stream:
+                # Check for interrupt (stop button)
+                if interrupt and interrupt.is_interrupted:
+                    logger.info(f"Sandbox session {sandbox_sid[:8]} interrupted by user")
+                    interrupted = True
+                    break
 
-        if retry_with_history:
-            retry_message = actual_message
-            prior_messages = await self.session_manager._load_sdk_messages(
-                sbx["session"]
-            )
-            if prior_messages:
-                history_lines = []
-                for msg in prior_messages:
-                    role = msg["role"].upper()
-                    history_lines.append(f"[{role}]: {_content_as_text(msg['content'])}")
-                history_block = "\n".join(history_lines)
-                retry_message = (
-                    f"<conversation_history>\n{history_block}\n"
-                    f"</conversation_history>\n\n{actual_message}"
+                event_type = event.get("type", "")
+                if event_type == "resume_failed":
+                    logger.warning(
+                        f"SDK resume failed for {sandbox_sid[:8]}: "
+                        f"{event.get('error', 'unknown')}, "
+                        f"will retry with history injection"
+                    )
+                    retry_with_history = True
+                elif event_type == "done" and retry_with_history:
+                    pass  # Suppress done from failed resume stream
+                else:
+                    async for yielded in self._process_sandbox_event(event, ctx):
+                        yield yielded
+
+            if retry_with_history and not interrupted:
+                retry_message = actual_message
+                prior_messages = await self.session_manager._load_sdk_messages(
+                    sbx["session"]
                 )
-            retry_stream = self._sandbox.run_session(
-                session_id=sandbox_sid,
-                config=sandbox_config,
-                message=retry_message,
-                project_slug=session.project_id,
-            )
-            async for event in retry_stream:
-                async for yielded in self._process_sandbox_event(event, ctx):
-                    yield yielded
+                if prior_messages:
+                    history_lines = []
+                    for msg in prior_messages:
+                        role = msg["role"].upper()
+                        history_lines.append(f"[{role}]: {_content_as_text(msg['content'])}")
+                    history_block = "\n".join(history_lines)
+                    retry_message = (
+                        f"<conversation_history>\n{history_block}\n"
+                        f"</conversation_history>\n\n{actual_message}"
+                    )
+                retry_stream = self._sandbox.run_session(
+                    session_id=sandbox_sid,
+                    config=sandbox_config,
+                    message=retry_message,
+                    project_slug=session.project_id,
+                )
+                async for event in retry_stream:
+                    if interrupt and interrupt.is_interrupted:
+                        logger.info(
+                            f"Sandbox session {sandbox_sid[:8]} interrupted "
+                            f"during retry"
+                        )
+                        interrupted = True
+                        break
+                    async for yielded in self._process_sandbox_event(event, ctx):
+                        yield yielded
+
+            if interrupted:
+                yield AbortedEvent(
+                    message="Stream cancelled",
+                    session_id=sandbox_sid,
+                ).model_dump(by_alias=True)
+
+        finally:
+            # Revoke sandbox MCP token after stream completes or is interrupted.
+            # Reuse the token_store captured at creation time to avoid registry
+            # lookup races during shutdown.
+            if sandbox_token and token_store is not None:
+                try:
+                    token_store.revoke_token(sandbox_token)
+                except Exception:
+                    pass
 
         session = sbx["session"]
 

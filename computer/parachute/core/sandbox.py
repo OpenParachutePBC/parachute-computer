@@ -87,7 +87,11 @@ class DockerSandbox:
         self._slug_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 
     async def is_available(self) -> bool:
-        """Check if Docker is installed and running (cached with TTL)."""
+        """Check if Docker is installed and running (cached with TTL).
+
+        If Docker is not running but OrbStack is installed, attempts to start
+        it automatically via ``orbctl start``.
+        """
         if (self._docker_available is not None
                 and (time.time() - self._checked_at) < self._CACHE_TTL):
             return self._docker_available
@@ -98,6 +102,19 @@ class DockerSandbox:
             self._checked_at = time.time()
             return False
 
+        available = await self._check_docker()
+        if not available:
+            # Docker daemon isn't responding — try auto-starting OrbStack
+            available = await self._try_orbstack_start()
+
+        self._docker_available = available
+        self._checked_at = time.time()
+        if not available:
+            logger.warning("Docker daemon not running")
+        return available
+
+    async def _check_docker(self) -> bool:
+        """Run ``docker info`` and return True if the daemon is responsive."""
         try:
             proc = await asyncio.create_subprocess_exec(
                 "docker", "info",
@@ -105,16 +122,41 @@ class DockerSandbox:
                 stderr=asyncio.subprocess.DEVNULL,
             )
             await asyncio.wait_for(proc.wait(), timeout=5.0)
-            self._docker_available = proc.returncode == 0
-            self._checked_at = time.time()
-            if not self._docker_available:
-                logger.warning("Docker daemon not running")
-            return self._docker_available
+            return proc.returncode == 0
         except (asyncio.TimeoutError, OSError):
-            logger.warning("Docker check timed out or failed")
-            self._docker_available = False
-            self._checked_at = time.time()
             return False
+
+    async def _try_orbstack_start(self) -> bool:
+        """Attempt to start OrbStack if installed. Returns True if Docker comes up."""
+        if not shutil.which("orbctl"):
+            return False
+
+        logger.info("Docker not running — attempting to start OrbStack via orbctl")
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "orbctl", "start",
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            await asyncio.wait_for(proc.wait(), timeout=30.0)
+            if proc.returncode != 0:
+                logger.warning("orbctl start returned non-zero exit code")
+                return False
+        except (asyncio.TimeoutError, OSError) as e:
+            logger.warning(f"orbctl start failed: {e}")
+            return False
+
+        # Poll for Docker readiness — OrbStack may need a few seconds to
+        # fully initialize the Linux VM and expose the Docker socket.
+        for attempt in range(3):
+            await asyncio.sleep(2)
+            if await self._check_docker():
+                logger.info("OrbStack started successfully — Docker is now available")
+                return True
+            logger.debug(f"Docker not ready yet (attempt {attempt + 1}/3)")
+
+        logger.warning("orbctl start completed but Docker still not responding")
+        return False
 
     async def image_exists(self) -> bool:
         """Check if the sandbox image is available."""

@@ -168,6 +168,32 @@ async def lifespan(app: FastAPI):
     # Auto-start enabled bot connectors (errors logged, never crash server)
     await auto_start_connectors()
 
+    # Initialize MCP HTTP bridge for sandbox containers
+    from parachute.lib.sandbox_tokens import SandboxTokenStore
+    from parachute.api.mcp_bridge import (
+        create_mcp_server,
+        create_session_manager,
+        create_mcp_asgi_app,
+    )
+
+    token_store = SandboxTokenStore()
+    app.state.sandbox_token_store = token_store
+    get_registry().publish("SandboxTokenStore", token_store)
+
+    mcp_server = create_mcp_server()
+    mcp_session_manager = create_session_manager(mcp_server)
+    # StreamableHTTPSessionManager.run() returns an async context manager.
+    # We call __aenter__/__aexit__ manually because FastAPI's lifespan is
+    # itself a context manager — we can't nest `async with` across the yield.
+    mcp_run_ctx = mcp_session_manager.run()
+    await mcp_run_ctx.__aenter__()
+    app.state.mcp_session_manager = mcp_session_manager
+    app.state.mcp_run_ctx = mcp_run_ctx
+
+    mcp_asgi_app = create_mcp_asgi_app(mcp_session_manager, token_store)
+    app.mount("/mcp/v1", mcp_asgi_app)
+    logger.info("MCP HTTP bridge mounted at /mcp/v1")
+
     logger.info("Server ready")
 
     yield
@@ -209,6 +235,16 @@ async def lifespan(app: FastAPI):
         await broker.close_all()
     except Exception as e:
         logger.warning(f"Error closing credential broker: {e}")
+
+    # Shut down MCP HTTP bridge
+    if hasattr(app.state, "mcp_run_ctx") and app.state.mcp_run_ctx is not None:
+        try:
+            await app.state.mcp_run_ctx.__aexit__(None, None, None)
+        except Exception as e:
+            logger.warning(f"Error shutting down MCP bridge: {e}")
+        app.state.mcp_run_ctx = None
+        app.state.mcp_session_manager = None
+        app.state.sandbox_token_store = None
 
     await stop_scheduler()
     if hasattr(app.state, "brain") and app.state.brain:

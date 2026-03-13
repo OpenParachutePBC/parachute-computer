@@ -222,9 +222,10 @@ def filter_stdio_servers(servers: dict[str, dict[str, Any]]) -> dict[str, dict[s
     """
     Filter MCP servers to only include stdio servers.
 
-    The Claude SDK only supports stdio (command-based) MCP servers.
-    HTTP/remote servers are not supported by the SDK and must be
-    filtered out before passing to the SDK to avoid validation errors.
+    Used by callers running in direct mode (non-sandboxed) to filter out
+    HTTP/SSE servers from the vault's .mcp.json. The Claude SDK actually
+    supports HTTP MCP servers (McpHttpServerConfig), but this filter is
+    retained for backward compatibility in direct-mode caller execution.
 
     Args:
         servers: Dictionary of server name -> config
