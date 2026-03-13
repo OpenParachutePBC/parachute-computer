@@ -1,5 +1,6 @@
 import 'package:collection/collection.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:parachute/core/config/app_config.dart';
 import 'package:parachute/core/providers/app_state_provider.dart';
 import 'package:parachute/core/providers/feature_flags_provider.dart'
     show aiServerUrlProvider;
@@ -12,7 +13,7 @@ import 'chat_session_providers.dart' show chatSessionsProvider, currentSessionId
 /// Mirrors [projectServiceProvider] — recreated when server URL or API key changes.
 final containerFilesServiceProvider = Provider<ContainerFilesService>((ref) {
   final urlAsync = ref.watch(aiServerUrlProvider);
-  final baseUrl = urlAsync.valueOrNull ?? 'http://localhost:3333';
+  final baseUrl = urlAsync.valueOrNull ?? AppConfig.defaultServerUrl;
   final apiKeyAsync = ref.watch(apiKeyProvider);
   final apiKey = apiKeyAsync.valueOrNull;
   return ContainerFilesService(baseUrl: baseUrl, apiKey: apiKey);

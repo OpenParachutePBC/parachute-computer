@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
+import '../config/app_config.dart';
 import '../models/supervisor_models.dart';
 import '../services/supervisor_service.dart';
 import '../services/models_service.dart';
@@ -14,7 +15,7 @@ part 'supervisor_providers.g.dart';
 SupervisorService supervisorService(SupervisorServiceRef ref) {
   // Get main server URL and derive supervisor URL (port 3334 instead of 3333)
   final serverUrlAsync = ref.watch(serverUrlProvider);
-  final serverUrl = serverUrlAsync.valueOrNull ?? 'http://localhost:3333';
+  final serverUrl = serverUrlAsync.valueOrNull ?? AppConfig.defaultServerUrl;
   final supervisorUrl = serverUrl.replaceAll(':3333', ':3334');
 
   final service = SupervisorService(baseUrl: supervisorUrl);
@@ -26,7 +27,7 @@ SupervisorService supervisorService(SupervisorServiceRef ref) {
 @riverpod
 ModelsService modelsService(ModelsServiceRef ref) {
   final serverUrlAsync = ref.watch(serverUrlProvider);
-  final serverUrl = serverUrlAsync.valueOrNull ?? 'http://localhost:3333';
+  final serverUrl = serverUrlAsync.valueOrNull ?? AppConfig.defaultServerUrl;
   final supervisorUrl = serverUrl.replaceAll(':3333', ':3334');
 
   final service = ModelsService(baseUrl: supervisorUrl);

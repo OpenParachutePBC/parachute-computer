@@ -1,4 +1,5 @@
 import 'package:shared_preferences/shared_preferences.dart';
+import '../config/app_config.dart';
 
 /// Service for managing feature toggles
 ///
@@ -19,7 +20,7 @@ class FeatureFlagsService {
   static const bool _defaultOmiEnabled = false;
   static const bool _defaultAiChatEnabled =
       false; // Off by default - power users can enable in settings
-  static const String _defaultAiServerUrl = 'http://localhost:3333';
+  static const String _defaultAiServerUrl = AppConfig.defaultServerUrl;
 
   // Cache for quick access
   bool? _omiEnabled;

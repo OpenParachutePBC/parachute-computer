@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import '../config/app_config.dart';
 
 /// Service for communicating with the Parachute Computer server.
 ///
@@ -18,7 +19,7 @@ class ComputerService {
   // Use same key as app_state_provider.dart ServerUrlNotifier for consistency
   static const String _serverUrlKey = 'parachute_server_url';
   static const String _apiKeyKey = 'parachute_api_key';
-  static const String _defaultServerUrl = 'http://localhost:3333';
+  static const String _defaultServerUrl = AppConfig.defaultServerUrl;
 
   String? _serverUrl;
   String? _apiKey;

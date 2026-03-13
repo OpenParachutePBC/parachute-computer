@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
@@ -205,38 +206,48 @@ final isServerConfiguredProvider = Provider<bool>((ref) {
   return ref.watch(appModeProvider) == AppMode.full;
 });
 
-/// Notifier for API key with persistence
+/// Notifier for API key with persistence via flutter_secure_storage.
 ///
-/// SECURITY NOTE: API keys are currently stored in SharedPreferences.
-/// This is NOT secure - SharedPreferences is unencrypted plaintext storage.
-/// TODO: Migrate to flutter_secure_storage for encrypted storage.
-/// For now, basic obfuscation is applied as a temporary measure.
+/// Uses platform-specific encrypted storage (Keychain on iOS/macOS,
+/// EncryptedSharedPreferences on Android, libsecret on Linux).
+/// Automatically migrates keys from the old SharedPreferences storage.
 class ApiKeyNotifier extends AsyncNotifier<String?> {
   static const _key = 'parachute_api_key';
+  static const _secureStorage = FlutterSecureStorage();
 
   @override
   Future<String?> build() async {
+    // Try secure storage first
+    final secureKey = await _secureStorage.read(key: _key);
+    if (secureKey != null) return secureKey;
+
+    // Migrate from SharedPreferences if present
     final prefs = await SharedPreferences.getInstance();
-    final stored = prefs.getString(_key);
-    if (stored == null) return null;
-    // Deobfuscate from base64
-    try {
-      return String.fromCharCodes(base64Decode(stored));
-    } catch (_) {
-      // If decoding fails, assume it's unencoded (migration)
-      return stored;
+    final legacyStored = prefs.getString(_key);
+    if (legacyStored != null) {
+      String plainKey;
+      try {
+        plainKey = String.fromCharCodes(base64Decode(legacyStored));
+      } catch (_) {
+        // Unencoded legacy value
+        plainKey = legacyStored;
+      }
+      // Migrate to secure storage and remove from SharedPreferences
+      await _secureStorage.write(key: _key, value: plainKey);
+      await prefs.remove(_key);
+      debugPrint('[ApiKey] Migrated from SharedPreferences to secure storage');
+      return plainKey;
     }
+
+    return null;
   }
 
   Future<void> setApiKey(String? key) async {
-    final prefs = await SharedPreferences.getInstance();
     if (key != null && key.isNotEmpty) {
-      // Basic obfuscation via base64 (NOT encryption, just prevents casual viewing)
-      final encoded = base64Encode(key.codeUnits);
-      await prefs.setString(_key, encoded);
+      await _secureStorage.write(key: _key, value: key);
       state = AsyncData(key);
     } else {
-      await prefs.remove(_key);
+      await _secureStorage.delete(key: _key);
       state = const AsyncData(null);
     }
   }

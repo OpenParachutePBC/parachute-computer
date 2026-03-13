@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:parachute/core/config/app_config.dart';
 import 'package:parachute/core/providers/file_system_provider.dart';
 import 'package:parachute/core/providers/feature_flags_provider.dart'
     show aiServerUrlProvider;
@@ -25,7 +26,7 @@ import '../services/pending_entry_queue.dart';
 /// Provider for DailyApiService — mirrors chatServiceProvider pattern
 final dailyApiServiceProvider = Provider<DailyApiService>((ref) {
   final urlAsync = ref.watch(aiServerUrlProvider);
-  final baseUrl = urlAsync.valueOrNull ?? 'http://localhost:3333';
+  final baseUrl = urlAsync.valueOrNull ?? AppConfig.defaultServerUrl;
   final apiKeyAsync = ref.watch(apiKeyProvider);
   final apiKey = apiKeyAsync.valueOrNull;
 

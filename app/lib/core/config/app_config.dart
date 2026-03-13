@@ -3,6 +3,11 @@ import 'package:flutter/foundation.dart';
 
 /// Application configuration with environment-based overrides.
 class AppConfig {
+  /// Default server URL used as fallback throughout the app.
+  /// All provider fallbacks should reference this constant instead of
+  /// hardcoding 'http://localhost:3333'.
+  static const String defaultServerUrl = 'http://localhost:3333';
+
   /// Get the server base URL based on environment and platform.
   ///
   /// Priority:
@@ -23,10 +28,10 @@ class AppConfig {
         return 'http://10.0.2.2:3333';
       } else if (Platform.isIOS) {
         // iOS simulator can use localhost
-        return 'http://localhost:3333';
+        return defaultServerUrl;
       } else {
         // Desktop (macOS, Linux, Windows) uses localhost
-        return 'http://localhost:3333';
+        return defaultServerUrl;
       }
     }
 
