@@ -424,10 +424,6 @@ class DockerSandbox:
                 os.unlink(prompt_file)
                 logger.warning("Failed to write system prompt for sandbox")
 
-        # Signal entrypoint to skip the Claude Code preset
-        if not config.use_preset:
-            args.extend(["-e", "PARACHUTE_NO_PRESET=1"])
-
         # Image + explicit entrypoint (Dockerfile uses CMD sleep infinity for persistent mode)
         args.extend([SANDBOX_IMAGE, "python", "/workspace/entrypoint.py"])
 
@@ -838,8 +834,8 @@ class DockerSandbox:
                 stdin_payload["claude_token"] = self.claude_token
             if config.system_prompt:
                 stdin_payload["system_prompt"] = config.system_prompt
-                if not config.use_preset:
-                    stdin_payload["use_preset"] = False
+            if not config.use_preset:
+                stdin_payload["use_preset"] = False
             if resume_session_id:
                 stdin_payload["resume_session_id"] = resume_session_id
 
