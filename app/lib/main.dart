@@ -562,6 +562,30 @@ class _TabShellState extends ConsumerState<_TabShell> with WidgetsBindingObserve
       }
     });
 
+    // Listen for agent question events to show toast
+    ref.listen<AgentQuestionEvent?>(agentQuestionProvider, (previous, next) {
+      if (next != null && next != previous) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('${next.title} \u2014 has a question'),
+            duration: const Duration(seconds: 5),
+            behavior: SnackBarBehavior.floating,
+            action: SnackBarAction(
+              label: 'View',
+              onPressed: () {
+                // Switch to chat tab and navigate to the session
+                final visibleTabs = ref.read(visibleTabsProvider);
+                final chatIndex = visibleTabs.indexOf(AppTab.chat);
+                if (chatIndex >= 0) {
+                  ref.read(currentTabIndexProvider.notifier).state = chatIndex;
+                }
+              },
+            ),
+          ),
+        );
+      }
+    });
+
     final appMode = ref.watch(appModeProvider);
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;

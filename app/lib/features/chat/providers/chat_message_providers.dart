@@ -1502,6 +1502,8 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
         // Stream complete
         debugPrint('[ChatMessagesNotifier] Done event received (sessionId: ${ctx.displaySessionId})');
 
+        // Flush any throttled updates before processing done event
+        _flushPendingUpdates();
         // Foreground: update UI normally
         _updateAssistantMessage(ctx.accumulatedContent, isStreaming: false);
 
@@ -1689,6 +1691,12 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
             sessionId: event.sessionId ?? '',
             questions: List<Map<String, dynamic>>.from(event.questions ?? []),
           ),
+        );
+
+        // Notify for toast/OS notification when user isn't looking at the chat
+        _ref.read(agentQuestionProvider.notifier).onQuestion(
+          state.sessionId ?? ctx.actualSessionId ?? '',
+          state.sessionTitle,
         );
         break;
 

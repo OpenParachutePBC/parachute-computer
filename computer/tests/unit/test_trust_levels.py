@@ -161,7 +161,7 @@ class TestAgentSandboxConfig:
         assert config.agent_type == "chat"
         assert config.allowed_paths == []
         assert config.network_enabled is False
-        assert config.timeout_seconds == 300
+        assert config.timeout_seconds == 600
 
     def test_custom_config(self):
         config = AgentSandboxConfig(

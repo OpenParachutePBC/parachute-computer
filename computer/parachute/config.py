@@ -230,6 +230,16 @@ class Settings(BaseSettings):
         description="Load plugins from ~/.claude/plugins/",
     )
 
+    # Sandbox timeouts
+    sandbox_timeout: int = Field(
+        default=600,
+        description="Overall sandbox session timeout in seconds (default: 600 = 10 min)",
+    )
+    sandbox_readline_timeout: int = Field(
+        default=300,
+        description="Per-line readline timeout inside sandbox in seconds (default: 300 = 5 min)",
+    )
+
     # Development
     debug: bool = Field(default=False, description="Enable debug mode")
     reload: bool = Field(default=False, description="Enable auto-reload")

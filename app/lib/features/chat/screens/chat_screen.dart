@@ -23,6 +23,7 @@ import '../providers/project_providers.dart' show activeProjectProvider;
 import '../providers/container_files_providers.dart'
     show currentSessionProjectIdProvider;
 import '../widgets/bridge_session_viewer_sheet.dart';
+import '../providers/agent_completion_provider.dart' show agentQuestionProvider, AgentQuestionEvent;
 import 'container_file_browser_screen.dart';
 
 /// Main chat screen for AI conversations
@@ -92,6 +93,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   /// Keeps activeViewSessionIdProvider in sync with currentSessionIdProvider
   ProviderSubscription<String?>? _sessionIdSubscription;
 
+  /// Listens for AskUserQuestion events to auto-scroll
+  ProviderSubscription<AgentQuestionEvent?>? _questionSubscription;
+
   @override
   void initState() {
     super.initState();
@@ -125,6 +129,17 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         (_, next) {
           if (mounted) {
             ref.read(activeViewSessionIdProvider.notifier).state = next;
+          }
+        },
+      );
+      // Auto-scroll when AskUserQuestion arrives for this session
+      _questionSubscription = ref.listenManual(
+        agentQuestionProvider,
+        (previous, next) {
+          if (!mounted || next == null || next == previous) return;
+          final currentSessionId = ref.read(currentSessionIdProvider);
+          if (next.sessionId == currentSessionId) {
+            _scrollToBottom();
           }
         },
       );
@@ -200,6 +215,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     _chatMessagesSubscription = null;
     _sessionIdSubscription?.close();
     _sessionIdSubscription = null;
+    _questionSubscription?.close();
+    _questionSubscription = null;
 
     // Clear active view tracking — we're no longer viewing this session
     ref.read(activeViewSessionIdProvider.notifier).state = null;

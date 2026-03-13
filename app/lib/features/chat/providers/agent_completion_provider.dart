@@ -131,3 +131,75 @@ final agentCompletionProvider =
     NotifierProvider<AgentCompletionNotifier, AgentCompletionState>(
   AgentCompletionNotifier.new,
 );
+
+// ============================================================
+// Agent Question Events
+// ============================================================
+
+/// A single agent question event for toast/notification display.
+class AgentQuestionEvent {
+  final String sessionId;
+  final String title;
+  final DateTime askedAt;
+
+  const AgentQuestionEvent({
+    required this.sessionId,
+    required this.title,
+    required this.askedAt,
+  });
+}
+
+/// Centralized notifier for agent question notifications.
+///
+/// Fires when AskUserQuestion arrives and the user isn't looking at the chat:
+/// - Viewing that session → auto-scroll only (handled by chat_screen listener)
+/// - Different session/tab → show toast "Claude has a question"
+/// - App backgrounded → OS notification
+class AgentQuestionNotifier extends Notifier<AgentQuestionEvent?> {
+  @override
+  AgentQuestionEvent? build() => null;
+
+  /// Called when an AskUserQuestion event arrives during streaming.
+  void onQuestion(String sessionId, String? title) {
+    final displayTitle = (title != null && title.isNotEmpty) ? title : 'Chat';
+
+    // Determine app state
+    final lifecycle = ref.read(appLifecycleProvider);
+    final isBackgrounded = lifecycle == AppLifecycleState.paused ||
+        lifecycle == AppLifecycleState.inactive ||
+        lifecycle == AppLifecycleState.detached;
+
+    final currentTab = ref.read(currentTabIndexProvider);
+    final visibleTabs = ref.read(visibleTabsProvider);
+    final isOnChatTab = currentTab < visibleTabs.length &&
+        visibleTabs[currentTab] == AppTab.chat;
+
+    final activeViewSessionId = ref.read(activeViewSessionIdProvider);
+    final isViewingSession = isOnChatTab && activeViewSessionId == sessionId;
+
+    debugPrint('[AgentQuestion] onQuestion: session=$sessionId, '
+        'title="$displayTitle", backgrounded=$isBackgrounded, '
+        'onChatTab=$isOnChatTab, viewingSession=$isViewingSession');
+
+    final event = AgentQuestionEvent(
+      sessionId: sessionId,
+      title: displayTitle,
+      askedAt: DateTime.now(),
+    );
+
+    if (isBackgrounded) {
+      final notificationService = NotificationService();
+      notificationService.showAgentQuestion(displayTitle, sessionId: sessionId);
+    }
+
+    // Always update state — the toast listener and chat_screen auto-scroll
+    // listener will check whether to fire based on the event.
+    state = event;
+  }
+}
+
+/// Provider for agent question notifications.
+final agentQuestionProvider =
+    NotifierProvider<AgentQuestionNotifier, AgentQuestionEvent?>(
+  AgentQuestionNotifier.new,
+);
