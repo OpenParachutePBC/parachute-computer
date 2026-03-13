@@ -139,7 +139,7 @@ async def list_chats(
     )
 
     rows = await graph.execute_cypher(query, params if params else None)
-    return {"sessions": rows, "count": len(rows)}
+    return {"chats": rows, "count": len(rows)}
 
 
 @router.get("/chats/{session_id}")
@@ -184,7 +184,7 @@ async def get_chat(
         logger.exception("Failed to fetch exchanges for session %s", session_id)
         exchanges = []
 
-    return {"session": session, "exchanges": exchanges, "exchange_count": len(exchanges)}
+    return {"chat": session, "exchanges": exchanges, "exchange_count": len(exchanges)}
 
 
 @router.get("/exchanges")
@@ -266,7 +266,7 @@ async def list_daily_entries(
 async def get_memory(
     limit: int = Query(50, ge=1, le=200),
     search: str | None = Query(None, description="Search query across session summaries, note content, and exchange messages"),
-    type: Literal["sessions", "notes"] | None = Query(None, description="Filter by type: sessions, notes"),
+    type: Literal["chats", "notes"] | None = Query(None, description="Filter by type: chats, notes"),
     date_from: str | None = Query(None, description="YYYY-MM-DD — filter notes by date (start)"),
     date_to: str | None = Query(None, description="YYYY-MM-DD — filter notes by date (end)"),
     note_type: str | None = Query(None, description="Filter notes by note_type (e.g. 'journal')"),
@@ -352,7 +352,7 @@ async def get_memory(
                     "module": row.get("module") or "chat",
                 })
 
-    if type != "sessions":
+    if type != "chats":
         # --- Note search ---
         note_where_clauses = []
         note_params: dict = {}

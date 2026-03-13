@@ -36,7 +36,7 @@ def _get_graph():
         return None
 
 
-def _get_session_store():
+def _get_chat_store():
     """Get BrainChatStore from the service registry."""
     try:
         from parachute.core.interfaces import get_registry
@@ -279,11 +279,11 @@ async def _handle_search_memory(arguments: dict[str, Any]) -> str:
     return json.dumps({"results": results, "count": len(results), "query": query}, default=str)
 
 
-async def _handle_list_recent_sessions(arguments: dict[str, Any]) -> str:
-    """List recent chat sessions."""
+async def _handle_list_recent_chats(arguments: dict[str, Any]) -> str:
+    """List recent chats."""
     limit = min(arguments.get("limit", 20), 100)
 
-    session_store = _get_session_store()
+    session_store = _get_chat_store()
     if session_store is None:
         return json.dumps({"error": "ChatStore not available"})
 
@@ -441,7 +441,7 @@ _HANDLERS = {
     "read_journal": _handle_read_journal,
     "read_recent_journals": _handle_read_recent_journals,
     "search_memory": _handle_search_memory,
-    "list_recent_sessions": _handle_list_recent_sessions,
+    "list_recent_sessions": _handle_list_recent_chats,
     "read_brain_entity": _handle_read_brain_entity,
     "write_output": _handle_write_output,
     # Chat memory (shared handlers)

@@ -694,7 +694,7 @@ async def handle_tool_call(name: str, arguments: dict[str, Any]) -> str:
                 params["type"] = "notes"
                 params["note_type"] = "journal"
             elif arguments.get("source") == "chat":
-                params["type"] = "sessions"
+                params["type"] = "chats"
             if arguments.get("date_from"):
                 params["date_from"] = arguments["date_from"]
             if arguments.get("date_to"):
@@ -746,7 +746,7 @@ async def handle_tool_call(name: str, arguments: dict[str, Any]) -> str:
             if "archived" in arguments:
                 bp["archived"] = "true" if arguments["archived"] else "false"
             qs = ("?" + urllib.parse.urlencode(bp)) if bp else ""
-            result = await _brain_call(f"/sessions{qs}")
+            result = await _brain_call(f"/chats{qs}")
         elif name == "brain_get_chat":
             sid = urllib.parse.quote(arguments["session_id"], safe="")
             gp: dict[str, Any] = {}
@@ -755,7 +755,7 @@ async def handle_tool_call(name: str, arguments: dict[str, Any]) -> str:
             if "max_chars" in arguments:
                 gp["max_chars"] = arguments["max_chars"]
             qs = ("?" + urllib.parse.urlencode(gp)) if gp else ""
-            result = await _brain_call(f"/sessions/{sid}{qs}")
+            result = await _brain_call(f"/chats/{sid}{qs}")
         elif name == "brain_get_exchange":
             eid = urllib.parse.quote(arguments["exchange_id"], safe="")
             result = await _brain_call(f"/exchanges?id={eid}")
