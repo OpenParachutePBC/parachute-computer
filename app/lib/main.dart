@@ -227,8 +227,17 @@ class _TabShell extends ConsumerStatefulWidget {
 }
 
 class _TabShellState extends ConsumerState<_TabShell> with WidgetsBindingObserver {
-  /// Navigator keys are instance variables to avoid GlobalKey reuse issues
-  /// when tabs are conditionally shown/hidden
+  // Navigation architecture: intentionally NOT using go_router or Navigator 2.0.
+  //
+  // Each tab owns an independent Navigator with its own GlobalKey, wrapped in
+  // an IndexedStack so tabs preserve state when switching. This gives us:
+  //   - Per-tab back stacks (pressing back pops within the tab, not globally)
+  //   - State preservation (switching tabs doesn't rebuild)
+  //   - Deep link support via DeepLinkService (parachute:// scheme)
+  //   - Dynamic tab visibility based on AppMode (daily-only vs full)
+  //
+  // go_router was evaluated and removed — it adds complexity without benefit
+  // for this tab-based architecture where each tab is a self-contained flow.
   final GlobalKey<NavigatorState> _chatNavigatorKey = GlobalKey<NavigatorState>();
   final GlobalKey<NavigatorState> _dailyNavigatorKey = GlobalKey<NavigatorState>();
   final GlobalKey<NavigatorState> _brainNavigatorKey = GlobalKey<NavigatorState>();

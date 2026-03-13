@@ -43,7 +43,9 @@ class SessionManager:
         """Initialize session manager."""
         self.parachute_dir = parachute_dir
         self.session_store = session_store
-        self.db = session_store  # Backward-compat alias
+        # Alias: used by orchestrator, claude_code API, and internal methods.
+        # Kept because `.db` is shorter and widely referenced.
+        self.db = session_store
 
     def resolve_working_directory(self, working_directory: Optional[str]) -> Path:
         """
@@ -64,7 +66,9 @@ class SessionManager:
         wd_path = Path(working_directory)
         if wd_path.is_absolute():
             if str(wd_path).startswith("/vault/"):
-                # Legacy /vault/... paths — translate to home dir
+                # COMPAT: /vault/... paths from pre-v0.2.0 sessions stored in DB.
+                # Safe to remove once no sessions have /vault/ working directories
+                # (likely 6+ months after the vault→home migration, ~Sep 2026).
                 relative = str(wd_path)[len("/vault/"):]
                 resolved = home / relative
             else:
@@ -97,7 +101,7 @@ class SessionManager:
             abs_path = home / wd_path
             return str(abs_path) if str(abs_path) != str(home) else None
 
-        # Legacy /vault/... path — convert to home-relative absolute path
+        # COMPAT: /vault/... → absolute path (see resolve_working_directory above)
         if working_directory.startswith("/vault/"):
             relative = working_directory[len("/vault/"):]
             abs_path = home / relative

@@ -16,7 +16,7 @@ from parachute.lib.credentials.base import (
     CredentialToken,
 )
 from parachute.lib.credentials.broker import CredentialBroker, get_broker, reset_broker
-from parachute.lib.credentials.legacy import load_credentials
+from parachute.lib.credentials.credential_loader import load_credentials
 
 __all__ = [
     "CredentialBroker",
