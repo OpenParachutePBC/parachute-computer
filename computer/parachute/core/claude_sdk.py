@@ -157,6 +157,7 @@ async def query_streaming(
     model: Optional[str] = None,
     message_queue: asyncio.Queue[str] | None = None,
     output_format: Optional[dict[str, Any]] = None,
+    event_timeout: int = 300,
 ) -> AsyncGenerator[dict[str, Any], None]:
     """
     Run a Claude SDK query with streaming response.
@@ -341,7 +342,17 @@ async def query_streaming(
         consumer_task = asyncio.create_task(_consume_sdk())
 
         while True:
-            event_dict = await event_queue.get()
+            try:
+                event_dict = await asyncio.wait_for(
+                    event_queue.get(), timeout=event_timeout
+                )
+            except asyncio.TimeoutError:
+                consumer_alive = consumer_task is not None and not consumer_task.done()
+                logger.warning(
+                    f"Event queue timeout after {event_timeout}s — "
+                    f"consumer_alive={consumer_alive}"
+                )
+                break
             if event_dict is None:
                 break
             yield event_dict
@@ -353,15 +364,15 @@ async def query_streaming(
         # generator cleanup runs inside the consumer task (same task that
         # entered the cancel scope), avoiding the cross-task RuntimeError.
         if consumer_task is not None:
-            consumer_task.cancel()
+            if not consumer_task.done():
+                consumer_task.cancel()
             try:
                 await consumer_task
             except (asyncio.CancelledError, Exception):
                 pass
-        # Log queue drain state for debugging stream lifecycle
-        if consumer_task is not None:
             logger.info(
-                f"query_streaming cleanup: queue_remaining={event_queue.qsize()}"
+                f"query_streaming cleanup: consumer_done={consumer_task.done()}, "
+                f"queue_remaining={event_queue.qsize()}"
             )
 
 
