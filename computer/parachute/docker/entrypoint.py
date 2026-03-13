@@ -258,12 +258,19 @@ async def run():
                 except OSError as e:
                     emit({"type": "warning", "message": f"Failed to load system prompt: {e}"})
         if system_prompt:
-            # Use Claude Code preset with appended content
-            options_kwargs["system_prompt"] = {
-                "type": "preset",
-                "preset": "claude_code",
-                "append": system_prompt,
-            }
+            # Check whether to use the Claude Code preset.
+            # Callers opt out (use_preset=False) so they get only their
+            # personality prompt without Claude Code noise (git, Bash, etc.).
+            # Chat sessions keep the preset (default) for full tool guidance.
+            use_preset = request.get("use_preset", True)
+            if not use_preset or os.environ.get("PARACHUTE_NO_PRESET"):
+                options_kwargs["system_prompt"] = system_prompt
+            else:
+                options_kwargs["system_prompt"] = {
+                    "type": "preset",
+                    "preset": "claude_code",
+                    "append": system_prompt,
+                }
 
         # Pass capabilities to SDK if available
         if capabilities.get("mcp_servers"):
