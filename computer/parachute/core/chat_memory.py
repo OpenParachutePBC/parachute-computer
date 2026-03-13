@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from mcp.types import Tool
 from parachute.db.brain import BrainService
 
 logger = logging.getLogger(__name__)
@@ -69,7 +70,11 @@ def _determine_match_field(
     ai_response: str | None,
     description: str | None,
 ) -> str:
-    """Determine which field contains the match (case-insensitive)."""
+    """Determine which field contains the match (case-insensitive).
+
+    Note: When called from search_chats, at least one field is guaranteed to match
+    because the exchange matched one of the CONTAINS filters in the Cypher query.
+    """
     q = query.lower()
     # Prefer description (curated summary) > user_message > ai_response
     if description and q in description.lower():
@@ -78,7 +83,7 @@ def _determine_match_field(
         return "user_message"
     if ai_response and q in ai_response.lower():
         return "ai_response"
-    return "description"  # fallback
+    return "unknown"  # Should not happen due to Cypher CONTAINS filter
 
 
 async def search_chats(
@@ -111,7 +116,9 @@ async def search_chats(
         f"WHERE {_BASE_CHAT_FILTERS}{module_filter} "
         f"AND (s.title CONTAINS $query "
         f"     OR (s.summary IS NOT NULL AND s.summary CONTAINS $query)) "
-        f"RETURN s ORDER BY s.last_accessed DESC LIMIT {limit}",
+        f"RETURN s.session_id AS session_id, s.title AS title, s.summary AS summary, "
+        f"       s.module AS module, s.last_accessed AS last_accessed, s.created_at AS created_at "
+        f"ORDER BY s.last_accessed DESC LIMIT {limit}",
         params,
     )
 
@@ -181,9 +188,6 @@ async def search_chats(
             # Chat already found via title/summary — add exchanges
             chat = chats_by_sid[sid]
             chat["matching_exchanges"].append(exchange_entry)
-            # Upgrade match_source if it was title/summary only
-            if chat["match_source"] in ("title", "summary"):
-                chat["match_source"] = chat["match_source"]  # keep original
         else:
             # Chat found only via exchange match
             chats_by_sid[sid] = {
@@ -255,7 +259,11 @@ async def get_chat(
     # Fetch most recent N exchanges (DESC to get most recent, then reverse)
     exchange_rows = await graph.execute_cypher(
         f"MATCH (s:Chat {{session_id: $session_id}})-[:HAS_EXCHANGE]->(e:Exchange) "
-        f"RETURN e ORDER BY e.exchange_number DESC LIMIT {exchange_limit}",
+        f"RETURN e.exchange_id AS exchange_id, e.exchange_number AS exchange_number, "
+        f"       e.description AS description, e.user_message AS user_message, "
+        f"       e.ai_response AS ai_response, e.tools_used AS tools_used, "
+        f"       e.created_at AS created_at "
+        f"ORDER BY e.exchange_number DESC LIMIT {exchange_limit}",
         {"session_id": session_id},
     )
 
@@ -314,3 +322,86 @@ async def get_exchange(
             "created_at": ex.get("created_at") or "",
         },
     }
+
+
+# ── Chat Memory Tool Definitions ───────────────────────────────────────────────
+# These tools are registered in both the direct MCP server (mcp_server.py)
+# and the sandbox HTTP bridge (mcp_tools.py). Defined here to avoid duplication.
+
+CHAT_MEMORY_TOOLS = [
+    Tool(
+        name="search_chats",
+        description=(
+            "Search across all past chat conversations by keyword. "
+            "Returns chats with matching exchanges bundled underneath — "
+            "shows what was actually said, not just chat-level pointers. "
+            "Each matching exchange includes user/AI snippets for quick review. "
+            "Use get_exchange to drill into full content of a specific exchange."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Keyword or phrase to search for",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max chats to return (default: 10)",
+                    "default": 10,
+                },
+                "module": {
+                    "type": "string",
+                    "description": "Optional: filter by module (e.g. 'chat', 'daily')",
+                },
+            },
+            "required": ["query"],
+        },
+    ),
+    Tool(
+        name="get_chat",
+        description=(
+            "Browse a specific chat conversation. Returns chat metadata "
+            "plus its exchanges (most recent N, truncated). Use get_exchange "
+            "to see full untruncated content of any specific exchange."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "session_id": {
+                    "type": "string",
+                    "description": "The chat's session_id",
+                },
+                "exchange_limit": {
+                    "type": "integer",
+                    "description": "Max exchanges to return (default: 25, most recent)",
+                    "default": 25,
+                },
+                "max_chars": {
+                    "type": "integer",
+                    "description": "Max chars per message before truncation (default: 2000)",
+                    "default": 2000,
+                },
+            },
+            "required": ["session_id"],
+        },
+    ),
+    Tool(
+        name="get_exchange",
+        description=(
+            "Get a single exchange with full untruncated content. "
+            "Use after search_chats or get_chat identifies a specific exchange "
+            "of interest."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "exchange_id": {
+                    "type": "string",
+                    "description": "The exchange's exchange_id",
+                },
+            },
+            "required": ["exchange_id"],
+        },
+    ),
+]

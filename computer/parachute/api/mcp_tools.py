@@ -16,6 +16,7 @@ from typing import Any
 
 from mcp.server import Server
 from mcp.types import TextContent, Tool
+from parachute.core.chat_memory import CHAT_MEMORY_TOOLS
 
 logger = logging.getLogger(__name__)
 
@@ -142,83 +143,7 @@ TOOLS = [
             "required": ["content", "date"],
         },
     ),
-    # Chat Memory Tools (shared handlers — same in direct MCP and sandbox bridge)
-    Tool(
-        name="search_chats",
-        description=(
-            "Search across all past chat conversations by keyword. "
-            "Returns chats with matching exchanges bundled underneath — "
-            "shows what was actually said, not just session-level pointers. "
-            "Each matching exchange includes user/AI snippets for quick review. "
-            "Use get_exchange to drill into full content of a specific exchange."
-        ),
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "Keyword or phrase to search for",
-                },
-                "limit": {
-                    "type": "integer",
-                    "description": "Max chats to return (default: 10)",
-                    "default": 10,
-                },
-                "module": {
-                    "type": "string",
-                    "description": "Optional: filter by module (e.g. 'chat', 'daily')",
-                },
-            },
-            "required": ["query"],
-        },
-    ),
-    Tool(
-        name="get_chat",
-        description=(
-            "Browse a specific chat conversation. Returns chat metadata "
-            "plus its exchanges (most recent N, truncated). Use get_exchange "
-            "to see full untruncated content of any specific exchange."
-        ),
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "session_id": {
-                    "type": "string",
-                    "description": "The chat's session_id",
-                },
-                "exchange_limit": {
-                    "type": "integer",
-                    "description": "Max exchanges to return (default: 25, most recent)",
-                    "default": 25,
-                },
-                "max_chars": {
-                    "type": "integer",
-                    "description": "Max chars per message before truncation (default: 2000)",
-                    "default": 2000,
-                },
-            },
-            "required": ["session_id"],
-        },
-    ),
-    Tool(
-        name="get_exchange",
-        description=(
-            "Get a single exchange by ID with full message content "
-            "(user message + AI response, untruncated). "
-            "Use after search_chats or get_chat identifies a specific exchange of interest."
-        ),
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "exchange_id": {
-                    "type": "string",
-                    "description": "Exchange ID (format: session_id_prefix:ex:N)",
-                },
-            },
-            "required": ["exchange_id"],
-        },
-    ),
-]
+] + CHAT_MEMORY_TOOLS  # Chat memory tools (search_chats, get_chat, get_exchange)
 
 
 # ── Tool Handlers ─────────────────────────────────────────────────────────────
