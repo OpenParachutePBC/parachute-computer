@@ -122,6 +122,7 @@ class PendingEntryQueue extends ChangeNotifier {
 
         final result = await api.createEntry(
           content: item.content,
+          createdAt: item.queuedAt,
           metadata: {
             if (item.type != 'text') 'type': item.type,
             if (item.title != null && item.title!.isNotEmpty) 'title': item.title!,

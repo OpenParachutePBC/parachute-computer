@@ -101,16 +101,28 @@ class DailyApiService {
   /// Create a new entry on the server.
   ///
   /// Returns the created [JournalEntry] on success, or null if offline / error.
+  ///
+  /// Client-originated timestamps: if [createdAt] is provided (e.g. for
+  /// offline entries being flushed), it is sent as `created_at` and the date
+  /// is derived from it.  Otherwise the current time is used so the server
+  /// always receives the moment the user actually wrote the entry.
   Future<JournalEntry?> createEntry({
     required String content,
     Map<String, dynamic>? metadata,
+    DateTime? createdAt,
   }) async {
     final uri = Uri.parse('$baseUrl/api/daily/entries');
     debugPrint('[DailyApiService] POST $uri');
     try {
+      final ts = createdAt ?? DateTime.now();
+      final enrichedMeta = <String, dynamic>{
+        ...?metadata,
+        'created_at': ts.toUtc().toIso8601String(),
+        'date': _dateStr(ts),
+      };
       final body = jsonEncode({
         'content': content,
-        if (metadata != null) 'metadata': metadata,
+        'metadata': enrichedMeta,
       });
       final response = await _client
           .post(uri, headers: _headers, body: body)
@@ -206,7 +218,7 @@ class DailyApiService {
     final uri = Uri.parse('$baseUrl/api/daily/assets/upload');
     debugPrint('[DailyApiService] POST $uri (audio upload)');
     try {
-      final dateStr = date ?? _todayStr();
+      final dateStr = date ?? _dateStr(DateTime.now());
       final request = http.MultipartRequest('POST', uri)
         ..files.add(await http.MultipartFile.fromPath('file', audioFile.path))
         ..fields['date'] = dateStr;
@@ -230,11 +242,12 @@ class DailyApiService {
     }
   }
 
-  static String _todayStr() {
-    final now = DateTime.now();
-    final y = now.year.toString();
-    final m = now.month.toString().padLeft(2, '0');
-    final d = now.day.toString().padLeft(2, '0');
+  /// Format a [DateTime] as a YYYY-MM-DD string in local time.
+  static String _dateStr(DateTime dt) {
+    final local = dt.toLocal();
+    final y = local.year.toString().padLeft(4, '0');
+    final m = local.month.toString().padLeft(2, '0');
+    final d = local.day.toString().padLeft(2, '0');
     return '$y-$m-$d';
   }
 

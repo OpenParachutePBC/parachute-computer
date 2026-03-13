@@ -642,20 +642,43 @@ class DailyModule:
         if graph is None:
             raise RuntimeError("BrainDB unavailable — cannot create entry")
 
-        now = datetime.now(timezone.utc)
-        entry_id = now.strftime("%Y-%m-%d-%H-%M-%S-%f")
+        meta = metadata or {}
+
+        # Honor client-provided timestamps when present (offline entries carry
+        # their original authoring time).  Fall back to server time otherwise.
+        # Defaults: use server time; overridden below if valid client timestamp.
+        now_utc = datetime.now(timezone.utc)
+        parsed = now_utc
+
+        client_created_at = meta.get("created_at")
+        if client_created_at:
+            try:
+                candidate = datetime.fromisoformat(client_created_at)
+                if candidate.tzinfo is None:
+                    candidate = candidate.replace(tzinfo=timezone.utc)
+                delta_secs = (now_utc - candidate).total_seconds()
+                max_age_secs = 30 * 24 * 3600
+                if delta_secs < -60:
+                    logger.warning(f"Daily: rejecting future client timestamp {client_created_at}")
+                elif delta_secs > max_age_secs:
+                    logger.warning(f"Daily: rejecting too-old client timestamp {client_created_at}")
+                else:
+                    parsed = candidate
+            except (ValueError, TypeError):
+                logger.warning(f"Daily: invalid client timestamp {client_created_at!r}, using server time")
+
+        entry_id = parsed.strftime("%Y-%m-%d-%H-%M-%S-%f")
+        created_at = parsed.isoformat()
         # Use local wall-clock date so entries group under the day the user
         # experienced them (e.g. 8pm local = next UTC day in US timezones).
-        date = datetime.now().strftime("%Y-%m-%d")
-        created_at = now.isoformat()
+        date = parsed.astimezone().strftime("%Y-%m-%d")
 
-        meta = metadata or {}
         title = meta.get("title", "")
         entry_type = meta.get("type", "text")
         audio_path = meta.get("audio_path", "") or ""
 
         # Extra metadata (image_path, duration_seconds, etc.)
-        known = {"title", "type", "audio_path"}
+        known = {"title", "type", "audio_path", "created_at", "date"}  # excluded from extra_meta
         extra_meta = {k: v for k, v in meta.items() if k not in known}
 
         await self._write_to_graph(

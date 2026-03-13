@@ -62,6 +62,9 @@ class JournalEntry {
   /// Whether this entry is queued for upload (written offline, not yet on server)
   final bool isPending;
 
+  /// Whether this entry was edited locally and the edit hasn't synced yet
+  final bool hasPendingEdit;
+
   const JournalEntry({
     required this.id,
     required this.title,
@@ -75,6 +78,7 @@ class JournalEntry {
     this.isPlainMarkdown = false,
     bool isPendingTranscription = false,
     this.isPending = false,
+    this.hasPendingEdit = false,
   }) : _isPendingTranscription = isPendingTranscription;
 
   /// Whether this entry has an associated audio file
@@ -269,6 +273,7 @@ class JournalEntry {
     bool? isPlainMarkdown,
     bool? isPendingTranscription,
     bool? isPending,
+    bool? hasPendingEdit,
   }) {
     return JournalEntry(
       id: id ?? this.id,
@@ -283,6 +288,7 @@ class JournalEntry {
       isPlainMarkdown: isPlainMarkdown ?? this.isPlainMarkdown,
       isPendingTranscription: isPendingTranscription ?? _isPendingTranscription,
       isPending: isPending ?? this.isPending,
+      hasPendingEdit: hasPendingEdit ?? this.hasPendingEdit,
     );
   }
 
