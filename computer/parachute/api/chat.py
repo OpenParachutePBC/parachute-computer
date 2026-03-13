@@ -106,6 +106,9 @@ async def event_generator(request: Request, chat_request: ChatRequest):
     if session_id == 'new':
         session_id = None
 
+    event_count = 0
+    heartbeat_count = 0
+    end_reason = "unknown"
     try:
         # Convert attachments to dicts if present
         attachments_data = None
@@ -132,8 +135,6 @@ async def event_generator(request: Request, chat_request: ChatRequest):
             container_id=chat_request.container_id,
         )
 
-        event_count = 0
-        heartbeat_count = 0
         async for event in _with_heartbeat(stream, request):
             if event is None:
                 heartbeat_count += 1
@@ -142,23 +143,28 @@ async def event_generator(request: Request, chat_request: ChatRequest):
                 event_count += 1
                 # Check if client disconnected
                 if await request.is_disconnected():
-                    logger.info(
-                        f"Client disconnected: session={chat_request.session_id or 'new'}, "
-                        f"events={event_count}, heartbeats={heartbeat_count}"
-                    )
+                    end_reason = "client_disconnected"
                     return
                 yield f"data: {json.dumps(event)}\n\n"
 
-        logger.info(
-            f"SSE stream complete: session={chat_request.session_id or 'new'}, "
-            f"events={event_count}, heartbeats={heartbeat_count}"
-        )
+        end_reason = "normal"
+
+    except asyncio.CancelledError:
+        end_reason = "cancelled"
+        raise
 
     except Exception as e:
+        end_reason = f"error: {e}"
         logger.error(f"Stream error: {e}", exc_info=True)
         typed = parse_error(e)
         event = TypedErrorEvent.from_typed_error(typed)
         yield f"data: {json.dumps(event.model_dump(by_alias=True))}\n\n"
+
+    finally:
+        logger.info(
+            f"SSE stream ended: session={chat_request.session_id or 'new'}, "
+            f"reason={end_reason}, events={event_count}, heartbeats={heartbeat_count}"
+        )
 
 
 @router.post("/chat")

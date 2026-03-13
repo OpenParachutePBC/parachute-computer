@@ -240,6 +240,13 @@ class Settings(BaseSettings):
         description="Per-line readline timeout inside sandbox in seconds (default: 300 = 5 min)",
     )
 
+    # Trusted path timeouts
+    trusted_event_timeout: int = Field(
+        default=300,
+        ge=1,
+        description="Per-event timeout for trusted SDK event queue in seconds (default: 300 = 5 min)",
+    )
+
     # Development
     debug: bool = Field(default=False, description="Enable debug mode")
     reload: bool = Field(default=False, description="Enable auto-reload")

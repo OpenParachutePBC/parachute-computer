@@ -925,6 +925,7 @@ class Orchestrator:
         current_text = ""
         inject_count = 0
         initial_user_echo_seen = False
+        end_reason = "unknown"
 
         sdk_can_use_tool = permission_handler.create_sdk_callback()
 
@@ -952,6 +953,7 @@ class Orchestrator:
                 agents=caps.agents_dict,
                 claude_token=claude_token,
                 message_queue=message_queue,
+                event_timeout=self.settings.trusted_event_timeout,
                 **(
                     {"model": model or self.settings.default_model}
                     if (model or self.settings.default_model)
@@ -1109,6 +1111,21 @@ class Orchestrator:
                     if event.get("session_id"):
                         captured_session_id = event["session_id"]
 
+                elif event_type == "event_timeout":
+                    timeout_s = event.get("timeout_seconds", "?")
+                    end_reason = f"event_timeout ({timeout_s}s)"
+                    logger.warning(
+                        f"SDK event timeout after {timeout_s}s: "
+                        f"session={captured_session_id or session.id[:8]}"
+                    )
+                    typed = parse_error(
+                        f"Response timed out after {timeout_s}s of inactivity"
+                    )
+                    yield TypedErrorEvent.from_typed_error(
+                        typed, session_id=captured_session_id or session.id
+                    ).model_dump(by_alias=True)
+                    return
+
                 elif event_type == "error":
                     error_msg = event.get("error", "Unknown SDK error")
                     logger.error(f"SDK error event received: {error_msg}")
@@ -1136,14 +1153,7 @@ class Orchestrator:
 
                     return
 
-            # Stream ended — log lifecycle info
             end_reason = "interrupted" if interrupt.is_interrupted else "normal"
-            session_label = captured_session_id or (session.id[:8] if session.id else "unknown")
-            logger.info(
-                f"Stream ended: session={session_label}, "
-                f"reason={end_reason}, result_len={len(result_text)}, "
-                f"model={captured_model}"
-            )
 
             # Finalize session (if not already done early)
             if is_new and captured_session_id and not session_finalized:
@@ -1214,6 +1224,7 @@ class Orchestrator:
             ).model_dump(by_alias=True)
 
         except asyncio.CancelledError:
+            end_reason = "cancelled"
             yield AbortedEvent(
                 message="Stream cancelled",
                 session_id=captured_session_id or session.id,
@@ -1222,6 +1233,7 @@ class Orchestrator:
             raise
 
         except Exception as e:
+            end_reason = f"error: {e}"
             logger.error(f"Streaming error: {e}", exc_info=True)
             if "ENOENT" in str(e) or "not found" in str(e).lower():
                 yield SessionUnavailableEvent(
@@ -1236,6 +1248,13 @@ class Orchestrator:
                 yield TypedErrorEvent.from_typed_error(
                     typed, session_id=captured_session_id or session.id
                 ).model_dump(by_alias=True)
+
+        finally:
+            session_label = captured_session_id or (session.id[:8] if session.id else "unknown")
+            logger.info(
+                f"Stream ended: session={session_label}, reason={end_reason}, "
+                f"result_len={len(result_text)}, model={captured_model}"
+            )
 
     async def _process_sandbox_event(
         self,
