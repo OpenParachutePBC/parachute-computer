@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
-import 'package:parachute/core/theme/app_theme.dart';
 import 'package:parachute/core/providers/app_state_provider.dart';
 import 'package:parachute/features/chat/models/chat_session.dart';
 import 'package:parachute/features/chat/models/stream_event.dart';
@@ -31,7 +30,7 @@ void main() {
     test('AppTab enum has expected values', () {
       expect(AppTab.values, contains(AppTab.chat));
       expect(AppTab.values, contains(AppTab.daily));
-      expect(AppTab.values, contains(AppTab.vault));
+      expect(AppTab.values, contains(AppTab.brain));
     });
   });
 

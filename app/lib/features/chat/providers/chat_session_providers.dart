@@ -3,10 +3,10 @@ import 'dart:async';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/chat_session.dart';
-import '../models/chat_message.dart';
 import '../models/claude_usage.dart';
 import '../services/chat_service.dart';
 import '../services/local_session_reader.dart';
+import 'package:parachute/core/config/app_config.dart';
 import 'package:parachute/core/providers/feature_flags_provider.dart';
 import 'package:parachute/core/providers/app_state_provider.dart';
 import 'package:parachute/core/services/file_system_service.dart';
@@ -22,7 +22,7 @@ import 'package:parachute/core/services/file_system_service.dart';
 final chatServiceProvider = Provider<ChatService>((ref) {
   // Import these from app_state_provider
   final urlAsync = ref.watch(aiServerUrlProvider);
-  final baseUrl = urlAsync.valueOrNull ?? 'http://localhost:3333';
+  final baseUrl = urlAsync.valueOrNull ?? AppConfig.defaultServerUrl;
 
   final apiKeyAsync = ref.watch(apiKeyProvider);
   final apiKey = apiKeyAsync.valueOrNull;

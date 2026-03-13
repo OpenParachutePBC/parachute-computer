@@ -5,7 +5,6 @@ import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/core/services/computer_service.dart'
     show CallerTemplate, DailyAgentInfo;
 import '../providers/journal_providers.dart';
-import '../utils/agent_theme.dart';
 import '../utils/time_helpers.dart';
 
 /// Tool definition for the context sources UI.

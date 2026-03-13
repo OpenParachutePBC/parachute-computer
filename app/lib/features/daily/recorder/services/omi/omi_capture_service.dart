@@ -39,7 +39,6 @@ class OmiCaptureService {
 
   // Mode detection
   bool _useStreamingMode = false;
-  bool _modeDetected = false;
 
   // Real-time streaming state
   WavBytesUtil? _wavBytesUtil;
@@ -83,7 +82,6 @@ class OmiCaptureService {
     // Reset tracking state on new connection
     _lastKnownStorageSize = null;
     _deviceIsRecording = false;
-    _modeDetected = false;
     _useStreamingMode = false;
 
     try {
@@ -104,7 +102,6 @@ class OmiCaptureService {
     final connection = bluetoothService.activeConnection;
     if (connection == null || connection is! OmiDeviceConnection) {
       _useStreamingMode = true;
-      _modeDetected = true;
       return;
     }
 
@@ -112,7 +109,6 @@ class OmiCaptureService {
 
     if (!omiConnection.hasStorageService) {
       _useStreamingMode = true;
-      _modeDetected = true;
       return;
     }
 
@@ -121,7 +117,6 @@ class OmiCaptureService {
       final storageInfo = await omiConnection.getStorageInfo();
       if (storageInfo == null) {
         _useStreamingMode = true;
-        _modeDetected = true;
         return;
       }
 
@@ -131,21 +126,16 @@ class OmiCaptureService {
       // If there's data on storage, device supports store-and-forward
       if (fileSize > 0 || currentOffset > 0) {
         _useStreamingMode = false;
-        _modeDetected = true;
 
         // Download any pending recordings
         final totalBytes = currentOffset > 0 ? currentOffset : fileSize;
         if (totalBytes > 0) {
           await _downloadRecording(omiConnection, fileSize, totalBytes);
         }
-      } else {
-        // Storage is empty - will detect after first recording completes
-        _modeDetected = false;
       }
     } catch (e) {
       debugPrint('[OmiCaptureService] Error detecting mode: $e');
       _useStreamingMode = true;
-      _modeDetected = true;
     }
   }
 

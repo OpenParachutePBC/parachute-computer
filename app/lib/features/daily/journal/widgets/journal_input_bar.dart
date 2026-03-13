@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/core/providers/model_download_provider.dart';
-import 'package:parachute/core/services/model_download_service.dart';
 import '../../capture/providers/capture_providers.dart';
 import '../../capture/screens/handwriting_screen.dart';
 import '../../recorder/providers/service_providers.dart';
@@ -773,7 +772,7 @@ class _JournalInputBarState extends ConsumerState<JournalInputBar> {
     ThemeData theme,
   ) {
     final hasConfirmed = state.confirmedSegments.isNotEmpty;
-    final hasInterim = state.interimText != null && state.interimText!.isNotEmpty;
+    final hasInterim = state.interimText.isNotEmpty;
 
     if (!hasConfirmed && !hasInterim) {
       return _buildTranscriptPlaceholder(isDark, state.modelStatus);
@@ -806,7 +805,7 @@ class _JournalInputBarState extends ConsumerState<JournalInputBar> {
               if (hasInterim) ...[
                 if (hasConfirmed) const TextSpan(text: ' '),
                 TextSpan(
-                  text: state.interimText!,
+                  text: state.interimText,
                   style: TextStyle(
                     color: isDark
                         ? BrandColors.driftwood
@@ -863,7 +862,7 @@ class _JournalInputBarState extends ConsumerState<JournalInputBar> {
               height: 16,
               child: CircularProgressIndicator(
                 strokeWidth: 2,
-                valueColor: AlwaysStoppedAnimation<Color>(iconColor ?? BrandColors.driftwood),
+                valueColor: AlwaysStoppedAnimation<Color>(iconColor),
               ),
             )
           else

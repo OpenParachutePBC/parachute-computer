@@ -233,47 +233,6 @@ class TranscriptionInitNotifier extends StateNotifier<TranscriptionInitState> {
     }
   }
 
-  /// Initialize engine only (models already downloaded)
-  Future<void> _initializeEngine() async {
-    state = state.copyWith(
-      phase: TranscriptionInitPhase.initializing,
-      progress: 0.9,
-      statusMessage: 'Initializing engine...',
-    );
-
-    try {
-      if (Platform.isIOS || Platform.isMacOS) {
-        await _parakeetService.initialize(version: 'v3');
-        state = TranscriptionInitState(
-          phase: TranscriptionInitPhase.ready,
-          progress: 1.0,
-          statusMessage: 'Ready',
-          engineName: 'Parakeet v3 (FluidAudio)',
-          lastChecked: DateTime.now(),
-        );
-      } else {
-        await _sherpaIsolate.initialize(
-          onProgress: (p) => state = state.copyWith(progress: 0.9 + p * 0.1),
-          onStatus: (s) => state = state.copyWith(statusMessage: s),
-        );
-        state = TranscriptionInitState(
-          phase: TranscriptionInitPhase.ready,
-          progress: 1.0,
-          statusMessage: 'Ready',
-          engineName: 'Parakeet v3 (Sherpa-ONNX)',
-          lastChecked: DateTime.now(),
-        );
-      }
-    } catch (e) {
-      debugPrint('[TranscriptionInit] Engine init failed: $e');
-      state = TranscriptionInitState(
-        phase: TranscriptionInitPhase.failed,
-        errorMessage: _friendlyErrorMessage(e),
-        lastChecked: DateTime.now(),
-      );
-    }
-  }
-
   /// Initialize Parakeet via FluidAudio (iOS/macOS)
   Future<void> _initializeParakeet() async {
     // FluidAudio doesn't provide progress, use indeterminate

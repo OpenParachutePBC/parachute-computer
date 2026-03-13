@@ -9,7 +9,6 @@ import 'package:parachute/core/providers/streaming_voice_providers.dart';
 import 'package:parachute/core/providers/model_download_provider.dart';
 import 'package:parachute/core/services/streaming_voice_service.dart';
 import '../models/attachment.dart';
-import '../providers/chat_providers.dart';
 
 /// Text input field for chat messages with voice input and attachment support
 class ChatInput extends ConsumerStatefulWidget {
@@ -302,8 +301,6 @@ class _ChatInputState extends ConsumerState<ChatInput>
     // Watch streaming transcription state
     final streamingState = ref.watch(streamingVoiceCurrentStateProvider);
     final isRecording = _isStreamingRecording;
-    final isTranscribing = false;
-    final duration = streamingState.recordingDuration;
 
     return Container(
       padding: const EdgeInsets.all(Spacing.md),
@@ -337,12 +334,12 @@ class _ChatInputState extends ConsumerState<ChatInput>
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 // Attachment button (left side)
-                _buildAttachmentButton(isDark, isRecording, isTranscribing),
+                _buildAttachmentButton(isDark, isRecording),
 
                 const SizedBox(width: Spacing.xs),
 
                 // Microphone button
-                _buildVoiceButton(isDark, isRecording, isTranscribing),
+                _buildVoiceButton(isDark, isRecording),
 
                 const SizedBox(width: Spacing.sm),
 
@@ -375,7 +372,7 @@ class _ChatInputState extends ConsumerState<ChatInput>
                       child: TextField(
                         controller: _controller,
                         focusNode: _focusNode,
-                        enabled: widget.enabled && !isRecording && !isTranscribing,
+                        enabled: widget.enabled && !isRecording,
                         maxLines: null,
                         textInputAction: TextInputAction.newline,
                         style: TextStyle(
@@ -385,9 +382,7 @@ class _ChatInputState extends ConsumerState<ChatInput>
                         decoration: InputDecoration(
                           hintText: isRecording
                               ? 'Recording...'
-                              : isTranscribing
-                                  ? 'Transcribing...'
-                                  : widget.hintText,
+                              : widget.hintText,
                           hintStyle: TextStyle(
                             color: isDark
                                 ? BrandColors.nightTextSecondary
@@ -430,16 +425,16 @@ class _ChatInputState extends ConsumerState<ChatInput>
                           tooltip: 'Stop generating',
                         )
                       : IconButton(
-                          onPressed: ((_hasText || _attachments.isNotEmpty) && widget.enabled && !isRecording && !isTranscribing)
+                          onPressed: ((_hasText || _attachments.isNotEmpty) && widget.enabled && !isRecording)
                               ? _handleSend
                               : null,
                           style: IconButton.styleFrom(
-                            backgroundColor: ((_hasText || _attachments.isNotEmpty) && widget.enabled && !isRecording && !isTranscribing)
+                            backgroundColor: ((_hasText || _attachments.isNotEmpty) && widget.enabled && !isRecording)
                                 ? (isDark ? BrandColors.nightForest : BrandColors.forest)
                                 : (isDark
                                     ? BrandColors.nightSurfaceElevated
                                     : BrandColors.stone),
-                            foregroundColor: ((_hasText || _attachments.isNotEmpty) && widget.enabled && !isRecording && !isTranscribing)
+                            foregroundColor: ((_hasText || _attachments.isNotEmpty) && widget.enabled && !isRecording)
                                 ? Colors.white
                                 : (isDark
                                     ? BrandColors.nightTextSecondary
@@ -459,29 +454,7 @@ class _ChatInputState extends ConsumerState<ChatInput>
     );
   }
 
-  Widget _buildVoiceButton(bool isDark, bool isRecording, bool isTranscribing) {
-    // Show loading spinner when transcribing
-    if (isTranscribing) {
-      return Container(
-        width: 40,
-        height: 40,
-        decoration: BoxDecoration(
-          color: isDark ? BrandColors.nightSurfaceElevated : BrandColors.stone,
-          borderRadius: Radii.button,
-        ),
-        child: Center(
-          child: SizedBox(
-            width: 20,
-            height: 20,
-            child: CircularProgressIndicator(
-              strokeWidth: 2,
-              color: isDark ? BrandColors.nightTurquoise : BrandColors.turquoise,
-            ),
-          ),
-        ),
-      );
-    }
-
+  Widget _buildVoiceButton(bool isDark, bool isRecording) {
     // Pulsing mic button when recording
     return AnimatedBuilder(
       animation: _pulseController,
@@ -516,7 +489,7 @@ class _ChatInputState extends ConsumerState<ChatInput>
   /// Build streaming transcript display with real-time feedback
   Widget _buildStreamingTranscriptDisplay(bool isDark, StreamingTranscriptionState state) {
     final hasConfirmed = state.confirmedSegments.isNotEmpty;
-    final hasInterim = state.interimText != null && state.interimText!.isNotEmpty;
+    final hasInterim = state.interimText.isNotEmpty;
     final hasText = hasConfirmed || hasInterim;
 
     return Container(
@@ -590,7 +563,7 @@ class _ChatInputState extends ConsumerState<ChatInput>
                       if (hasInterim) ...[
                         if (hasConfirmed) const TextSpan(text: ' '),
                         TextSpan(
-                          text: state.interimText!,
+                          text: state.interimText,
                           style: TextStyle(
                             color: isDark
                                 ? BrandColors.nightTextSecondary
@@ -676,7 +649,7 @@ class _ChatInputState extends ConsumerState<ChatInput>
   /// Build finalizing indicator (shown while processing stop)
   Widget _buildFinalizingIndicator(bool isDark, StreamingTranscriptionState state) {
     final hasText = state.confirmedSegments.isNotEmpty ||
-        (state.interimText != null && state.interimText!.isNotEmpty);
+        state.interimText.isNotEmpty;
 
     return Container(
       margin: const EdgeInsets.only(bottom: Spacing.sm),
@@ -739,7 +712,7 @@ class _ChatInputState extends ConsumerState<ChatInput>
     );
   }
 
-  Widget _buildAttachmentButton(bool isDark, bool isRecording, bool isTranscribing) {
+  Widget _buildAttachmentButton(bool isDark, bool isRecording) {
     if (_isLoadingAttachment) {
       return Container(
         width: 40,
@@ -762,7 +735,7 @@ class _ChatInputState extends ConsumerState<ChatInput>
     }
 
     return IconButton(
-      onPressed: (widget.enabled && !isRecording && !isTranscribing)
+      onPressed: (widget.enabled && !isRecording)
           ? _handleAttachment
           : null,
       style: IconButton.styleFrom(

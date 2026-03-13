@@ -1,4 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:parachute/core/config/app_config.dart';
 import 'package:parachute/core/providers/app_state_provider.dart';
 import 'package:parachute/core/providers/feature_flags_provider.dart' show aiServerUrlProvider;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -10,7 +11,7 @@ import 'chat_session_providers.dart';
 /// Provider for the ProjectService.
 final projectServiceProvider = Provider<ProjectService>((ref) {
   final urlAsync = ref.watch(aiServerUrlProvider);
-  final baseUrl = urlAsync.valueOrNull ?? 'http://localhost:3333';
+  final baseUrl = urlAsync.valueOrNull ?? AppConfig.defaultServerUrl;
   final apiKeyAsync = ref.watch(apiKeyProvider);
   final apiKey = apiKeyAsync.valueOrNull;
 

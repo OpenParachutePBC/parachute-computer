@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:parachute/core/config/app_config.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/core/providers/app_state_provider.dart';
 import 'package:parachute/core/providers/bare_metal_provider.dart';
@@ -153,13 +154,6 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
     '/opt/homebrew/bin/brew', // Apple Silicon
     '/usr/local/bin/brew', // Intel
   ];
-
-  String? get _brewPath {
-    for (final p in _brewPaths) {
-      if (File(p).existsSync()) return p;
-    }
-    return null;
-  }
 
   Future<void> _installHomebrew() async {
     final url = Uri.parse('https://brew.sh');
@@ -421,8 +415,7 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
 
   Future<void> _complete() async {
     // Set the server URL so the app switches to full mode (Chat + Vault tabs)
-    // Server runs on localhost:3333
-    const serverUrl = 'http://localhost:3333';
+    const serverUrl = AppConfig.defaultServerUrl;
 
     debugPrint('[ComputerSetupWizard] Setting server URL to $serverUrl');
     await ref.read(serverUrlProvider.notifier).setServerUrl(serverUrl);

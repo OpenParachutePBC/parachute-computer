@@ -249,11 +249,6 @@ class SyncService {
     return headers;
   }
 
-  /// Compute SHA-256 hash of file content
-  String _hashContent(String content) {
-    return sha256.convert(utf8.encode(content)).toString();
-  }
-
   /// Compute SHA-256 hash of file
   Future<String> _hashFile(File file) async {
     final bytes = await file.readAsBytes();

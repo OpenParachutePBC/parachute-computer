@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:parachute/core/config/app_config.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/core/providers/app_state_provider.dart'
     show serverUrlProvider, apiKeyProvider;
 import 'package:parachute/core/providers/feature_flags_provider.dart';
-import 'package:parachute/core/providers/server_providers.dart';
 import 'package:parachute/core/providers/sync_provider.dart';
 import 'package:parachute/core/services/backend_health_service.dart';
 
@@ -45,7 +45,7 @@ class _ServerSettingsSectionState extends ConsumerState<ServerSettingsSection> {
 
     try {
       // Save using FeatureFlagsService (same key as working chat app)
-      await featureFlags.setAiServerUrl(url.isEmpty ? 'http://localhost:3333' : url);
+      await featureFlags.setAiServerUrl(url.isEmpty ? AppConfig.defaultServerUrl : url);
       featureFlags.clearCache();
 
       // Invalidate the provider so ChatService rebuilds with the new URL
@@ -194,7 +194,7 @@ class _ServerSettingsSectionState extends ConsumerState<ServerSettingsSection> {
           controller: _serverUrlController,
           decoration: InputDecoration(
             labelText: 'Server URL',
-            hintText: 'http://localhost:3333',
+            hintText: AppConfig.defaultServerUrl,
             border: const OutlineInputBorder(),
             prefixIcon: const Icon(Icons.link),
             suffixIcon: IconButton(

@@ -48,12 +48,12 @@ class StreamingTranscriptionDisplay extends ConsumerWidget {
     // Don't show if not recording and no text
     if (!state.isRecording &&
         state.confirmedSegments.isEmpty &&
-        (state.interimText == null || state.interimText!.isEmpty)) {
+        state.interimText.isEmpty) {
       return const SizedBox.shrink();
     }
 
     final hasConfirmed = state.confirmedSegments.isNotEmpty;
-    final hasInterim = state.interimText != null && state.interimText!.isNotEmpty;
+    final hasInterim = state.interimText.isNotEmpty;
 
     if (!hasConfirmed && !hasInterim) {
       // Show placeholder during recording
@@ -92,7 +92,7 @@ class StreamingTranscriptionDisplay extends ConsumerWidget {
             if (hasInterim) ...[
               if (hasConfirmed) const SizedBox(height: 8),
               Text(
-                state.interimText!,
+                state.interimText,
                 style: TextStyle(
                   color: isDark
                       ? BrandColors.driftwood

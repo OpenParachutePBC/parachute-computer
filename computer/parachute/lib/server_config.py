@@ -6,7 +6,7 @@ Handles the server.yaml config file in the vault's .parachute directory.
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Optional
@@ -105,7 +105,7 @@ class ServerConfig:
         for key in self.security.api_keys:
             if verify_key(provided_key, key.key_hash):
                 # Update last used timestamp
-                key.last_used_at = datetime.utcnow()
+                key.last_used_at = datetime.now(timezone.utc)
                 self.save()
                 return key
         return None

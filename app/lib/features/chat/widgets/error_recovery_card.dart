@@ -220,6 +220,8 @@ class ErrorRecoveryCard extends StatelessWidget {
         return onNewSession;
       case RecoveryActionType.dismiss:
         return onDismiss;
+      case RecoveryActionType.startDocker:
+        return onRetry; // Starting Docker is a retry-like action
     }
   }
 
@@ -250,6 +252,8 @@ class ErrorRecoveryCard extends StatelessWidget {
       case ErrorCode.sessionNotFound:
       case ErrorCode.sessionUnavailable:
         return Icons.history_toggle_off;
+      case ErrorCode.dockerUnavailable:
+        return Icons.dock;
       case ErrorCode.unknownError:
         return Icons.error_outline;
     }
@@ -267,6 +271,8 @@ class ErrorRecoveryCard extends StatelessWidget {
         return Icons.add_comment;
       case RecoveryActionType.dismiss:
         return Icons.close;
+      case RecoveryActionType.startDocker:
+        return Icons.play_arrow;
     }
   }
 }

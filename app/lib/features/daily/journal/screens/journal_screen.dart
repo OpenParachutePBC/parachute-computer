@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:parachute/core/config/app_config.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/core/providers/feature_flags_provider.dart' show aiServerUrlProvider;
 import 'package:parachute/core/providers/sync_provider.dart';
@@ -985,7 +986,7 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
       await audioService.initialize();
 
       final serverBaseUrl =
-          ref.read(aiServerUrlProvider).valueOrNull ?? 'http://localhost:3333';
+          ref.read(aiServerUrlProvider).valueOrNull ?? AppConfig.defaultServerUrl;
       final fullPath = JournalHelpers.getAudioUrl(relativePath, serverBaseUrl);
       debugPrint('[JournalScreen] Audio URL: $fullPath');
 
@@ -1169,7 +1170,7 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
     final audioPath = entry.audioPath;
     if (audioPath == null) return const SizedBox.shrink();
 
-    final serverBaseUrl = ref.read(aiServerUrlProvider).valueOrNull ?? 'http://localhost:3333';
+    final serverBaseUrl = ref.read(aiServerUrlProvider).valueOrNull ?? AppConfig.defaultServerUrl;
     final audioUrl = JournalHelpers.getAudioUrl(audioPath, serverBaseUrl);
     final duration = Duration(seconds: entry.durationSeconds ?? 0);
 

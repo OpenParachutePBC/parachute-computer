@@ -1050,9 +1050,4 @@ class _JournalEntryRowState extends ConsumerState<JournalEntryRow> {
     return null;
   }
 
-  Future<String> _getFullImagePath() async {
-    final fileSystemService = ref.read(fileSystemServiceProvider);
-    final vaultPath = await fileSystemService.getRootPath();
-    return '$vaultPath/${widget.entry.imagePath}';
-  }
 }

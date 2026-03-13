@@ -1,4 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:parachute/core/config/app_config.dart';
 import 'package:parachute/core/providers/feature_flags_provider.dart'
     show aiServerUrlProvider;
 import 'package:parachute/core/providers/app_state_provider.dart'
@@ -7,7 +8,7 @@ import '../services/brain_service.dart';
 
 /// Provider for BrainService.
 final brainServiceProvider = Provider<BrainService>((ref) {
-  final baseUrl = ref.watch(aiServerUrlProvider).valueOrNull ?? 'http://localhost:3333';
+  final baseUrl = ref.watch(aiServerUrlProvider).valueOrNull ?? AppConfig.defaultServerUrl;
   final apiKey = ref.watch(apiKeyProvider).valueOrNull;
   final service = BrainService(baseUrl: baseUrl, apiKey: apiKey);
   ref.onDispose(() => service.dispose());
