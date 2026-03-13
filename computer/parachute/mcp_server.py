@@ -110,14 +110,14 @@ _session_context: SessionContext | None = None
 
 
 async def get_db():
-    """Get or create BrainSessionStore connection."""
+    """Get or create BrainChatStore connection."""
     global _db
     if _db is None:
         from parachute.db.brain import BrainService
-        from parachute.db.brain_sessions import BrainSessionStore
+        from parachute.db.brain_chat_store import BrainChatStore
         brain = BrainService(db_path=_PARACHUTE_DIR / "graph" / "parachute.kz")
         await brain.connect()
-        _db = BrainSessionStore(brain)
+        _db = BrainChatStore(brain)
         await _db.ensure_schema()
         logger.info(f"Connected to brain DB: {_PARACHUTE_DIR / 'graph' / 'parachute.kz'}")
     return _db

@@ -325,7 +325,7 @@ async def _run_sandboxed(
     # Ensure project record exists in session store
     try:
         from parachute.core.interfaces import get_registry
-        session_store = get_registry().get("SessionStore")
+        session_store = get_registry().get("ChatStore")
         if session_store is not None:
             # Check if project already exists before creating
             existing = await session_store.get_project(slug)

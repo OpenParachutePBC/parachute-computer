@@ -3,12 +3,12 @@ Brain query API — read-only access to the shared Kuzu graph.
 
 Endpoints:
   GET  /api/brain/schema            — all tables with column types
-  GET  /api/brain/sessions          — conversation sessions (Chat), supports ?search=
-  GET  /api/brain/sessions/{id}     — single session + exchanges (brain_get_chat)
+  GET  /api/brain/chats             — conversation chats, supports ?search=
+  GET  /api/brain/chats/{id}        — single chat + exchanges (brain_get_chat)
   GET  /api/brain/exchanges         — single exchange by ?id= (brain_get_exchange)
   GET  /api/brain/projects          — named projects
   GET  /api/brain/daily/entries     — Daily journal notes (brain_list_notes), supports ?search=
-  GET  /api/brain/memory            — unified memory search across sessions, notes, and exchanges
+  GET  /api/brain/memory            — unified memory search across chats, notes, and exchanges
   POST /api/brain/query             — read-only Cypher passthrough
   POST /api/brain/execute           — write Cypher passthrough (auth required)
 """
@@ -100,17 +100,17 @@ async def get_schema():
     }
 
 
-@router.get("/sessions")
-async def list_sessions(
+@router.get("/chats")
+async def list_chats(
     module: str | None = Query(None, description="Filter by module: chat, daily"),
     limit: int = Query(20, ge=1, le=200),
     archived: bool = Query(False),
-    all: bool = Query(False, description="Show all sessions (including agent runs). Default: human-initiated only."),
-    search: str | None = Query(None, description="Search in session title and summary"),
+    all: bool = Query(False, description="Show all chats (including agent runs). Default: human-initiated only."),
+    search: str | None = Query(None, description="Search in chat title and summary"),
 ):
-    """List conversation sessions (chats) from the graph.
+    """List chats from the graph.
 
-    By default filters to human-initiated sessions. Pass ?search= to filter by title or summary.
+    By default filters to human-initiated chats. Pass ?search= to filter by title or summary.
     """
     graph = _get_graph()
 
@@ -142,13 +142,13 @@ async def list_sessions(
     return {"sessions": rows, "count": len(rows)}
 
 
-@router.get("/sessions/{session_id}")
-async def get_session(
+@router.get("/chats/{session_id}")
+async def get_chat(
     session_id: str,
     exchange_limit: int = Query(25, ge=1, le=200, description="Max exchanges to return (default 25, most recent first)"),
     max_chars: int = Query(2000, ge=100, le=50000, description="Max chars per message field before truncation"),
 ):
-    """Get a single chat session by ID with its exchanges.
+    """Get a single chat by ID with its exchanges.
 
     Exchanges are returned most-recent-first up to exchange_limit, then reversed to
     chronological order. Long user_message/ai_response fields are truncated at max_chars.
@@ -161,7 +161,7 @@ async def get_session(
         {"session_id": session_id},
     )
     if not rows:
-        raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+        raise HTTPException(status_code=404, detail=f"Chat not found: {session_id}")
 
     session = rows[0]
 

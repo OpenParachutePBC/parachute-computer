@@ -1,7 +1,7 @@
 """
-BrainSessionStore — Kuzu-backed session metadata store.
+BrainChatStore — Kuzu-backed chat metadata store.
 
-Replaces database.py (SQLite/aiosqlite). All session metadata is stored in
+Replaces database.py (SQLite/aiosqlite). All chat metadata is stored in
 the shared Kuzu graph database alongside Brain, Chat, and Daily data.
 
 Schema:
@@ -37,9 +37,9 @@ def _now() -> str:
 
 
 
-class BrainSessionStore:
+class BrainChatStore:
     """
-    Kuzu-backed session metadata store.
+    Kuzu-backed chat metadata store.
 
     Drop-in replacement for Database (SQLite/aiosqlite). Uses BrainService for
     all Kuzu access. The BrainService write_lock serializes writes.
@@ -111,7 +111,7 @@ class BrainSessionStore:
             },
             primary_key="request_id",
         )
-        logger.info("BrainSessionStore: schema ready")
+        logger.info("BrainChatStore: schema ready")
 
     # ── Session CRUD ──────────────────────────────────────────────────────────
 
