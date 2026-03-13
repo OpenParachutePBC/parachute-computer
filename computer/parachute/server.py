@@ -182,6 +182,9 @@ async def lifespan(app: FastAPI):
 
     mcp_server = create_mcp_server()
     mcp_session_manager = create_session_manager(mcp_server)
+    # StreamableHTTPSessionManager.run() returns an async context manager.
+    # We call __aenter__/__aexit__ manually because FastAPI's lifespan is
+    # itself a context manager — we can't nest `async with` across the yield.
     mcp_run_ctx = mcp_session_manager.run()
     await mcp_run_ctx.__aenter__()
     app.state.mcp_session_manager = mcp_session_manager

@@ -1359,7 +1359,7 @@ class Orchestrator:
         agent_type: Optional[str],
         captured_model: Optional[str],
         mode: str = "converse",
-        interrupt: Optional["QueryInterrupt"] = None,
+        interrupt: "QueryInterrupt | None" = None,
     ) -> AsyncGenerator[dict, None]:
         """Run the sandboxed (Docker container) execution path.
 
@@ -1408,6 +1408,8 @@ class Orchestrator:
 
             token_store = get_registry().get("SandboxTokenStore")
             if token_store is not None:
+                from parachute.api.mcp_bridge import build_http_mcp_config
+
                 token_ctx = SandboxTokenContext(
                     session_id=sandbox_sid,
                     trust_level="sandboxed",
@@ -1415,11 +1417,7 @@ class Orchestrator:
                     allowed_writes=[],  # Read-only for chat sessions
                 )
                 sandbox_token = token_store.create_token(token_ctx)
-                sandbox_mcps["parachute"] = {
-                    "type": "http",
-                    "url": "http://host.docker.internal:3333/mcp/v1/",
-                    "headers": {"Authorization": f"Bearer {sandbox_token}"},
-                }
+                sandbox_mcps["parachute"] = build_http_mcp_config(sandbox_token)
                 logger.info(
                     f"Injected HTTP MCP bridge for sandbox session {sandbox_sid[:8]}"
                 )
@@ -1590,13 +1588,12 @@ class Orchestrator:
                 ).model_dump(by_alias=True)
 
         finally:
-            # Revoke sandbox MCP token after stream completes or is interrupted
-            if sandbox_token:
+            # Revoke sandbox MCP token after stream completes or is interrupted.
+            # Reuse the token_store captured at creation time to avoid registry
+            # lookup races during shutdown.
+            if sandbox_token and token_store is not None:
                 try:
-                    from parachute.core.interfaces import get_registry
-                    ts = get_registry().get("SandboxTokenStore")
-                    if ts is not None:
-                        ts.revoke_token(sandbox_token)
+                    token_store.revoke_token(sandbox_token)
                 except Exception:
                     pass
 

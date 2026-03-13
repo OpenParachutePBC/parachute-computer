@@ -336,6 +336,8 @@ async def _handle_write_output(arguments: dict[str, Any]) -> str:
 
     if not content:
         return json.dumps({"error": "Content cannot be empty"})
+    if len(content) > 512 * 1024:
+        return json.dumps({"error": "Content exceeds maximum size (512 KB)"})
     if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_str):
         return json.dumps({"error": "Invalid date format. Use YYYY-MM-DD"})
 

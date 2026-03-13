@@ -15,7 +15,6 @@ from typing import Any
 
 from mcp.server import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
-from mcp.types import TextContent, Tool
 
 from parachute.lib.sandbox_tokens import SandboxTokenContext, SandboxTokenStore
 
@@ -31,6 +30,26 @@ _current_sandbox_ctx: ContextVar[SandboxTokenContext | None] = ContextVar(
 def get_sandbox_context() -> SandboxTokenContext | None:
     """Get the current sandbox token context (for use in tool handlers)."""
     return _current_sandbox_ctx.get()
+
+
+def build_http_mcp_config(token: str, port: int | None = None) -> dict[str, Any]:
+    """Build HTTP MCP server config for a sandbox container.
+
+    The container connects over the Docker network to the host's Streamable
+    HTTP MCP endpoint. Auth is via session-scoped bearer token.
+
+    Args:
+        token: Bearer token for this sandbox session.
+        port: Server port. Defaults to Settings.port (usually 3333).
+    """
+    if port is None:
+        from parachute.config import get_settings
+        port = get_settings().port
+    return {
+        "type": "http",
+        "url": f"http://host.docker.internal:{port}/mcp/v1/",
+        "headers": {"Authorization": f"Bearer {token}"},
+    }
 
 
 def create_mcp_server() -> Server:
@@ -75,7 +94,7 @@ def create_mcp_asgi_app(
     """
 
     async def asgi_app(scope: dict, receive: Any, send: Any) -> None:
-        if scope["type"] not in ("http",):
+        if scope["type"] != "http":
             # Let non-HTTP scopes (lifespan, websocket) pass through
             await session_manager.handle_request(scope, receive, send)
             return

@@ -274,16 +274,9 @@ async def _mark_card_failed(graph, card_id: str) -> None:
 
 
 def _build_http_mcp_config(token: str) -> dict[str, Any]:
-    """Build HTTP MCP server config pointing to the host's MCP bridge.
-
-    The container connects over the Docker network to the host's Streamable
-    HTTP MCP endpoint. Auth is via session-scoped bearer token.
-    """
-    return {
-        "type": "http",
-        "url": "http://host.docker.internal:3333/mcp/v1/",
-        "headers": {"Authorization": f"Bearer {token}"},
-    }
+    """Build HTTP MCP server config pointing to the host's MCP bridge."""
+    from parachute.api.mcp_bridge import build_http_mcp_config
+    return build_http_mcp_config(token)
 
 
 async def _run_sandboxed(

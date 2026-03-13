@@ -146,14 +146,17 @@ class DockerSandbox:
             logger.warning(f"orbctl start failed: {e}")
             return False
 
-        # Give the daemon a moment to expose the socket, then re-check
-        await asyncio.sleep(2)
-        available = await self._check_docker()
-        if available:
-            logger.info("OrbStack started successfully — Docker is now available")
-        else:
-            logger.warning("orbctl start completed but Docker still not responding")
-        return available
+        # Poll for Docker readiness — OrbStack may need a few seconds to
+        # fully initialize the Linux VM and expose the Docker socket.
+        for attempt in range(3):
+            await asyncio.sleep(2)
+            if await self._check_docker():
+                logger.info("OrbStack started successfully — Docker is now available")
+                return True
+            logger.debug(f"Docker not ready yet (attempt {attempt + 1}/3)")
+
+        logger.warning("orbctl start completed but Docker still not responding")
+        return False
 
     async def image_exists(self) -> bool:
         """Check if the sandbox image is available."""
