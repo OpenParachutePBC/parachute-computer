@@ -40,7 +40,8 @@ def _load_yaml_config(parachute_dir: Path) -> dict[str, Any]:
     """Load config.yaml from ~/.parachute/config.yaml."""
     config_file = parachute_dir / "config.yaml"
     if not config_file.exists():
-        # Fallback: check legacy location ~/Parachute/.parachute/config.yaml
+        # COMPAT: pre-v0.2.0 stored config under ~/Parachute/.parachute/.
+        # Safe to remove once all users have re-run install.sh.
         legacy = Path.home() / "Parachute" / ".parachute" / "config.yaml"
         if legacy.exists():
             config_file = legacy
@@ -52,7 +53,8 @@ def _load_yaml_config(parachute_dir: Path) -> dict[str, Any]:
         if not isinstance(data, dict):
             logger.warning(f"config.yaml is not a dict, ignoring: {config_file}")
             return {}
-        # Drop vault_path — no longer a valid config key
+        # COMPAT: vault_path was a pre-v0.2.0 config key. Drop silently
+        # so old config files don't cause Pydantic validation errors.
         data.pop("vault_path", None)
         return data
     except Exception as e:
@@ -64,7 +66,7 @@ def _load_token(parachute_dir: Path) -> Optional[str]:
     """Load Claude token from ~/.parachute/.token."""
     token_file = parachute_dir / ".token"
     if not token_file.exists():
-        # Fallback: legacy location
+        # COMPAT: pre-v0.2.0 token location (see config.yaml fallback above)
         token_file = Path.home() / "Parachute" / ".parachute" / ".token"
         if not token_file.exists():
             return None

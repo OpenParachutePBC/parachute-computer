@@ -117,8 +117,8 @@ void main() {
                   label: 'Daily',
                 ),
                 NavigationDestination(
-                  icon: Icon(Icons.folder_outlined),
-                  label: 'Vault',
+                  icon: Icon(Icons.psychology_outlined),
+                  label: 'Brain',
                 ),
               ],
             ),
@@ -130,7 +130,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Chat'), findsOneWidget);
       expect(find.text('Daily'), findsOneWidget);
-      expect(find.text('Vault'), findsOneWidget);
+      expect(find.text('Brain'), findsOneWidget);
     });
   });
 }

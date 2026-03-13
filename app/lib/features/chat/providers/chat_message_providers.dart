@@ -11,6 +11,8 @@ import '../models/attachment.dart';
 import '../models/pending_user_question.dart';
 import '../services/chat_service.dart';
 import '../services/background_stream_manager.dart';
+import 'chat_context_manager.dart';
+import 'chat_stream_event_processor.dart';
 import 'package:parachute/core/services/logging_service.dart';
 import 'package:parachute/core/providers/core_service_providers.dart';
 import 'package:parachute/core/providers/supervisor_providers.dart' show supervisorConfigProvider;
@@ -213,15 +215,20 @@ class SessionUnavailableInfo {
 /// variables.  Shared between the registration site and the event callback
 /// via closure.
 class _SendStreamContext {
-  List<MessageContent> accumulatedContent = [];
+  /// The stream event processor that owns accumulated content for this stream.
+  final ChatStreamEventProcessor processor;
   String? actualSessionId;
   String displaySessionId;
   final String originalMessage;
 
   _SendStreamContext({
+    required this.processor,
     required this.displaySessionId,
     required this.originalMessage,
   });
+
+  /// Shorthand for processor.content (used by terminal event handlers).
+  List<MessageContent> get accumulatedContent => processor.content;
 }
 
 /// Notifier for managing chat messages and streaming
@@ -267,16 +274,15 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
   /// Active send-stream context (null when no sendMessage stream is running)
   _SendStreamContext? _sendStreamCtx;
 
-  ChatMessagesNotifier(this._service, this._streamManager, this._ref) : super(const ChatMessagesState());
+  /// Processor for the reattach-to-background-stream path.
+  /// Created in [_reattachToBackgroundStream], reset in [_resetTransientState].
+  ChatStreamEventProcessor? _reattachProcessor;
 
-  /// Format warning event data into display text
-  String _formatWarningText(StreamEvent event) {
-    final title = (event.data['title'] as String?) ?? 'Warning';
-    final msg = (event.data['message'] as String?) ?? '';
-    final details = (event.data['details'] as List<dynamic>?)?.whereType<String>().toList() ?? [];
-    return details.isNotEmpty
-        ? '$title: $msg\n${details.map((d) => '  - $d').join('\n')}'
-        : '$title: $msg';
+  /// Manages context file persistence and prior-message formatting.
+  late final ChatContextManager _contextManager;
+
+  ChatMessagesNotifier(this._service, this._streamManager, this._ref) : super(const ChatMessagesState()) {
+    _contextManager = ChatContextManager(_service);
   }
 
   /// Reset all mutable transient state that should not persist across sessions.
@@ -295,7 +301,8 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
     _pollTimer = null;
     _isPolling = false;
     _streamingThrottle.reset();
-    _reattachStreamContent.clear();
+    _reattachProcessor?.reset();
+    _reattachProcessor = null;
     _pendingContent = null;
     _pendingSessionId = null;
     _pendingResendMessage = null;
@@ -587,7 +594,20 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
 
   /// Reattach to a background stream to continue receiving updates
   void _reattachToBackgroundStream(String sessionId) {
-    _reattachStreamContent.clear(); // Prevent stale content from previous session
+    // Create a processor for this reattach session.
+    // The processor owns the accumulated content list and handles
+    // text/toolUse/toolResult/thinking/warning/model/promptMetadata events.
+    _reattachProcessor = ChatStreamEventProcessor(
+      onUpdate: (content, {required bool isStreaming, bool immediate = false}) {
+        if (immediate) {
+          _updateOrAddAssistantMessage(content, sessionId, isStreaming: isStreaming);
+        } else {
+          _updateReattachAssistantMessage(content, sessionId, isStreaming: isStreaming);
+        }
+      },
+      onFlush: _flushPendingUpdates,
+      buildPromptMetadata: _buildPromptMetadata,
+    );
     _currentStreamSubscription = _streamManager.reattachCallback(
       sessionId: sessionId,
       onEvent: (event) => _handleStreamEvent(event, sessionId),
@@ -688,137 +708,51 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
     });
   }
 
-  /// Accumulated content for reattached background streams
-  List<MessageContent> _reattachStreamContent = [];
-
-  /// Handle a stream event from background stream reattachment
+  /// Handle a stream event from background stream reattachment.
   ///
-  /// Unlike sendMessage which creates the assistant message, this is used when
-  /// reattaching to a background stream - we need to append/update content.
+  /// Common content events (text, toolUse, toolResult, thinking, warning,
+  /// model, promptMetadata) are delegated to [_reattachProcessor].
+  /// Terminal and path-specific events are handled inline.
   void _handleStreamEvent(StreamEvent event, String sessionId) {
     // Only process if we're still on this session
     if (state.sessionId != sessionId) return;
 
+    // Delegate common content events to the processor
+    if (_reattachProcessor != null && _reattachProcessor!.handles(event.type)) {
+      final patch = _reattachProcessor!.processEvent(event);
+      if (patch != null) _applyStatePatch(patch);
+      return;
+    }
+
+    // Handle terminal and path-specific events
     switch (event.type) {
       case StreamEventType.session:
-        // Capture model info if provided
         debugPrint('[ChatMessagesNotifier] Reattach stream session event');
         break;
 
-      case StreamEventType.model:
-        final model = event.model;
-        if (model != null) {
-          debugPrint('[ChatMessagesNotifier] Reattach stream model: $model');
-          state = state.copyWith(model: model);
-        }
-        break;
-
-      case StreamEventType.promptMetadata:
-        // Prompt composition metadata for transparency
-        final metadata = _buildPromptMetadata(event);
-        debugPrint('[ChatMessagesNotifier] Reattach stream prompt metadata: ${metadata.promptSource}');
-        state = state.copyWith(promptMetadata: metadata);
-        break;
-
-      case StreamEventType.text:
-        // Text content from server - accumulate it
-        final content = event.textContent;
-        if (content != null) {
-          // Replace or add text content
-          final hasTextContent = _reattachStreamContent.any((c) => c.type == ContentType.text);
-          if (hasTextContent) {
-            final lastTextIndex = _reattachStreamContent.lastIndexWhere(
-                (c) => c.type == ContentType.text);
-            _reattachStreamContent[lastTextIndex] = MessageContent.text(content);
-          } else {
-            _reattachStreamContent.add(MessageContent.text(content));
-          }
-          // Throttle text updates to ~20/sec (same as sendMessage path)
-          _updateReattachAssistantMessage(_reattachStreamContent, sessionId, isStreaming: true);
-        }
-        break;
-
-      case StreamEventType.toolUse:
-        // Tool call event — flush pending throttled updates first
-        _flushPendingUpdates();
-        final toolCall = event.toolCall;
-        if (toolCall != null) {
-          // Convert any pending text to thinking before tool
-          final lastTextIndex = _reattachStreamContent.lastIndexWhere(
-              (c) => c.type == ContentType.text);
-          if (lastTextIndex >= 0) {
-            final thinkingText = _reattachStreamContent[lastTextIndex].text ?? '';
-            if (thinkingText.isNotEmpty) {
-              _reattachStreamContent[lastTextIndex] = MessageContent.thinking(thinkingText);
-            }
-          }
-          _reattachStreamContent.add(MessageContent.toolUse(toolCall));
-          // Force immediate update for tool events (not throttled)
-          _updateOrAddAssistantMessage(_reattachStreamContent, sessionId, isStreaming: true);
-        }
-        break;
-
-      case StreamEventType.toolResult:
-        // Tool result - update the corresponding tool call
-        final toolUseId = event.toolUseId;
-        final resultContent = event.toolResultContent;
-        if (toolUseId != null && resultContent != null) {
-          for (int i = 0; i < _reattachStreamContent.length; i++) {
-            final content = _reattachStreamContent[i];
-            if (content.type == ContentType.toolUse &&
-                content.toolCall?.id == toolUseId) {
-              final updatedToolCall = content.toolCall!.withResult(
-                resultContent,
-                isError: event.toolResultIsError,
-              );
-              _reattachStreamContent[i] = MessageContent.toolUse(updatedToolCall);
-              _updateReattachAssistantMessage(_reattachStreamContent, sessionId, isStreaming: true);
-              break;
-            }
-          }
-        }
-        break;
-
-      case StreamEventType.thinking:
-        // Extended thinking content
-        final thinkingText = event.thinkingContent;
-        if (thinkingText != null && thinkingText.isNotEmpty) {
-          _reattachStreamContent.add(MessageContent.thinking(thinkingText));
-          _updateReattachAssistantMessage(_reattachStreamContent, sessionId, isStreaming: true);
-        }
-        break;
-
-      case StreamEventType.warning:
-        // Non-fatal warning — append as distinct content type (won't be overwritten by text)
-        _reattachStreamContent.add(MessageContent.warning(_formatWarningText(event)));
-        _updateReattachAssistantMessage(_reattachStreamContent, sessionId, isStreaming: true);
-        break;
-
       case StreamEventType.done:
-        _updateOrAddAssistantMessage(_reattachStreamContent, sessionId, isStreaming: false);
-        _reattachStreamContent = []; // Reset for next stream
+        final content = _reattachProcessor?.content ?? [];
+        _updateOrAddAssistantMessage(content, sessionId, isStreaming: false);
+        _reattachProcessor?.reset();
         state = state.copyWith(isStreaming: false);
-        // Notify completion for toast/badge/OS notification
         _ref.read(agentCompletionProvider.notifier).onCompleted(
           sessionId,
           event.sessionTitle ?? state.sessionTitle,
         );
-        // Reload to get final state
         loadSession(sessionId);
         break;
 
       case StreamEventType.aborted:
-        // Stream was stopped by user - session is still valid
-        _updateOrAddAssistantMessage(_reattachStreamContent, sessionId, isStreaming: false);
-        _reattachStreamContent = [];
+        final content = _reattachProcessor?.content ?? [];
+        _updateOrAddAssistantMessage(content, sessionId, isStreaming: false);
+        _reattachProcessor?.reset();
         state = state.copyWith(isStreaming: false);
         debugPrint('[ChatMessagesNotifier] Stream aborted: ${event.abortedMessage}');
-        // Reload to get current state (conversation continues)
         loadSession(sessionId);
         break;
 
       case StreamEventType.error:
-        _reattachStreamContent = [];
+        _reattachProcessor?.reset();
         state = state.copyWith(
           isStreaming: false,
           error: event.errorMessage ?? 'Unknown error',
@@ -826,8 +760,7 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
         break;
 
       case StreamEventType.typedError:
-        // Handle typed errors with recovery info
-        _reattachStreamContent = [];
+        _reattachProcessor?.reset();
         final typedErr = event.typedError;
         state = state.copyWith(
           isStreaming: false,
@@ -836,36 +769,23 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
         break;
 
       case StreamEventType.userMessage:
-        // User message event - add if not already present
-        // This ensures the user's message is visible when rejoining mid-stream
         final userContent = event.userMessageContent;
-        debugPrint('[ChatMessagesNotifier] Reattach stream: GOT user_message event!');
-        debugPrint('[ChatMessagesNotifier] Reattach stream: content="${userContent != null && userContent.length > 50 ? userContent.substring(0, 50) : userContent}..."');
-        debugPrint('[ChatMessagesNotifier] Reattach stream: Current messages count=${state.messages.length}');
         if (userContent != null && userContent.isNotEmpty) {
-          // Check if we already have a user message with this exact content (avoid duplicates)
           final hasUserMessage = state.messages.any((m) =>
               m.role == MessageRole.user && m.textContent == userContent);
-          debugPrint('[ChatMessagesNotifier] Reattach stream: hasUserMessage=$hasUserMessage');
           if (!hasUserMessage) {
-            debugPrint('[ChatMessagesNotifier] Reattach stream: ADDING user message to END of list');
             final userMessage = ChatMessage.user(
               sessionId: sessionId,
               text: userContent,
             );
-            // Add user message at the END (after existing messages, before assistant response)
-            final updatedMessages = [...state.messages, userMessage];
-            debugPrint('[ChatMessagesNotifier] Reattach stream: New messages count=${updatedMessages.length}');
-            debugPrint('[ChatMessagesNotifier] Reattach stream: Last message role=${updatedMessages.last.role}');
             state = state.copyWith(
-              messages: updatedMessages,
+              messages: [...state.messages, userMessage],
             );
           }
         }
         break;
 
       case StreamEventType.userQuestion:
-        // Restore pendingUserQuestion when reattaching to background stream
         debugPrint('[ChatMessagesNotifier] Restoring user question from reattach: ${event.questionRequestId}');
         state = state.copyWith(
           pendingUserQuestion: PendingUserQuestion(
@@ -876,11 +796,19 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
         );
         break;
 
-      case StreamEventType.init:
-      case StreamEventType.sessionUnavailable:
-      case StreamEventType.unknown:
-        // Ignore these events in join stream
+      default:
+        // init, sessionUnavailable, unknown — ignore in reattach
         break;
+    }
+  }
+
+  /// Apply a state patch from the stream event processor.
+  void _applyStatePatch(ChatStatePatch patch) {
+    if (patch.model != null) {
+      state = state.copyWith(model: patch.model);
+    }
+    if (patch.promptMetadata != null) {
+      state = state.copyWith(promptMetadata: patch.promptMetadata);
     }
   }
 
@@ -1038,37 +966,18 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
 
   /// Toggle a specific context file on or off
   void toggleContext(String contextPath) {
-    final current = List<String>.from(state.selectedContexts);
-    if (current.contains(contextPath)) {
-      current.remove(contextPath);
-    } else {
-      current.add(contextPath);
-    }
+    final updated = _contextManager.toggleContext(contextPath, state.selectedContexts);
     state = state.copyWith(
-      selectedContexts: current,
+      selectedContexts: updated,
       contextsExplicitlySet: true,
     );
-
-    // Persist to database if we have a session
-    _persistContextsToDatabase(current);
+    _contextManager.persistContexts(state.sessionId, updated);
   }
 
-  /// Persist context selection to database for the current session
-  Future<void> _persistContextsToDatabase(List<String> contexts) async {
-    final sessionId = state.sessionId;
-    if (sessionId == null || sessionId == 'pending') {
-      debugPrint('[ChatMessagesNotifier] No session ID yet, contexts will be persisted after first message');
-      return;
-    }
-
-    try {
-      await _service.setSessionContextFolders(sessionId, contexts);
-      debugPrint('[ChatMessagesNotifier] Persisted contexts to database: $contexts');
-    } catch (e) {
-      debugPrint('[ChatMessagesNotifier] Failed to persist contexts: $e');
-      // Don't rethrow - local state is still updated, persistence is best-effort
-    }
-  }
+  /// Persist context selection to database for the current session.
+  /// Delegates to [ChatContextManager] — see that class for no-op conditions.
+  Future<void> _persistContextsToDatabase(List<String> contexts) =>
+      _contextManager.persistContexts(state.sessionId, contexts);
 
   /// Mark that CLAUDE.md should be reloaded on the next message
   ///
@@ -1107,40 +1016,10 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
     debugPrint('[ChatMessagesNotifier] State set - isContinuation: ${state.isContinuation}');
   }
 
-  /// Format prior messages as context for the AI
-  /// The server wraps this in its own header, so we just provide the messages
-  /// Limited to ~50k chars to avoid 413 errors
-  String _formatPriorMessagesAsContext() {
-    if (state.priorMessages.isEmpty) return '';
-
-    final buffer = StringBuffer();
-    const maxChars = 50000;
-
-    // Take most recent messages that fit within limit
-    final messages = state.priorMessages.reversed.toList();
-    final selectedMessages = <ChatMessage>[];
-    int totalChars = 0;
-
-    for (final msg in messages) {
-      final content = msg.textContent;
-      if (content.isEmpty) continue;
-
-      final msgText = '${msg.role == MessageRole.user ? "Human" : "Assistant"}: $content\n\n';
-      if (totalChars + msgText.length > maxChars) break;
-
-      totalChars += msgText.length;
-      selectedMessages.insert(0, msg);
-    }
-
-    for (final msg in selectedMessages) {
-      final role = msg.role == MessageRole.user ? 'Human' : 'Assistant';
-      final content = msg.textContent;
-      buffer.writeln('$role: $content\n');
-    }
-
-    debugPrint('[ChatMessagesNotifier] Formatted ${selectedMessages.length}/${state.priorMessages.length} prior messages ($totalChars chars)');
-    return buffer.toString().trim();
-  }
+  /// Format prior messages as context for the AI.
+  /// Delegates to [ChatContextManager] — see that class for details.
+  String _formatPriorMessagesAsContext() =>
+      _contextManager.formatPriorMessagesAsContext(state.priorMessages);
 
   /// Inject a message into an active streaming session.
   ///
@@ -1299,8 +1178,22 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
       // Read active container env - prefer explicit param, fall back to sidebar filter
       final activeProject = projectId ?? _ref.read(activeProjectProvider).valueOrNull;
 
-      // Create stream context to hold mutable state across callbacks
+      // Create stream context with its own event processor.
+      // The processor handles common content events (text, toolUse, etc.)
+      // while the context holds send-path-specific state (session ID mapping).
+      final processor = ChatStreamEventProcessor(
+        onUpdate: (content, {required bool isStreaming, bool immediate = false}) {
+          if (immediate) {
+            _performMessageUpdate(content, isStreaming: isStreaming);
+          } else {
+            _updateAssistantMessage(content, isStreaming: isStreaming);
+          }
+        },
+        onFlush: _flushPendingUpdates,
+        buildPromptMetadata: _buildPromptMetadata,
+      );
       final ctx = _SendStreamContext(
+        processor: processor,
         displaySessionId: displaySessionId,
         originalMessage: message,
       );
@@ -1356,11 +1249,17 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
   void _handleSendStreamEvent(StreamEvent event, _SendStreamContext ctx) {
     // Guard: only update UI if this session is still in foreground
     if (_activeStreamSessionId != ctx.displaySessionId) {
-      debugPrint('[ChatMessagesNotifier] DROPPED ${event.type} event: '
-        'active=$_activeStreamSessionId != ctx=${ctx.displaySessionId}');
       return;
     }
 
+    // Delegate common content events to the processor
+    if (ctx.processor.handles(event.type)) {
+      final patch = ctx.processor.processEvent(event);
+      if (patch != null) _applyStatePatch(patch);
+      return;
+    }
+
+    // Handle terminal and send-path-specific events
     switch (event.type) {
       case StreamEventType.session:
         // Server may return a different session ID (for resumed sessions)
@@ -1413,88 +1312,6 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
               'contextInjected: ${resumeInfo.contextInjected}, '
               'messagesInjected: ${resumeInfo.messagesInjected})');
           state = state.copyWith(sessionResumeInfo: resumeInfo);
-        }
-        break;
-
-      case StreamEventType.model:
-        // Model info from SDK - capture for display
-        final model = event.model;
-        if (model != null) {
-          debugPrint('[ChatMessagesNotifier] Using model: $model');
-          state = state.copyWith(model: model);
-        }
-        break;
-
-      case StreamEventType.promptMetadata:
-        // Prompt composition metadata for transparency
-        final metadata = _buildPromptMetadata(event);
-        debugPrint('[ChatMessagesNotifier] Prompt metadata: ${metadata.promptSource} '
-            '(${metadata.totalPromptTokens} tokens, ${metadata.contextFiles.length} context files)');
-        state = state.copyWith(promptMetadata: metadata);
-        break;
-
-      case StreamEventType.text:
-        // Accumulating text content from server
-        final content = event.textContent;
-        if (content != null) {
-          // Track the current text for potential conversion to "thinking"
-          // The server sends accumulated text, so we replace the last text block
-          final hasTextContent = ctx.accumulatedContent.any((c) => c.type == ContentType.text);
-          if (hasTextContent) {
-            // Replace the last text content
-            final lastTextIndex = ctx.accumulatedContent.lastIndexWhere(
-                (c) => c.type == ContentType.text);
-            ctx.accumulatedContent[lastTextIndex] = MessageContent.text(content);
-          } else {
-            ctx.accumulatedContent.add(MessageContent.text(content));
-          }
-          _updateAssistantMessage(ctx.accumulatedContent, isStreaming: true);
-        }
-        break;
-
-      case StreamEventType.toolUse:
-        // Flush any pending UI updates before showing tool call
-        _flushPendingUpdates();
-
-        // Tool call event - convert any pending text to "thinking"
-        final toolCall = event.toolCall;
-        if (toolCall != null) {
-          // Check if there's text content before this tool call
-          final lastTextIndex = ctx.accumulatedContent.lastIndexWhere(
-              (c) => c.type == ContentType.text);
-          if (lastTextIndex >= 0) {
-            // Convert the last text block to thinking
-            final thinkingText = ctx.accumulatedContent[lastTextIndex].text ?? '';
-            if (thinkingText.isNotEmpty) {
-              ctx.accumulatedContent[lastTextIndex] = MessageContent.thinking(thinkingText);
-            }
-          }
-          ctx.accumulatedContent.add(MessageContent.toolUse(toolCall));
-          // Force immediate update for tool events (not throttled)
-          _performMessageUpdate(ctx.accumulatedContent, isStreaming: true);
-        }
-        break;
-
-      case StreamEventType.toolResult:
-        // Tool result - attach to the corresponding tool call
-        final toolUseId = event.toolUseId;
-        final resultContent = event.toolResultContent;
-        if (toolUseId != null && resultContent != null) {
-          // Find the tool call with this ID and update it with the result
-          for (int i = 0; i < ctx.accumulatedContent.length; i++) {
-            final content = ctx.accumulatedContent[i];
-            if (content.type == ContentType.toolUse &&
-                content.toolCall?.id == toolUseId) {
-              // Replace with updated tool call that has the result
-              final updatedToolCall = content.toolCall!.withResult(
-                resultContent,
-                isError: event.toolResultIsError,
-              );
-              ctx.accumulatedContent[i] = MessageContent.toolUse(updatedToolCall);
-              _updateAssistantMessage(ctx.accumulatedContent, isStreaming: true);
-              break;
-            }
-          }
         }
         break;
 
@@ -1606,21 +1423,6 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
         _sendStreamCtx = null;
         break;
 
-      case StreamEventType.warning:
-        // Non-fatal warning — append as distinct content type (won't be overwritten by text)
-        ctx.accumulatedContent.add(MessageContent.warning(_formatWarningText(event)));
-        _updateAssistantMessage(ctx.accumulatedContent, isStreaming: true);
-        break;
-
-      case StreamEventType.thinking:
-        // Extended thinking content from Claude
-        final thinkingText = event.thinkingContent;
-        if (thinkingText != null && thinkingText.isNotEmpty) {
-          ctx.accumulatedContent.add(MessageContent.thinking(thinkingText));
-          _updateAssistantMessage(ctx.accumulatedContent, isStreaming: true);
-        }
-        break;
-
       case StreamEventType.sessionUnavailable:
         // SDK session couldn't be resumed - ask user how to proceed
         debugPrint('[ChatMessagesNotifier] Session unavailable');
@@ -1700,9 +1502,8 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
         );
         break;
 
-      case StreamEventType.init:
-      case StreamEventType.unknown:
-        // Ignore init and unknown events
+      default:
+        // init, unknown, and processor-handled events (already returned above)
         break;
     }
   }
