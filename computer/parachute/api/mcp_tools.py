@@ -396,7 +396,7 @@ async def _handle_search_chats(arguments: dict[str, Any]) -> str:
     from parachute.core.chat_memory import search_chats
     result = await search_chats(
         graph,
-        query=arguments.get("query", ""),
+        query=arguments["query"],
         limit=arguments.get("limit", 10),
         module=arguments.get("module"),
     )
@@ -412,7 +412,7 @@ async def _handle_get_chat(arguments: dict[str, Any]) -> str:
     from parachute.core.chat_memory import get_chat
     result = await get_chat(
         graph,
-        session_id=arguments.get("session_id", ""),
+        session_id=arguments["session_id"],
         exchange_limit=arguments.get("exchange_limit", 25),
         max_chars=arguments.get("max_chars", 2000),
     )
@@ -428,7 +428,7 @@ async def _handle_get_exchange(arguments: dict[str, Any]) -> str:
     from parachute.core.chat_memory import get_exchange
     result = await get_exchange(
         graph,
-        exchange_id=arguments.get("exchange_id", ""),
+        exchange_id=arguments["exchange_id"],
     )
     return json.dumps(result, default=str)
 
