@@ -118,9 +118,7 @@ class DailyApiService {
       final enrichedMeta = <String, dynamic>{
         ...?metadata,
         'created_at': ts.toUtc().toIso8601String(),
-        'date': '${ts.year.toString().padLeft(4, '0')}-'
-            '${ts.month.toString().padLeft(2, '0')}-'
-            '${ts.day.toString().padLeft(2, '0')}',
+        'date': _dateStr(ts),
       };
       final body = jsonEncode({
         'content': content,
@@ -220,7 +218,7 @@ class DailyApiService {
     final uri = Uri.parse('$baseUrl/api/daily/assets/upload');
     debugPrint('[DailyApiService] POST $uri (audio upload)');
     try {
-      final dateStr = date ?? _todayStr();
+      final dateStr = date ?? _dateStr(DateTime.now());
       final request = http.MultipartRequest('POST', uri)
         ..files.add(await http.MultipartFile.fromPath('file', audioFile.path))
         ..fields['date'] = dateStr;
@@ -244,11 +242,12 @@ class DailyApiService {
     }
   }
 
-  static String _todayStr() {
-    final now = DateTime.now();
-    final y = now.year.toString();
-    final m = now.month.toString().padLeft(2, '0');
-    final d = now.day.toString().padLeft(2, '0');
+  /// Format a [DateTime] as a YYYY-MM-DD string in local time.
+  static String _dateStr(DateTime dt) {
+    final local = dt.toLocal();
+    final y = local.year.toString().padLeft(4, '0');
+    final m = local.month.toString().padLeft(2, '0');
+    final d = local.day.toString().padLeft(2, '0');
     return '$y-$m-$d';
   }
 
