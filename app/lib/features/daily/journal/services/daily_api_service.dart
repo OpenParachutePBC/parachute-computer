@@ -101,16 +101,30 @@ class DailyApiService {
   /// Create a new entry on the server.
   ///
   /// Returns the created [JournalEntry] on success, or null if offline / error.
+  ///
+  /// Client-originated timestamps: if [createdAt] is provided (e.g. for
+  /// offline entries being flushed), it is sent as `created_at` and the date
+  /// is derived from it.  Otherwise the current time is used so the server
+  /// always receives the moment the user actually wrote the entry.
   Future<JournalEntry?> createEntry({
     required String content,
     Map<String, dynamic>? metadata,
+    DateTime? createdAt,
   }) async {
     final uri = Uri.parse('$baseUrl/api/daily/entries');
     debugPrint('[DailyApiService] POST $uri');
     try {
+      final ts = createdAt ?? DateTime.now();
+      final enrichedMeta = <String, dynamic>{
+        ...?metadata,
+        'created_at': ts.toUtc().toIso8601String(),
+        'date': '${ts.year.toString().padLeft(4, '0')}-'
+            '${ts.month.toString().padLeft(2, '0')}-'
+            '${ts.day.toString().padLeft(2, '0')}',
+      };
       final body = jsonEncode({
         'content': content,
-        if (metadata != null) 'metadata': metadata,
+        'metadata': enrichedMeta,
       });
       final response = await _client
           .post(uri, headers: _headers, body: body)

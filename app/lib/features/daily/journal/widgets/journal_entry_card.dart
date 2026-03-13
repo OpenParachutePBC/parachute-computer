@@ -142,10 +142,11 @@ class JournalEntryCard extends ConsumerWidget {
                 _buildTranscribeButton(context, isDark, canTranscribe),
               ],
 
-              // Pending upload indicator
-              if (entry.isPending) ...[
+              // Sync status indicators
+              if (entry.isPending || entry.hasPendingEdit) ...[
                 const SizedBox(height: 8),
-                _buildPendingChip(isDark),
+                if (entry.isPending) _buildSyncChip(isDark, isPendingUpload: true),
+                if (entry.hasPendingEdit) _buildSyncChip(isDark, isPendingUpload: false),
               ],
             ],
           ),
@@ -154,24 +155,32 @@ class JournalEntryCard extends ConsumerWidget {
     );
   }
 
-  Widget _buildPendingChip(bool isDark) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(
-          Icons.cloud_upload_outlined,
-          size: 14,
-          color: BrandColors.driftwood,
-        ),
-        const SizedBox(width: 4),
-        Text(
-          'Not uploaded yet',
-          style: TextStyle(
-            fontSize: 12,
-            color: BrandColors.driftwood,
+  Widget _buildSyncChip(bool isDark, {required bool isPendingUpload}) {
+    final icon = isPendingUpload ? Icons.cloud_upload_outlined : Icons.edit_outlined;
+    final label = isPendingUpload ? 'Not uploaded yet' : 'Edit not synced';
+    final color = isPendingUpload ? BrandColors.warning : BrandColors.driftwood;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: isDark ? 0.15 : 0.1),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: color),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              color: color,
+              fontWeight: FontWeight.w500,
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 

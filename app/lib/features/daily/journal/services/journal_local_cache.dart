@@ -282,6 +282,7 @@ class JournalLocalCache {
   JournalEntry _rowToEntry(Row row) {
     final typeStr = (row['entry_type'] as String?) ?? 'text';
     final durationSecs = row['duration_secs'];
+    final syncState = (row['sync_state'] as String?) ?? 'synced';
     return JournalEntry(
       id: row['entry_id'] as String,
       title: (row['title'] as String?) ?? '',
@@ -296,6 +297,7 @@ class JournalLocalCache {
         final double v => v.toInt(),
         _ => null,
       },
+      hasPendingEdit: syncState == 'pending_edit',
     );
   }
 }

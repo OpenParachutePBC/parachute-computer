@@ -642,20 +642,57 @@ class DailyModule:
         if graph is None:
             raise RuntimeError("BrainDB unavailable — cannot create entry")
 
-        now = datetime.now(timezone.utc)
-        entry_id = now.strftime("%Y-%m-%d-%H-%M-%S-%f")
-        # Use local wall-clock date so entries group under the day the user
-        # experienced them (e.g. 8pm local = next UTC day in US timezones).
-        date = datetime.now().strftime("%Y-%m-%d")
-        created_at = now.isoformat()
-
         meta = metadata or {}
+
+        # Honor client-provided timestamps when present (offline entries carry
+        # their original authoring time).  Fall back to server time otherwise.
+        client_created_at = meta.get("created_at")
+        client_date = meta.get("date")
+
+        if client_created_at:
+            try:
+                parsed = datetime.fromisoformat(client_created_at)
+                # Reject timestamps more than 30 days in the past or in the future
+                now_utc = datetime.now(timezone.utc)
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+                delta = now_utc - parsed
+                if delta.total_seconds() < -60:  # more than 1 min in the future
+                    logger.warning(f"Daily: rejecting future client timestamp {client_created_at}")
+                    parsed = now_utc
+                elif delta.days > 30:
+                    logger.warning(f"Daily: rejecting too-old client timestamp {client_created_at}")
+                    parsed = now_utc
+                entry_id = parsed.strftime("%Y-%m-%d-%H-%M-%S-%f")
+                created_at = parsed.isoformat()
+            except (ValueError, TypeError):
+                logger.warning(f"Daily: invalid client timestamp {client_created_at!r}, using server time")
+                now = datetime.now(timezone.utc)
+                entry_id = now.strftime("%Y-%m-%d-%H-%M-%S-%f")
+                created_at = now.isoformat()
+        else:
+            now = datetime.now(timezone.utc)
+            entry_id = now.strftime("%Y-%m-%d-%H-%M-%S-%f")
+            created_at = now.isoformat()
+
+        if client_date:
+            # Validate YYYY-MM-DD format
+            if re.fullmatch(r"\d{4}-\d{2}-\d{2}", client_date):
+                date = client_date
+            else:
+                logger.warning(f"Daily: invalid client date {client_date!r}, using server date")
+                # Use local wall-clock date so entries group under the day the user
+                # experienced them (e.g. 8pm local = next UTC day in US timezones).
+                date = datetime.now().strftime("%Y-%m-%d")
+        else:
+            date = datetime.now().strftime("%Y-%m-%d")
+
         title = meta.get("title", "")
         entry_type = meta.get("type", "text")
         audio_path = meta.get("audio_path", "") or ""
 
         # Extra metadata (image_path, duration_seconds, etc.)
-        known = {"title", "type", "audio_path"}
+        known = {"title", "type", "audio_path", "created_at", "date"}
         extra_meta = {k: v for k, v in meta.items() if k not in known}
 
         await self._write_to_graph(
