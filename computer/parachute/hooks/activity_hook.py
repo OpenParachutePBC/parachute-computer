@@ -17,7 +17,7 @@ import json
 import os
 import sys
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -220,13 +220,13 @@ async def append_activity_log(
 
     settings = get_settings()
 
-    today = datetime.utcnow().strftime("%Y-%m-%d")
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     log_dir = Path.home() / "Daily" / ".activity"
     log_dir.mkdir(parents=True, exist_ok=True)
     log_file = log_dir / f"{today}.jsonl"
 
     entry = {
-        "ts": datetime.utcnow().isoformat() + "Z",
+        "ts": datetime.now(timezone.utc).isoformat() + "Z",
         "session_id": session_id,
         "session_title": session_title,
         "agent_type": agent_type,

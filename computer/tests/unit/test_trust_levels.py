@@ -5,7 +5,7 @@ and permission handler trust level integration.
 
 import json
 import tempfile
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -55,8 +55,8 @@ def _make_session(trust_level="direct", allowed_paths=None):
         id="test-session",
         module="chat",
         source=SessionSource.PARACHUTE,
-        created_at=datetime.utcnow(),
-        last_accessed=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc),
+        last_accessed=datetime.now(timezone.utc),
         metadata={"permissions": perms.model_dump(by_alias=True)},
     )
 
@@ -133,8 +133,8 @@ class TestSessionTrustLevel:
         session = Session(
             id="test",
             module="chat",
-            created_at=datetime.utcnow(),
-            last_accessed=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
+            last_accessed=datetime.now(timezone.utc),
             trust_level="sandboxed",
         )
         assert session.get_trust_level() == TrustLevel.SANDBOXED
@@ -143,8 +143,8 @@ class TestSessionTrustLevel:
         session = Session(
             id="test",
             module="chat",
-            created_at=datetime.utcnow(),
-            last_accessed=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
+            last_accessed=datetime.now(timezone.utc),
             trust_level="invalid_value",
         )
         assert session.get_trust_level() == TrustLevel.DIRECT

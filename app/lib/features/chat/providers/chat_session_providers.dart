@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/chat_session.dart';
-import '../models/chat_message.dart';
 import '../models/claude_usage.dart';
 import '../services/chat_service.dart';
 import '../services/local_session_reader.dart';

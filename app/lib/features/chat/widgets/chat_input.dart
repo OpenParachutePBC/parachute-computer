@@ -9,7 +9,6 @@ import 'package:parachute/core/providers/streaming_voice_providers.dart';
 import 'package:parachute/core/providers/model_download_provider.dart';
 import 'package:parachute/core/services/streaming_voice_service.dart';
 import '../models/attachment.dart';
-import '../providers/chat_providers.dart';
 
 /// Text input field for chat messages with voice input and attachment support
 class ChatInput extends ConsumerStatefulWidget {
@@ -303,7 +302,6 @@ class _ChatInputState extends ConsumerState<ChatInput>
     final streamingState = ref.watch(streamingVoiceCurrentStateProvider);
     final isRecording = _isStreamingRecording;
     final isTranscribing = false;
-    final duration = streamingState.recordingDuration;
 
     return Container(
       padding: const EdgeInsets.all(Spacing.md),
@@ -385,9 +383,7 @@ class _ChatInputState extends ConsumerState<ChatInput>
                         decoration: InputDecoration(
                           hintText: isRecording
                               ? 'Recording...'
-                              : isTranscribing
-                                  ? 'Transcribing...'
-                                  : widget.hintText,
+                              : widget.hintText,
                           hintStyle: TextStyle(
                             color: isDark
                                 ? BrandColors.nightTextSecondary
@@ -516,7 +512,7 @@ class _ChatInputState extends ConsumerState<ChatInput>
   /// Build streaming transcript display with real-time feedback
   Widget _buildStreamingTranscriptDisplay(bool isDark, StreamingTranscriptionState state) {
     final hasConfirmed = state.confirmedSegments.isNotEmpty;
-    final hasInterim = state.interimText != null && state.interimText!.isNotEmpty;
+    final hasInterim = state.interimText.isNotEmpty;
     final hasText = hasConfirmed || hasInterim;
 
     return Container(
@@ -590,7 +586,7 @@ class _ChatInputState extends ConsumerState<ChatInput>
                       if (hasInterim) ...[
                         if (hasConfirmed) const TextSpan(text: ' '),
                         TextSpan(
-                          text: state.interimText!,
+                          text: state.interimText,
                           style: TextStyle(
                             color: isDark
                                 ? BrandColors.nightTextSecondary
@@ -676,7 +672,7 @@ class _ChatInputState extends ConsumerState<ChatInput>
   /// Build finalizing indicator (shown while processing stop)
   Widget _buildFinalizingIndicator(bool isDark, StreamingTranscriptionState state) {
     final hasText = state.confirmedSegments.isNotEmpty ||
-        (state.interimText != null && state.interimText!.isNotEmpty);
+        state.interimText.isNotEmpty;
 
     return Container(
       margin: const EdgeInsets.only(bottom: Spacing.sm),

@@ -23,20 +23,6 @@ class _ErrorBoundaryState extends State<ErrorBoundary> {
   StackTrace? _stack;
 
   @override
-  void initState() {
-    super.initState();
-  }
-
-  void _handleError(Object error, StackTrace stack) {
-    setState(() {
-      _error = error;
-      _stack = stack;
-    });
-    widget.onError?.call(error, stack);
-    logger.error('ErrorBoundary', 'Caught error', error: error, stackTrace: stack);
-  }
-
-  @override
   Widget build(BuildContext context) {
     if (_error != null) {
       if (widget.fallbackBuilder != null) {

@@ -403,7 +403,6 @@ class _EnvItem extends StatelessWidget {
   final IconData icon;
   final bool isActive;
   final bool isDark;
-  final String? subtitle;
   final VoidCallback onTap;
   final VoidCallback? onDelete;
 
@@ -412,7 +411,6 @@ class _EnvItem extends StatelessWidget {
     required this.icon,
     required this.isActive,
     required this.isDark,
-    this.subtitle,
     required this.onTap,
     this.onDelete,
   });
@@ -439,34 +437,18 @@ class _EnvItem extends StatelessWidget {
             ),
             SizedBox(width: Spacing.sm),
             Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    name,
-                    style: TextStyle(
-                      fontSize: TypographyTokens.bodySmall,
-                      fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
-                      color: isActive
-                          ? (isDark ? BrandColors.nightText : BrandColors.charcoal)
-                          : (isDark
-                              ? BrandColors.nightTextSecondary
-                              : BrandColors.driftwood),
-                    ),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  if (subtitle != null)
-                    Text(
-                      subtitle!,
-                      style: TextStyle(
-                        fontSize: TypographyTokens.labelSmall,
-                        color: isDark
-                            ? BrandColors.nightTextSecondary.withValues(alpha: 0.7)
-                            : BrandColors.stone.withValues(alpha: 0.7),
-                      ),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                ],
+              child: Text(
+                name,
+                style: TextStyle(
+                  fontSize: TypographyTokens.bodySmall,
+                  fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
+                  color: isActive
+                      ? (isDark ? BrandColors.nightText : BrandColors.charcoal)
+                      : (isDark
+                          ? BrandColors.nightTextSecondary
+                          : BrandColors.driftwood),
+                ),
+                overflow: TextOverflow.ellipsis,
               ),
             ),
             if (onDelete != null)

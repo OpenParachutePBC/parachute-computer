@@ -154,13 +154,6 @@ class _ComputerSetupWizardState extends ConsumerState<ComputerSetupWizard> {
     '/usr/local/bin/brew', // Intel
   ];
 
-  String? get _brewPath {
-    for (final p in _brewPaths) {
-      if (File(p).existsSync()) return p;
-    }
-    return null;
-  }
-
   Future<void> _installHomebrew() async {
     final url = Uri.parse('https://brew.sh');
     if (await canLaunchUrl(url)) {

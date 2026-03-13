@@ -840,7 +840,7 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
         // This ensures the user's message is visible when rejoining mid-stream
         final userContent = event.userMessageContent;
         debugPrint('[ChatMessagesNotifier] Reattach stream: GOT user_message event!');
-        debugPrint('[ChatMessagesNotifier] Reattach stream: content="${userContent?.substring(0, (userContent?.length ?? 0) > 50 ? 50 : (userContent?.length ?? 0))}..."');
+        debugPrint('[ChatMessagesNotifier] Reattach stream: content="${userContent != null && userContent.length > 50 ? userContent.substring(0, 50) : userContent}..."');
         debugPrint('[ChatMessagesNotifier] Reattach stream: Current messages count=${state.messages.length}');
         if (userContent != null && userContent.isNotEmpty) {
           // Check if we already have a user message with this exact content (avoid duplicates)
@@ -871,7 +871,7 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
           pendingUserQuestion: PendingUserQuestion(
             requestId: event.questionRequestId ?? '',
             sessionId: event.sessionId ?? '',
-            questions: List<Map<String, dynamic>>.from(event.questions ?? []),
+            questions: List<Map<String, dynamic>>.from(event.questions),
           ),
         );
         break;
@@ -1689,7 +1689,7 @@ class ChatMessagesNotifier extends StateNotifier<ChatMessagesState> {
           pendingUserQuestion: PendingUserQuestion(
             requestId: event.questionRequestId ?? '',
             sessionId: event.sessionId ?? '',
-            questions: List<Map<String, dynamic>>.from(event.questions ?? []),
+            questions: List<Map<String, dynamic>>.from(event.questions),
           ),
         );
 

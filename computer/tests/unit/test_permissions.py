@@ -2,7 +2,7 @@
 Tests for permission checking utilities.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -27,8 +27,8 @@ def basic_session():
         title="Test Session",
         module="chat",
         source=SessionSource.PARACHUTE,
-        created_at=datetime.utcnow(),
-        last_accessed=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc),
+        last_accessed=datetime.now(timezone.utc),
         metadata={"permissions": permissions.model_dump(by_alias=True)},
     )
 
@@ -46,8 +46,8 @@ def session_with_read_permission():
         title="Test Session",
         module="chat",
         source=SessionSource.PARACHUTE,
-        created_at=datetime.utcnow(),
-        last_accessed=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc),
+        last_accessed=datetime.now(timezone.utc),
         metadata={"permissions": permissions.model_dump(by_alias=True)},
     )
 
@@ -61,8 +61,8 @@ def trust_mode_session():
         title="Test Session",
         module="chat",
         source=SessionSource.PARACHUTE,
-        created_at=datetime.utcnow(),
-        last_accessed=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc),
+        last_accessed=datetime.now(timezone.utc),
         metadata={"permissions": permissions.model_dump(by_alias=True)},
     )
 

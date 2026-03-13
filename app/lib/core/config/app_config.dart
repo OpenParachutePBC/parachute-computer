@@ -11,8 +11,8 @@ class AppConfig {
   /// 3. Production default
   static String get serverBaseUrl {
     // Check for build-time environment variable
-    const String? envUrl = String.fromEnvironment('SERVER_URL');
-    if (envUrl != null && envUrl.isNotEmpty) {
+    const String envUrl = String.fromEnvironment('SERVER_URL');
+    if (envUrl.isNotEmpty) {
       return envUrl;
     }
 

@@ -7,7 +7,7 @@ Provides secure key generation, hashing, and validation for multi-device access.
 import hashlib
 import secrets
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 
@@ -130,7 +130,7 @@ def create_api_key(label: str) -> tuple[APIKey, str]:
         id=key_id,
         label=label,
         key_hash=hash_key(full_key),
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc),
     )
 
     return api_key, full_key

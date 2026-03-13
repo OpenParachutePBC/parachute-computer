@@ -4,7 +4,6 @@ import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/core/providers/app_state_provider.dart'
     show serverUrlProvider, apiKeyProvider;
 import 'package:parachute/core/providers/feature_flags_provider.dart';
-import 'package:parachute/core/providers/server_providers.dart';
 import 'package:parachute/core/providers/sync_provider.dart';
 import 'package:parachute/core/services/backend_health_service.dart';
 

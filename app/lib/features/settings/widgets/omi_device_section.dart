@@ -3,7 +3,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/features/daily/recorder/providers/omi_providers.dart';
 import 'package:parachute/features/daily/recorder/screens/device_pairing_screen.dart';
-import 'package:parachute/features/daily/recorder/services/omi/omi_connection.dart';
 
 /// Omi Device settings section (pairing and firmware updates)
 class OmiDeviceSection extends ConsumerWidget {

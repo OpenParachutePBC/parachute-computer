@@ -114,20 +114,15 @@ class StreamingVoiceService {
 
   List<int> _rollingAudioBuffer = [];
   static const int _rollingBufferMaxSamples = 16000 * 30; // 30 seconds max
-  static const Duration _reTranscriptionInterval = Duration(seconds: 2); // Faster updates
+  // Re-transcription interval removed - using LocalAgreement via LiveTranscriptionService
 
   Timer? _reTranscriptionTimer;
   Timer? _recordingDurationTimer;
-  bool _isReTranscribing = false;
 
   // === LocalAgreement-2 State ===
-  String? _previousTranscription; // Last transcription result
   String _confirmedText = '';      // Text stable across 2+ iterations (locked)
   String _tentativeText = '';      // Text stable for 1 iteration (likely stable)
   String _interimText = '';        // Current transcription suffix (may change)
-
-  // Track when we last had a VAD pause to avoid re-transcribing stale audio
-  DateTime? _lastVadPauseTime;
 
   // For final transcript assembly
   final List<String> _confirmedSegments = [];
@@ -254,7 +249,6 @@ class StreamingVoiceService {
 
       // Reset streaming state
       _rollingAudioBuffer = [];
-      _previousTranscription = null;
       _confirmedText = '';
       _tentativeText = '';
       _interimText = '';
@@ -263,7 +257,6 @@ class StreamingVoiceService {
       _nextSegmentIndex = 1;
       _processingQueue.clear();
       _totalSamplesWritten = 0;
-      _lastVadPauseTime = null;
 
       // Set initial model status and trigger initialization if needed
       final isModelReady = await _transcriptionService.isReady();
@@ -428,33 +421,6 @@ class StreamingVoiceService {
     debugPrint('[StreamingVoice] Finalized WAV: ${dataSize ~/ 1024}KB');
   }
 
-  /// Start the re-transcription loop for streaming feedback
-  void _startReTranscriptionLoop() {
-    _reTranscriptionTimer?.cancel();
-
-    _reTranscriptionTimer = Timer.periodic(_reTranscriptionInterval, (_) async {
-      if (!_isRecording) return;
-      if (_chunker == null) return;
-
-      // Check if model became ready
-      if (_modelStatus == TranscriptionModelStatus.initializing) {
-        final isReady = await _transcriptionService.isReady();
-        if (isReady) {
-          debugPrint('[StreamingVoice] Model became ready during recording!');
-          _updateModelStatus(TranscriptionModelStatus.ready);
-        }
-      }
-
-      final isSpeaking = _chunker!.stats.vadStats.isSpeaking;
-      final hasSpeech = _chunker!.stats.vadStats.speechDuration > const Duration(milliseconds: 500);
-      final bufferSeconds = _rollingAudioBuffer.length / 16000;
-
-      if (isSpeaking || hasSpeech || bufferSeconds >= 3.0) {
-        _transcribeRollingBuffer();
-      }
-    });
-  }
-
   /// Stop re-transcription loop
   void _stopReTranscriptionLoop() {
     _reTranscriptionTimer?.cancel();
@@ -475,123 +441,6 @@ class StreamingVoiceService {
   void _stopRecordingDurationTimer() {
     _recordingDurationTimer?.cancel();
     _recordingDurationTimer = null;
-  }
-
-  /// Transcribe the rolling buffer and apply LocalAgreement-2
-  Future<void> _transcribeRollingBuffer() async {
-    if (_isReTranscribing) return;
-    if (_rollingAudioBuffer.isEmpty || _rollingAudioBuffer.length < 16000) return;
-
-    _isReTranscribing = true;
-
-    try {
-      final isReady = await _transcriptionService.isReady();
-      if (!isReady) {
-        if (_modelStatus != TranscriptionModelStatus.initializing) {
-          _updateModelStatus(TranscriptionModelStatus.initializing);
-        }
-      }
-
-      // Transcribe full buffer
-      final samplesToTranscribe = List<int>.from(_rollingAudioBuffer);
-      final durationSec = samplesToTranscribe.length / 16000;
-      debugPrint('[LocalAgreement] Transcribing ${durationSec.toStringAsFixed(1)}s of audio');
-
-      final tempDir = await getTemporaryDirectory();
-      final tempPath = '${tempDir.path}/interim_${DateTime.now().millisecondsSinceEpoch}.wav';
-      await _saveSamplesToWav(samplesToTranscribe, tempPath);
-
-      final result = await _transcriptionService.transcribeAudio(tempPath);
-
-      if (_modelStatus != TranscriptionModelStatus.ready) {
-        _updateModelStatus(TranscriptionModelStatus.ready);
-      }
-
-      try {
-        await File(tempPath).delete();
-      } catch (_) {}
-
-      final currentTranscription = result.text.trim();
-      if (currentTranscription.isEmpty) {
-        _previousTranscription = currentTranscription;
-        return;
-      }
-
-      // === LocalAgreement-2 Algorithm ===
-      _applyLocalAgreement(currentTranscription);
-
-      if (!_interimTextController.isClosed) {
-        _interimTextController.add(_interimText);
-      }
-      _emitStreamingState();
-
-      // Debug output
-      final display = '$_confirmedText $_tentativeText $_interimText'.trim();
-      if (display.isNotEmpty) {
-        final preview = display.length > 60 ? '${display.substring(0, 60)}...' : display;
-        debugPrint('[LocalAgreement] Display: "$preview"');
-      }
-    } catch (e) {
-      debugPrint('[LocalAgreement] Transcription failed: $e');
-    } finally {
-      _isReTranscribing = false;
-    }
-  }
-
-  /// Apply LocalAgreement-2 algorithm to update confirmed/tentative/interim text
-  ///
-  /// SIMPLIFIED: The rolling buffer produces the FULL transcription of current audio.
-  /// We just display that directly, using LocalAgreement only for visual styling.
-  void _applyLocalAgreement(String currentTranscription) {
-    if (_previousTranscription == null) {
-      _confirmedText = '';
-      _tentativeText = '';
-      _interimText = currentTranscription;
-      _previousTranscription = currentTranscription;
-      return;
-    }
-
-    final commonPrefix = _longestCommonWordPrefix(_previousTranscription!, currentTranscription);
-
-    // Common prefix is stable, rest is still changing
-    _confirmedText = '';  // Don't accumulate - buffer has full audio
-    _tentativeText = commonPrefix;
-
-    if (commonPrefix.length < currentTranscription.length) {
-      _interimText = currentTranscription.substring(commonPrefix.length).trim();
-    } else {
-      _interimText = '';
-    }
-
-    _previousTranscription = currentTranscription;
-  }
-
-  /// Find the longest common prefix between two strings, word-by-word
-  String _longestCommonWordPrefix(String a, String b) {
-    final wordsA = a.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
-    final wordsB = b.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
-
-    int matchLen = 0;
-    for (int i = 0; i < min(wordsA.length, wordsB.length); i++) {
-      if (_wordMatchesFuzzy(wordsA[i], wordsB[i])) {
-        matchLen = i + 1;
-      } else {
-        break;
-      }
-    }
-    return wordsA.take(matchLen).join(' ');
-  }
-
-  /// Check if two words match (case-insensitive, ignoring punctuation)
-  bool _wordMatchesFuzzy(String a, String b) {
-    String normalize(String s) => s.toLowerCase().replaceAll(RegExp(r'[^\w]'), '');
-    final normA = normalize(a);
-    final normB = normalize(b);
-    if (normA == normB) return true;
-    if (normA.length > 2 && normB.length > 2) {
-      return _levenshteinDistance(normA, normB) <= 1;
-    }
-    return false;
   }
 
   /// Remove overlap between confirmed text and new interim text using fuzzy matching
@@ -806,11 +655,6 @@ class StreamingVoiceService {
     _emitStreamingState();
   }
 
-  /// Normalize text for duplicate comparison
-  String _normalizeForComparison(String text) {
-    return text.toLowerCase().replaceAll(RegExp(r'[^\w\s]'), '').replaceAll(RegExp(r'\s+'), ' ').trim();
-  }
-
   /// Handle chunk ready from SmartChunker (VAD detected pause)
   ///
   /// Richardtate approach: On VAD pause, transcribe ONLY the chunk audio,
@@ -825,7 +669,6 @@ class StreamingVoiceService {
 
     // Clear rolling buffer state - we're done with this audio
     _rollingAudioBuffer.clear();
-    _previousTranscription = null;
     _confirmedText = '';
     _tentativeText = '';
     _interimText = '';
@@ -1110,7 +953,6 @@ class StreamingVoiceService {
 
       // Clear state
       _rollingAudioBuffer.clear();
-      _previousTranscription = null;
       _confirmedText = '';
       _tentativeText = '';
       _interimText = '';
