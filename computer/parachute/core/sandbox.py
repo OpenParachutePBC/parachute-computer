@@ -70,6 +70,7 @@ class AgentSandboxConfig:
     working_directory: str | None = None  # /vault/... absolute path for container CWD
     model: str | None = None  # Model to use (e.g., "claude-opus-4-6")
     system_prompt: str | None = None  # System prompt to pass to SDK inside container
+    use_preset: bool = True  # Whether to wrap system_prompt in claude_code preset
     session_source: SessionSource | None = None  # Used to gate credential injection
 
 
@@ -833,6 +834,8 @@ class DockerSandbox:
                 stdin_payload["claude_token"] = self.claude_token
             if config.system_prompt:
                 stdin_payload["system_prompt"] = config.system_prompt
+            if not config.use_preset:
+                stdin_payload["use_preset"] = False
             if resume_session_id:
                 stdin_payload["resume_session_id"] = resume_session_id
 

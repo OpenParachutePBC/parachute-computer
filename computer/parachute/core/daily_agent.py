@@ -346,6 +346,7 @@ async def _run_sandboxed(
         network_enabled=True,  # Needs to reach host API for daily tools
         mcp_servers=all_mcp_servers,
         system_prompt=system_prompt,
+        use_preset=False,  # Callers don't need Claude Code preset
         model=config.raw_metadata.get("model") or None,
         session_source=None,  # No credential injection for Callers
     )

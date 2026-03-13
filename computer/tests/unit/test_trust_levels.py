@@ -163,6 +163,7 @@ class TestAgentSandboxConfig:
         assert config.network_enabled is False
         assert config.timeout_seconds == 600
         assert config.readline_timeout == 300
+        assert config.use_preset is True
 
     def test_custom_config(self):
         config = AgentSandboxConfig(
