@@ -11,7 +11,7 @@ AI orchestration server with modular architecture. The unified Parachute app req
 ```
 Router → Orchestrator → Claude Agent SDK → AI
               ↓                    ↑
-         BrainSessionStore    ModuleLoader
+         BrainChatStore       ModuleLoader
               ↓                    ↓
          BrainService         vault/.modules/
        (Kuzu/LadybugDB)            ↓
@@ -44,8 +44,8 @@ Router → Orchestrator → Claude Agent SDK → AI
 
 **Brain (the extended mind):**
 - `parachute/db/brain.py` — `BrainService`: Kuzu/LadybugDB connection, schema management, Cypher
-- `parachute/db/brain_sessions.py` — `BrainSessionStore`: session/project CRUD on top of BrainService
-- `parachute/api/brain.py` — `/api/brain/` REST endpoints (schema, sessions, projects, notes, memory feed)
+- `parachute/db/brain_chat_store.py` — `BrainChatStore`: chat/project CRUD on top of BrainService
+- `parachute/api/brain.py` — `/api/brain/` REST endpoints (schema, chats, projects, notes, memory feed)
 - Brain = your whole extended mind: conversations (Chat) + journal entries (Note) in one unified graph
 
 ---
@@ -107,7 +107,7 @@ parachute/
 │   ├── session_manager.py
 │   ├── module_loader.py
 │   └── sandbox.py
-├── db/            # Kuzu/LadybugDB layer (brain.py, brain_sessions.py)
+├── db/            # Kuzu/LadybugDB layer (brain.py, brain_chat_store.py)
 ├── docker/        # Sandbox Dockerfile + entrypoint
 ├── lib/           # Utilities
 ├── models/        # Pydantic models

@@ -31,7 +31,7 @@ from parachute.config import get_settings, Settings
 from parachute.core.module_loader import ModuleLoader
 from parachute.core.orchestrator import Orchestrator
 from parachute.core.scheduler import init_scheduler, stop_scheduler
-from parachute.db.brain_sessions import BrainSessionStore
+from parachute.db.brain_chat_store import BrainChatStore
 from parachute.db.brain import BrainService
 from parachute.lib.logger import setup_logging, get_logger
 from parachute.lib.server_config import (
@@ -73,13 +73,13 @@ async def lifespan(app: FastAPI):
     await brain.connect()
 
     # Initialize brain-backed session store and register schema
-    session_store = BrainSessionStore(brain)
+    session_store = BrainChatStore(brain)
     await session_store.ensure_schema()
     app.state.brain = brain
     app.state.session_store = session_store
     from parachute.core.interfaces import get_registry
     get_registry().publish("BrainDB", brain)
-    get_registry().publish("SessionStore", session_store)
+    get_registry().publish("ChatStore", session_store)
     await brain.start_checkpoint_loop()
     logger.info(f"BrainDB initialized: {settings.brain_db_path}")
 

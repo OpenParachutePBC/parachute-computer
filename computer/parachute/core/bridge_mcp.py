@@ -45,13 +45,13 @@ _PARACHUTE_DIR = Path.home() / ".parachute"
 
 
 async def _open_db():
-    """Open a fresh BrainSessionStore connection."""
+    """Open a fresh BrainChatStore connection."""
     from parachute.db.brain import BrainService
-    from parachute.db.brain_sessions import BrainSessionStore
+    from parachute.db.brain_chat_store import BrainChatStore
 
     brain = BrainService(db_path=str(_PARACHUTE_DIR / "graph" / "parachute.kz"))
     await brain.connect()
-    return BrainSessionStore(brain)
+    return BrainChatStore(brain)
 
 
 # ---------------------------------------------------------------------------

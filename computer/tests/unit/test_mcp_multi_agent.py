@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from parachute.db.brain_sessions import BrainSessionStore
+from parachute.db.brain_chat_store import BrainChatStore
 from parachute.models.session import Session, SessionCreate, SessionSource, TrustLevel
 from parachute.mcp_server import (
     SessionContext,
@@ -34,7 +34,7 @@ async def db(tmp_path):
 
     graph = BrainService(db_path=tmp_path / "test.kz")
     await graph.connect()
-    store = BrainSessionStore(graph)
+    store = BrainChatStore(graph)
     await store.ensure_schema()
     yield store
 
@@ -49,7 +49,7 @@ def vault_path(tmp_path):
 
 
 @pytest.fixture
-async def parent_session(db: BrainSessionStore):
+async def parent_session(db: BrainChatStore):
     """Create a parent session in the test database."""
     session_create = SessionCreate(
         id="parent_sess_abc123",
