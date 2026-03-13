@@ -309,25 +309,34 @@ async def query_streaming(
 
         async def _consume_sdk() -> None:
             """Iterate SDK events and forward them through the queue."""
+            event_count = 0
+            end_reason = "normal"
             try:
                 async for event in sdk_query(prompt=effective_prompt, options=options):
                     event_dict = _event_to_dict(event)
+                    event_count += 1
                     event_queue.put_nowait(event_dict)
                     if event_dict.get("type") == "result":
                         done_event.set()
             except ClaudeSDKError as e:
+                end_reason = f"sdk_error: {e}"
                 logger.error(f"Claude SDK error: {e}", exc_info=True)
                 event_queue.put_nowait({"type": "error", "error": str(e)})
             except asyncio.CancelledError:
+                end_reason = "cancelled"
                 # Let cancellation propagate so `async for` closes the SDK
                 # generator in THIS task (preserving cancel-scope affinity).
                 raise
             except Exception as e:
+                end_reason = f"error: {e}"
                 logger.error(f"SDK query error: {str(e)}", exc_info=True)
                 event_queue.put_nowait({"type": "error", "error": str(e)})
             finally:
                 event_queue.put_nowait(None)  # sentinel
                 done_event.set()
+                logger.info(
+                    f"SDK consumer ended: reason={end_reason}, events={event_count}"
+                )
 
         consumer_task = asyncio.create_task(_consume_sdk())
 
@@ -349,6 +358,11 @@ async def query_streaming(
                 await consumer_task
             except (asyncio.CancelledError, Exception):
                 pass
+        # Log queue drain state for debugging stream lifecycle
+        if consumer_task is not None:
+            logger.info(
+                f"query_streaming cleanup: queue_remaining={event_queue.qsize()}"
+            )
 
 
 def _event_to_dict(event: Any) -> dict[str, Any]:

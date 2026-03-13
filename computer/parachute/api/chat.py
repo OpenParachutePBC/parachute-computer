@@ -66,6 +66,10 @@ async def _with_heartbeat(stream, request: Request, interval: float = 15.0):
     finally:
         if next_task is not None and not next_task.done():
             next_task.cancel()
+            try:
+                await next_task
+            except (asyncio.CancelledError, StopAsyncIteration):
+                pass
 
 
 async def event_generator(request: Request, chat_request: ChatRequest):
@@ -128,15 +132,27 @@ async def event_generator(request: Request, chat_request: ChatRequest):
             container_id=chat_request.container_id,
         )
 
+        event_count = 0
+        heartbeat_count = 0
         async for event in _with_heartbeat(stream, request):
             if event is None:
+                heartbeat_count += 1
                 yield ": heartbeat\n\n"
             else:
+                event_count += 1
                 # Check if client disconnected
                 if await request.is_disconnected():
-                    logger.info("Client disconnected, stopping stream")
+                    logger.info(
+                        f"Client disconnected: session={chat_request.session_id or 'new'}, "
+                        f"events={event_count}, heartbeats={heartbeat_count}"
+                    )
                     return
                 yield f"data: {json.dumps(event)}\n\n"
+
+        logger.info(
+            f"SSE stream complete: session={chat_request.session_id or 'new'}, "
+            f"events={event_count}, heartbeats={heartbeat_count}"
+        )
 
     except Exception as e:
         logger.error(f"Stream error: {e}", exc_info=True)

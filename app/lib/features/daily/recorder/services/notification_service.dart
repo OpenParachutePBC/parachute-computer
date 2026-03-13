@@ -187,6 +187,25 @@ class NotificationService {
     }
   }
 
+  /// Show agent question notification (Claude needs user input)
+  Future<void> showAgentQuestion(String sessionTitle, {String? sessionId}) async {
+    if (!_isSupported || !_isInitialized) return;
+
+    try {
+      // Use offset notification ID so it doesn't collide with completion notifications
+      final notificationId = (sessionId?.hashCode.abs() ?? 100) + 10000;
+      await _notifications.show(
+        notificationId,
+        '$sessionTitle \u2014 has a question',
+        'Tap to respond',
+        _agentCompletionDetails(),
+        payload: sessionId,
+      );
+    } catch (e) {
+      debugPrint('[NotificationService] Error showing agent question notification: $e');
+    }
+  }
+
   /// Cancel all notifications
   Future<void> cancelAll() async {
     if (!_isSupported || !_isInitialized) return;

@@ -1136,6 +1136,15 @@ class Orchestrator:
 
                     return
 
+            # Stream ended — log lifecycle info
+            end_reason = "interrupted" if interrupt.is_interrupted else "normal"
+            session_label = captured_session_id or (session.id[:8] if session.id else "unknown")
+            logger.info(
+                f"Stream ended: session={session_label}, "
+                f"reason={end_reason}, result_len={len(result_text)}, "
+                f"model={captured_model}"
+            )
+
             # Finalize session (if not already done early)
             if is_new and captured_session_id and not session_finalized:
                 title = (
@@ -1441,6 +1450,8 @@ class Orchestrator:
             model=sandbox_model,
             system_prompt=sandbox_system_prompt,
             session_source=session.source,
+            timeout_seconds=self.settings.sandbox_timeout,
+            readline_timeout=self.settings.sandbox_readline_timeout,
         )
 
         # Three-tier resume strategy: SDK resume → history injection → fresh start

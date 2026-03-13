@@ -62,7 +62,8 @@ class AgentSandboxConfig:
     agent_type: str = "chat"
     allowed_paths: list[str] = field(default_factory=list)
     network_enabled: bool = False
-    timeout_seconds: int = 300  # 5 minute default
+    timeout_seconds: int = 600  # 10 minute default
+    readline_timeout: int = 300  # 5 minute per-line default
     plugin_dirs: list[Path] = field(default_factory=list)
     mcp_servers: dict[str, Any] | None = None  # Filtered MCP configs to pass to container
     agents: dict[str, Any] | None = None
@@ -457,7 +458,7 @@ class DockerSandbox:
             try:
                 line = await asyncio.wait_for(
                     proc.stdout.readline(),
-                    timeout=min(remaining, 180),
+                    timeout=min(remaining, config.readline_timeout),
                 )
             except asyncio.TimeoutError:
                 timed_out = True

@@ -16,6 +16,12 @@ from typing import Any
 
 from mcp.server import Server
 from mcp.types import TextContent, Tool
+from parachute.core.chat_memory import (
+    CHAT_MEMORY_TOOLS,
+    search_chats as _search_chats,
+    get_chat as _get_chat,
+    get_exchange as _get_exchange,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -142,7 +148,7 @@ TOOLS = [
             "required": ["content", "date"],
         },
     ),
-]
+] + CHAT_MEMORY_TOOLS  # Chat memory tools (search_chats, get_chat, get_exchange)
 
 
 # ── Tool Handlers ─────────────────────────────────────────────────────────────
@@ -383,6 +389,52 @@ async def _handle_write_output(arguments: dict[str, Any]) -> str:
     return json.dumps({"card_id": card_id, "status": "done", "date": date_str})
 
 
+# ── Chat Memory Handlers (shared with direct MCP server) ─────────────────────
+
+
+async def _handle_search_chats(arguments: dict[str, Any]) -> str:
+    """Search across all chats with bundled exchange results."""
+    graph = _get_graph()
+    if graph is None:
+        return json.dumps({"error": "BrainDB not available"})
+
+    result = await _search_chats(
+        graph,
+        query=arguments["query"],
+        limit=arguments.get("limit", 10),
+        module=arguments.get("module"),
+    )
+    return json.dumps(result, default=str)
+
+
+async def _handle_get_chat(arguments: dict[str, Any]) -> str:
+    """Browse a specific chat with paginated exchanges."""
+    graph = _get_graph()
+    if graph is None:
+        return json.dumps({"error": "BrainDB not available"})
+
+    result = await _get_chat(
+        graph,
+        session_id=arguments["session_id"],
+        exchange_limit=arguments.get("exchange_limit", 25),
+        max_chars=arguments.get("max_chars", 2000),
+    )
+    return json.dumps(result, default=str)
+
+
+async def _handle_get_exchange(arguments: dict[str, Any]) -> str:
+    """Get a single exchange with full untruncated content."""
+    graph = _get_graph()
+    if graph is None:
+        return json.dumps({"error": "BrainDB not available"})
+
+    result = await _get_exchange(
+        graph,
+        exchange_id=arguments["exchange_id"],
+    )
+    return json.dumps(result, default=str)
+
+
 # ── Handler Dispatch ──────────────────────────────────────────────────────────
 
 _HANDLERS = {
@@ -392,6 +444,10 @@ _HANDLERS = {
     "list_recent_sessions": _handle_list_recent_sessions,
     "read_brain_entity": _handle_read_brain_entity,
     "write_output": _handle_write_output,
+    # Chat memory (shared handlers)
+    "search_chats": _handle_search_chats,
+    "get_chat": _handle_get_chat,
+    "get_exchange": _handle_get_exchange,
 }
 
 

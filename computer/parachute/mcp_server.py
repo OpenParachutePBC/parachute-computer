@@ -44,6 +44,12 @@ from typing import Any, Self
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent
+from parachute.core.chat_memory import (
+    CHAT_MEMORY_TOOLS,
+    search_chats as _search_chats,
+    get_chat as _get_chat,
+    get_exchange as _get_exchange,
+)
 
 # Configure logging to stderr (stdout is for MCP protocol)
 logging.basicConfig(
@@ -409,7 +415,7 @@ TOOLS = [
             "required": ["query"],
         },
     ),
-]
+] + CHAT_MEMORY_TOOLS  # Chat memory tools (search_chats, get_chat, get_exchange)
 
 
 async def get_session(
@@ -784,6 +790,29 @@ async def handle_tool_call(name: str, arguments: dict[str, Any]) -> str:
                     method="POST",
                     body={"query": arguments["query"], "params": arguments.get("params")},
                 )
+        # Chat Memory Tools (shared handlers — imported at module level)
+        elif name == "search_chats":
+            db = await get_db()
+            result = await _search_chats(
+                db.graph,
+                query=arguments["query"],
+                limit=arguments.get("limit", 10),
+                module=arguments.get("module"),
+            )
+        elif name == "get_chat":
+            db = await get_db()
+            result = await _get_chat(
+                db.graph,
+                session_id=arguments["session_id"],
+                exchange_limit=arguments.get("exchange_limit", 25),
+                max_chars=arguments.get("max_chars", 2000),
+            )
+        elif name == "get_exchange":
+            db = await get_db()
+            result = await _get_exchange(
+                db.graph,
+                exchange_id=arguments["exchange_id"],
+            )
         else:
             return json.dumps({"error": f"Unknown tool: {name}"})
 
