@@ -378,8 +378,8 @@ class SherpaOnnxService {
   ///
   /// [audioPath] - Absolute path to WAV file (16kHz mono PCM16)
   /// [onProgress] - Optional callback for progress updates (0.0-1.0)
-  /// [chunkDurationSeconds] - Chunk size for long audio (default: 30s).
-  ///   Use 60 for Daily voice recordings to reduce boundary artifacts.
+  /// [chunkDurationSeconds] - Chunk size for long audio (default: 60s).
+  ///   Override to use a different chunk size for specific use cases.
   ///
   /// Returns transcribed text with automatic language detection.
   /// For long audio files, processes in chunks to avoid OOM.

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
@@ -35,6 +36,7 @@ class _RecordingWaveformState extends State<RecordingWaveform>
     with SingleTickerProviderStateMixin {
   late final List<double> _amplitudes;
   late final AnimationController _animationController;
+  StreamSubscription<double>? _amplitudeSubscription;
 
   @override
   void initState() {
@@ -45,7 +47,7 @@ class _RecordingWaveformState extends State<RecordingWaveform>
       duration: const Duration(milliseconds: 100),
     );
 
-    widget.amplitudeStream.listen((amplitude) {
+    _amplitudeSubscription = widget.amplitudeStream.listen((amplitude) {
       if (!mounted) return;
       setState(() {
         // Shift all values left and add new one at end
@@ -59,6 +61,7 @@ class _RecordingWaveformState extends State<RecordingWaveform>
 
   @override
   void dispose() {
+    _amplitudeSubscription?.cancel();
     _animationController.dispose();
     super.dispose();
   }

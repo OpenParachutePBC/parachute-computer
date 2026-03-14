@@ -129,8 +129,19 @@ class PostHocTranscriptionNotifier extends StateNotifier<PostHocTranscriptionSta
       // Verify the audio file still exists
       final audioFile = File(job.audioPath);
       if (!await audioFile.exists()) {
-        debugPrint('[PostHocTranscription] Audio file missing for ${job.entryId}, cleaning up');
-        await _tracker.completeJob(job.entryId);
+        debugPrint('[PostHocTranscription] Audio file missing for ${job.entryId}, marking failed');
+        await _tracker.failJob(job.entryId);
+
+        // Update server status so entry shows as failed (retryable if audio reappears)
+        try {
+          final api = _ref.read(dailyApiServiceProvider);
+          await api.updateEntry(
+            job.entryId,
+            metadata: {'transcription_status': 'failed'},
+          );
+        } catch (e) {
+          debugPrint('[PostHocTranscription] Failed to update server status: $e');
+        }
         continue;
       }
 
