@@ -108,12 +108,22 @@ class JournalEntryCard extends ConsumerWidget {
                 ],
               ),
 
-              // Active transcription progress
+              // Active transcription progress (local transcription in progress)
               if (isActivelyTranscribing) ...[
                 const SizedBox(height: 12),
                 _buildTranscribingIndicator(isDark, transcriptionProgress),
               ]
-              // Content preview
+              // Server processing (no text yet — transcription in progress on server)
+              else if (entry.serverTranscriptionStatus == 'processing' && entry.content.isEmpty) ...[
+                const SizedBox(height: 12),
+                _buildServerProcessingIndicator(isDark),
+              ]
+              // Server transcription failed
+              else if (entry.isTranscriptionFailed) ...[
+                const SizedBox(height: 12),
+                _buildTranscriptionFailedIndicator(isDark),
+              ]
+              // Content preview (with optional cleanup indicator)
               else if (entry.content.isNotEmpty) ...[
                 const SizedBox(height: 12),
                 Text(
@@ -125,6 +135,10 @@ class JournalEntryCard extends ConsumerWidget {
                   maxLines: 4,
                   overflow: TextOverflow.ellipsis,
                 ),
+                if (entry.isCleanupInProgress) ...[
+                  const SizedBox(height: 8),
+                  _buildCleanupIndicator(isDark),
+                ],
               ],
 
               // Linked file indicator
@@ -146,7 +160,8 @@ class JournalEntryCard extends ConsumerWidget {
               ],
 
               // Transcribe button for pending transcription entries
-              if (entry.isPendingTranscription) ...[
+              // Don't show when server is actively processing or cleanup is running
+              if (entry.isPendingTranscription && !entry.isServerProcessing) ...[
                 const SizedBox(height: 12),
                 _buildTranscribeButton(context, isDark, canTranscribe),
               ],
@@ -615,6 +630,94 @@ class JournalEntryCard extends ConsumerWidget {
               ),
             ),
           ],
+        ],
+      ),
+    );
+  }
+
+  /// Server is processing: audio uploaded, transcription running on server
+  Widget _buildServerProcessingIndicator(bool isDark) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: BrandColors.turquoise.withValues(alpha: isDark ? 0.15 : 0.08),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 14,
+            height: 14,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              valueColor: AlwaysStoppedAnimation<Color>(BrandColors.turquoise),
+              backgroundColor: BrandColors.turquoise.withValues(alpha: 0.2),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            'Transcribing on server...',
+            style: TextStyle(
+              fontSize: 13,
+              color: BrandColors.turquoise,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Raw text available, LLM cleanup still running
+  Widget _buildCleanupIndicator(bool isDark) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SizedBox(
+          width: 10,
+          height: 10,
+          child: CircularProgressIndicator(
+            strokeWidth: 1.5,
+            valueColor: AlwaysStoppedAnimation<Color>(BrandColors.driftwood),
+          ),
+        ),
+        const SizedBox(width: 6),
+        Text(
+          'Cleaning up...',
+          style: TextStyle(
+            fontSize: 11,
+            color: BrandColors.driftwood,
+            fontStyle: FontStyle.italic,
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Server transcription failed
+  Widget _buildTranscriptionFailedIndicator(bool isDark) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: BrandColors.error.withValues(alpha: isDark ? 0.15 : 0.08),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            Icons.error_outline,
+            size: 14,
+            color: BrandColors.error,
+          ),
+          const SizedBox(width: 8),
+          Text(
+            'Transcription failed',
+            style: TextStyle(
+              fontSize: 13,
+              color: BrandColors.error,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
         ],
       ),
     );
