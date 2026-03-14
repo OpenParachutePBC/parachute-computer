@@ -8,6 +8,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:parachute/core/config/app_config.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
+import 'package:parachute/core/providers/backend_health_provider.dart' show serverTranscriptionAvailableProvider;
 import 'package:parachute/core/providers/feature_flags_provider.dart' show aiServerUrlProvider;
 import 'package:parachute/core/providers/sync_provider.dart';
 import '../../recorder/providers/service_providers.dart';
@@ -60,6 +61,13 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
   Timer? _draftSaveTimer;
   static const _draftKeyPrefix = 'journal_draft_';
 
+  // Server transcription polling
+  final Set<String> _pollingEntryIds = {};
+  final Map<String, Timer> _pollingTimeouts = {};
+  Timer? _transcriptionPollTimer;
+  static const _pollInterval = Duration(seconds: 5);
+  static const _pollTimeout = Duration(minutes: 5);
+
   // Save state tracking for UI feedback
   bool _isSaving = false;
   bool _hasDraftSaved = false;
@@ -90,6 +98,11 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
     WidgetsBinding.instance.removeObserver(this);
     _flushPendingDraft();
     _draftSaveTimer?.cancel();
+    _transcriptionPollTimer?.cancel();
+    for (final timer in _pollingTimeouts.values) {
+      timer.cancel();
+    }
+    _pollingTimeouts.clear();
     _scrollController.dispose();
     super.dispose();
   }
@@ -129,6 +142,8 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
             _cachedJournal = journal;
             _cachedJournalDate = ref.read(selectedJournalDateProvider);
           });
+          // Restart polling for any entries still being server-transcribed
+          _restartPollingForInFlightEntries();
         }
       });
     });
@@ -486,6 +501,81 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
 
   Future<void> _addVoiceEntry(String transcript, String localAudioPath, int duration) async {
     debugPrint('[JournalScreen] Adding voice entry via API...');
+
+    // Read mode once and decide whether to use server-side transcription
+    final mode = await ref.read(transcriptionModeProvider.future);
+    if (!mounted) return;
+
+    final useServer = switch (mode) {
+      TranscriptionMode.local => false,
+      TranscriptionMode.server => true,
+      TranscriptionMode.auto => ref.read(serverTranscriptionAvailableProvider),
+    };
+
+    if (useServer) {
+      final success = await _addVoiceEntryViaServer(localAudioPath, duration);
+      if (!mounted) return;
+      if (success) return;
+
+      // Server-only mode: don't fall back, show error
+      if (mode == TranscriptionMode.server) {
+        _showErrorSnackbar('Server transcription unavailable');
+        // Still save the entry locally so the recording isn't lost
+        await _appendEntryToCache(
+          null,
+          content: transcript,
+          type: JournalEntryType.voice,
+          audioPath: localAudioPath,
+          durationSeconds: duration,
+        );
+        return;
+      }
+      debugPrint('[JournalScreen] Server upload failed, falling back to local');
+    }
+
+    await _addVoiceEntryLocally(transcript, localAudioPath, duration);
+  }
+
+  /// Upload audio to server for transcription + cleanup. Returns true on success.
+  Future<bool> _addVoiceEntryViaServer(String localAudioPath, int duration) async {
+    debugPrint('[JournalScreen] Uploading voice entry to server for transcription...');
+    final api = ref.read(dailyApiServiceProvider);
+
+    final entry = await api.uploadVoiceEntry(
+      audioFile: File(localAudioPath),
+      durationSeconds: duration,
+    );
+    if (!mounted) return false;
+
+    if (entry == null) {
+      debugPrint('[JournalScreen] Server voice upload failed');
+      return false;
+    }
+
+    // Cache the entry (with processing status — no text yet)
+    await _appendEntryToCache(
+      entry,
+      content: '',
+      type: JournalEntryType.voice,
+      audioPath: entry.audioPath,
+      durationSeconds: duration,
+    );
+
+    // Clean up local audio — server has its own copy
+    try {
+      await File(localAudioPath).delete();
+    } catch (e) {
+      debugPrint('[JournalScreen] Failed to delete staged audio: $e');
+    }
+
+    // Start polling for transcription completion
+    _startPollingEntry(entry.id);
+
+    return true;
+  }
+
+  /// Original local flow: upload audio asset, create entry, let on-device transcription handle it.
+  Future<void> _addVoiceEntryLocally(String transcript, String localAudioPath, int duration) async {
     final api = ref.read(dailyApiServiceProvider);
 
     // Try to upload audio to server first
@@ -546,6 +636,94 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
         audioPath: localAudioPath,
         durationSeconds: duration,
       );
+    }
+  }
+
+  // ========== Server Transcription Polling ==========
+
+  /// Start polling for an entry's transcription to complete.
+  void _startPollingEntry(String entryId) {
+    // Guard: don't re-register if already being polled
+    if (_pollingEntryIds.contains(entryId)) return;
+
+    _pollingEntryIds.add(entryId);
+    _transcriptionPollTimer ??= Timer.periodic(_pollInterval, (_) => _pollTranscriptions());
+
+    // Set a cancellable timeout to stop polling this entry after _pollTimeout
+    _pollingTimeouts[entryId] = Timer(_pollTimeout, () {
+      _pollingTimeouts.remove(entryId);
+      if (_pollingEntryIds.remove(entryId)) {
+        debugPrint('[JournalScreen] Polling timeout for entry $entryId');
+        _stopPollingIfEmpty();
+      }
+    });
+  }
+
+  /// Poll all in-flight entries for transcription completion.
+  Future<void> _pollTranscriptions() async {
+    if (_pollingEntryIds.isEmpty || !mounted) {
+      _stopPollingIfEmpty();
+      return;
+    }
+
+    final api = ref.read(dailyApiServiceProvider);
+
+    for (final entryId in Set<String>.of(_pollingEntryIds)) {
+      try {
+        final updated = await api.getEntry(entryId);
+        if (updated == null || !mounted) continue;
+
+        // Check if transcription is done (complete or failed — no longer in-flight)
+        if (!updated.isServerProcessing) {
+          _pollingEntryIds.remove(entryId);
+          _pollingTimeouts.remove(entryId)?.cancel();
+          debugPrint(
+            '[JournalScreen] Entry $entryId transcription resolved: '
+            '${updated.serverTranscriptionStatus}',
+          );
+
+          // Update the cached journal with the new content
+          if (_cachedJournal != null) {
+            setState(() {
+              _cachedJournal = _cachedJournal!.updateEntry(updated);
+            });
+          }
+        } else if (updated.isCleanupInProgress && updated.content.isNotEmpty) {
+          // Transcribed but cleanup still running — show raw text
+          if (_cachedJournal != null) {
+            final existing = _cachedJournal!.getEntry(entryId);
+            if (existing != null && existing.content != updated.content) {
+              setState(() {
+                _cachedJournal = _cachedJournal!.updateEntry(updated);
+              });
+            }
+          }
+        }
+      } catch (e) {
+        debugPrint('[JournalScreen] Poll error for entry $entryId: $e');
+      }
+    }
+
+    _stopPollingIfEmpty();
+  }
+
+  void _stopPollingIfEmpty() {
+    if (_pollingEntryIds.isEmpty) {
+      _transcriptionPollTimer?.cancel();
+      _transcriptionPollTimer = null;
+    }
+  }
+
+  /// Restart polling for any in-flight entries in the current journal.
+  /// Called when the journal data loads or refreshes.
+  void _restartPollingForInFlightEntries() {
+    final journal = _cachedJournal;
+    if (journal == null) return;
+
+    for (final entry in journal.entries) {
+      if (entry.isServerProcessing) {
+        _startPollingEntry(entry.id);
+      }
     }
   }
 

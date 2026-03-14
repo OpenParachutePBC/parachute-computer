@@ -6,10 +6,16 @@ enum TranscriptionStatus {
   /// Not yet transcribed
   pending,
 
-  /// Currently being transcribed
+  /// Currently being transcribed (local)
   transcribing,
 
-  /// Successfully transcribed
+  /// Server is processing (transcription + cleanup pipeline running)
+  processing,
+
+  /// Raw transcription ready, LLM cleanup still running
+  transcribed,
+
+  /// Successfully transcribed (and cleaned up if applicable)
   complete,
 
   /// Transcription failed

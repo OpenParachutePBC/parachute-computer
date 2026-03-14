@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'entry_metadata.dart' show TranscriptionStatus;
 
 /// The type of a journal entry based on how it was created.
 enum JournalEntryType {
@@ -65,6 +66,11 @@ class JournalEntry {
   /// Whether this entry was edited locally and the edit hasn't synced yet
   final bool hasPendingEdit;
 
+  /// Transcription status from the server pipeline.
+  /// Null for locally-created entries. Lets the UI distinguish processing (no text) from
+  /// transcribed (raw text visible, cleanup running).
+  final TranscriptionStatus? serverTranscriptionStatus;
+
   const JournalEntry({
     required this.id,
     required this.title,
@@ -79,6 +85,7 @@ class JournalEntry {
     bool isPendingTranscription = false,
     this.isPending = false,
     this.hasPendingEdit = false,
+    this.serverTranscriptionStatus,
   }) : _isPendingTranscription = isPendingTranscription;
 
   /// Whether this entry has an associated audio file
@@ -95,6 +102,19 @@ class JournalEntry {
   bool get isPendingTranscription =>
       _isPendingTranscription ||
       (type == JournalEntryType.voice && hasAudio && (content.isEmpty || content == '*(Transcribing...)*'));
+
+  /// Whether the server is still processing this entry (transcription or cleanup in progress)
+  bool get isServerProcessing =>
+      serverTranscriptionStatus == TranscriptionStatus.processing ||
+      serverTranscriptionStatus == TranscriptionStatus.transcribed;
+
+  /// Whether the server has raw text ready but cleanup is still running
+  bool get isCleanupInProgress =>
+      serverTranscriptionStatus == TranscriptionStatus.transcribed;
+
+  /// Whether server transcription failed
+  bool get isTranscriptionFailed =>
+      serverTranscriptionStatus == TranscriptionStatus.failed;
 
   /// Format the H1 line for this entry
   String get h1Line => '# para:$id $title';
@@ -199,6 +219,10 @@ class JournalEntry {
   factory JournalEntry.fromServerJson(Map<String, dynamic> json) {
     final meta = (json['metadata'] as Map<String, dynamic>?) ?? {};
     final typeStr = meta['type'] as String? ?? 'text';
+    final statusStr = meta['transcription_status'] as String?;
+    final transcriptionStatus = _parseTranscriptionStatus(statusStr);
+    final isPending = transcriptionStatus == TranscriptionStatus.processing ||
+        transcriptionStatus == TranscriptionStatus.transcribed;
     return JournalEntry(
       id: json['id'] as String,
       title: meta['title'] as String? ?? '',
@@ -213,6 +237,17 @@ class JournalEntry {
         final String v => int.tryParse(v),
         _ => null,
       },
+      isPendingTranscription: isPending,
+      serverTranscriptionStatus: transcriptionStatus,
+    );
+  }
+
+  /// Parse a server transcription_status string into a [TranscriptionStatus].
+  static TranscriptionStatus? _parseTranscriptionStatus(String? status) {
+    if (status == null) return null;
+    return TranscriptionStatus.values.cast<TranscriptionStatus?>().firstWhere(
+      (s) => s?.name == status,
+      orElse: () => null,
     );
   }
 
@@ -274,6 +309,7 @@ class JournalEntry {
     bool? isPendingTranscription,
     bool? isPending,
     bool? hasPendingEdit,
+    TranscriptionStatus? serverTranscriptionStatus,
   }) {
     return JournalEntry(
       id: id ?? this.id,
@@ -289,6 +325,7 @@ class JournalEntry {
       isPendingTranscription: isPendingTranscription ?? _isPendingTranscription,
       isPending: isPending ?? this.isPending,
       hasPendingEdit: hasPendingEdit ?? this.hasPendingEdit,
+      serverTranscriptionStatus: serverTranscriptionStatus ?? this.serverTranscriptionStatus,
     );
   }
 
