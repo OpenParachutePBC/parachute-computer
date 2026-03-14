@@ -52,10 +52,16 @@ async def health_check(
     """
     settings = get_settings()
 
+    # Transcription capability — available when TranscriptionService is loaded
+    transcription_available = bool(
+        getattr(request.app.state, "transcribe_audio", None)
+    )
+
     basic = {
         "status": "ok",
         "timestamp": int(time.time() * 1000),
         "version": __version__,
+        "transcription_available": transcription_available,
         **({"commit": _GIT_COMMIT} if _GIT_COMMIT else {}),
     }
 

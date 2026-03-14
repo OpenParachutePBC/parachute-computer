@@ -9,7 +9,10 @@ enum TranscriptionStatus {
   /// Currently being transcribed
   transcribing,
 
-  /// Successfully transcribed
+  /// Raw transcription ready, LLM cleanup still running
+  transcribed,
+
+  /// Successfully transcribed (and cleaned up if applicable)
   complete,
 
   /// Transcription failed

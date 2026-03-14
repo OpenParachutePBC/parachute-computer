@@ -44,5 +44,15 @@ final periodicServerHealthProvider = StreamProvider<ServerHealthStatus?>((ref) a
   }
 });
 
+/// Whether the connected server supports transcription (Parakeet MLX etc.).
+///
+/// Returns true only when the server is healthy AND reports transcription_available.
+/// Used by the recording flow to decide server vs local transcription path.
+final serverTranscriptionAvailableProvider = Provider<bool>((ref) {
+  final healthAsync = ref.watch(periodicServerHealthProvider);
+  final health = healthAsync.valueOrNull;
+  return health != null && health.isHealthy && health.transcriptionAvailable;
+});
+
 // Note: vaultPathProvider is defined in app_state_provider.dart
 // It handles both local settings and fetching from server in Parachute Computer mode
