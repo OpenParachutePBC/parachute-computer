@@ -1,5 +1,5 @@
 ---
-name: para-review
+name: review
 description: Code review — lightweight by default, full suite when needed
 argument-hint: "[PR number, branch, or 'full' for comprehensive review]"
 ---

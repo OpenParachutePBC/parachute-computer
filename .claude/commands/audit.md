@@ -1,5 +1,5 @@
 ---
-name: para-audit
+name: audit
 description: Project health check — plan/issue sync, brainstorm lifecycle, module drift, and open issue health
 argument-hint: ""
 ---

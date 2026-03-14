@@ -1,5 +1,5 @@
 ---
-name: para-work
+name: work
 description: Execute work plans efficiently while maintaining quality and finishing features
 argument-hint: "[#issue-number, plan file, specification, or todo file path]"
 ---

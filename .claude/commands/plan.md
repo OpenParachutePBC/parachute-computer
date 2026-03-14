@@ -1,5 +1,5 @@
 ---
-name: para-plan
+name: plan
 description: Transform feature descriptions into well-structured project plans
 argument-hint: "[#issue-number or feature description]"
 ---

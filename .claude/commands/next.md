@@ -1,5 +1,5 @@
 ---
-name: para-next
+name: next
 description: Recommend the next issue to work on based on priority, type, and current context
 argument-hint: "[module filter: chat, daily, brain, computer, app]"
 ---
