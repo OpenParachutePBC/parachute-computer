@@ -24,12 +24,19 @@ from datetime import date as _date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal, Optional, TypedDict
 
-from fastapi import APIRouter, Query, UploadFile
+from fastapi import APIRouter, Form, Query, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, field_validator
 
 # Audio/image assets directory — fixed, not user-configurable
 ASSETS_DIR = Path.home() / ".parachute" / "daily" / "assets"
+
+# Background task references — prevent GC from swallowing exceptions
+_background_tasks: set[asyncio.Task] = set()
+
+# Upload constraints
+MAX_VOICE_BYTES = 200 * 1024 * 1024  # 200 MB
+ALLOWED_AUDIO_EXTENSIONS = {".wav", ".m4a", ".mp3", ".aac", ".ogg", ".webm", ".mp4"}
 
 # Append-only JSONL redo log for crash recovery (rolled to 90 days)
 REDO_LOG_PATH = Path.home() / ".parachute" / "daily" / "entries.jsonl"
@@ -153,12 +160,182 @@ def _trim_redo_log() -> list[dict]:
 
 
 # ── Transcription status validation ─────────────────────────────────────────
-VALID_TRANSCRIPTION_STATUSES = {"processing", "complete", "failed"}
+VALID_TRANSCRIPTION_STATUSES = {"processing", "transcribed", "complete", "failed"}
 VALID_TRANSCRIPTION_TRANSITIONS = {
-    "processing": {"complete", "failed"},
+    "processing": {"transcribed", "complete", "failed"},
+    "transcribed": {"complete", "failed"},
     "failed": {"processing"},       # retry
     "complete": set(),              # terminal — no transitions out
 }
+
+
+# ── Cleanup Caller system prompt ──────────────────────────────────────────────
+CLEANUP_SYSTEM_PROMPT = (
+    "You are a transcription cleanup assistant. You receive raw speech-to-text "
+    "output and produce clean, readable text.\n\n"
+    "## Rules\n\n"
+    "- Remove filler words: \"um\", \"uh\", \"like\", \"you know\", \"I mean\", \"so\", \"right\"\n"
+    "- Fix grammar and sentence structure\n"
+    "- Add proper punctuation (periods, commas, question marks)\n"
+    "- Create paragraph breaks at natural topic transitions\n"
+    "- Very light restructuring for readability — combine fragments, smooth transitions\n"
+    "- Preserve the speaker's voice, tone, and meaning exactly\n"
+    "- Do NOT summarize, add commentary, or change the substance\n"
+    "- Do NOT add headers, bullet points, or other structural formatting "
+    "unless the speaker clearly intended a list\n"
+    "- Output ONLY the cleaned text — no preamble, no explanation\n\n"
+    "## Process\n\n"
+    "1. Read the journal entry for the given date using read_journal\n"
+    "2. Clean up the text following the rules above\n"
+    "3. Write the cleaned text back using update_entry with the entry_id provided\n"
+)
+
+
+async def _transcribe_and_cleanup(
+    module: "DailyModule",
+    graph,
+    entry_id: str,
+    audio_path: Path,
+) -> None:
+    """Background task: transcribe audio → update entry → trigger cleanup Caller."""
+    from parachute.core.interfaces import get_registry
+
+    ts = get_registry().get("TranscriptionService")
+    if not ts:
+        await _update_entry_transcription_status(
+            graph, entry_id, "failed", error="Transcription service unavailable"
+        )
+        return
+
+    try:
+        raw_text = await ts.transcribe(audio_path)
+        if not raw_text.strip():
+            await _update_entry_transcription_status(
+                graph, entry_id, "failed", error="No speech detected in audio"
+            )
+            return
+
+        # Update entry with raw transcription + status "transcribed" (atomic)
+        async with graph.write_lock:
+            rows = await graph.execute_cypher(
+                "MATCH (e:Note {entry_id: $entry_id}) RETURN e.metadata_json AS meta",
+                {"entry_id": entry_id},
+            )
+            existing_meta = {}
+            if rows:
+                blob = rows[0].get("meta") or ""
+                try:
+                    existing_meta = json.loads(blob) if blob else {}
+                except (json.JSONDecodeError, TypeError):
+                    existing_meta = {}
+
+            existing_meta["transcription_status"] = "transcribed"
+            existing_meta["transcription_raw"] = raw_text
+            await graph.execute_cypher(
+                "MATCH (e:Note {entry_id: $entry_id}) "
+                "SET e.content = $content, e.metadata_json = $meta",
+                {
+                    "entry_id": entry_id,
+                    "content": raw_text,
+                    "meta": json.dumps(existing_meta),
+                },
+            )
+
+        logger.info(f"Daily: transcribed voice entry {entry_id} ({len(raw_text)} chars)")
+
+        # Auto-trigger cleanup Caller
+        await _trigger_cleanup_caller(module, entry_id, graph)
+
+    except Exception as e:
+        logger.error(f"Daily: transcription failed for {entry_id}: {e}", exc_info=True)
+        await _update_entry_transcription_status(
+            graph, entry_id, "failed", error=str(e)
+        )
+        # Clean up orphaned audio file on failure
+        try:
+            if audio_path.exists():
+                audio_path.unlink()
+                logger.info(f"Daily: cleaned up audio file after failed transcription: {audio_path}")
+        except OSError as cleanup_err:
+            logger.warning(f"Daily: failed to clean up audio file {audio_path}: {cleanup_err}")
+
+
+async def _trigger_cleanup_caller(
+    module: "DailyModule",
+    entry_id: str,
+    graph,
+) -> None:
+    """Trigger the transcription-cleanup Caller on a specific entry."""
+    from parachute.core.daily_agent import run_daily_agent
+    from parachute.config import PARACHUTE_DIR
+
+    # Extract date from entry_id (format: YYYY-MM-DD-HH-MM-SS-ffffff)
+    date = entry_id[:10]
+
+    try:
+        result = await run_daily_agent(
+            vault_path=PARACHUTE_DIR,
+            agent_name="transcription-cleanup",
+            date=date,
+            force=True,
+            build_prompt_fn=lambda config, d, od: (
+                f"Clean up the voice transcription for journal entry {entry_id} "
+                f"from {d}. Read the journal for that date, then use update_entry "
+                f"to write the cleaned-up version back. The entry_id is: {entry_id}"
+            ),
+        )
+
+        if result.get("status") in ("completed", "done"):
+            # Update transcription_status to "complete"
+            await _update_entry_transcription_status(
+                graph, entry_id, "complete"
+            )
+            logger.info(f"Daily: cleanup Caller completed for entry {entry_id}")
+        else:
+            logger.warning(
+                f"Daily: cleanup Caller returned status={result.get('status')} "
+                f"for entry {entry_id}. Entry stays at 'transcribed'."
+            )
+    except Exception as e:
+        logger.error(
+            f"Daily: cleanup Caller failed for entry {entry_id}: {e}",
+            exc_info=True,
+        )
+        # Don't mark as failed — raw transcription is still readable
+
+
+async def _update_entry_transcription_status(
+    graph, entry_id: str, status: str, error: str | None = None
+) -> None:
+    """Update an entry's transcription_status in metadata_json.
+
+    The full read-modify-write is inside write_lock to avoid race conditions
+    with concurrent PATCH requests on the same entry.
+    """
+    try:
+        async with graph.write_lock:
+            rows = await graph.execute_cypher(
+                "MATCH (e:Note {entry_id: $entry_id}) RETURN e.metadata_json AS meta",
+                {"entry_id": entry_id},
+            )
+            existing_meta = {}
+            if rows:
+                blob = rows[0].get("meta") or ""
+                try:
+                    existing_meta = json.loads(blob) if blob else {}
+                except (json.JSONDecodeError, TypeError):
+                    existing_meta = {}
+
+            existing_meta["transcription_status"] = status
+            if error:
+                existing_meta["transcription_error"] = error
+
+            await graph.execute_cypher(
+                "MATCH (e:Note {entry_id: $entry_id}) SET e.metadata_json = $meta",
+                {"entry_id": entry_id, "meta": json.dumps(existing_meta)},
+            )
+    except Exception as e:
+        logger.error(f"Daily: failed to update transcription status for {entry_id}: {e}")
 
 
 class CreateEntryRequest(BaseModel):
@@ -269,6 +446,9 @@ class DailyModule:
         # Add new columns to existing databases (idempotent schema migration)
         await self._ensure_new_columns(graph)
 
+        # Seed built-in Callers (idempotent — skips if already exists)
+        await self._seed_builtin_callers(graph)
+
         # Migrate relative audio paths to absolute (one-time, idempotent)
         await self._migrate_audio_paths_to_absolute(graph)
 
@@ -321,6 +501,58 @@ class DailyModule:
                         logger.info(f"Daily: added column Caller.{col}")
         except Exception:
             pass  # Caller table may not exist yet on first run
+
+    async def _seed_builtin_callers(self, graph) -> None:
+        """Seed built-in Callers that ship with Parachute. Idempotent — skips existing."""
+        builtin_callers = [
+            {
+                "name": "transcription-cleanup",
+                "display_name": "Transcription Cleanup",
+                "description": (
+                    "Cleans up voice transcriptions: removes filler words, "
+                    "fixes grammar, adds punctuation and paragraph breaks. "
+                    "Preserves the speaker's voice."
+                ),
+                "system_prompt": CLEANUP_SYSTEM_PROMPT,
+                "tools": json.dumps(["read_journal", "update_entry"]),
+                "schedule_enabled": "false",
+                "schedule_time": "",
+                "enabled": "true",
+                "trust_level": "sandboxed",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            },
+        ]
+
+        for caller in builtin_callers:
+            rows = await graph.execute_cypher(
+                "MATCH (c:Caller {name: $name}) RETURN c.name AS name",
+                {"name": caller["name"]},
+            )
+            if rows:
+                continue  # Already exists — don't overwrite user customizations
+
+            try:
+                async with graph.write_lock:
+                    await graph.execute_cypher(
+                        "CREATE (c:Caller {"
+                        "  name: $name,"
+                        "  display_name: $display_name,"
+                        "  description: $description,"
+                        "  system_prompt: $system_prompt,"
+                        "  tools: $tools,"
+                        "  schedule_enabled: $schedule_enabled,"
+                        "  schedule_time: $schedule_time,"
+                        "  enabled: $enabled,"
+                        "  trust_level: $trust_level,"
+                        "  created_at: $created_at,"
+                        "  updated_at: $updated_at"
+                        "})",
+                        caller,
+                    )
+                logger.info(f"Daily: seeded built-in Caller '{caller['name']}'")
+            except Exception as e:
+                logger.warning(f"Daily: failed to seed Caller '{caller['name']}': {e}")
 
     async def _migrate_audio_paths_to_absolute(self, graph) -> None:
         """One-time: convert relative audio_path values in graph to absolute.
@@ -1140,6 +1372,109 @@ class DailyModule:
             """Create a new daily journal entry."""
             result = await self.create_entry(body.content, body.metadata)
             return result
+
+        @router.post("/entries/voice", status_code=201)
+        async def create_voice_entry(
+            file: UploadFile,
+            date: str | None = Form(None),
+            duration_seconds: float | None = Form(None),
+        ):
+            """Upload audio and create a voice entry.
+
+            Saves the audio file, creates an entry with status "processing",
+            and kicks off background transcription + LLM cleanup.
+            """
+            from parachute.core.interfaces import get_registry
+
+            graph = self._get_graph()
+            if graph is None:
+                return JSONResponse(
+                    status_code=503,
+                    content={"error": "BrainDB not available"},
+                )
+
+            # Check transcription service availability
+            ts = get_registry().get("TranscriptionService")
+            if ts is None:
+                return JSONResponse(
+                    status_code=503,
+                    content={"error": "Transcription service not available"},
+                )
+
+            # Determine date
+            date_str = date or datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d")
+            if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_str):
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": "Invalid date format, expected YYYY-MM-DD"},
+                )
+
+            # Validate file extension
+            ext = (
+                Path(file.filename).suffix.lower() if file.filename else ".wav"
+            )
+            if ext not in ALLOWED_AUDIO_EXTENSIONS:
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": f"Unsupported audio format: {ext}"},
+                )
+
+            # Read and validate file size
+            contents = await file.read()
+            if len(contents) > MAX_VOICE_BYTES:
+                return JSONResponse(
+                    status_code=413,
+                    content={"error": f"File too large (max {MAX_VOICE_BYTES // (1024*1024)} MB)"},
+                )
+
+            # Save audio file (reuse asset upload pattern)
+            assets_root = ASSETS_DIR.resolve()
+            dest_dir = (assets_root / date_str).resolve()
+            if not dest_dir.is_relative_to(assets_root):
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": "Invalid date parameter"},
+                )
+
+            safe_name = f"{uuid.uuid4().hex[:8]}{ext}"
+            audio_path = dest_dir / safe_name
+
+            await asyncio.to_thread(dest_dir.mkdir, parents=True, exist_ok=True)
+            await asyncio.to_thread(audio_path.write_bytes, contents)
+            logger.info(f"Daily: saved voice recording to {audio_path}")
+
+            # Create entry with status "processing"
+            meta: dict[str, Any] = {
+                "type": "audio",
+                "audio_path": str(audio_path),
+                "transcription_status": "processing",
+            }
+            if duration_seconds is not None:
+                meta["duration_seconds"] = duration_seconds
+            result = await self.create_entry("", meta)
+
+            # Kick off background transcription + cleanup
+            entry_id = result["id"]
+            task = asyncio.create_task(
+                _transcribe_and_cleanup(self, graph, entry_id, audio_path)
+            )
+            _background_tasks.add(task)
+
+            def _on_done(t: asyncio.Task, eid: str = entry_id) -> None:
+                _background_tasks.discard(t)
+                if not t.cancelled() and (exc := t.exception()):
+                    logger.error(
+                        "Background transcription failed for entry %s: %s",
+                        eid, exc, exc_info=exc,
+                    )
+
+            task.add_done_callback(_on_done)
+
+            return {
+                "entry_id": entry_id,
+                "status": "processing",
+                "audio_path": str(audio_path),
+            }
 
         @router.get("/entries")
         async def list_entries(

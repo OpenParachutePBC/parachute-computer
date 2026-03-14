@@ -272,7 +272,64 @@ def create_daily_agent_tools(
                 "is_error": True
             }
 
-    tools = [read_journal, read_chat_log, read_recent_journals, read_recent_sessions, write_output]
+    @tool(
+        "update_entry",
+        "Update a journal entry's content. Use for cleaning up or rewriting an entry.",
+        {"entry_id": str, "content": str}
+    )
+    async def update_entry(args: dict[str, Any]) -> dict[str, Any]:
+        """Update an existing Note's content in the graph."""
+        entry_id = args.get("entry_id", "").strip()
+        content = args.get("content", "").strip()
+
+        if not entry_id:
+            return {
+                "content": [{"type": "text", "text": "Error: entry_id is required"}],
+                "is_error": True
+            }
+
+        if not content:
+            return {
+                "content": [{"type": "text", "text": "Error: content is required"}],
+                "is_error": True
+            }
+
+        if graph is None:
+            return {
+                "content": [{"type": "text", "text": "Error: graph unavailable — cannot update entry"}],
+                "is_error": True
+            }
+
+        try:
+            # Check the entry exists
+            rows = await graph.execute_cypher(
+                "MATCH (e:Note {entry_id: $entry_id}) RETURN e.entry_id AS eid",
+                {"entry_id": entry_id},
+            )
+            if not rows:
+                return {
+                    "content": [{"type": "text", "text": f"Error: no entry found with id {entry_id}"}],
+                    "is_error": True
+                }
+
+            # Update the content
+            await graph.execute_cypher(
+                "MATCH (e:Note {entry_id: $entry_id}) SET e.content = $content",
+                {"entry_id": entry_id, "content": content},
+            )
+
+            logger.info(f"Agent '{config.name}' updated entry {entry_id}")
+            return {
+                "content": [{"type": "text", "text": f"Successfully updated entry {entry_id}"}]
+            }
+        except Exception as e:
+            logger.error(f"Error updating entry: {e}")
+            return {
+                "content": [{"type": "text", "text": f"Error updating entry: {e}"}],
+                "is_error": True
+            }
+
+    tools = [read_journal, read_chat_log, read_recent_journals, read_recent_sessions, write_output, update_entry]
 
     # Create the MCP server config
     server_config = create_sdk_mcp_server(
