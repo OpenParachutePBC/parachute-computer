@@ -152,6 +152,15 @@ def _trim_redo_log() -> list[dict]:
         return []
 
 
+# ── Transcription status validation ─────────────────────────────────────────
+VALID_TRANSCRIPTION_STATUSES = {"processing", "complete", "failed"}
+VALID_TRANSCRIPTION_TRANSITIONS = {
+    "processing": {"complete", "failed"},
+    "failed": {"processing"},       # retry
+    "complete": set(),              # terminal — no transitions out
+}
+
+
 class CreateEntryRequest(BaseModel):
     content: str
     metadata: Optional[dict] = None
@@ -723,6 +732,31 @@ class DailyModule:
 
         row = rows[0]
 
+        # ── Validate transcription_status transitions ──────────────────────
+        if metadata and "transcription_status" in metadata:
+            new_status = metadata["transcription_status"]
+            if new_status not in VALID_TRANSCRIPTION_STATUSES:
+                raise ValueError(
+                    f"Invalid transcription_status '{new_status}'. "
+                    f"Valid: {sorted(VALID_TRANSCRIPTION_STATUSES)}"
+                )
+
+            # Check current status from metadata_json
+            existing_blob = row.get("metadata_json") or ""
+            try:
+                existing_meta = json.loads(existing_blob) if existing_blob else {}
+            except (json.JSONDecodeError, TypeError):
+                existing_meta = {}
+
+            current_status = existing_meta.get("transcription_status")
+            if current_status is not None:
+                allowed = VALID_TRANSCRIPTION_TRANSITIONS.get(current_status, set())
+                if new_status not in allowed:
+                    raise ValueError(
+                        f"Invalid transition: '{current_status}' → '{new_status}'. "
+                        f"Allowed from '{current_status}': {sorted(allowed) if allowed else 'none (terminal)'}"
+                    )
+
         # Merge updates
         new_content = content if content is not None else (row.get("content") or "")
         new_snippet = new_content[:200]
@@ -1140,7 +1174,13 @@ class DailyModule:
         @router.patch("/entries/{entry_id}")
         async def update_entry(entry_id: str, body: UpdateEntryRequest):
             """Update content and/or metadata of an existing entry."""
-            entry = await self.update_entry(entry_id, content=body.content, metadata=body.metadata)
+            try:
+                entry = await self.update_entry(entry_id, content=body.content, metadata=body.metadata)
+            except ValueError as e:
+                return JSONResponse(
+                    status_code=422,
+                    content={"error": str(e), "id": entry_id},
+                )
             if entry is None:
                 return JSONResponse(
                     status_code=404,

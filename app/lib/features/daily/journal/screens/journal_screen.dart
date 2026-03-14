@@ -500,6 +500,8 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
           'type': 'voice',
           'audio_path': serverPath,
           'duration_seconds': duration,
+          // Mark as processing if content is empty (post-hoc transcription pending)
+          if (transcript.isEmpty) 'transcription_status': 'processing',
         },
       );
       if (!mounted) return;
