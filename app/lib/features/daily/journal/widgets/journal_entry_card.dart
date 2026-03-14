@@ -6,6 +6,7 @@ import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/core/providers/file_system_provider.dart';
 import '../../recorder/providers/transcription_init_provider.dart';
 import '../models/journal_entry.dart';
+import '../providers/journal_screen_state_provider.dart';
 
 /// Card widget displaying a single journal entry
 ///
@@ -43,7 +44,10 @@ class JournalEntryCard extends ConsumerWidget {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     final transcriptionState = ref.watch(transcriptionInitProvider);
-    final canTranscribe = transcriptionState.isReady && entry.isPendingTranscription && onTranscribe != null;
+    final screenState = ref.watch(journalScreenStateProvider);
+    final isActivelyTranscribing = screenState.transcribingEntryIds.contains(entry.id);
+    final transcriptionProgress = screenState.transcriptionProgress[entry.id] ?? 0.0;
+    final canTranscribe = transcriptionState.isReady && entry.isPendingTranscription && !isActivelyTranscribing && onTranscribe != null;
 
     // Use different layout for imported markdown vs para:ID entries
     if (_isImportedMarkdown) {
@@ -104,8 +108,13 @@ class JournalEntryCard extends ConsumerWidget {
                 ],
               ),
 
+              // Active transcription progress
+              if (isActivelyTranscribing) ...[
+                const SizedBox(height: 12),
+                _buildTranscribingIndicator(isDark, transcriptionProgress),
+              ]
               // Content preview
-              if (entry.content.isNotEmpty) ...[
+              else if (entry.content.isNotEmpty) ...[
                 const SizedBox(height: 12),
                 Text(
                   _truncateContent(entry.content),
@@ -556,6 +565,59 @@ class JournalEntryCard extends ConsumerWidget {
     final fileSystemService = ref.read(fileSystemServiceProvider);
     final vaultPath = await fileSystemService.getRootPath();
     return '$vaultPath/${entry.imagePath}';
+  }
+
+  /// Progress indicator shown while transcription is actively running
+  Widget _buildTranscribingIndicator(bool isDark, double progress) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: BrandColors.turquoise.withValues(alpha: isDark ? 0.15 : 0.08),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  value: progress > 0 ? progress : null,
+                  valueColor: AlwaysStoppedAnimation<Color>(BrandColors.turquoise),
+                  backgroundColor: BrandColors.turquoise.withValues(alpha: 0.2),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                progress > 0
+                    ? 'Transcribing... ${(progress * 100).toInt()}%'
+                    : 'Transcribing...',
+                style: TextStyle(
+                  fontSize: 13,
+                  color: BrandColors.turquoise,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+          if (progress > 0) ...[
+            const SizedBox(height: 8),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(2),
+              child: LinearProgressIndicator(
+                value: progress,
+                backgroundColor: BrandColors.turquoise.withValues(alpha: 0.15),
+                valueColor: AlwaysStoppedAnimation<Color>(BrandColors.turquoise),
+                minHeight: 3,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
   }
 
   Widget _buildTranscribeButton(BuildContext context, bool isDark, bool canTranscribe) {

@@ -369,7 +369,7 @@ class SherpaOnnxService {
 
   // Chunking configuration
   static const int _sampleRate = 16000;
-  static const int _chunkDurationSeconds = 30; // 30 second chunks
+  static const int _chunkDurationSeconds = 60; // 60 second chunks (reduced boundary artifacts)
   static const int _overlapSeconds = 2; // 2 second overlap to avoid cutting words
   static const int _samplesPerChunk = _sampleRate * _chunkDurationSeconds;
   static const int _overlapSamples = _sampleRate * _overlapSeconds;
@@ -378,12 +378,15 @@ class SherpaOnnxService {
   ///
   /// [audioPath] - Absolute path to WAV file (16kHz mono PCM16)
   /// [onProgress] - Optional callback for progress updates (0.0-1.0)
+  /// [chunkDurationSeconds] - Chunk size for long audio (default: 30s).
+  ///   Use 60 for Daily voice recordings to reduce boundary artifacts.
   ///
   /// Returns transcribed text with automatic language detection.
   /// For long audio files, processes in chunks to avoid OOM.
   Future<TranscriptionResult> transcribeAudio(
     String audioPath, {
     Function(double progress)? onProgress,
+    int? chunkDurationSeconds,
   }) async {
     if (!_isInitialized) {
       throw StateError('SherpaOnnx not initialized. Call initialize() first.');
@@ -410,12 +413,16 @@ class SherpaOnnxService {
 
       debugPrint('[SherpaOnnxService] Audio duration: ${estimatedDurationSec.toStringAsFixed(1)}s, samples: $estimatedSamples');
 
+      // Use custom chunk duration if provided, otherwise use default
+      final effectiveChunkSeconds = chunkDurationSeconds ?? _chunkDurationSeconds;
+      final effectiveSamplesPerChunk = _sampleRate * effectiveChunkSeconds;
+
       String fullText;
       List<String> allTokens = [];
       List<double> allTimestamps = [];
 
-      if (estimatedSamples <= _samplesPerChunk * 1.5) {
-        // Short audio - process in one go (up to ~45 seconds)
+      if (estimatedSamples <= effectiveSamplesPerChunk * 1.5) {
+        // Short audio - process in one go
         debugPrint('[SherpaOnnxService] Short audio, processing in one chunk');
         onProgress?.call(0.1); // Start progress
         final result = await _transcribeChunk(audioPath, 0, estimatedSamples);
@@ -425,10 +432,11 @@ class SherpaOnnxService {
         onProgress?.call(0.9); // Near complete
       } else {
         // Long audio - process in chunks with overlap
-        debugPrint('[SherpaOnnxService] Long audio, processing in ${(_samplesPerChunk / _sampleRate).toInt()}s chunks');
+        debugPrint('[SherpaOnnxService] Long audio, processing in ${effectiveChunkSeconds}s chunks');
         final results = await _transcribeInChunks(
           audioPath,
           estimatedSamples,
+          samplesPerChunk: effectiveSamplesPerChunk,
           onProgress: onProgress,
         );
         fullText = results.map((r) => r.text).join(' ').trim();
@@ -457,17 +465,23 @@ class SherpaOnnxService {
   }
 
   /// Transcribe audio in chunks to avoid OOM on long recordings
+  ///
+  /// [samplesPerChunk] allows overriding the default chunk size (e.g. 60s for Daily)
   Future<List<TranscriptionResult>> _transcribeInChunks(
     String audioPath,
     int totalSamples, {
+    int? samplesPerChunk,
     Function(double progress)? onProgress,
   }) async {
     final results = <TranscriptionResult>[];
     int chunkStart = 0;
     int chunkIndex = 0;
 
+    // Use provided chunk size or default
+    final chunkSamples = samplesPerChunk ?? _samplesPerChunk;
+
     // Calculate total number of chunks for progress reporting
-    final effectiveChunkSize = _samplesPerChunk - _overlapSamples;
+    final effectiveChunkSize = chunkSamples - _overlapSamples;
     final totalChunks = ((totalSamples - _overlapSamples) / effectiveChunkSize).ceil();
     debugPrint('[SherpaOnnxService] Estimated $totalChunks chunks to process');
 
@@ -475,7 +489,7 @@ class SherpaOnnxService {
 
     while (chunkStart < totalSamples) {
       // Calculate chunk bounds
-      int chunkEnd = (chunkStart + _samplesPerChunk).clamp(0, totalSamples);
+      int chunkEnd = (chunkStart + chunkSamples).clamp(0, totalSamples);
 
       debugPrint('[SherpaOnnxService] Processing chunk ${chunkIndex + 1}/$totalChunks: samples $chunkStart-$chunkEnd');
 

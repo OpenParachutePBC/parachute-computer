@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/core/providers/model_download_provider.dart';
@@ -9,9 +10,11 @@ import '../../capture/screens/handwriting_screen.dart';
 import '../../recorder/providers/service_providers.dart';
 import '../screens/compose_screen.dart';
 import '../providers/compose_draft_provider.dart';
+import '../providers/journal_screen_state_provider.dart';
 import '../../recorder/providers/transcription_progress_provider.dart';
-import '../../recorder/providers/streaming_transcription_provider.dart';
-import '../../recorder/services/live_transcription_service_v3.dart';
+import '../../recorder/providers/daily_recording_provider.dart';
+import '../../recorder/providers/post_hoc_transcription_provider.dart';
+import '../../recorder/widgets/daily_recording_overlay.dart';
 import 'package:parachute/features/settings/screens/settings_screen.dart';
 
 /// Input bar for adding entries to the journal
@@ -49,18 +52,11 @@ class _JournalInputBarState extends ConsumerState<JournalInputBar> {
   final TextEditingController _controller = TextEditingController();
   final FocusNode _focusNode = FocusNode();
   bool _isRecording = false;
-  bool _isPaused = false;
   bool _isSubmitting = false;
   bool _isProcessing = false;
   bool _hasPendingDraft = false;
   Duration _recordingDuration = Duration.zero;
   Timer? _durationTimer;
-
-  // Streaming transcription state
-  final bool _useStreamingTranscription = true; // Enable by default
-  bool _isUsingStreamingMode = false; // Track which mode was actually started
-  StreamSubscription<StreamingTranscriptionState>? _streamingSubscription;
-
   @override
   void initState() {
     super.initState();
@@ -108,7 +104,6 @@ class _JournalInputBarState extends ConsumerState<JournalInputBar> {
     _controller.dispose();
     _focusNode.dispose();
     _durationTimer?.cancel();
-    _streamingSubscription?.cancel();
     super.dispose();
   }
 
@@ -177,24 +172,20 @@ class _JournalInputBarState extends ConsumerState<JournalInputBar> {
     final transcriptionAdapter = ref.read(transcriptionServiceAdapterProvider);
     final isModelReady = await transcriptionAdapter.isReady();
 
-    debugPrint('[JournalInputBar] Starting recording - streaming mode: $_useStreamingTranscription (model ready: $isModelReady)');
+    debugPrint('[JournalInputBar] Starting recording - post-hoc mode (model ready: $isModelReady)');
 
-    if (_useStreamingTranscription) {
-      // Use streaming transcription service (handles model init gracefully)
-      _isUsingStreamingMode = true;
-      await _startStreamingRecording();
-    } else {
-      // Only use standard recording if streaming is explicitly disabled
-      _isUsingStreamingMode = false;
-      await _startStandardRecording();
-    }
+    // Use simplified Daily recording (audio only, no live transcription)
+    await _startDailyRecording();
   }
 
-  /// Start recording with streaming transcription (real-time feedback)
-  Future<void> _startStreamingRecording() async {
+  /// Start Daily recording — audio only, no live transcription
+  ///
+  /// Uses DailyRecordingProvider for a clean recording-only flow.
+  /// Transcription happens post-hoc after recording stops.
+  Future<void> _startDailyRecording() async {
     try {
-      final streamingNotifier = ref.read(streamingRecordingProvider.notifier);
-      final started = await streamingNotifier.startRecording();
+      final dailyNotifier = ref.read(dailyRecordingProvider.notifier);
+      final started = await dailyNotifier.startRecording();
 
       if (!started) {
         if (mounted) {
@@ -213,18 +204,19 @@ class _JournalInputBarState extends ConsumerState<JournalInputBar> {
         _recordingDuration = Duration.zero;
       });
 
-      // Start duration timer
+      // Duration tracking is handled by DailyRecordingProvider,
+      // but we keep local state for the minimum duration check
       _durationTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-        if (mounted && _isRecording && !_isPaused) {
+        if (mounted && _isRecording) {
           setState(() {
             _recordingDuration = _recordingDuration + const Duration(seconds: 1);
           });
         }
       });
 
-      debugPrint('[JournalInputBar] Streaming recording started');
+      debugPrint('[JournalInputBar] Daily recording started (audio only)');
     } catch (e) {
-      debugPrint('[JournalInputBar] Failed to start streaming recording: $e');
+      debugPrint('[JournalInputBar] Failed to start Daily recording: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -236,97 +228,10 @@ class _JournalInputBarState extends ConsumerState<JournalInputBar> {
     }
   }
 
-  /// Start standard recording (transcribe after recording ends)
-  Future<void> _startStandardRecording() async {
-    final audioService = ref.read(audioServiceProvider);
-
-    try {
-      await audioService.ensureInitialized();
-      final started = await audioService.startRecording();
-
-      if (!started) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Could not start recording. Check microphone permissions.'),
-              duration: Duration(seconds: 3),
-            ),
-          );
-        }
-        return;
-      }
-
-      setState(() {
-        _isRecording = true;
-        _recordingDuration = Duration.zero;
-      });
-
-      // Start duration timer
-      _durationTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-        if (mounted && _isRecording && !_isPaused) {
-          setState(() {
-            _recordingDuration = _recordingDuration + const Duration(seconds: 1);
-          });
-        }
-      });
-
-      debugPrint('[JournalInputBar] Standard recording started');
-    } catch (e) {
-      debugPrint('[JournalInputBar] Failed to start recording: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to start recording: $e'),
-            duration: const Duration(seconds: 3),
-          ),
-        );
-      }
-    }
-  }
-
-  Future<void> _pauseRecording() async {
-    if (!_isRecording || _isPaused) return;
-
-    try {
-      if (_isUsingStreamingMode) {
-        // Pause streaming recording
-        final service = await ref.read(autoPauseTranscriptionServiceProvider.future);
-        await service.pauseRecording();
-      } else {
-        // Pause standard recording
-        final audioService = ref.read(audioServiceProvider);
-        await audioService.pauseRecording();
-      }
-      setState(() {
-        _isPaused = true;
-      });
-      debugPrint('[JournalInputBar] Recording paused');
-    } catch (e) {
-      debugPrint('[JournalInputBar] Failed to pause recording: $e');
-    }
-  }
-
-  Future<void> _resumeRecording() async {
-    if (!_isRecording || !_isPaused) return;
-
-    try {
-      if (_isUsingStreamingMode) {
-        // Resume streaming recording
-        final service = await ref.read(autoPauseTranscriptionServiceProvider.future);
-        await service.resumeRecording();
-      } else {
-        // Resume standard recording
-        final audioService = ref.read(audioServiceProvider);
-        await audioService.resumeRecording();
-      }
-      setState(() {
-        _isPaused = false;
-      });
-      debugPrint('[JournalInputBar] Recording resumed');
-    } catch (e) {
-      debugPrint('[JournalInputBar] Failed to resume recording: $e');
-    }
-  }
+  // Note: _startStreamingRecording, _startStandardRecording, _pauseRecording,
+  // _resumeRecording removed — Daily now uses DailyRecordingProvider for
+  // audio-only recording without live transcription. Chat voice input
+  // (StreamingVoiceService) is separate and unaffected.
 
   Future<void> _discardRecording() async {
     if (!_isRecording) return;
@@ -334,22 +239,17 @@ class _JournalInputBarState extends ConsumerState<JournalInputBar> {
     _durationTimer?.cancel();
     _durationTimer = null;
 
-    debugPrint('[JournalInputBar] Discarding recording - streaming mode: $_isUsingStreamingMode');
+    debugPrint('[JournalInputBar] Discarding recording');
 
-    // Use the mode we tracked when starting, not current init state
-    if (_isUsingStreamingMode) {
-      final streamingNotifier = ref.read(streamingRecordingProvider.notifier);
-      await streamingNotifier.cancelRecording();
-    } else {
-      final audioService = ref.read(audioServiceProvider);
-      await audioService.stopRecording();
-    }
+    // Cancel via Daily recording provider
+    final dailyNotifier = ref.read(dailyRecordingProvider.notifier);
+    await dailyNotifier.cancelRecording();
+
+    HapticFeedback.lightImpact();
 
     setState(() {
       _isRecording = false;
-      _isPaused = false;
       _recordingDuration = Duration.zero;
-      _isUsingStreamingMode = false;
     });
 
     debugPrint('[JournalInputBar] Recording discarded');
@@ -361,205 +261,84 @@ class _JournalInputBarState extends ConsumerState<JournalInputBar> {
     _durationTimer?.cancel();
     _durationTimer = null;
 
-    debugPrint('[JournalInputBar] Stopping recording - streaming mode: $_isUsingStreamingMode');
-
-    // Use the mode we tracked when starting, not current init state
-    if (_isUsingStreamingMode) {
-      await _stopStreamingRecording();
-    } else {
-      await _stopStandardRecording();
-    }
-  }
-
-  /// Stop streaming recording and get the transcript that was built up during recording
-  Future<void> _stopStreamingRecording() async {
     final durationSeconds = _recordingDuration.inSeconds;
 
-    setState(() {
-      _isRecording = false;
-      _isPaused = false;
-      _isProcessing = true;
-    });
-
-    try {
-      final streamingNotifier = ref.read(streamingRecordingProvider.notifier);
-
-      // Stop recording first - this flushes final audio and may add more text
-      final audioPath = await streamingNotifier.stopRecording();
-
-      // Get the transcript AFTER stopping - includes any text from final flush
-      final transcript = streamingNotifier.getStreamingTranscript();
-
-      if (audioPath == null) {
-        throw Exception('No audio file saved');
-      }
-
-      debugPrint('[JournalInputBar] Streaming recording stopped with transcript: ${transcript.length} chars');
-
-      // Create entry with the streaming transcript we already have
-      if (widget.onVoiceRecorded != null) {
-        await widget.onVoiceRecorded!(transcript, audioPath, durationSeconds);
-      }
-
-      // If we got a transcript, we're done - otherwise fall back to background transcription
-      if (transcript.isEmpty) {
-        debugPrint('[JournalInputBar] No streaming transcript - falling back to background transcription');
-        _transcribeInBackground(audioPath, durationSeconds);
-      } else {
-        // Clean up temp file since we have the transcript
-        try {
-          final tempFile = File(audioPath);
-          if (await tempFile.exists()) {
-            await tempFile.delete();
-            debugPrint('[JournalInputBar] Deleted temp audio file');
-          }
-        } catch (e) {
-          debugPrint('[JournalInputBar] Could not delete temp file: $e');
-        }
-      }
-    } catch (e) {
-      debugPrint('[JournalInputBar] Failed to process streaming recording: $e');
+    // Minimum duration check: discard recordings < 3 seconds
+    if (durationSeconds < 3) {
+      debugPrint('[JournalInputBar] Recording too short (${durationSeconds}s), discarding');
+      await _discardRecording();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to save recording: $e'),
-            duration: const Duration(seconds: 3),
+          const SnackBar(
+            content: Text('Recording too short — try again'),
+            duration: Duration(seconds: 2),
           ),
         );
       }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isProcessing = false;
-          _recordingDuration = Duration.zero;
-          _isUsingStreamingMode = false;
-        });
-      }
-    }
-  }
-
-  /// Stop standard recording and transcribe in background
-  Future<void> _stopStandardRecording() async {
-    final audioService = ref.read(audioServiceProvider);
-    final durationSeconds = _recordingDuration.inSeconds;
-
-    setState(() {
-      _isRecording = false;
-      _isPaused = false;
-      _isProcessing = true;
-    });
-
-    try {
-      final audioPath = await audioService.stopRecording();
-
-      if (audioPath == null) {
-        throw Exception('No audio file saved');
-      }
-
-      debugPrint('[JournalInputBar] Recording stopped, creating entry immediately...');
-
-      // Create entry immediately with placeholder (streaming approach)
-      // This gives instant feedback while transcription runs in background
-      if (widget.onVoiceRecorded != null) {
-        // Create with empty transcript - UI will show "Transcribing..."
-        await widget.onVoiceRecorded!('', audioPath, durationSeconds);
-      }
-
-      // Now transcribe in background and update
-      debugPrint('[JournalInputBar] Starting background transcription...');
-      _transcribeInBackground(audioPath, durationSeconds);
-
-    } catch (e) {
-      debugPrint('[JournalInputBar] Failed to process recording: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to save recording: $e'),
-            duration: const Duration(seconds: 3),
-          ),
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isProcessing = false;
-          _recordingDuration = Duration.zero;
-        });
-      }
-    }
-  }
-
-  /// Transcribe audio in background and update the entry
-  ///
-  /// If Parakeet is not ready, transcription is skipped silently.
-  /// The recording is saved with audio only - user can transcribe later.
-  Future<void> _transcribeInBackground(String audioPath, int durationSeconds) async {
-    // Check if transcription is available using the actual adapter
-    // (transcriptionInitProvider may not reflect the true state if initialized elsewhere)
-    final transcriptionAdapter = ref.read(transcriptionServiceAdapterProvider);
-    final isReady = await transcriptionAdapter.isReady();
-
-    if (!isReady) {
-      debugPrint('[JournalInputBar] Transcription service not ready - skipping background transcription');
-      // Don't delete the audio file - keep it for later transcription
-      // The entry is already saved with the audio path
       return;
     }
 
-    // Start progress tracking (uses historical data for estimates)
-    await ref.read(transcriptionProgressProvider.notifier).startTranscription(
-      audioDurationSeconds: durationSeconds,
-    );
+    debugPrint('[JournalInputBar] Stopping Daily recording (${durationSeconds}s)');
+    await _stopDailyRecording(durationSeconds);
+  }
+
+  /// Stop Daily recording and trigger post-hoc transcription
+  Future<void> _stopDailyRecording(int durationSeconds) async {
+    setState(() {
+      _isRecording = false;
+      _isProcessing = true;
+    });
 
     try {
-      final postProcessingService = ref.read(recordingPostProcessingProvider);
-      final result = await postProcessingService.process(audioPath: audioPath);
-      final transcript = result.transcript;
+      final dailyNotifier = ref.read(dailyRecordingProvider.notifier);
+      final audioPath = await dailyNotifier.stopRecording();
 
-      // Mark progress complete and record timing for future estimates
-      await ref.read(transcriptionProgressProvider.notifier).complete();
-
-      debugPrint('[JournalInputBar] Background transcription complete: ${transcript.length} chars');
-
-      // Clean up temp file now that transcription is done
-      try {
-        final tempFile = File(audioPath);
-        if (await tempFile.exists()) {
-          await tempFile.delete();
-          debugPrint('[JournalInputBar] Deleted temp audio file');
-        }
-      } catch (e) {
-        debugPrint('[JournalInputBar] Could not delete temp file: $e');
+      if (audioPath == null) {
+        throw Exception('No audio file saved');
       }
 
-      if (transcript.isEmpty) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('No speech detected in recording.'),
-              duration: Duration(seconds: 2),
-            ),
-          );
-        }
-        return;
+      HapticFeedback.heavyImpact();
+
+      debugPrint('[JournalInputBar] Daily recording stopped, audio at: $audioPath');
+
+      // Create entry immediately with empty transcript — "processing" state
+      // The entry appears in the list with a progress indicator
+      if (widget.onVoiceRecorded != null) {
+        await widget.onVoiceRecorded!('', audioPath, durationSeconds);
       }
 
-      // Update the entry with the transcript
-      if (widget.onTranscriptReady != null) {
-        await widget.onTranscriptReady!(transcript);
+      // Get the entry ID that was just created
+      final entryId = ref.read(journalScreenStateProvider).pendingTranscriptionEntryId;
+
+      if (entryId != null) {
+        // Enqueue post-hoc transcription — the provider handles everything:
+        // tracking, transcription, updating entry, failure/retry
+        ref.read(postHocTranscriptionProvider.notifier).enqueue(
+          entryId: entryId,
+          audioPath: audioPath,
+          durationSeconds: durationSeconds,
+        );
+        debugPrint('[JournalInputBar] Enqueued post-hoc transcription for $entryId');
+      } else {
+        debugPrint('[JournalInputBar] Warning: no entry ID after creation, skipping transcription');
       }
+
     } catch (e) {
-      // Mark progress as failed
-      ref.read(transcriptionProgressProvider.notifier).fail(e.toString());
-
-      debugPrint('[JournalInputBar] Background transcription failed: $e');
+      debugPrint('[JournalInputBar] Failed to process Daily recording: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Transcription failed: $e'),
+            content: Text('Failed to save recording: $e'),
             duration: const Duration(seconds: 3),
           ),
         );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isProcessing = false;
+          _recordingDuration = Duration.zero;
+        });
       }
     }
   }
@@ -603,287 +382,14 @@ class _JournalInputBarState extends ConsumerState<JournalInputBar> {
     );
   }
 
-  /// Build the recording mode UI with timer, streaming transcript, and controls
+  /// Build the recording mode UI — calm waveform + timer, no live text
   Widget _buildRecordingMode(bool isDark, ThemeData theme) {
-    // Watch streaming state for real-time updates
-    final streamingState = ref.watch(streamingTranscriptionProvider);
+    final dailyNotifier = ref.read(dailyRecordingProvider.notifier);
 
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        // Recording header with status and timer
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          decoration: BoxDecoration(
-            color: _isPaused
-                ? BrandColors.warning.withValues(alpha: 0.1)
-                : BrandColors.error.withValues(alpha: 0.1),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Row(
-            children: [
-              // Recording indicator (pulsing dot or pause icon)
-              if (_isPaused)
-                Icon(Icons.pause, color: BrandColors.warning, size: 20)
-              else
-                Container(
-                  width: 12,
-                  height: 12,
-                  decoration: BoxDecoration(
-                    color: BrandColors.error,
-                    shape: BoxShape.circle,
-                  ),
-                ),
-              const SizedBox(width: 12),
-
-              // Duration
-              Text(
-                _formatDuration(_recordingDuration),
-                style: TextStyle(
-                  color: _isPaused ? BrandColors.warning : BrandColors.error,
-                  fontSize: 18,
-                  fontWeight: FontWeight.w600,
-                  fontFeatures: const [FontFeature.tabularFigures()],
-                ),
-              ),
-
-              const Spacer(),
-
-              // VAD indicator - shows when speech is detected
-              streamingState.when(
-                data: (state) => _buildVadIndicator(state.vadLevel > 0.5, isDark),
-                loading: () => const SizedBox(width: 24, height: 24),
-                error: (e, st) => const SizedBox(width: 24, height: 24),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 12),
-
-        // Streaming transcription display
-        streamingState.when(
-          data: (state) => _buildStreamingTranscript(state, isDark, theme),
-          loading: () => _buildTranscriptPlaceholder(isDark, TranscriptionModelStatus.initializing),
-          error: (e, st) => _buildTranscriptPlaceholder(isDark, TranscriptionModelStatus.error),
-        ),
-        const SizedBox(height: 12),
-
-        // Control buttons
-        Row(
-          children: [
-            // Discard button
-            Expanded(
-              child: SizedBox(
-                height: 48,
-                child: OutlinedButton.icon(
-                  onPressed: _discardRecording,
-                  icon: Icon(Icons.close, size: 20, color: BrandColors.driftwood),
-                  label: Text(
-                    'Discard',
-                    style: TextStyle(color: BrandColors.driftwood),
-                  ),
-                  style: OutlinedButton.styleFrom(
-                    side: BorderSide(color: BrandColors.driftwood.withValues(alpha: 0.5)),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(24),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(width: 8),
-
-            // Pause/Resume button
-            SizedBox(
-              width: 48,
-              height: 48,
-              child: IconButton(
-                onPressed: _isPaused ? _resumeRecording : _pauseRecording,
-                style: IconButton.styleFrom(
-                  backgroundColor: _isPaused
-                      ? BrandColors.forest.withValues(alpha: 0.1)
-                      : BrandColors.warning.withValues(alpha: 0.1),
-                  shape: const CircleBorder(),
-                ),
-                icon: Icon(
-                  _isPaused ? Icons.play_arrow : Icons.pause,
-                  color: _isPaused ? BrandColors.forest : BrandColors.warning,
-                ),
-              ),
-            ),
-            const SizedBox(width: 8),
-
-            // Save button
-            Expanded(
-              child: SizedBox(
-                height: 48,
-                child: ElevatedButton.icon(
-                  onPressed: _stopRecording,
-                  icon: const Icon(Icons.check, size: 20),
-                  label: const Text('Done'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: BrandColors.forest,
-                    foregroundColor: BrandColors.softWhite,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(24),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-
-  /// Build VAD (Voice Activity Detection) indicator
-  Widget _buildVadIndicator(bool isSpeaking, bool isDark) {
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 150),
-      width: 24,
-      height: 24,
-      decoration: BoxDecoration(
-        color: isSpeaking
-            ? BrandColors.forest.withValues(alpha: 0.2)
-            : (isDark
-                ? BrandColors.charcoal.withValues(alpha: 0.5)
-                : BrandColors.stone.withValues(alpha: 0.5)),
-        shape: BoxShape.circle,
-      ),
-      child: Center(
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 150),
-          width: isSpeaking ? 14 : 10,
-          height: isSpeaking ? 14 : 10,
-          decoration: BoxDecoration(
-            color: isSpeaking ? BrandColors.forest : BrandColors.driftwood,
-            shape: BoxShape.circle,
-          ),
-        ),
-      ),
-    );
-  }
-
-  /// Build the streaming transcript display
-  Widget _buildStreamingTranscript(
-    StreamingTranscriptionState state,
-    bool isDark,
-    ThemeData theme,
-  ) {
-    final hasConfirmed = state.confirmedSegments.isNotEmpty;
-    final hasInterim = state.interimText.isNotEmpty;
-
-    if (!hasConfirmed && !hasInterim) {
-      return _buildTranscriptPlaceholder(isDark, state.modelStatus);
-    }
-
-    return Container(
-      constraints: const BoxConstraints(maxHeight: 150),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: isDark
-            ? BrandColors.nightSurfaceElevated.withValues(alpha: 0.5)
-            : BrandColors.cream.withValues(alpha: 0.5),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: SingleChildScrollView(
-        reverse: true, // Keep newest content visible
-        child: RichText(
-          text: TextSpan(
-            style: TextStyle(
-              color: isDark ? BrandColors.softWhite : BrandColors.ink,
-              fontSize: 15,
-              height: 1.5,
-            ),
-            children: [
-              // Confirmed segments (finalized text) - joined with spaces
-              if (hasConfirmed)
-                TextSpan(text: state.confirmedSegments.join(' ')),
-
-              // Interim text (currently being transcribed - shown in gray/italic)
-              if (hasInterim) ...[
-                if (hasConfirmed) const TextSpan(text: ' '),
-                TextSpan(
-                  text: state.interimText,
-                  style: TextStyle(
-                    color: isDark
-                        ? BrandColors.driftwood
-                        : BrandColors.charcoal.withValues(alpha: 0.7),
-                    fontStyle: FontStyle.italic,
-                  ),
-                ),
-              ],
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  /// Build placeholder when no transcript is available yet
-  Widget _buildTranscriptPlaceholder(bool isDark, [TranscriptionModelStatus? modelStatus]) {
-    // Determine message based on model status
-    String message;
-    bool showProgress = true;
-    Color? iconColor;
-
-    switch (modelStatus) {
-      case TranscriptionModelStatus.initializing:
-        message = 'Initializing transcription model...';
-        iconColor = BrandColors.forest;
-        break;
-      case TranscriptionModelStatus.error:
-        message = 'Transcription unavailable';
-        showProgress = false;
-        iconColor = BrandColors.warning;
-        break;
-      case TranscriptionModelStatus.ready:
-      case TranscriptionModelStatus.notInitialized:
-      case null:
-        message = 'Listening...';
-        iconColor = BrandColors.driftwood;
-        break;
-    }
-
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: isDark
-            ? BrandColors.nightSurfaceElevated.withValues(alpha: 0.3)
-            : BrandColors.cream.withValues(alpha: 0.3),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        children: [
-          if (showProgress)
-            SizedBox(
-              width: 16,
-              height: 16,
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                valueColor: AlwaysStoppedAnimation<Color>(iconColor),
-              ),
-            )
-          else
-            Icon(
-              Icons.warning_amber_rounded,
-              size: 16,
-              color: iconColor,
-            ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Text(
-              message,
-              style: TextStyle(
-                color: BrandColors.driftwood,
-                fontSize: 14,
-                fontStyle: FontStyle.italic,
-              ),
-            ),
-          ),
-        ],
-      ),
+    return DailyRecordingOverlay(
+      amplitudeStream: dailyNotifier.amplitudeStream,
+      onStop: _stopRecording,
+      onCancel: _discardRecording,
     );
   }
 
