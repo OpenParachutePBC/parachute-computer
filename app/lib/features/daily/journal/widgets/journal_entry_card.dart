@@ -114,14 +114,23 @@ class JournalEntryCard extends ConsumerWidget {
                 _buildTranscribingIndicator(isDark, transcriptionProgress),
               ]
               // Server processing (no text yet — transcription in progress on server)
-              else if (entry.serverTranscriptionStatus == 'processing' && entry.content.isEmpty) ...[
+              else if (entry.isServerProcessing && entry.content.isEmpty) ...[
                 const SizedBox(height: 12),
-                _buildServerProcessingIndicator(isDark),
+                _buildServerStatusIndicator(isDark,
+                  icon: null,
+                  label: 'Transcribing on server...',
+                  color: BrandColors.turquoise,
+                  showSpinner: true,
+                ),
               ]
               // Server transcription failed
               else if (entry.isTranscriptionFailed) ...[
                 const SizedBox(height: 12),
-                _buildTranscriptionFailedIndicator(isDark),
+                _buildServerStatusIndicator(isDark,
+                  icon: Icons.error_outline,
+                  label: 'Transcription failed',
+                  color: BrandColors.error,
+                ),
               ]
               // Content preview (with optional cleanup indicator)
               else if (entry.content.isNotEmpty) ...[
@@ -635,31 +644,39 @@ class JournalEntryCard extends ConsumerWidget {
     );
   }
 
-  /// Server is processing: audio uploaded, transcription running on server
-  Widget _buildServerProcessingIndicator(bool isDark) {
+  /// Status indicator chip for server transcription states (processing, failed).
+  Widget _buildServerStatusIndicator(bool isDark, {
+    required IconData? icon,
+    required String label,
+    required Color color,
+    bool showSpinner = false,
+  }) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
-        color: BrandColors.turquoise.withValues(alpha: isDark ? 0.15 : 0.08),
+        color: color.withValues(alpha: isDark ? 0.15 : 0.08),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Row(
         children: [
-          SizedBox(
-            width: 14,
-            height: 14,
-            child: CircularProgressIndicator(
-              strokeWidth: 2,
-              valueColor: AlwaysStoppedAnimation<Color>(BrandColors.turquoise),
-              backgroundColor: BrandColors.turquoise.withValues(alpha: 0.2),
-            ),
-          ),
+          if (showSpinner)
+            SizedBox(
+              width: 14,
+              height: 14,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                valueColor: AlwaysStoppedAnimation<Color>(color),
+                backgroundColor: color.withValues(alpha: 0.2),
+              ),
+            )
+          else if (icon != null)
+            Icon(icon, size: 14, color: color),
           const SizedBox(width: 8),
           Text(
-            'Transcribing on server...',
+            label,
             style: TextStyle(
               fontSize: 13,
-              color: BrandColors.turquoise,
+              color: color,
               fontWeight: FontWeight.w500,
             ),
           ),
@@ -691,35 +708,6 @@ class JournalEntryCard extends ConsumerWidget {
           ),
         ),
       ],
-    );
-  }
-
-  /// Server transcription failed
-  Widget _buildTranscriptionFailedIndicator(bool isDark) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: BrandColors.error.withValues(alpha: isDark ? 0.15 : 0.08),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Row(
-        children: [
-          Icon(
-            Icons.error_outline,
-            size: 14,
-            color: BrandColors.error,
-          ),
-          const SizedBox(width: 8),
-          Text(
-            'Transcription failed',
-            style: TextStyle(
-              fontSize: 13,
-              color: BrandColors.error,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-        ],
-      ),
     );
   }
 

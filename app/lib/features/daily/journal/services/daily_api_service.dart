@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import '../models/entry_metadata.dart' show TranscriptionStatus;
 import '../models/journal_entry.dart';
 import '../models/agent_card.dart';
 import 'package:parachute/core/services/computer_service.dart'
@@ -294,18 +295,17 @@ class DailyApiService {
         final body = jsonDecode(
           await streamed.stream.bytesToString(),
         ) as Map<String, dynamic>;
-        // Build entry from server response
-        final meta = (body['metadata'] as Map<String, dynamic>?) ?? {};
+        // Server returns {entry_id, status, audio_path} — different from entry JSON shape
         return JournalEntry(
-          id: body['id'] as String,
+          id: (body['entry_id'] ?? body['id']) as String,
           title: '',
           content: '',
           type: JournalEntryType.voice,
           createdAt: JournalEntry.parseDateTime(body['created_at'] as String?),
-          audioPath: meta['audio_path'] as String?,
+          audioPath: body['audio_path'] as String?,
           durationSeconds: durationSeconds,
           isPendingTranscription: true,
-          serverTranscriptionStatus: 'processing',
+          serverTranscriptionStatus: TranscriptionStatus.processing,
         );
       }
       debugPrint(

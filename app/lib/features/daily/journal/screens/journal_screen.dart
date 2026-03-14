@@ -63,6 +63,7 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
 
   // Server transcription polling
   final Set<String> _pollingEntryIds = {};
+  final Map<String, Timer> _pollingTimeouts = {};
   Timer? _transcriptionPollTimer;
   static const _pollInterval = Duration(seconds: 5);
   static const _pollTimeout = Duration(minutes: 5);
@@ -98,6 +99,10 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
     _flushPendingDraft();
     _draftSaveTimer?.cancel();
     _transcriptionPollTimer?.cancel();
+    for (final timer in _pollingTimeouts.values) {
+      timer.cancel();
+    }
+    _pollingTimeouts.clear();
     _scrollController.dispose();
     super.dispose();
   }
@@ -497,19 +502,23 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
   Future<void> _addVoiceEntry(String transcript, String localAudioPath, int duration) async {
     debugPrint('[JournalScreen] Adding voice entry via API...');
 
-    // Decide whether to use server-side transcription
-    final useServer = await _shouldUseServerTranscription();
+    // Read mode once and decide whether to use server-side transcription
+    final mode = await ref.read(transcriptionModeProvider.future);
     if (!mounted) return;
+
+    final useServer = switch (mode) {
+      TranscriptionMode.local => false,
+      TranscriptionMode.server => true,
+      TranscriptionMode.auto => ref.read(serverTranscriptionAvailableProvider),
+    };
 
     if (useServer) {
       final success = await _addVoiceEntryViaServer(localAudioPath, duration);
       if (!mounted) return;
       if (success) return;
 
-      // Auto mode: server failed, fall back to local
-      final mode = await ref.read(transcriptionModeProvider.future);
+      // Server-only mode: don't fall back, show error
       if (mode == TranscriptionMode.server) {
-        // Server-only mode — don't fall back, show error
         _showErrorSnackbar('Server transcription unavailable');
         // Still save the entry locally so the recording isn't lost
         await _appendEntryToCache(
@@ -525,20 +534,6 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
     }
 
     await _addVoiceEntryLocally(transcript, localAudioPath, duration);
-  }
-
-  /// Resolve whether to use server-side transcription for this voice entry.
-  Future<bool> _shouldUseServerTranscription() async {
-    final mode = await ref.read(transcriptionModeProvider.future);
-    switch (mode) {
-      case TranscriptionMode.local:
-        return false;
-      case TranscriptionMode.server:
-        return true;
-      case TranscriptionMode.auto:
-        // Use server if connected AND server has transcription
-        return ref.read(serverTranscriptionAvailableProvider);
-    }
   }
 
   /// Upload audio to server for transcription + cleanup. Returns true on success.
@@ -648,11 +643,15 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
 
   /// Start polling for an entry's transcription to complete.
   void _startPollingEntry(String entryId) {
+    // Guard: don't re-register if already being polled
+    if (_pollingEntryIds.contains(entryId)) return;
+
     _pollingEntryIds.add(entryId);
     _transcriptionPollTimer ??= Timer.periodic(_pollInterval, (_) => _pollTranscriptions());
 
-    // Set a timeout to stop polling this entry after _pollTimeout
-    Future.delayed(_pollTimeout, () {
+    // Set a cancellable timeout to stop polling this entry after _pollTimeout
+    _pollingTimeouts[entryId] = Timer(_pollTimeout, () {
+      _pollingTimeouts.remove(entryId);
       if (_pollingEntryIds.remove(entryId)) {
         debugPrint('[JournalScreen] Polling timeout for entry $entryId');
         _stopPollingIfEmpty();
@@ -677,6 +676,7 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
         // Check if transcription is done (complete or failed — no longer in-flight)
         if (!updated.isServerProcessing) {
           _pollingEntryIds.remove(entryId);
+          _pollingTimeouts.remove(entryId)?.cancel();
           debugPrint(
             '[JournalScreen] Entry $entryId transcription resolved: '
             '${updated.serverTranscriptionStatus}',

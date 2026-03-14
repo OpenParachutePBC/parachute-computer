@@ -11,6 +11,7 @@ from fastapi import APIRouter, Query, Request
 
 from parachute import __version__
 from parachute.config import get_settings
+from parachute.core.interfaces import get_registry
 from parachute.core.sandbox import DockerSandbox
 
 router = APIRouter()
@@ -53,9 +54,7 @@ async def health_check(
     settings = get_settings()
 
     # Transcription capability — available when TranscriptionService is loaded
-    transcription_available = bool(
-        getattr(request.app.state, "transcribe_audio", None)
-    )
+    transcription_available = get_registry().get("TranscriptionService") is not None
 
     basic = {
         "status": "ok",

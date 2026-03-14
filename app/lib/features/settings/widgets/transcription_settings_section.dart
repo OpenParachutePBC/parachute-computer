@@ -137,7 +137,6 @@ class _ModeSelector extends StatelessWidget {
     return Column(
       children: [
         _ModeOption(
-          mode: TranscriptionMode.auto,
           title: 'Auto (recommended)',
           subtitle: 'Server when connected, local when offline',
           icon: Icons.auto_awesome,
@@ -147,7 +146,6 @@ class _ModeSelector extends StatelessWidget {
         ),
         SizedBox(height: Spacing.sm),
         _ModeOption(
-          mode: TranscriptionMode.server,
           title: 'Server only',
           subtitle: serverAvailable
               ? 'Transcription + LLM cleanup on server'
@@ -160,7 +158,6 @@ class _ModeSelector extends StatelessWidget {
         ),
         SizedBox(height: Spacing.sm),
         _ModeOption(
-          mode: TranscriptionMode.local,
           title: 'Local only',
           subtitle: 'Always transcribe on this device',
           icon: Icons.phone_android,
@@ -174,7 +171,6 @@ class _ModeSelector extends StatelessWidget {
 }
 
 class _ModeOption extends StatelessWidget {
-  final TranscriptionMode mode;
   final String title;
   final String subtitle;
   final IconData icon;
@@ -184,7 +180,6 @@ class _ModeOption extends StatelessWidget {
   final VoidCallback onTap;
 
   const _ModeOption({
-    required this.mode,
     required this.title,
     required this.subtitle,
     required this.icon,
