@@ -32,6 +32,17 @@ fi
 
 echo "Python $PY_VERSION"
 
+# --- Check FFmpeg (optional, for server-side transcription) ---
+
+if ! command -v ffmpeg &>/dev/null; then
+    echo "⚠  FFmpeg not found — server-side transcription won't work."
+    echo "   macOS:  brew install ffmpeg"
+    echo "   Ubuntu: sudo apt install ffmpeg"
+    echo "   (Parachute will still run, but voice note processing requires FFmpeg.)"
+else
+    echo "FFmpeg $(ffmpeg -version 2>&1 | head -1 | awk '{print $3}')"
+fi
+
 # --- Create / update venv ---
 
 if [ ! -d "$REPO_DIR/.venv" ]; then

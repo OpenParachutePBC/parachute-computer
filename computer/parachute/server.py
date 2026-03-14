@@ -96,6 +96,21 @@ async def lifespan(app: FastAPI):
     # Discover existing persistent container env containers
     await orchestrator.reconcile_containers()
 
+    # Initialize transcription service (optional — skip if backend not available)
+    from parachute.core.transcription import TranscriptionService
+
+    _transcription_service = TranscriptionService.from_config(settings)
+    if _transcription_service:
+        try:
+            await _transcription_service.initialize()
+            get_registry().publish("TranscriptionService", _transcription_service)
+            logger.info("Transcription service initialized")
+        except Exception as e:
+            logger.warning(f"Transcription service failed to initialize: {e}")
+            _transcription_service = None
+    else:
+        logger.info("Transcription service: no backend available, skipping")
+
     # Load modules from ~/.parachute/modules/
     module_loader = ModuleLoader(settings.parachute_dir)
     modules = await module_loader.discover_and_load()
@@ -157,11 +172,24 @@ async def lifespan(app: FastAPI):
         ):
             yield event
 
+    async def transcribe_audio(audio_data) -> str:
+        """Transcribe audio for bot connectors.
+
+        Accepts either raw bytes or a file path string.
+        """
+        ts = get_registry().get("TranscriptionService")
+        if not ts:
+            raise RuntimeError("Transcription service not available")
+        if isinstance(audio_data, (bytes, bytearray)):
+            return await ts.transcribe_bytes(audio_data)
+        return await ts.transcribe(Path(audio_data))
+
     server_ref = SimpleNamespace(
         session_store=session_store,
         orchestrator=orchestrator,
         orchestrate=orchestrate,
         hook_runner=app.state.hook_runner,
+        transcribe_audio=transcribe_audio,
     )
     init_bots_api(parachute_dir=settings.parachute_dir, server_ref=server_ref)
 

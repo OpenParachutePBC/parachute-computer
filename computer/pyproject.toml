@@ -20,6 +20,7 @@ dependencies = [
     "real-ladybug>=0.14.0",
     "PyJWT[crypto]>=2.8.0",
     "mcp>=1.6.0",
+    "parakeet-mlx>=0.3.0; sys_platform == 'darwin'",
 ]
 
 [project.optional-dependencies]
