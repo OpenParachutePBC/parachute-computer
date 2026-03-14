@@ -31,6 +31,13 @@ from pydantic import BaseModel, field_validator
 # Audio/image assets directory — fixed, not user-configurable
 ASSETS_DIR = Path.home() / ".parachute" / "daily" / "assets"
 
+# Background task references — prevent GC from swallowing exceptions
+_background_tasks: set[asyncio.Task] = set()
+
+# Upload constraints
+MAX_VOICE_BYTES = 200 * 1024 * 1024  # 200 MB
+ALLOWED_AUDIO_EXTENSIONS = {".wav", ".m4a", ".mp3", ".aac", ".ogg", ".webm", ".mp4"}
+
 # Append-only JSONL redo log for crash recovery (rolled to 90 days)
 REDO_LOG_PATH = Path.home() / ".parachute" / "daily" / "entries.jsonl"
 
@@ -208,15 +215,8 @@ async def _transcribe_and_cleanup(
             )
             return
 
-        # Update entry with raw transcription + status "transcribed"
+        # Update entry with raw transcription + status "transcribed" (atomic)
         async with graph.write_lock:
-            # First update content
-            await graph.execute_cypher(
-                "MATCH (e:Note {entry_id: $entry_id}) SET e.content = $content",
-                {"entry_id": entry_id, "content": raw_text},
-            )
-
-            # Then update metadata with raw transcription and status
             rows = await graph.execute_cypher(
                 "MATCH (e:Note {entry_id: $entry_id}) RETURN e.metadata_json AS meta",
                 {"entry_id": entry_id},
@@ -232,8 +232,13 @@ async def _transcribe_and_cleanup(
             existing_meta["transcription_status"] = "transcribed"
             existing_meta["transcription_raw"] = raw_text
             await graph.execute_cypher(
-                "MATCH (e:Note {entry_id: $entry_id}) SET e.metadata_json = $meta",
-                {"entry_id": entry_id, "meta": json.dumps(existing_meta)},
+                "MATCH (e:Note {entry_id: $entry_id}) "
+                "SET e.content = $content, e.metadata_json = $meta",
+                {
+                    "entry_id": entry_id,
+                    "content": raw_text,
+                    "meta": json.dumps(existing_meta),
+                },
             )
 
         logger.info(f"Daily: transcribed voice entry {entry_id} ({len(raw_text)} chars)")
@@ -246,6 +251,13 @@ async def _transcribe_and_cleanup(
         await _update_entry_transcription_status(
             graph, entry_id, "failed", error=str(e)
         )
+        # Clean up orphaned audio file on failure
+        try:
+            if audio_path.exists():
+                audio_path.unlink()
+                logger.info(f"Daily: cleaned up audio file after failed transcription: {audio_path}")
+        except OSError as cleanup_err:
+            logger.warning(f"Daily: failed to clean up audio file {audio_path}: {cleanup_err}")
 
 
 async def _trigger_cleanup_caller(
@@ -295,25 +307,29 @@ async def _trigger_cleanup_caller(
 async def _update_entry_transcription_status(
     graph, entry_id: str, status: str, error: str | None = None
 ) -> None:
-    """Update an entry's transcription_status in metadata_json."""
+    """Update an entry's transcription_status in metadata_json.
+
+    The full read-modify-write is inside write_lock to avoid race conditions
+    with concurrent PATCH requests on the same entry.
+    """
     try:
-        rows = await graph.execute_cypher(
-            "MATCH (e:Note {entry_id: $entry_id}) RETURN e.metadata_json AS meta",
-            {"entry_id": entry_id},
-        )
-        existing_meta = {}
-        if rows:
-            blob = rows[0].get("meta") or ""
-            try:
-                existing_meta = json.loads(blob) if blob else {}
-            except (json.JSONDecodeError, TypeError):
-                existing_meta = {}
-
-        existing_meta["transcription_status"] = status
-        if error:
-            existing_meta["transcription_error"] = error
-
         async with graph.write_lock:
+            rows = await graph.execute_cypher(
+                "MATCH (e:Note {entry_id: $entry_id}) RETURN e.metadata_json AS meta",
+                {"entry_id": entry_id},
+            )
+            existing_meta = {}
+            if rows:
+                blob = rows[0].get("meta") or ""
+                try:
+                    existing_meta = json.loads(blob) if blob else {}
+                except (json.JSONDecodeError, TypeError):
+                    existing_meta = {}
+
+            existing_meta["transcription_status"] = status
+            if error:
+                existing_meta["transcription_error"] = error
+
             await graph.execute_cypher(
                 "MATCH (e:Note {entry_id: $entry_id}) SET e.metadata_json = $meta",
                 {"entry_id": entry_id, "meta": json.dumps(existing_meta)},
@@ -502,7 +518,7 @@ class DailyModule:
                 "schedule_enabled": "false",
                 "schedule_time": "",
                 "enabled": "true",
-                "trust_level": "direct",
+                "trust_level": "sandboxed",
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             },
@@ -1393,6 +1409,24 @@ class DailyModule:
                     content={"error": "Invalid date format, expected YYYY-MM-DD"},
                 )
 
+            # Validate file extension
+            ext = (
+                Path(file.filename).suffix.lower() if file.filename else ".wav"
+            )
+            if ext not in ALLOWED_AUDIO_EXTENSIONS:
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": f"Unsupported audio format: {ext}"},
+                )
+
+            # Read and validate file size
+            contents = await file.read()
+            if len(contents) > MAX_VOICE_BYTES:
+                return JSONResponse(
+                    status_code=413,
+                    content={"error": f"File too large (max {MAX_VOICE_BYTES // (1024*1024)} MB)"},
+                )
+
             # Save audio file (reuse asset upload pattern)
             assets_root = ASSETS_DIR.resolve()
             dest_dir = (assets_root / date_str).resolve()
@@ -1402,11 +1436,9 @@ class DailyModule:
                     content={"error": "Invalid date parameter"},
                 )
 
-            bare_name = Path(file.filename).name if file.filename else "voice.wav"
-            safe_name = f"{uuid.uuid4().hex[:8]}_{bare_name}"
+            safe_name = f"{uuid.uuid4().hex[:8]}{ext}"
             audio_path = dest_dir / safe_name
 
-            contents = await file.read()
             await asyncio.to_thread(dest_dir.mkdir, parents=True, exist_ok=True)
             await asyncio.to_thread(audio_path.write_bytes, contents)
             logger.info(f"Daily: saved voice recording to {audio_path}")
@@ -1423,9 +1455,20 @@ class DailyModule:
 
             # Kick off background transcription + cleanup
             entry_id = result["id"]
-            asyncio.create_task(
+            task = asyncio.create_task(
                 _transcribe_and_cleanup(self, graph, entry_id, audio_path)
             )
+            _background_tasks.add(task)
+
+            def _on_done(t: asyncio.Task, eid: str = entry_id) -> None:
+                _background_tasks.discard(t)
+                if not t.cancelled() and (exc := t.exception()):
+                    logger.error(
+                        "Background transcription failed for entry %s: %s",
+                        eid, exc, exc_info=exc,
+                    )
+
+            task.add_done_callback(_on_done)
 
             return {
                 "entry_id": entry_id,

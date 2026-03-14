@@ -11,9 +11,11 @@ Requires: FFmpeg installed (brew install ffmpeg)
 
 import asyncio
 import logging
+import os
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +25,7 @@ class ParakeetMLXBackend:
 
     def __init__(self, model_id: str = "mlx-community/parakeet-tdt-0.6b-v3"):
         self._model_id = model_id
-        self._model = None
+        self._model: Any = None
         self._executor = ThreadPoolExecutor(max_workers=2)
 
     async def initialize(self) -> None:
@@ -38,7 +40,7 @@ class ParakeetMLXBackend:
         )
         logger.info(f"Transcription model loaded: {self._model_id}")
 
-    def _load_model(self):
+    def _load_model(self) -> Any:
         """Load the model (blocking — runs in executor)."""
         from parakeet_mlx import from_pretrained
 
@@ -62,6 +64,10 @@ class ParakeetMLXBackend:
             self._executor, self._transcribe_bytes_sync, audio_bytes
         )
 
+    async def shutdown(self) -> None:
+        """Shut down the executor, waiting for in-flight transcriptions."""
+        self._executor.shutdown(wait=True, cancel_futures=False)
+
     def _transcribe_sync(self, audio_path: Path) -> str:
         """Transcribe a file (blocking — runs in executor)."""
         result = self._model.transcribe(str(audio_path))
@@ -75,5 +81,6 @@ class ParakeetMLXBackend:
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=True) as tmp:
             tmp.write(audio_bytes)
             tmp.flush()
+            os.fsync(tmp.fileno())
             result = self._model.transcribe(tmp.name)
             return result.text

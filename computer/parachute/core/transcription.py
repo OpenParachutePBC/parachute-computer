@@ -13,7 +13,9 @@ import asyncio
 import logging
 import sys
 from pathlib import Path
-from typing import Optional, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
+
+from parachute.config import Settings
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +47,7 @@ class TranscriptionService:
         self._backend = backend
 
     @classmethod
-    def from_config(cls, settings) -> Optional["TranscriptionService"]:
+    def from_config(cls, settings: Settings) -> "TranscriptionService | None":
         """Auto-detect platform and select best available backend.
 
         Returns None if no backend is available (e.g., parakeet-mlx not
@@ -76,8 +78,13 @@ class TranscriptionService:
         """Transcribe from raw audio bytes. Returns text."""
         return await self._backend.transcribe_bytes(audio_bytes)
 
+    async def shutdown(self) -> None:
+        """Shut down the backend, waiting for in-flight work."""
+        if hasattr(self._backend, "shutdown"):
+            await self._backend.shutdown()
 
-def _detect_backend(model_id: str) -> Optional[TranscriptionBackend]:
+
+def _detect_backend(model_id: str) -> TranscriptionBackend | None:
     """Select backend: parakeet-mlx on macOS, sherpa-onnx on Linux (future)."""
     if sys.platform == "darwin":
         try:

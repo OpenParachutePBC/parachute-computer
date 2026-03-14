@@ -229,6 +229,14 @@ async def lifespan(app: FastAPI):
     # Shutdown
     logger.info("Shutting down...")
 
+    # Shut down transcription service (waits for in-flight work)
+    ts = get_registry().get("TranscriptionService")
+    if ts and hasattr(ts, "shutdown"):
+        try:
+            await ts.shutdown()
+        except Exception as e:
+            logger.warning(f"Error shutting down transcription service: {e}")
+
     # Stop all running env containers so they don't idle between restarts.
     # They restart cleanly on next ensure_container() call via docker start.
     if app.state.sandbox:
