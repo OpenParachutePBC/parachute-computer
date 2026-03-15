@@ -3,34 +3,34 @@ import 'package:parachute/core/config/app_config.dart';
 import 'package:parachute/core/providers/app_state_provider.dart';
 import 'package:parachute/core/providers/feature_flags_provider.dart' show aiServerUrlProvider;
 import 'package:shared_preferences/shared_preferences.dart';
-import '../models/project.dart';
+import '../models/container_env.dart';
 import '../models/chat_session.dart';
-import '../services/project_service.dart';
+import '../services/container_service.dart';
 import 'chat_session_providers.dart';
 
-/// Provider for the ProjectService.
-final projectServiceProvider = Provider<ProjectService>((ref) {
+/// Provider for the ContainerService.
+final containerServiceProvider = Provider<ContainerService>((ref) {
   final urlAsync = ref.watch(aiServerUrlProvider);
   final baseUrl = urlAsync.valueOrNull ?? AppConfig.defaultServerUrl;
   final apiKeyAsync = ref.watch(apiKeyProvider);
   final apiKey = apiKeyAsync.valueOrNull;
 
-  final service = ProjectService(baseUrl: baseUrl, apiKey: apiKey);
+  final service = ContainerService(baseUrl: baseUrl, apiKey: apiKey);
   ref.onDispose(() => service.dispose());
   return service;
 });
 
-/// Fetches all named projects from the server.
-final projectsProvider = FutureProvider.autoDispose<List<Project>>((ref) async {
-  final service = ref.watch(projectServiceProvider);
-  return await service.listProjects();
+/// Fetches all named containers from the server.
+final containersProvider = FutureProvider.autoDispose<List<ContainerEnv>>((ref) async {
+  final service = ref.watch(containerServiceProvider);
+  return await service.listContainers();
 });
 
-/// Notifier for the active project slug with SharedPreferences persistence.
+/// Notifier for the active container slug with SharedPreferences persistence.
 ///
-/// Persists the selected project across app restarts. null = show all sessions.
+/// Persists the selected container across app restarts. null = show all sessions.
 /// No autoDispose — app-level state that must outlive individual screens.
-class ActiveProjectNotifier extends AsyncNotifier<String?> {
+class ActiveContainerNotifier extends AsyncNotifier<String?> {
   static const _key = 'parachute_active_project';
 
   @override
@@ -39,7 +39,7 @@ class ActiveProjectNotifier extends AsyncNotifier<String?> {
     return prefs.getString(_key);
   }
 
-  Future<void> setProject(String? slug) async {
+  Future<void> setContainer(String? slug) async {
     final prefs = await SharedPreferences.getInstance();
     if (slug != null) {
       await prefs.setString(_key, slug);
@@ -50,27 +50,27 @@ class ActiveProjectNotifier extends AsyncNotifier<String?> {
   }
 }
 
-/// Currently selected project slug (null = show all sessions).
+/// Currently selected container slug (null = show all sessions).
 ///
 /// Persists across app restarts via SharedPreferences.
-final activeProjectProvider =
-    AsyncNotifierProvider<ActiveProjectNotifier, String?>(
-  ActiveProjectNotifier.new,
+final activeContainerProvider =
+    AsyncNotifierProvider<ActiveContainerNotifier, String?>(
+  ActiveContainerNotifier.new,
 );
 
-/// Sessions filtered by the active project.
+/// Sessions filtered by the active container.
 ///
 /// Derives from the already-fetched [chatSessionsProvider] via client-side
 /// filtering, eliminating a separate network request per chip tap.
-final projectSessionsProvider =
+final containerSessionsProvider =
     Provider.autoDispose<AsyncValue<List<ChatSession>>>((ref) {
-  final activeSlug = ref.watch(activeProjectProvider).valueOrNull;
+  final activeSlug = ref.watch(activeContainerProvider).valueOrNull;
   final sessionsAsync = ref.watch(chatSessionsProvider);
 
   if (activeSlug == null) return sessionsAsync;
 
   return sessionsAsync.whenData(
     (sessions) =>
-        sessions.where((s) => s.projectId == activeSlug).toList(),
+        sessions.where((s) => s.containerId == activeSlug).toList(),
   );
 });

@@ -239,11 +239,11 @@ class Session(BaseModel):
         serialization_alias="bridgeContextLog",
         description="JSON: list of {query, type, turn_number} — bridge agent context loaded/stored",
     )
-    project_id: Optional[str] = Field(
+    container_id: Optional[str] = Field(
         default=None,
-        alias="projectId",
-        serialization_alias="projectId",
-        description="Named project (container env) slug this session runs in (NULL = private container)",
+        alias="containerId",
+        serialization_alias="containerId",
+        description="Container slug this session runs in (NULL = private container)",
     )
     metadata: Optional[dict[str, Any]] = Field(
         default=None, description="Additional metadata"
@@ -286,8 +286,8 @@ class Session(BaseModel):
 
 
 
-class Project(BaseModel):
-    """A named project — shared container environment with core memory."""
+class Container(BaseModel):
+    """A container environment — Docker execution environment with optional core memory."""
 
     slug: str = Field(description="Unique slug (also the Docker container name suffix)")
     display_name: str = Field(
@@ -300,13 +300,13 @@ class Project(BaseModel):
         max_length=4000,
         alias="coreMemory",
         serialization_alias="coreMemory",
-        description="Markdown context injected into system prompt for all conversations in this project",
+        description="Markdown context injected into system prompt for all conversations in this container",
     )
     credential_grants: list[dict] = Field(
         default_factory=list,
         alias="credentialGrants",
         serialization_alias="credentialGrants",
-        description="Per-project credential grants (provider, scope, granted_at)",
+        description="Per-container credential grants (provider, scope, granted_at)",
     )
     created_at: datetime = Field(
         alias="createdAt",
@@ -318,12 +318,12 @@ class Project(BaseModel):
 
     @property
     def docker_name(self) -> str:
-        """Docker container name for this project."""
+        """Docker container name for this container."""
         return f"parachute-env-{self.slug}"
 
 
-class ProjectCreate(BaseModel):
-    """Data for creating a new project."""
+class ContainerCreate(BaseModel):
+    """Data for creating a new container."""
 
     display_name: str = Field(min_length=1, max_length=100, description="Human-readable name")
     slug: str | None = Field(
@@ -359,7 +359,7 @@ class SessionCreate(BaseModel):
     linked_bot_chat_type: Optional[str] = None
     parent_session_id: Optional[str] = None
     created_by: str = "user"
-    project_id: Optional[str] = None
+    container_id: Optional[str] = None
     metadata: Optional[dict[str, Any]] = None
 
 
@@ -378,7 +378,7 @@ class SessionUpdate(BaseModel):
     working_directory: Optional[str] = None
     bridge_session_id: Optional[str] = None
     bridge_context_log: Optional[str] = None
-    project_id: Optional[str] = None
+    container_id: Optional[str] = None
 
 
 class PairingRequest(BaseModel):

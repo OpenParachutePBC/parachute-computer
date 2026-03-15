@@ -7,8 +7,8 @@ import '../providers/chat_providers.dart';
 import '../services/chat_service.dart';
 import '../providers/chat_layout_provider.dart';
 import '../providers/session_search_provider.dart';
-import '../models/project.dart';
-import '../providers/project_providers.dart';
+import '../models/container_env.dart';
+import '../providers/container_providers.dart';
 import '../widgets/session_config_sheet.dart';
 import '../widgets/session_list_item.dart';
 import '../screens/chat_screen.dart';
@@ -45,8 +45,8 @@ class _SessionListPanelState extends ConsumerState<SessionListPanel> {
 
   Widget _buildHeader(BuildContext context, bool isDark) {
     final layoutMode = ref.watch(chatLayoutModeProvider);
-    final activeSlug = ref.watch(activeProjectProvider).valueOrNull;
-    final containerEnvsAsync = ref.watch(projectsProvider);
+    final activeSlug = ref.watch(activeContainerProvider).valueOrNull;
+    final containerEnvsAsync = ref.watch(containersProvider);
 
     return Container(
       padding: EdgeInsets.symmetric(horizontal: Spacing.md, vertical: Spacing.sm),
@@ -118,15 +118,15 @@ class _SessionListPanelState extends ConsumerState<SessionListPanel> {
   ) {
     final searchQuery = ref.watch(sessionSearchQueryProvider);
 
-    final activeProject = ref.watch(activeProjectProvider).valueOrNull;
+    final activeContainer = ref.watch(activeContainerProvider).valueOrNull;
 
     final AsyncValue<List<ChatSession>> sessionsAsync;
     if (_showArchived) {
       sessionsAsync = ref.watch(archivedSessionsProvider);
     } else if (searchQuery.isNotEmpty) {
       sessionsAsync = ref.watch(searchedSessionsProvider);
-    } else if (activeProject != null) {
-      sessionsAsync = ref.watch(projectSessionsProvider);
+    } else if (activeContainer != null) {
+      sessionsAsync = ref.watch(containerSessionsProvider);
     } else {
       sessionsAsync = ref.watch(chatSessionsProvider);
     }
@@ -186,7 +186,7 @@ class _SessionListPanelState extends ConsumerState<SessionListPanel> {
   Widget _buildEnvChip(
     bool isDark,
     String? activeSlug,
-    AsyncValue<List<Project>> containerEnvsAsync,
+    AsyncValue<List<ContainerEnv>> containerEnvsAsync,
   ) {
     final hasFilter = activeSlug != null;
     final label = containerEnvsAsync.whenOrNull(
@@ -250,8 +250,8 @@ class _SessionListPanelState extends ConsumerState<SessionListPanel> {
   }
 
   void _showEnvPicker(bool isDark) {
-    final containerEnvsAsync = ref.read(projectsProvider);
-    final activeSlug = ref.read(activeProjectProvider).valueOrNull;
+    final containerEnvsAsync = ref.read(containersProvider);
+    final activeSlug = ref.read(activeContainerProvider).valueOrNull;
 
     showModalBottomSheet(
       context: context,
@@ -310,7 +310,7 @@ class _SessionListPanelState extends ConsumerState<SessionListPanel> {
                       ? Icon(Icons.check, color: isDark ? BrandColors.nightForest : BrandColors.forest)
                       : null,
                   onTap: () {
-                    ref.read(activeProjectProvider.notifier).setProject(null);
+                    ref.read(activeContainerProvider.notifier).setContainer(null);
                     Navigator.pop(sheetContext);
                   },
                 ),
@@ -352,7 +352,7 @@ class _SessionListPanelState extends ConsumerState<SessionListPanel> {
                                   ? Icon(Icons.check, color: isDark ? BrandColors.nightForest : BrandColors.forest)
                                   : null,
                               onTap: () {
-                                ref.read(activeProjectProvider.notifier).setProject(env.slug);
+                                ref.read(activeContainerProvider.notifier).setContainer(env.slug);
                                 Navigator.pop(sheetContext);
                               },
                             );

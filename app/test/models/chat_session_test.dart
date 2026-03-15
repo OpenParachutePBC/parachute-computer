@@ -23,7 +23,7 @@ void main() {
         'linkedBotPlatform': 'telegram',
         'linkedBotChatId': 'tg123',
         'linkedBotChatType': 'group',
-        'projectId': 'proj1',
+        'containerId': 'proj1',
         'bridgeSessionId': 'bridge1',
         'metadata': {'pending_approval': true},
       });
@@ -45,7 +45,7 @@ void main() {
       expect(session.linkedBotPlatform, 'telegram');
       expect(session.linkedBotChatId, 'tg123');
       expect(session.linkedBotChatType, 'group');
-      expect(session.projectId, 'proj1');
+      expect(session.containerId, 'proj1');
       expect(session.bridgeSessionId, 'bridge1');
       expect(session.isPendingApproval, isTrue);
     });

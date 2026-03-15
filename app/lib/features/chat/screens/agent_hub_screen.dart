@@ -4,7 +4,7 @@ import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/features/settings/screens/settings_screen.dart';
 import '../models/chat_session.dart';
 import '../providers/chat_providers.dart';
-import '../providers/project_providers.dart' show activeProjectProvider;
+import '../providers/container_providers.dart' show activeContainerProvider;
 import '../widgets/session_list_item.dart';
 import '../widgets/new_chat_sheet.dart';
 import 'chat_screen.dart';
@@ -684,8 +684,8 @@ class _AgentHubScreenState extends ConsumerState<AgentHubScreen> {
     }
 
     // Set container env if selected
-    if (config.projectId != null) {
-      ref.read(activeProjectProvider.notifier).setProject(config.projectId);
+    if (config.containerId != null) {
+      ref.read(activeContainerProvider.notifier).setContainer(config.containerId);
     }
 
     if (mounted) {
@@ -721,8 +721,8 @@ class _AgentHubScreenState extends ConsumerState<AgentHubScreen> {
     }
 
     // Set container env if selected
-    if (config.projectId != null) {
-      ref.read(activeProjectProvider.notifier).setProject(config.projectId);
+    if (config.containerId != null) {
+      ref.read(activeContainerProvider.notifier).setContainer(config.containerId);
     }
 
     if (mounted) {

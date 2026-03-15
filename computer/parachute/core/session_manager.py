@@ -120,7 +120,7 @@ class SessionManager:
         continued_from: Optional[str] = None,
         trust_level: Optional[str] = None,
         mode: Optional[str] = None,
-        project_id: str | None = None,
+        container_id: str | None = None,
     ) -> tuple[Session, ResumeInfo, bool]:
         """
         Get an existing session or prepare for a new one.
@@ -190,7 +190,7 @@ class SessionManager:
                 continued_from=continued_from,
                 trust_level=trust_level,
                 mode=mode,
-                project_id=project_id,
+                container_id=container_id,
                 created_at=datetime.now(timezone.utc),
                 last_accessed=datetime.now(timezone.utc),
             )
@@ -212,7 +212,7 @@ class SessionManager:
             continued_from=continued_from,
             trust_level=trust_level,
             mode=mode,
-            project_id=project_id,
+            container_id=container_id,
             created_at=datetime.now(timezone.utc),
             last_accessed=datetime.now(timezone.utc),
         )
@@ -252,7 +252,7 @@ class SessionManager:
         trust_level = getattr(placeholder, 'trust_level', None)
         final_mode = mode or getattr(placeholder, 'mode', None)
         metadata = getattr(placeholder, 'metadata', None)
-        final_project_id = getattr(placeholder, 'project_id', None)
+        final_container_id = getattr(placeholder, 'container_id', None)
 
         if sdk_session_id == placeholder.id:
             # Session ID unchanged (e.g., sandbox reused a connector-created session ID).
@@ -282,7 +282,7 @@ class SessionManager:
                     linked_bot_platform=linked_bot_platform,
                     linked_bot_chat_id=linked_bot_chat_id,
                     linked_bot_chat_type=linked_bot_chat_type,
-                    project_id=final_project_id,
+                    container_id=final_container_id,
                     metadata=metadata,
                 )
             )
