@@ -673,7 +673,18 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
         final updated = await api.getEntry(entryId);
         if (updated == null || !mounted) continue;
 
-        // Check if transcription is done (complete or failed — no longer in-flight)
+        // Update UI whenever content changes (raw text arrives, then
+        // cleaned text replaces it a few seconds later).
+        if (_cachedJournal != null) {
+          final existing = _cachedJournal!.getEntry(entryId);
+          if (existing != null && existing.content != updated.content) {
+            setState(() {
+              _cachedJournal = _cachedJournal!.updateEntry(updated);
+            });
+          }
+        }
+
+        // Stop polling once status reaches a terminal state (complete/failed)
         if (!updated.isServerProcessing) {
           _pollingEntryIds.remove(entryId);
           _pollingTimeouts.remove(entryId)?.cancel();
@@ -681,23 +692,6 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
             '[JournalScreen] Entry $entryId transcription resolved: '
             '${updated.serverTranscriptionStatus}',
           );
-
-          // Update the cached journal with the new content
-          if (_cachedJournal != null) {
-            setState(() {
-              _cachedJournal = _cachedJournal!.updateEntry(updated);
-            });
-          }
-        } else if (updated.isCleanupInProgress && updated.content.isNotEmpty) {
-          // Transcribed but cleanup still running — show raw text
-          if (_cachedJournal != null) {
-            final existing = _cachedJournal!.getEntry(entryId);
-            if (existing != null && existing.content != updated.content) {
-              setState(() {
-                _cachedJournal = _cachedJournal!.updateEntry(updated);
-              });
-            }
-          }
         }
       } catch (e) {
         debugPrint('[JournalScreen] Poll error for entry $entryId: $e');

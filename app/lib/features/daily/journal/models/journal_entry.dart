@@ -253,7 +253,8 @@ class JournalEntry {
 
   static JournalEntryType parseType(String typeStr) {
     switch (typeStr) {
-      case 'voice': return JournalEntryType.voice;
+      case 'voice':
+      case 'audio': return JournalEntryType.voice;
       case 'photo': return JournalEntryType.photo;
       case 'handwriting': return JournalEntryType.handwriting;
       case 'linked': return JournalEntryType.linked;
