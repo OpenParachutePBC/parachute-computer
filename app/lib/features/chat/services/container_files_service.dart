@@ -49,7 +49,7 @@ class ContainerFilesService {
     if (path.isNotEmpty) params['path'] = path;
     if (includeHidden) params['includeHidden'] = 'true';
 
-    final uri = Uri.parse('$baseUrl/api/projects/$slug/files')
+    final uri = Uri.parse('$baseUrl/api/containers/$slug/files')
         .replace(queryParameters: params.isNotEmpty ? params : null);
 
     final response = await http.get(uri, headers: _headers).timeout(
@@ -93,7 +93,7 @@ class ContainerFilesService {
 
   /// Download raw bytes for a file at relative [path].
   Future<Uint8List> downloadFile(String slug, String path) async {
-    final uri = Uri.parse('$baseUrl/api/projects/$slug/files/download')
+    final uri = Uri.parse('$baseUrl/api/containers/$slug/files/download')
         .replace(queryParameters: {'path': path});
 
     final response = await http.get(uri, headers: _headers).timeout(
@@ -117,7 +117,7 @@ class ContainerFilesService {
     final params = <String, String>{};
     if (uploadPath.isNotEmpty) params['path'] = uploadPath;
 
-    final uri = Uri.parse('$baseUrl/api/projects/$slug/files/upload')
+    final uri = Uri.parse('$baseUrl/api/containers/$slug/files/upload')
         .replace(queryParameters: params.isNotEmpty ? params : null);
 
     final request = http.MultipartRequest('POST', uri);
@@ -150,7 +150,7 @@ class ContainerFilesService {
 
   /// Create a directory at relative [path] within [slug]'s home.
   Future<ContainerFileOpResult> mkdir(String slug, String path) async {
-    final uri = Uri.parse('$baseUrl/api/projects/$slug/files/mkdir')
+    final uri = Uri.parse('$baseUrl/api/containers/$slug/files/mkdir')
         .replace(queryParameters: {'path': path});
 
     final response = await http.post(uri, headers: _headers).timeout(
@@ -167,7 +167,7 @@ class ContainerFilesService {
 
   /// Delete a file or directory at relative [path] within [slug]'s home.
   Future<ContainerFileOpResult> delete(String slug, String path) async {
-    final uri = Uri.parse('$baseUrl/api/projects/$slug/files')
+    final uri = Uri.parse('$baseUrl/api/containers/$slug/files')
         .replace(queryParameters: {'path': path});
 
     final response = await http.delete(uri, headers: _headers).timeout(

@@ -13,7 +13,7 @@ Brain Tools:
 - brain_list_chats: List conversation sessions from the brain
 - brain_get_chat: Get a single session by ID with its exchanges (truncated, paginated)
 - brain_get_exchange: Get a single exchange by ID with full message content
-- brain_list_projects: List named project environments (container envs)
+- brain_list_containers: List container environments
 - brain_list_notes: List Daily journal Notes from the brain
 - brain_query: Execute a read-only Cypher query (power users / debugging)
 - brain_execute: Execute a write Cypher query against the brain
@@ -70,7 +70,7 @@ class SessionContext:
     """Immutable session context injected by orchestrator via env vars."""
     session_id: str | None
     trust_level: str | None  # Will be normalized to TrustLevelStr
-    project_id: str | None = None
+    container_id: str | None = None
 
     @classmethod
     def from_env(cls) -> Self:
@@ -92,11 +92,11 @@ class SessionContext:
                 session_id = None
 
         raw_trust = os.getenv("PARACHUTE_TRUST_LEVEL")
-        project_id = os.getenv("PARACHUTE_PROJECT_ID") or None
+        container_id = os.getenv("PARACHUTE_CONTAINER_ID") or None
         return cls(
             session_id=session_id,
             trust_level=normalize_trust_level(raw_trust) if raw_trust else None,
-            project_id=project_id,
+            container_id=container_id,
         )
 
     @property
@@ -362,8 +362,8 @@ TOOLS = [
         },
     ),
     Tool(
-        name="brain_list_projects",
-        description="List named project environments (shared containers).",
+        name="brain_list_containers",
+        description="List container environments.",
         inputSchema={
             "type": "object",
             "properties": {"limit": {"type": "integer", "description": "Max results (default 20)"}},
@@ -542,7 +542,7 @@ async def create_session(
     db = await get_db()
     parent_session_id = _session_context.session_id
     trust_level = _session_context.trust_level
-    project_id = _session_context.project_id
+    container_id = _session_context.container_id
 
     # Enforce spawn limit (max 10 children)
     child_count = await db.count_children(parent_session_id)
@@ -573,7 +573,7 @@ async def create_session(
         working_directory=None,
         agent_type=agent_type,
         trust_level=trust_level,
-        project_id=project_id,
+        container_id=container_id,
         parent_session_id=parent_session_id,
         created_by=f"agent:{parent_session_id}",
     )
@@ -588,7 +588,7 @@ async def create_session(
         "session_id": session_id,
         "title": title,
         "agent_type": agent_type,
-        "project_id": project_id,
+        "container_id": container_id,
         "trust_level": trust_level,
         "parent_session_id": parent_session_id,
         "initial_message_queued": True,
@@ -759,9 +759,9 @@ async def handle_tool_call(name: str, arguments: dict[str, Any]) -> str:
         elif name == "brain_get_exchange":
             eid = urllib.parse.quote(arguments["exchange_id"], safe="")
             result = await _brain_call(f"/exchanges?id={eid}")
-        elif name == "brain_list_projects":
+        elif name == "brain_list_containers":
             qs = f"?limit={arguments['limit']}" if "limit" in arguments else ""
-            result = await _brain_call(f"/projects{qs}")
+            result = await _brain_call(f"/containers{qs}")
         elif name == "brain_list_notes":
             np: dict[str, Any] = {k: arguments[k] for k in ("date_from", "date_to", "limit", "note_type", "search") if k in arguments}
             qs = ("?" + urllib.parse.urlencode(np)) if np else ""

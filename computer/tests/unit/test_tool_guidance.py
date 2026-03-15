@@ -53,7 +53,7 @@ class TestToolGroups:
             "brain_get_chat",
             "brain_get_exchange",
             "brain_list_notes",
-            "brain_list_projects",
+            "brain_list_containers",
             "brain_schema",
         }
         assert expected_read_tools.issubset(sandboxed_tools), (
