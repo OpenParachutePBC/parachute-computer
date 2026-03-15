@@ -108,7 +108,7 @@ class _DesktopLayout extends StatelessWidget {
         // Container env sidebar
         SizedBox(
           width: 220,
-          child: _ProjectSidebar(isDark: isDark),
+          child: _ContainerEnvSidebar(isDark: isDark),
         ),
         // Session list
         SizedBox(
@@ -134,10 +134,10 @@ class _DesktopLayout extends StatelessWidget {
 }
 
 /// Container env sidebar showing app header, env list, and create button.
-class _ProjectSidebar extends ConsumerWidget {
+class _ContainerEnvSidebar extends ConsumerWidget {
   final bool isDark;
 
-  const _ProjectSidebar({required this.isDark});
+  const _ContainerEnvSidebar({required this.isDark});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {

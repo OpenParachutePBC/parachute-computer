@@ -31,11 +31,19 @@ final containersProvider = FutureProvider.autoDispose<List<ContainerEnv>>((ref) 
 /// Persists the selected container across app restarts. null = show all sessions.
 /// No autoDispose — app-level state that must outlive individual screens.
 class ActiveContainerNotifier extends AsyncNotifier<String?> {
-  static const _key = 'parachute_active_project';
+  static const _key = 'parachute_active_container';
+  static const _oldKey = 'parachute_active_project';
 
   @override
   Future<String?> build() async {
     final prefs = await SharedPreferences.getInstance();
+    // One-time migration from old key
+    final old = prefs.getString(_oldKey);
+    if (old != null) {
+      await prefs.setString(_key, old);
+      await prefs.remove(_oldKey);
+      return old;
+    }
     return prefs.getString(_key);
   }
 

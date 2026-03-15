@@ -11,24 +11,12 @@ import re
 import uuid
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, Field
 
-from parachute.models.session import ContainerCreate
+from parachute.models.session import ContainerCreate, ContainerUpdate
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/containers", tags=["containers"])
-
-
-class ContainerUpdate(BaseModel):
-    """Data for updating a container."""
-
-    display_name: str | None = Field(
-        default=None, min_length=1, max_length=100, description="New display name"
-    )
-    core_memory: str | None = Field(
-        default=None, max_length=4000, description="New core memory content"
-    )
 
 
 def _slugify(name: str) -> str:
@@ -94,7 +82,11 @@ async def update_container(request: Request, slug: str, body: ContainerUpdate):
         display_name=body.display_name,
         core_memory=body.core_memory,
     )
-    return {"container": updated.model_dump(by_alias=True) if updated else None}
+    if not updated:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to update container '{slug}'"
+        )
+    return {"container": updated.model_dump(by_alias=True)}
 
 
 @router.delete("/{slug}", status_code=200)

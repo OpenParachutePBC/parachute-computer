@@ -339,6 +339,16 @@ class ContainerCreate(BaseModel):
     )
 
 
+class ContainerUpdate(BaseModel):
+    """Data for updating a container."""
+
+    display_name: str | None = Field(
+        default=None, min_length=1, max_length=100, description="New display name"
+    )
+    core_memory: str | None = Field(
+        default=None, max_length=4000, description="New core memory content"
+    )
+
 
 class SessionCreate(BaseModel):
     """Data for creating a new session."""
