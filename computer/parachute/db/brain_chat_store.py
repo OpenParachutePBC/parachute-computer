@@ -6,7 +6,7 @@ the shared Kuzu graph database alongside Brain, Chat, and Daily data.
 
 Schema:
   - Chat: core session metadata
-  - Project: named container environments
+  - Container: container environments
   - Parachute_PairingRequest: bot pairing requests
   - Parachute_KV: key-value metadata store
 
@@ -21,7 +21,7 @@ from typing import Any, Optional, Union
 
 from parachute.db.brain import BrainService
 from parachute.models.session import (
-    Project,
+    Container,
     PairingRequest,
     Session,
     SessionCreate,
@@ -77,7 +77,7 @@ class BrainChatStore:
                 "summary": "STRING",
                 "bridge_session_id": "STRING",
                 "bridge_context_log": "STRING",
-                "project_id": "STRING",
+                "container_id": "STRING",
                 "metadata_json": "STRING",
                 "tags_json": "STRING",
                 "contexts_json": "STRING",
@@ -85,7 +85,7 @@ class BrainChatStore:
             primary_key="session_id",
         )
         await self.graph.ensure_node_table(
-            "Project",
+            "Container",
             {
                 "slug": "STRING",
                 "display_name": "STRING",
@@ -159,7 +159,7 @@ class BrainChatStore:
             "summary": getattr(session, "summary", None),
             "bridge_session_id": getattr(session, "bridge_session_id", None),
             "bridge_context_log": getattr(session, "bridge_context_log", None),
-            "project_id": getattr(session, "project_id", None),
+            "container_id": getattr(session, "container_id", None),
             "metadata_json": metadata_json,
             "tags_json": "[]",
             "contexts_json": "[]",
@@ -191,7 +191,7 @@ class BrainChatStore:
                     summary: $summary,
                     bridge_session_id: $bridge_session_id,
                     bridge_context_log: $bridge_context_log,
-                    project_id: $project_id,
+                    container_id: $container_id,
                     metadata_json: $metadata_json,
                     tags_json: $tags_json,
                     contexts_json: $contexts_json
@@ -270,9 +270,9 @@ class BrainChatStore:
             set_parts.append("s.bridge_context_log = $bridge_context_log")
             params["bridge_context_log"] = update.bridge_context_log
 
-        if update.project_id is not None:
-            set_parts.append("s.project_id = $project_id")
-            params["project_id"] = update.project_id
+        if update.container_id is not None:
+            set_parts.append("s.container_id = $container_id")
+            params["container_id"] = update.container_id
 
         if not set_parts:
             return await self.get_session(session_id)
@@ -808,107 +808,125 @@ class BrainChatStore:
                 {"request_id": request_id, "resolved_at": now},
             )
 
-    # ── Container Envs ────────────────────────────────────────────────────────
+    # ── Containers ─────────────────────────────────────────────────────────────
 
-    async def create_project(
+    async def create_container(
         self, slug: str, display_name: str, core_memory: Optional[str] = None
-    ) -> Project:
-        """Create a named project (container environment)."""
+    ) -> Container:
+        """Create a container environment."""
         now = _now()
         async with self.graph.write_lock:
             await self.graph._execute(
-                "CREATE (:Project {slug: $slug, display_name: $display_name, core_memory: $core_memory, created_at: $created_at})",
-                {"slug": slug, "display_name": display_name, "core_memory": core_memory, "created_at": now},
+                "CREATE (:Container {slug: $slug, display_name: $display_name, core_memory: $core_memory, created_at: $created_at})",
+{"slug": slug, "display_name": display_name, "core_memory": core_memory, "created_at": now},
             )
-        return Project(
+        return Container(
             slug=slug,
             display_name=display_name,
             core_memory=core_memory,
             created_at=datetime.fromisoformat(now),
         )
 
-    async def get_project(self, slug: str) -> Optional[Project]:
-        """Get a named container environment by slug."""
+    async def get_container(self, slug: str) -> Optional[Container]:
+        """Get a container environment by slug."""
         rows = await self.graph.execute_cypher(
-            "MATCH (e:Project {slug: $slug}) RETURN e",
+            "MATCH (c:Container {slug: $slug}) RETURN c",
             {"slug": slug},
         )
         if rows:
-            return self._node_to_project(rows[0])
+            return self._node_to_container(rows[0])
         return None
 
-    async def list_projects(self) -> list[Project]:
-        """List all named container environments."""
+    async def list_containers(self) -> list[Container]:
+        """List all container environments."""
         rows = await self.graph.execute_cypher(
-            "MATCH (e:Project) RETURN e ORDER BY e.created_at DESC"
+            "MATCH (c:Container) RETURN c ORDER BY c.created_at DESC"
         )
-        return [self._node_to_project(r) for r in rows]
+        return [self._node_to_container(r) for r in rows]
 
-    async def delete_project(self, slug: str) -> bool:
-        """Delete a container env, nullifying sessions that reference it."""
-        # Nullify project_id on referencing sessions
+    async def update_container(
+        self, slug: str, display_name: Optional[str] = None, core_memory: Optional[str] = None
+    ) -> Optional[Container]:
+        """Update a container's display name or core memory."""
+        set_parts: list[str] = []
+        params: dict[str, Any] = {"slug": slug}
+        if display_name is not None:
+            set_parts.append("c.display_name = $display_name")
+            params["display_name"] = display_name
+        if core_memory is not None:
+            set_parts.append("c.core_memory = $core_memory")
+            params["core_memory"] = core_memory
+        if not set_parts:
+            return await self.get_container(slug)
         async with self.graph.write_lock:
             await self.graph._execute(
-                "MATCH (s:Chat {project_id: $slug}) "
-                "SET s.project_id = null",
+                f"MATCH (c:Container {{slug: $slug}}) SET {', '.join(set_parts)}",
+                params,
+            )
+        return await self.get_container(slug)
+
+    async def delete_container(self, slug: str) -> bool:
+        """Delete a container, nullifying sessions that reference it."""
+        async with self.graph.write_lock:
+            await self.graph._execute(
+                "MATCH (s:Chat {container_id: $slug}) "
+                "SET s.container_id = null",
                 {"slug": slug},
             )
             result = await self.graph.execute_cypher(
-                "MATCH (e:Project {slug: $slug}) RETURN count(e) AS cnt",
+                "MATCH (c:Container {slug: $slug}) RETURN count(c) AS cnt",
                 {"slug": slug},
             )
             count = result[0]["cnt"] if result else 0
             if count == 0:
                 return False
             await self.graph._execute(
-                "MATCH (e:Project {slug: $slug}) DETACH DELETE e",
+                "MATCH (c:Container {slug: $slug}) DETACH DELETE c",
                 {"slug": slug},
             )
         return True
 
-    async def delete_project_if_unreferenced(self, slug: str) -> bool:
-        """Delete a container env only if no sessions reference it."""
+    async def delete_container_if_unreferenced(self, slug: str) -> bool:
+        """Delete a container only if no sessions reference it."""
         async with self.graph.write_lock:
-            # Check if any sessions reference this env
             sessions = await self.graph.execute_cypher(
-                "MATCH (s:Chat {project_id: $slug}) RETURN count(s) AS cnt",
+                "MATCH (s:Chat {container_id: $slug}) RETURN count(s) AS cnt",
                 {"slug": slug},
             )
             if sessions and sessions[0]["cnt"] > 0:
                 return False
             env = await self.graph.execute_cypher(
-                "MATCH (e:Project {slug: $slug}) RETURN count(e) AS cnt",
+                "MATCH (c:Container {slug: $slug}) RETURN count(c) AS cnt",
                 {"slug": slug},
             )
             if not env or env[0]["cnt"] == 0:
                 return False
             await self.graph._execute(
-                "MATCH (e:Project {slug: $slug}) DETACH DELETE e",
+                "MATCH (c:Container {slug: $slug}) DETACH DELETE c",
                 {"slug": slug},
             )
         return True
 
-    async def list_orphan_project_slugs(
+    async def list_orphan_container_slugs(
         self, min_age_minutes: int = 5
     ) -> list[str]:
-        """Return slugs of container envs safe to prune."""
+        """Return slugs of containers safe to prune."""
         cutoff = (
             datetime.now(timezone.utc) - timedelta(minutes=min_age_minutes)
         ).isoformat()
 
         all_envs = await self.graph.execute_cypher(
-            "MATCH (e:Project) WHERE e.created_at < $cutoff RETURN e.slug",
+            "MATCH (c:Container) WHERE c.created_at < $cutoff RETURN c.slug",
             {"cutoff": cutoff},
         )
 
         orphans = []
         for row in all_envs:
-            slug = row.get("e.slug")
+            slug = row.get("c.slug")
             if not slug:
                 continue
-            # Check if any session with message_count > 0 references this env
             sessions = await self.graph.execute_cypher(
-                "MATCH (s:Chat {project_id: $slug}) "
+                "MATCH (s:Chat {container_id: $slug}) "
                 "WHERE s.message_count > 0 "
                 "RETURN count(s) AS cnt",
                 {"slug": slug},
@@ -963,7 +981,7 @@ class BrainChatStore:
             summary=row.get("summary"),
             bridge_session_id=row.get("bridge_session_id"),
             bridge_context_log=row.get("bridge_context_log"),
-            project_id=row.get("project_id"),
+            container_id=row.get("container_id"),
             metadata=metadata,
         )
 
@@ -983,9 +1001,8 @@ class BrainChatStore:
             resolved_by=row.get("resolved_by"),
         )
 
-    def _node_to_project(self, row: dict[str, Any]) -> Project:
-        """Convert a Kuzu node dict to a Project model."""
-        # Parse credential_grants from JSON string
+    def _node_to_container(self, row: dict[str, Any]) -> Container:
+        """Convert a Kuzu node dict to a Container model."""
         grants_json = row.get("credential_grants_json")
         grants = []
         if grants_json:
@@ -994,7 +1011,7 @@ class BrainChatStore:
             except (json.JSONDecodeError, TypeError):
                 pass
 
-        return Project(
+        return Container(
             slug=row["slug"],
             display_name=row["display_name"],
             core_memory=row.get("core_memory"),

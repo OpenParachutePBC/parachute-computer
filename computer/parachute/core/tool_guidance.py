@@ -83,8 +83,8 @@ TOOL_GROUPS: list[ToolGroup] = [
                 "description": "List journal entries. Use date_from/date_to to scope by date, note_type='journal' for Daily entries.",
             },
             {
-                "name": "brain_list_projects",
-                "description": "List named project environments.",
+                "name": "brain_list_containers",
+                "description": "List container environments.",
             },
             {
                 "name": "brain_schema",

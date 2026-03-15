@@ -322,21 +322,21 @@ async def _run_sandboxed(
     # Slug used as both session ID (for resume) and project slug (for container)
     slug = f"caller-{agent_name}"
 
-    # Ensure project record exists in session store
+    # Ensure container record exists in session store
     try:
         from parachute.core.interfaces import get_registry
         session_store = get_registry().get("ChatStore")
         if session_store is not None:
-            # Check if project already exists before creating
-            existing = await session_store.get_project(slug)
+            # Check if container already exists before creating
+            existing = await session_store.get_container(slug)
             if not existing:
-                await session_store.create_project(
+                await session_store.create_container(
                     slug=slug,
                     display_name=f"Caller: {config.display_name}",
                 )
-                logger.info(f"Created project record for caller '{agent_name}'")
+                logger.info(f"Created container record for caller '{agent_name}'")
     except Exception as e:
-        logger.warning(f"Could not ensure project record for caller '{agent_name}': {e}")
+        logger.warning(f"Could not ensure container record for caller '{agent_name}': {e}")
 
     # Build sandbox config
     sandbox_config = AgentSandboxConfig(
@@ -375,7 +375,7 @@ async def _run_sandboxed(
             config=sandbox_config,
             message=prompt_text,
             resume_session_id=caller_state["sdk_session_id"] if caller_state["sdk_session_id"] else None,
-            project_slug=slug,
+            container_slug=slug,
         ):
             event_type = event.get("type", "")
 

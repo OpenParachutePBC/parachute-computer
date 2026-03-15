@@ -230,24 +230,24 @@ class Orchestrator:
 
     async def reconcile_containers(self) -> None:
         """Reconcile sandbox containers on startup."""
-        # Remove project records for envs where every session is empty
+        # Remove container records for envs where every session is empty
         # (message_count == 0) and the env is older than 5 minutes. These are
         # abandoned or failed sessions that never sent a message.
-        orphan_slugs = await self.session_store.list_orphan_project_slugs(
+        orphan_slugs = await self.session_store.list_orphan_container_slugs(
             min_age_minutes=5
         )
         if orphan_slugs:
             logger.info(
-                f"Pruning {len(orphan_slugs)} orphan project record(s): {orphan_slugs}"
+                f"Pruning {len(orphan_slugs)} orphan container record(s): {orphan_slugs}"
             )
             for slug in orphan_slugs:
                 try:
-                    await self.session_store.delete_project(slug)
+                    await self.session_store.delete_container(slug)
                 except Exception as e:
-                    logger.warning(f"Failed to delete orphan project {slug}: {e}")
+                    logger.warning(f"Failed to delete orphan container {slug}: {e}")
 
-        # Use remaining project slugs for Docker orphan detection
-        active_envs = await self.session_store.list_projects()
+        # Use remaining container slugs for Docker orphan detection
+        active_envs = await self.session_store.list_containers()
         active_slugs = {env.slug for env in active_envs}
         await self._sandbox.reconcile(active_slugs=active_slugs)
 
@@ -304,7 +304,7 @@ class Orchestrator:
             working_directory=working_directory,
             trust_level=trust_level,
             mode=mode,
-            project_id=container_id,
+            container_id=container_id,
         )
 
         # For imported sessions, handle context continuity
@@ -395,12 +395,12 @@ class Orchestrator:
         # Resolve effective mode: request > session > default ("converse")
         effective_mode = mode or getattr(session, "mode", None) or "converse"
 
-        # Load project core_memory if session belongs to a project
-        project_memory: Optional[str] = None
-        if session.project_id:
-            project = await self.session_store.get_project(session.project_id)
-            if project and project.core_memory:
-                project_memory = project.core_memory[:4000]
+        # Load container core_memory if session belongs to a container
+        container_memory: Optional[str] = None
+        if session.container_id:
+            container = await self.session_store.get_container(session.container_id)
+            if container and container.core_memory:
+                container_memory = container.core_memory[:4000]
 
         # Build system prompt (after loading prior conversation, with working dir)
         # Note: tool guidance is injected later, after capability discovery resolves
@@ -420,7 +420,7 @@ class Orchestrator:
             working_directory=effective_working_dir,
             credential_keys=prompt_cred_keys,
             mode=effective_mode,
-            project_memory=project_memory,
+            container_memory=container_memory,
         )
 
         logger.info(
@@ -857,7 +857,7 @@ class Orchestrator:
                 env = {**mcp_config.get("env", {})}
                 env["PARACHUTE_SESSION_ID"] = session.id
                 env["PARACHUTE_TRUST_LEVEL"] = trust_level_str
-                env["PARACHUTE_PROJECT_ID"] = session.project_id or ""
+                env["PARACHUTE_CONTAINER_ID"] = session.container_id or ""
                 resolved_mcps[mcp_name] = {**mcp_config, "env": env}
             logger.info(
                 f"Injected session context into {len(resolved_mcps)} MCP servers"
@@ -1500,20 +1500,20 @@ class Orchestrator:
                     f"into sandbox prompt for session {sandbox_sid[:8]}"
                 )
 
-        # Ensure every sandboxed session has a project record
-        if not session.project_id:
+        # Ensure every sandboxed session has a container record
+        if not session.container_id:
             auto_slug = str(uuid.uuid4()).replace("-", "")[:12]
-            await self.session_store.create_project(
+            await self.session_store.create_container(
                 slug=auto_slug,
                 display_name=f"Session {sandbox_sid[:8]}",
             )
             await self.session_store.update_session(
                 session.id,
-                SessionUpdate(project_id=auto_slug),
+                SessionUpdate(container_id=auto_slug),
             )
-            session.project_id = auto_slug
+            session.container_id = auto_slug
             logger.info(
-                f"Auto-created project {auto_slug} for session {sandbox_sid[:8]}"
+                f"Auto-created container {auto_slug} for session {sandbox_sid[:8]}"
             )
 
         # Pre-check sandbox image
@@ -1532,7 +1532,7 @@ class Orchestrator:
             config=sandbox_config,
             message=sandbox_message,
             resume_session_id=resume_session_id,
-            project_slug=session.project_id,
+            container_slug=session.container_id,
         )
 
         sbx = {
@@ -1598,7 +1598,7 @@ class Orchestrator:
                     session_id=sandbox_sid,
                     config=sandbox_config,
                     message=retry_message,
-                    project_slug=session.project_id,
+                    container_slug=session.container_id,
                 )
                 async for event in retry_stream:
                     if interrupt and interrupt.is_interrupted:
@@ -1777,7 +1777,7 @@ class Orchestrator:
         working_directory: Optional[str] = None,
         credential_keys: Optional[set[str]] = None,
         mode: str = "converse",
-        project_memory: Optional[str] = None,
+        container_memory: Optional[str] = None,
     ) -> tuple[str, dict[str, Any]]:
         """
         Build the system prompt additions.
@@ -1850,9 +1850,9 @@ class Orchestrator:
                 except OSError as e:
                     logger.warning(f"Failed to read vault CLAUDE.md: {e}")
 
-        # Project context (core_memory from Project node) — injected after mode framing
-        if project_memory:
-            append_parts.append(f"## Project Context\n\n{project_memory}")
+        # Container context (core_memory from Container node) — injected after mode framing
+        if container_memory:
+            append_parts.append(f"## Container Context\n\n{container_memory}")
 
         # Working directory framing — tell the AI where it's operating
         # (SDK loads the actual CLAUDE.md via setting_sources=["project"] + cwd)
@@ -2021,26 +2021,26 @@ The user is now continuing this conversation with you. Respond naturally as if y
     async def delete_session(self, session_id: str) -> bool:
         """Delete a session and clean up its container env if it was private."""
         session = await self.session_manager.get_session(session_id)
-        project_id = session.project_id if session else None
+        container_id = session.container_id if session else None
 
         result = await self.session_manager.delete_session(session_id)
 
-        if result and project_id:
+        if result and container_id:
             # Remove the container env if no other sessions reference it.
             # Atomic check-and-delete prevents double-remove when two sessions
             # sharing the same env are deleted concurrently.
             try:
-                deleted = await self.session_store.delete_project_if_unreferenced(
-                    project_id
+                deleted = await self.session_store.delete_container_if_unreferenced(
+                    container_id
                 )
                 if deleted:
-                    await self._sandbox.delete_container(project_id)
+                    await self._sandbox.delete_container(container_id)
                     logger.info(
-                        f"Removed container env {project_id} with session {session_id[:8]}"
+                        f"Removed container env {container_id} with session {session_id[:8]}"
                     )
             except Exception as e:
                 logger.warning(
-                    f"Failed to clean up container env {project_id}: {e}"
+                    f"Failed to clean up container env {container_id}: {e}"
                 )
 
         return result

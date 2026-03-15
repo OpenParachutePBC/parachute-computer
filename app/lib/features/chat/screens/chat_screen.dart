@@ -19,9 +19,9 @@ import '../widgets/directory_picker.dart';
 import '../widgets/unified_session_settings.dart';
 import '../../settings/models/trust_level.dart';
 import '../../settings/screens/settings_screen.dart';
-import '../providers/project_providers.dart' show activeProjectProvider;
+import '../providers/container_providers.dart' show activeContainerProvider;
 import '../providers/container_files_providers.dart'
-    show currentSessionProjectIdProvider;
+    show currentSessionContainerIdProvider;
 import '../widgets/bridge_session_viewer_sheet.dart';
 import '../providers/agent_completion_provider.dart' show agentQuestionProvider, AgentQuestionEvent;
 import 'container_file_browser_screen.dart';
@@ -301,7 +301,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           agentType: _pendingAgentType,
           agentPath: _pendingAgentPath,
           trustLevel: _pendingTrustLevel,
-          projectId: ref.read(activeProjectProvider).valueOrNull,
+          containerId: ref.read(activeContainerProvider).valueOrNull,
         );
 
     // Clear pending context, agentType, agentPath, and trustLevel after first message
@@ -439,15 +439,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               ),
             // Container file browser (only when session has a container env)
             Builder(builder: (context) {
-              final projectId =
-                  ref.watch(currentSessionProjectIdProvider);
-              if (projectId == null) return const SizedBox.shrink();
+              final containerId =
+                  ref.watch(currentSessionContainerIdProvider);
+              if (containerId == null) return const SizedBox.shrink();
               return IconButton(
                 onPressed: () => Navigator.push(
                   context,
                   MaterialPageRoute(
                     builder: (_) => ContainerFileBrowserScreen(
-                      slug: projectId,
+                      slug: containerId,
                       displayName: 'Container Files',
                     ),
                   ),

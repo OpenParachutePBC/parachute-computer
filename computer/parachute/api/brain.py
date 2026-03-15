@@ -6,7 +6,7 @@ Endpoints:
   GET  /api/brain/chats             — conversation chats, supports ?search=
   GET  /api/brain/chats/{id}        — single chat + exchanges (brain_get_chat)
   GET  /api/brain/exchanges         — single exchange by ?id= (brain_get_exchange)
-  GET  /api/brain/projects          — named projects
+  GET  /api/brain/containers         — container environments
   GET  /api/brain/daily/entries     — Daily journal notes (brain_list_notes), supports ?search=
   GET  /api/brain/memory            — unified memory search across chats, notes, and exchanges
   POST /api/brain/query             — read-only Cypher passthrough
@@ -208,17 +208,17 @@ async def get_exchange(
     return {"exchange": rows[0]}
 
 
-@router.get("/projects")
-async def list_projects(
+@router.get("/containers")
+async def list_containers(
     limit: int = Query(20, ge=1, le=200),
 ):
-    """List named projects."""
+    """List container environments."""
     graph = _get_graph()
 
     rows = await graph.execute_cypher(
-        f"MATCH (p:Project) RETURN p ORDER BY p.created_at DESC LIMIT {limit}"
+        f"MATCH (c:Container) RETURN c ORDER BY c.created_at DESC LIMIT {limit}"
     )
-    return {"projects": rows, "count": len(rows)}
+    return {"containers": rows, "count": len(rows)}
 
 
 @router.get("/daily/entries")

@@ -1,22 +1,24 @@
-/// Project model matching the server's Project.
+/// ContainerEnv model matching the server's Container.
 ///
-/// Projects are named execution environments that group sandboxed
-/// sessions. Private sessions (no named project) auto-get a UUID-slug project
+/// Containers are Docker execution environments that group sandboxed
+/// sessions. Private sessions (no named container) auto-get a UUID-slug container
 /// on first sandboxed turn.
-class Project {
+///
+/// Named "ContainerEnv" to avoid collision with Flutter's built-in Container widget.
+class ContainerEnv {
   final String slug;
   final String displayName;
   final String? coreMemory;
   final DateTime createdAt;
 
-  const Project({
+  const ContainerEnv({
     required this.slug,
     required this.displayName,
     this.coreMemory,
     required this.createdAt,
   });
 
-  factory Project.fromJson(Map<String, dynamic> json) => Project(
+  factory ContainerEnv.fromJson(Map<String, dynamic> json) => ContainerEnv(
         slug: json['slug'] as String,
         displayName: json['displayName'] as String,
         coreMemory: json['coreMemory'] as String?,
@@ -30,8 +32,8 @@ class Project {
         'createdAt': createdAt.toIso8601String(),
       };
 
-  Project copyWith({String? slug, String? displayName, String? coreMemory, DateTime? createdAt}) =>
-      Project(
+  ContainerEnv copyWith({String? slug, String? displayName, String? coreMemory, DateTime? createdAt}) =>
+      ContainerEnv(
         slug: slug ?? this.slug,
         displayName: displayName ?? this.displayName,
         coreMemory: coreMemory ?? this.coreMemory,
@@ -39,13 +41,13 @@ class Project {
       );
 }
 
-/// Request body for creating a new project.
-class ProjectCreate {
+/// Request body for creating a new container.
+class ContainerEnvCreate {
   final String displayName;
   final String? slug;
   final String? coreMemory;
 
-  const ProjectCreate({required this.displayName, this.slug, this.coreMemory});
+  const ContainerEnvCreate({required this.displayName, this.slug, this.coreMemory});
 
   Map<String, dynamic> toJson() => {
         'displayName': displayName,

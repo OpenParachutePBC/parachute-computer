@@ -622,22 +622,22 @@ class DockerSandbox:
         config: AgentSandboxConfig,
         message: str,
         resume_session_id: str | None = None,
-        project_slug: str | None = None,
+        container_slug: str | None = None,
     ) -> AsyncGenerator[dict, None]:
         """Run an agent session in a container, yielding streaming events.
 
-        project_slug must be set by the caller. The orchestrator auto-creates
-        a project record before calling this method, so it is always set for
+        container_slug must be set by the caller. The orchestrator auto-creates
+        a container record before calling this method, so it is always set for
         sandboxed sessions.
         """
-        if not project_slug:
+        if not container_slug:
             raise ValueError(
-                f"project_slug is required for run_session (session {session_id[:8]}). "
-                "The orchestrator must create a project record before calling run_session."
+                f"container_slug is required for run_session (session {session_id[:8]}). "
+                "The orchestrator must create a container record before calling run_session."
             )
         await self._validate_docker_ready()
 
-        target = await self.ensure_container(project_slug, config)
+        target = await self.ensure_container(container_slug, config)
 
         async for event in self._run_in_container(
             target, config, message, resume_session_id, "sandbox"
