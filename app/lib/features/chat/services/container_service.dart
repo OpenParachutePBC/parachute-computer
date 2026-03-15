@@ -50,6 +50,30 @@ class ContainerService {
     return ContainerEnv.fromJson(envelope['container'] as Map<String, dynamic>);
   }
 
+  /// Update a container's display name or core memory.
+  Future<ContainerEnv> updateContainer(
+    String slug, {
+    String? displayName,
+    String? coreMemory,
+  }) async {
+    final body = <String, dynamic>{};
+    if (displayName != null) body['displayName'] = displayName;
+    if (coreMemory != null) body['coreMemory'] = coreMemory;
+
+    final response = await _client.patch(
+      Uri.parse('$baseUrl/api/containers/$slug'),
+      headers: _headers,
+      body: jsonEncode(body),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to update container: ${response.statusCode} ${response.body}');
+    }
+
+    final Map<String, dynamic> envelope = jsonDecode(response.body);
+    return ContainerEnv.fromJson(envelope['container'] as Map<String, dynamic>);
+  }
+
   /// Delete a container by slug.
   Future<void> deleteContainer(String slug) async {
     final response = await _client.delete(

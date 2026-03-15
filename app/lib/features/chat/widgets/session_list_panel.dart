@@ -1,16 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
-import 'package:parachute/features/settings/screens/settings_screen.dart';
 import '../models/chat_session.dart';
 import '../providers/chat_providers.dart';
 import '../services/chat_service.dart';
 import '../providers/chat_layout_provider.dart';
 import '../providers/session_search_provider.dart';
-import '../models/container_env.dart';
 import '../providers/container_providers.dart';
 import '../widgets/session_config_sheet.dart';
 import '../widgets/session_list_item.dart';
+import '../widgets/workspace_context_bar.dart';
 import '../screens/chat_screen.dart';
 
 /// Composable session list panel for use in adaptive layouts.
@@ -35,80 +34,17 @@ class _SessionListPanelState extends ConsumerState<SessionListPanel> {
 
     return Column(
       children: [
-        // Header
-        _buildHeader(context, isDark),
+        // Workspace context bar (replaces old header + filter chip)
+        WorkspaceContextBar(
+          onNewChat: _startNewChat,
+          onToggleArchive: () => setState(() => _showArchived = !_showArchived),
+          showArchived: _showArchived,
+        ),
         // Session list
         Expanded(child: _buildSessionList(context, isDark, isPanelMode, currentSessionId)),
       ],
     );
   }
-
-  Widget _buildHeader(BuildContext context, bool isDark) {
-    final layoutMode = ref.watch(chatLayoutModeProvider);
-    final activeSlug = ref.watch(activeContainerProvider).valueOrNull;
-    final containerEnvsAsync = ref.watch(containersProvider);
-
-    return Container(
-      padding: EdgeInsets.symmetric(horizontal: Spacing.md, vertical: Spacing.sm),
-      decoration: BoxDecoration(
-        border: Border(
-          bottom: BorderSide(
-            color: isDark
-                ? BrandColors.nightTextSecondary.withValues(alpha: 0.2)
-                : BrandColors.stone.withValues(alpha: 0.2),
-          ),
-        ),
-      ),
-      child: Row(
-        children: [
-          Text(
-            _showArchived ? 'Archived' : 'Chats',
-            style: TextStyle(
-              fontSize: TypographyTokens.titleMedium,
-              fontWeight: FontWeight.w600,
-              color: isDark ? BrandColors.nightText : BrandColors.charcoal,
-            ),
-          ),
-          // Container env filter chip (hidden on desktop where sidebar handles this)
-          if (layoutMode != ChatLayoutMode.desktop) ...[
-            const SizedBox(width: Spacing.xs),
-            _buildEnvChip(isDark, activeSlug, containerEnvsAsync),
-          ],
-          const Spacer(),
-          IconButton(
-            icon: Icon(
-              Icons.settings_outlined,
-              size: 20,
-              color: isDark ? BrandColors.nightTextSecondary : BrandColors.stone,
-            ),
-            onPressed: () => Navigator.of(context, rootNavigator: true).push(
-              MaterialPageRoute(builder: (_) => const SettingsScreen()),
-            ),
-            tooltip: 'Settings',
-          ),
-          IconButton(
-            icon: Icon(
-              _showArchived ? Icons.inbox : Icons.archive_outlined,
-              size: 20,
-              color: isDark ? BrandColors.nightTextSecondary : BrandColors.stone,
-            ),
-            onPressed: () => setState(() => _showArchived = !_showArchived),
-            tooltip: _showArchived ? 'Show active' : 'Show archived',
-          ),
-          IconButton(
-            icon: Icon(
-              Icons.add,
-              size: 20,
-              color: isDark ? BrandColors.nightForest : BrandColors.forest,
-            ),
-            onPressed: _startNewChat,
-            tooltip: 'New Chat',
-          ),
-        ],
-      ),
-    );
-  }
-
 
   Widget _buildSessionList(
     BuildContext context,
@@ -180,205 +116,6 @@ class _SessionListPanelState extends ConsumerState<SessionListPanel> {
       error: (error, _) => Center(
         child: Text('Error: $error'),
       ),
-    );
-  }
-
-  Widget _buildEnvChip(
-    bool isDark,
-    String? activeSlug,
-    AsyncValue<List<ContainerEnv>> containerEnvsAsync,
-  ) {
-    final hasFilter = activeSlug != null;
-    final label = containerEnvsAsync.whenOrNull(
-      data: (envs) {
-        if (activeSlug == null) return null;
-        final match = envs.where((e) => e.slug == activeSlug);
-        return match.isNotEmpty ? match.first.displayName : activeSlug;
-      },
-    );
-
-    return GestureDetector(
-      onTap: () => _showEnvPicker(isDark),
-      child: Container(
-        padding: EdgeInsets.symmetric(
-          horizontal: Spacing.sm,
-          vertical: Spacing.xxs,
-        ),
-        decoration: BoxDecoration(
-          color: hasFilter
-              ? (isDark ? BrandColors.nightForest : BrandColors.forest).withValues(alpha: 0.15)
-              : (isDark ? BrandColors.nightSurfaceElevated : BrandColors.stone.withValues(alpha: 0.1)),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              hasFilter ? Icons.dns_outlined : Icons.filter_list,
-              size: 14,
-              color: hasFilter
-                  ? (isDark ? BrandColors.nightForest : BrandColors.forest)
-                  : (isDark ? BrandColors.nightTextSecondary : BrandColors.stone),
-            ),
-            const SizedBox(width: 4),
-            ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 100),
-              child: Text(
-                label ?? 'All',
-                style: TextStyle(
-                  fontSize: TypographyTokens.labelSmall,
-                  fontWeight: hasFilter ? FontWeight.w600 : FontWeight.w400,
-                  color: hasFilter
-                      ? (isDark ? BrandColors.nightForest : BrandColors.forest)
-                      : (isDark ? BrandColors.nightTextSecondary : BrandColors.stone),
-                ),
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-            if (hasFilter) ...[
-              const SizedBox(width: 2),
-              Icon(
-                Icons.close,
-                size: 12,
-                color: isDark ? BrandColors.nightForest : BrandColors.forest,
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-
-  void _showEnvPicker(bool isDark) {
-    final containerEnvsAsync = ref.read(containersProvider);
-    final activeSlug = ref.read(activeContainerProvider).valueOrNull;
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (sheetContext) {
-        return ConstrainedBox(
-          constraints: BoxConstraints(
-            maxHeight: MediaQuery.sizeOf(sheetContext).height * 0.85,
-          ),
-          child: Container(
-            decoration: BoxDecoration(
-              color: isDark ? BrandColors.nightSurface : Colors.white,
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // Drag handle
-                Padding(
-                  padding: EdgeInsets.only(top: Spacing.sm),
-                  child: Container(
-                    width: 40,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: isDark ? BrandColors.nightTextSecondary : BrandColors.stone,
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  ),
-                ),
-                Padding(
-                  padding: EdgeInsets.all(Spacing.md),
-                  child: Text(
-                    'Filter by Environment',
-                    style: TextStyle(
-                      fontSize: TypographyTokens.titleSmall,
-                      fontWeight: FontWeight.w600,
-                      color: isDark ? BrandColors.nightText : BrandColors.ink,
-                    ),
-                  ),
-                ),
-                // "All Chats" option
-                ListTile(
-                  leading: Icon(
-                    Icons.chat_bubble_outline,
-                    color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
-                  ),
-                  title: Text(
-                    'All Chats',
-                    style: TextStyle(
-                      color: isDark ? BrandColors.nightText : BrandColors.ink,
-                      fontWeight: activeSlug == null ? FontWeight.w600 : FontWeight.w400,
-                    ),
-                  ),
-                  trailing: activeSlug == null
-                      ? Icon(Icons.check, color: isDark ? BrandColors.nightForest : BrandColors.forest)
-                      : null,
-                  onTap: () {
-                    ref.read(activeContainerProvider.notifier).setContainer(null);
-                    Navigator.pop(sheetContext);
-                  },
-                ),
-                // Scrollable env list
-                Flexible(
-                  child: SingleChildScrollView(
-                    child: containerEnvsAsync.when(
-                      data: (envs) {
-                        if (envs.isEmpty) {
-                          return Padding(
-                            padding: EdgeInsets.all(Spacing.lg),
-                            child: Text(
-                              'No named environments configured',
-                              style: TextStyle(
-                                color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
-                              ),
-                            ),
-                          );
-                        }
-                        return Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: envs.map((env) {
-                            final isActive = env.slug == activeSlug;
-                            return ListTile(
-                              leading: Icon(
-                                Icons.dns_outlined,
-                                color: isActive
-                                    ? (isDark ? BrandColors.nightForest : BrandColors.forest)
-                                    : (isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood),
-                              ),
-                              title: Text(
-                                env.displayName,
-                                style: TextStyle(
-                                  color: isDark ? BrandColors.nightText : BrandColors.ink,
-                                  fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
-                                ),
-                              ),
-                              trailing: isActive
-                                  ? Icon(Icons.check, color: isDark ? BrandColors.nightForest : BrandColors.forest)
-                                  : null,
-                              onTap: () {
-                                ref.read(activeContainerProvider.notifier).setContainer(env.slug);
-                                Navigator.pop(sheetContext);
-                              },
-                            );
-                          }).toList(),
-                        );
-                      },
-                      loading: () => Padding(
-                        padding: EdgeInsets.all(Spacing.lg),
-                        child: const CircularProgressIndicator(),
-                      ),
-                      error: (_, __) => Padding(
-                        padding: EdgeInsets.all(Spacing.lg),
-                        child: Text(
-                          'Failed to load environments',
-                          style: TextStyle(color: BrandColors.error),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-                SizedBox(height: Spacing.md),
-              ],
-            ),
-          ),
-        );
-      },
     );
   }
 

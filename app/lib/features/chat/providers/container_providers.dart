@@ -82,3 +82,22 @@ final containerSessionsProvider =
         sessions.where((s) => s.containerId == activeSlug).toList(),
   );
 });
+
+/// Per-container session counts derived from the full session list.
+///
+/// Returns a map of container slug → session count for display in the
+/// workspace picker. Also includes a null key for total unfiltered count.
+final containerSessionCountsProvider =
+    Provider.autoDispose<Map<String?, int>>((ref) {
+  final sessionsAsync = ref.watch(chatSessionsProvider);
+  final sessions = sessionsAsync.valueOrNull ?? [];
+
+  final counts = <String?, int>{null: sessions.length};
+  for (final session in sessions) {
+    final slug = session.containerId;
+    if (slug != null) {
+      counts[slug] = (counts[slug] ?? 0) + 1;
+    }
+  }
+  return counts;
+});

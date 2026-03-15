@@ -5,22 +5,16 @@ enum ChatLayoutMode {
   /// Single column with push navigation (mobile)
   mobile,
 
-  /// Two columns: session list + chat content (tablet)
-  tablet,
-
-  /// Three columns: sidebar + session list + chat content (desktop)
-  desktop,
+  /// Two columns: session list + chat content (tablet and desktop)
+  panel,
 }
 
 /// Breakpoints for adaptive layout.
 class ChatLayoutBreakpoints {
-  static const double tablet = 600;
-  static const double desktop = 1200;
+  static const double panel = 600;
 
   static ChatLayoutMode fromWidth(double width) {
-    if (width >= desktop) return ChatLayoutMode.desktop;
-    if (width >= tablet) return ChatLayoutMode.tablet;
-    return ChatLayoutMode.mobile;
+    return width >= panel ? ChatLayoutMode.panel : ChatLayoutMode.mobile;
   }
 }
 
@@ -32,5 +26,5 @@ final chatLayoutModeProvider = StateProvider<ChatLayoutMode>(
 /// Whether the current layout uses side-by-side panels (tablet or desktop).
 final isPanelModeProvider = Provider<bool>((ref) {
   final mode = ref.watch(chatLayoutModeProvider);
-  return mode != ChatLayoutMode.mobile;
+  return mode == ChatLayoutMode.panel;
 });
