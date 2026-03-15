@@ -11,6 +11,7 @@ from fastapi import APIRouter, Query, Request
 
 from parachute import __version__
 from parachute.config import get_settings
+from parachute.core.interfaces import get_registry
 from parachute.core.sandbox import DockerSandbox
 
 router = APIRouter()
@@ -52,10 +53,14 @@ async def health_check(
     """
     settings = get_settings()
 
+    # Transcription capability — available when TranscriptionService is loaded
+    transcription_available = get_registry().get("TranscriptionService") is not None
+
     basic = {
         "status": "ok",
         "timestamp": int(time.time() * 1000),
         "version": __version__,
+        "transcription_available": transcription_available,
         **({"commit": _GIT_COMMIT} if _GIT_COMMIT else {}),
     }
 

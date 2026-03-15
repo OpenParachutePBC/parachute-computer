@@ -23,6 +23,9 @@ class ServerHealthStatus {
   final String? serverVersion;
   final Map<String, dynamic>? additionalInfo;
 
+  /// Whether the server has transcription capability (Parakeet MLX etc.)
+  final bool transcriptionAvailable;
+
   ServerHealthStatus({
     required this.isHealthy,
     required this.connectionState,
@@ -31,13 +34,18 @@ class ServerHealthStatus {
     DateTime? timestamp,
     this.serverVersion,
     this.additionalInfo,
+    this.transcriptionAvailable = false,
   }) : timestamp = timestamp ?? DateTime.now();
 
-  factory ServerHealthStatus.healthy({String? version}) => ServerHealthStatus(
+  factory ServerHealthStatus.healthy({
+    String? version,
+    bool transcriptionAvailable = false,
+  }) => ServerHealthStatus(
     isHealthy: true,
     connectionState: ServerConnectionState.connected,
     message: 'Connected',
     serverVersion: version,
+    transcriptionAvailable: transcriptionAvailable,
   );
 
   factory ServerHealthStatus.offline() => ServerHealthStatus(
@@ -98,13 +106,18 @@ class BackendHealthService {
 
       if (response.statusCode == 200) {
         String? version;
+        bool transcriptionAvailable = false;
         try {
           final data = json.decode(response.body);
           version = data['version']?.toString();
+          transcriptionAvailable = data['transcription_available'] == true;
         } catch (_) {
           // Ignore JSON parse errors
         }
-        return ServerHealthStatus.healthy(version: version);
+        return ServerHealthStatus.healthy(
+          version: version,
+          transcriptionAvailable: transcriptionAvailable,
+        );
       } else {
         return ServerHealthStatus(
           isHealthy: false,

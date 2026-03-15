@@ -192,12 +192,11 @@ CLEANUP_SYSTEM_PROMPT = (
 
 
 async def _transcribe_and_cleanup(
-    module: "DailyModule",
     graph,
     entry_id: str,
     audio_path: Path,
 ) -> None:
-    """Background task: transcribe audio → update entry → trigger cleanup Caller."""
+    """Background task: transcribe audio → update entry → clean up via LLM."""
     from parachute.core.interfaces import get_registry
 
     ts = get_registry().get("TranscriptionService")
@@ -243,8 +242,8 @@ async def _transcribe_and_cleanup(
 
         logger.info(f"Daily: transcribed voice entry {entry_id} ({len(raw_text)} chars)")
 
-        # Auto-trigger cleanup Caller
-        await _trigger_cleanup_caller(module, entry_id, graph)
+        # Clean up the raw transcription via a direct LLM call
+        await _cleanup_transcription(graph, entry_id, raw_text)
 
     except Exception as e:
         logger.error(f"Daily: transcription failed for {entry_id}: {e}", exc_info=True)
@@ -260,48 +259,69 @@ async def _transcribe_and_cleanup(
             logger.warning(f"Daily: failed to clean up audio file {audio_path}: {cleanup_err}")
 
 
-async def _trigger_cleanup_caller(
-    module: "DailyModule",
-    entry_id: str,
+async def _cleanup_transcription(
     graph,
+    entry_id: str,
+    raw_text: str,
 ) -> None:
-    """Trigger the transcription-cleanup Caller on a specific entry."""
-    from parachute.core.daily_agent import run_daily_agent
-    from parachute.config import PARACHUTE_DIR
+    """Clean up raw transcription text via a single LLM call. No tools, no sandbox."""
+    from parachute.core.claude_sdk import query_streaming
+    from parachute.config import settings
 
-    # Extract date from entry_id (format: YYYY-MM-DD-HH-MM-SS-ffffff)
-    date = entry_id[:10]
+    claude_token = settings.claude_code_oauth_token
+    if not claude_token:
+        import os
+        claude_token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
+    if not claude_token:
+        logger.warning(f"Daily: skipping cleanup for {entry_id} — no OAuth token")
+        await _update_entry_transcription_status(graph, entry_id, "complete")
+        return
 
     try:
-        result = await run_daily_agent(
-            vault_path=PARACHUTE_DIR,
-            agent_name="transcription-cleanup",
-            date=date,
-            force=True,
-            build_prompt_fn=lambda config, d, od: (
-                f"Clean up the voice transcription for journal entry {entry_id} "
-                f"from {d}. Read the journal for that date, then use update_entry "
-                f"to write the cleaned-up version back. The entry_id is: {entry_id}"
-            ),
-        )
+        # Single-turn SDK call: system prompt + raw text → cleaned text
+        cleaned_text = ""
+        async for event in query_streaming(
+            prompt=f"Clean up this voice transcription:\n\n{raw_text}",
+            system_prompt=CLEANUP_SYSTEM_PROMPT,
+            use_claude_code_preset=False,
+            tools=[],  # No tools — pure text transform
+            permission_mode="default",
+            claude_token=claude_token,
+            model="haiku",
+        ):
+            # The result event carries the final assistant text
+            if event.get("type") == "result" and "result" in event:
+                cleaned_text = event["result"]
+            elif event.get("type") == "assistant" and "message" in event:
+                # Extract text from content blocks
+                msg = event["message"]
+                if isinstance(msg, dict) and "content" in msg:
+                    for block in msg["content"]:
+                        if isinstance(block, dict) and block.get("type") == "text":
+                            cleaned_text += block.get("text", "")
 
-        if result.get("status") in ("completed", "done"):
-            # Update transcription_status to "complete"
-            await _update_entry_transcription_status(
-                graph, entry_id, "complete"
+        cleaned_text = cleaned_text.strip()
+        if not cleaned_text:
+            logger.warning(f"Daily: cleanup returned empty text for {entry_id}, keeping raw")
+            await _update_entry_transcription_status(graph, entry_id, "complete")
+            return
+
+        # Write cleaned text back to the entry
+        async with graph.write_lock:
+            await graph.execute_cypher(
+                "MATCH (e:Note {entry_id: $entry_id}) "
+                "SET e.content = $content",
+                {"entry_id": entry_id, "content": cleaned_text},
             )
-            logger.info(f"Daily: cleanup Caller completed for entry {entry_id}")
-        else:
-            logger.warning(
-                f"Daily: cleanup Caller returned status={result.get('status')} "
-                f"for entry {entry_id}. Entry stays at 'transcribed'."
-            )
+
+        await _update_entry_transcription_status(graph, entry_id, "complete")
+        logger.info(f"Daily: cleaned up entry {entry_id} ({len(raw_text)} → {len(cleaned_text)} chars)")
+
     except Exception as e:
-        logger.error(
-            f"Daily: cleanup Caller failed for entry {entry_id}: {e}",
-            exc_info=True,
-        )
-        # Don't mark as failed — raw transcription is still readable
+        logger.error(f"Daily: cleanup failed for {entry_id}: {e}", exc_info=True)
+        # Don't mark as failed — raw transcription is still readable.
+        # Mark as complete so polling resolves on the client.
+        await _update_entry_transcription_status(graph, entry_id, "complete")
 
 
 async def _update_entry_transcription_status(
@@ -1445,7 +1465,7 @@ class DailyModule:
 
             # Create entry with status "processing"
             meta: dict[str, Any] = {
-                "type": "audio",
+                "type": "voice",
                 "audio_path": str(audio_path),
                 "transcription_status": "processing",
             }
@@ -1456,7 +1476,7 @@ class DailyModule:
             # Kick off background transcription + cleanup
             entry_id = result["id"]
             task = asyncio.create_task(
-                _transcribe_and_cleanup(self, graph, entry_id, audio_path)
+                _transcribe_and_cleanup(graph, entry_id, audio_path)
             )
             _background_tasks.add(task)
 
