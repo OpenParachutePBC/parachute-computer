@@ -249,6 +249,16 @@ class Settings(BaseSettings):
         description="Per-event timeout for trusted SDK event queue in seconds (default: 300 = 5 min)",
     )
 
+    # Transcription
+    transcription_enabled: bool = Field(
+        default=True,
+        description="Enable server-side transcription (requires parakeet-mlx on macOS)",
+    )
+    transcription_model_id: Optional[str] = Field(
+        default=None,
+        description="HuggingFace model ID for transcription (default: mlx-community/parakeet-tdt-0.6b-v3)",
+    )
+
     # Development
     debug: bool = Field(default=False, description="Enable debug mode")
     reload: bool = Field(default=False, description="Enable auto-reload")

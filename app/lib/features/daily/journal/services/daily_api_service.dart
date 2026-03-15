@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import '../models/entry_metadata.dart' show TranscriptionStatus;
 import '../models/journal_entry.dart';
 import '../models/agent_card.dart';
 import 'package:parachute/core/services/computer_service.dart'
@@ -238,6 +239,81 @@ class DailyApiService {
       return null;
     } catch (e) {
       debugPrint('[DailyApiService] uploadAudio error: $e');
+      return null;
+    }
+  }
+
+  /// Get a single entry by ID.
+  ///
+  /// Returns the [JournalEntry] on success, or null if offline / not found.
+  Future<JournalEntry?> getEntry(String entryId) async {
+    final uri = Uri.parse('$baseUrl/api/daily/entries/$entryId');
+    debugPrint('[DailyApiService] GET $uri');
+    try {
+      final response = await _client
+          .get(uri, headers: _headers)
+          .timeout(_timeout);
+
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        debugPrint('[DailyApiService] GET entries/$entryId ${response.statusCode}');
+        return null;
+      }
+
+      final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+      return JournalEntry.fromServerJson(decoded);
+    } catch (e) {
+      debugPrint('[DailyApiService] getEntry error: $e');
+      return null;
+    }
+  }
+
+  /// Upload audio for server-side transcription + LLM cleanup.
+  ///
+  /// Sends audio to `POST /api/daily/entries/voice`. The server creates the entry,
+  /// transcribes via Parakeet MLX, and runs cleanup — all asynchronously.
+  /// Returns the created [JournalEntry] (with transcription_status: processing).
+  Future<JournalEntry?> uploadVoiceEntry({
+    required File audioFile,
+    required int durationSeconds,
+    String? date,
+  }) async {
+    final uri = Uri.parse('$baseUrl/api/daily/entries/voice');
+    debugPrint('[DailyApiService] POST $uri (voice entry upload)');
+    try {
+      final dateStr = date ?? _dateStr(DateTime.now());
+      final request = http.MultipartRequest('POST', uri)
+        ..files.add(await http.MultipartFile.fromPath('file', audioFile.path))
+        ..fields['date'] = dateStr
+        ..fields['duration_seconds'] = durationSeconds.toString();
+      if (apiKey != null && apiKey!.isNotEmpty) {
+        request.headers['X-API-Key'] = apiKey!;
+      }
+      final streamed = await request.send().timeout(
+        const Duration(seconds: 60),
+      );
+      if (streamed.statusCode == 201 || streamed.statusCode == 200) {
+        final body = jsonDecode(
+          await streamed.stream.bytesToString(),
+        ) as Map<String, dynamic>;
+        // Server returns {entry_id, status, audio_path} — different from entry JSON shape
+        return JournalEntry(
+          id: (body['entry_id'] ?? body['id']) as String,
+          title: '',
+          content: '',
+          type: JournalEntryType.voice,
+          createdAt: JournalEntry.parseDateTime(body['created_at'] as String?),
+          audioPath: body['audio_path'] as String?,
+          durationSeconds: durationSeconds,
+          isPendingTranscription: true,
+          serverTranscriptionStatus: TranscriptionStatus.processing,
+        );
+      }
+      debugPrint(
+        '[DailyApiService] uploadVoiceEntry ${streamed.statusCode}',
+      );
+      return null;
+    } catch (e) {
+      debugPrint('[DailyApiService] uploadVoiceEntry error: $e');
       return null;
     }
   }

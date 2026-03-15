@@ -8,6 +8,18 @@ import 'package:parachute/features/daily/recorder/services/recording_post_proces
 
 // Settings keys
 const String _autoEnhanceKey = 'auto_enhance';
+const String _transcriptionModeKey = 'transcription_mode';
+
+/// Transcription mode: where voice entries get transcribed.
+///
+/// - [auto]: Use server when connected and capable, fall back to local (default)
+/// - [server]: Always use server transcription (fail if unavailable)
+/// - [local]: Always transcribe on-device
+enum TranscriptionMode {
+  auto,
+  server,
+  local,
+}
 
 /// Provider for auto-enhance setting
 /// When enabled, automatically cleans up transcripts and generates titles
@@ -20,6 +32,22 @@ final autoEnhanceProvider = FutureProvider<bool>((ref) async {
 Future<void> setAutoEnhance(bool enabled) async {
   final prefs = await SharedPreferences.getInstance();
   await prefs.setBool(_autoEnhanceKey, enabled);
+}
+
+/// Provider for transcription mode setting
+final transcriptionModeProvider = FutureProvider<TranscriptionMode>((ref) async {
+  final prefs = await SharedPreferences.getInstance();
+  final value = prefs.getString(_transcriptionModeKey);
+  return TranscriptionMode.values.firstWhere(
+    (m) => m.name == value,
+    orElse: () => TranscriptionMode.auto,
+  );
+});
+
+/// Set transcription mode preference
+Future<void> setTranscriptionMode(TranscriptionMode mode) async {
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.setString(_transcriptionModeKey, mode.name);
 }
 
 /// Provider for AudioService
