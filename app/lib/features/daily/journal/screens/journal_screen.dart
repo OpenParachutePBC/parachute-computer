@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:parachute/core/config/app_config.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/core/providers/backend_health_provider.dart' show serverTranscriptionAvailableProvider;
+import 'package:parachute/core/providers/app_state_provider.dart' show apiKeyProvider;
 import 'package:parachute/core/providers/feature_flags_provider.dart' show aiServerUrlProvider;
 import 'package:parachute/core/providers/sync_provider.dart';
 import '../../recorder/providers/service_providers.dart';
@@ -198,9 +199,6 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
                 onVoiceRecorded: (transcript, audioPath, duration) =>
                     _addVoiceEntry(transcript, audioPath, duration),
                 onTranscriptReady: (transcript) => _updatePendingTranscription(transcript),
-                onPhotoCaptured: (imagePath) => _addPhotoEntry(imagePath),
-                onHandwritingCaptured: (imagePath, linedBackground) =>
-                    _addHandwritingEntry(imagePath, linedBackground),
                 onComposeSubmitted: (title, content) =>
                     _addComposeEntry(title, content),
               ),
@@ -721,40 +719,6 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
     }
   }
 
-  Future<void> _addPhotoEntry(String imagePath) async {
-    debugPrint('[JournalScreen] Adding photo entry via API...');
-    final api = ref.read(dailyApiServiceProvider);
-    final entry = await api.createEntry(
-      content: '',
-      metadata: {'type': 'photo', 'image_path': imagePath},
-    );
-    await _appendEntryToCache(
-      entry,
-      content: '',
-      type: JournalEntryType.photo,
-      imagePath: imagePath,
-    );
-  }
-
-  Future<void> _addHandwritingEntry(String imagePath, bool linedBackground) async {
-    debugPrint('[JournalScreen] Adding handwriting entry via API...');
-    final api = ref.read(dailyApiServiceProvider);
-    final entry = await api.createEntry(
-      content: '',
-      metadata: {
-        'type': 'handwriting',
-        'image_path': imagePath,
-        if (linedBackground) 'lined_background': true,
-      },
-    );
-    await _appendEntryToCache(
-      entry,
-      content: '',
-      type: JournalEntryType.handwriting,
-      imagePath: imagePath,
-    );
-  }
-
   Future<void> _updatePendingTranscription(String transcript) async {
     final screenState = ref.read(journalScreenStateProvider);
     final entryId = screenState.pendingTranscriptionEntryId;
@@ -1022,9 +986,13 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
         fullAudioPath = audioPath;
       } else {
         final serverBaseUrl = await ref.read(aiServerUrlProvider.future);
+        final apiKey = await ref.read(apiKeyProvider.future);
         final audioUrl = JournalHelpers.getAudioUrl(audioPath, serverBaseUrl);
+        final headers = <String, String>{
+          if (apiKey != null && apiKey.isNotEmpty) 'X-API-Key': apiKey,
+        };
         final response = await http
-            .get(Uri.parse(audioUrl))
+            .get(Uri.parse(audioUrl), headers: headers)
             .timeout(const Duration(minutes: 2),
                 onTimeout: () => throw TimeoutException('Audio download timed out'));
         if (response.statusCode != 200) {

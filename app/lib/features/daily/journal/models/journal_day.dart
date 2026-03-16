@@ -51,10 +51,21 @@ class JournalDay {
 
   /// Create from a list of server entries (API-backed)
   factory JournalDay.fromEntries(DateTime date, List<JournalEntry> entries) {
+    // Build entryMetadata from server entry fields so getAudioPath() etc. work
+    final metadata = <String, EntryMetadata>{};
+    for (final entry in entries) {
+      metadata[entry.id] = EntryMetadata(
+        type: entry.type,
+        audioPath: entry.audioPath,
+        imagePath: entry.imagePath,
+        durationSeconds: entry.durationSeconds,
+        transcriptionStatus: entry.serverTranscriptionStatus,
+      );
+    }
     return JournalDay(
       date: DateTime(date.year, date.month, date.day),
       entries: entries,
-      entryMetadata: const {},
+      entryMetadata: metadata,
       filePath: '',
     );
   }

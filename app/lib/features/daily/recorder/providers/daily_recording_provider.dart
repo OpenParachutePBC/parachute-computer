@@ -7,22 +7,26 @@ import 'service_providers.dart';
 /// State for Daily voice recording (no live transcription)
 class DailyRecordingState {
   final bool isRecording;
+  final bool isPaused;
   final Duration duration;
   final String? audioPath;
 
   const DailyRecordingState({
     this.isRecording = false,
+    this.isPaused = false,
     this.duration = Duration.zero,
     this.audioPath,
   });
 
   DailyRecordingState copyWith({
     bool? isRecording,
+    bool? isPaused,
     Duration? duration,
     String? audioPath,
   }) {
     return DailyRecordingState(
       isRecording: isRecording ?? this.isRecording,
+      isPaused: isPaused ?? this.isPaused,
       duration: duration ?? this.duration,
       audioPath: audioPath ?? this.audioPath,
     );
@@ -93,6 +97,7 @@ class DailyRecordingNotifier extends StateNotifier<DailyRecordingState> {
 
       state = state.copyWith(
         isRecording: false,
+        isPaused: false,
         audioPath: audioPath,
       );
 
@@ -100,8 +105,50 @@ class DailyRecordingNotifier extends StateNotifier<DailyRecordingState> {
       return audioPath;
     } catch (e) {
       debugPrint('[DailyRecording] Failed to stop: $e');
-      state = state.copyWith(isRecording: false);
+      state = state.copyWith(isRecording: false, isPaused: false);
       return null;
+    }
+  }
+
+  /// Pause recording
+  Future<bool> pauseRecording() async {
+    if (!state.isRecording || state.isPaused) return false;
+
+    try {
+      final audioService = _ref.read(audioServiceProvider);
+      final paused = await audioService.pauseRecording();
+      if (!paused) return false;
+
+      _stopDurationTimer();
+      _stopAmplitudePolling();
+
+      state = state.copyWith(isPaused: true);
+      debugPrint('[DailyRecording] Recording paused at ${state.duration}');
+      return true;
+    } catch (e) {
+      debugPrint('[DailyRecording] Failed to pause: $e');
+      return false;
+    }
+  }
+
+  /// Resume recording after pause
+  Future<bool> resumeRecording() async {
+    if (!state.isRecording || !state.isPaused) return false;
+
+    try {
+      final audioService = _ref.read(audioServiceProvider);
+      final resumed = await audioService.resumeRecording();
+      if (!resumed) return false;
+
+      _startDurationTimer();
+      _startAmplitudePolling();
+
+      state = state.copyWith(isPaused: false);
+      debugPrint('[DailyRecording] Recording resumed');
+      return true;
+    } catch (e) {
+      debugPrint('[DailyRecording] Failed to resume: $e');
+      return false;
     }
   }
 

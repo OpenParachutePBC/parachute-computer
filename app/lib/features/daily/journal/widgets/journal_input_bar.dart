@@ -5,8 +5,6 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/core/providers/model_download_provider.dart';
-import '../../capture/providers/capture_providers.dart';
-import '../../capture/screens/handwriting_screen.dart';
 import '../../recorder/providers/service_providers.dart';
 import '../screens/compose_screen.dart';
 import '../providers/compose_draft_provider.dart';
@@ -14,7 +12,7 @@ import '../providers/journal_screen_state_provider.dart';
 import '../../recorder/providers/transcription_progress_provider.dart';
 import '../../recorder/providers/daily_recording_provider.dart';
 import '../../recorder/providers/post_hoc_transcription_provider.dart';
-import '../../recorder/widgets/daily_recording_overlay.dart';
+import '../../recorder/widgets/recording_waveform.dart';
 import 'package:parachute/features/settings/screens/settings_screen.dart';
 
 /// Input bar for adding entries to the journal
@@ -27,10 +25,6 @@ class JournalInputBar extends ConsumerStatefulWidget {
       onVoiceRecorded;
   /// Called when background transcription completes - allows updating the entry
   final Future<void> Function(String transcript)? onTranscriptReady;
-  /// Called when a photo is captured from camera or gallery
-  final Future<void> Function(String imagePath)? onPhotoCaptured;
-  /// Called when handwriting canvas is saved
-  final Future<void> Function(String imagePath, bool linedBackground)? onHandwritingCaptured;
   /// Called when the full-screen compose screen saves an entry (title + content)
   final Future<void> Function(String title, String content)? onComposeSubmitted;
 
@@ -39,8 +33,6 @@ class JournalInputBar extends ConsumerStatefulWidget {
     required this.onTextSubmitted,
     this.onVoiceRecorded,
     this.onTranscriptReady,
-    this.onPhotoCaptured,
-    this.onHandwritingCaptured,
     this.onComposeSubmitted,
   });
 
@@ -48,18 +40,30 @@ class JournalInputBar extends ConsumerStatefulWidget {
   ConsumerState<JournalInputBar> createState() => _JournalInputBarState();
 }
 
-class _JournalInputBarState extends ConsumerState<JournalInputBar> {
+class _JournalInputBarState extends ConsumerState<JournalInputBar>
+    with SingleTickerProviderStateMixin {
   final TextEditingController _controller = TextEditingController();
   final FocusNode _focusNode = FocusNode();
-  bool _isRecording = false;
   bool _isSubmitting = false;
   bool _isProcessing = false;
   bool _hasPendingDraft = false;
-  Duration _recordingDuration = Duration.zero;
-  Timer? _durationTimer;
+
+  /// Breathing animation for the stop button during recording
+  late final AnimationController _breathingController;
+  late final Animation<double> _breathingAnimation;
   @override
   void initState() {
     super.initState();
+
+    // Breathing animation for stop button during recording
+    _breathingController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1500),
+    );
+    _breathingAnimation = Tween(begin: 0.85, end: 1.0).animate(
+      CurvedAnimation(parent: _breathingController, curve: Curves.easeInOut),
+    );
+
     // Trigger transcription model initialization in background
     // so it's ready when user wants to record
     _initializeTranscriptionModel();
@@ -103,7 +107,7 @@ class _JournalInputBarState extends ConsumerState<JournalInputBar> {
   void dispose() {
     _controller.dispose();
     _focusNode.dispose();
-    _durationTimer?.cancel();
+    _breathingController.dispose();
     super.dispose();
   }
 
@@ -126,7 +130,8 @@ class _JournalInputBarState extends ConsumerState<JournalInputBar> {
   }
 
   Future<void> _startRecording() async {
-    if (_isRecording || widget.onVoiceRecorded == null) return;
+    final recState = ref.read(dailyRecordingProvider);
+    if (recState.isRecording || widget.onVoiceRecorded == null) return;
 
     // On Android, MUST check if transcription models are downloaded before proceeding
     // This is a critical check to prevent native crashes
@@ -199,20 +204,8 @@ class _JournalInputBarState extends ConsumerState<JournalInputBar> {
         return;
       }
 
-      setState(() {
-        _isRecording = true;
-        _recordingDuration = Duration.zero;
-      });
-
-      // Duration tracking is handled by DailyRecordingProvider,
-      // but we keep local state for the minimum duration check
-      _durationTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-        if (mounted && _isRecording) {
-          setState(() {
-            _recordingDuration = _recordingDuration + const Duration(seconds: 1);
-          });
-        }
-      });
+      // Start breathing animation for stop button
+      _breathingController.repeat(reverse: true);
 
       debugPrint('[JournalInputBar] Daily recording started (audio only)');
     } catch (e) {
@@ -228,40 +221,57 @@ class _JournalInputBarState extends ConsumerState<JournalInputBar> {
     }
   }
 
-  // Note: _startStreamingRecording, _startStandardRecording, _pauseRecording,
-  // _resumeRecording removed — Daily now uses DailyRecordingProvider for
-  // audio-only recording without live transcription. Chat voice input
-  // (StreamingVoiceService) is separate and unaffected.
+  Future<void> _pauseRecording() async {
+    final recState = ref.read(dailyRecordingProvider);
+    if (!recState.isRecording || recState.isPaused) return;
+
+    final dailyNotifier = ref.read(dailyRecordingProvider.notifier);
+    final paused = await dailyNotifier.pauseRecording();
+    if (!paused) return;
+
+    _breathingController.stop();
+    HapticFeedback.lightImpact();
+
+    debugPrint('[JournalInputBar] Recording paused');
+  }
+
+  Future<void> _resumeRecording() async {
+    final recState = ref.read(dailyRecordingProvider);
+    if (!recState.isRecording || !recState.isPaused) return;
+
+    final dailyNotifier = ref.read(dailyRecordingProvider.notifier);
+    final resumed = await dailyNotifier.resumeRecording();
+    if (!resumed) return;
+
+    _breathingController.repeat(reverse: true);
+    HapticFeedback.lightImpact();
+
+    debugPrint('[JournalInputBar] Recording resumed');
+  }
 
   Future<void> _discardRecording() async {
-    if (!_isRecording) return;
+    final recState = ref.read(dailyRecordingProvider);
+    if (!recState.isRecording) return;
 
-    _durationTimer?.cancel();
-    _durationTimer = null;
+    _breathingController.stop();
+    _breathingController.reset();
 
     debugPrint('[JournalInputBar] Discarding recording');
 
-    // Cancel via Daily recording provider
+    // Cancel via Daily recording provider (resets all state)
     final dailyNotifier = ref.read(dailyRecordingProvider.notifier);
     await dailyNotifier.cancelRecording();
 
     HapticFeedback.lightImpact();
 
-    setState(() {
-      _isRecording = false;
-      _recordingDuration = Duration.zero;
-    });
-
     debugPrint('[JournalInputBar] Recording discarded');
   }
 
   Future<void> _stopRecording() async {
-    if (!_isRecording) return;
+    final recState = ref.read(dailyRecordingProvider);
+    if (!recState.isRecording) return;
 
-    _durationTimer?.cancel();
-    _durationTimer = null;
-
-    final durationSeconds = _recordingDuration.inSeconds;
+    final durationSeconds = recState.duration.inSeconds;
 
     // Minimum duration check: discard recordings < 3 seconds
     if (durationSeconds < 3) {
@@ -284,8 +294,10 @@ class _JournalInputBarState extends ConsumerState<JournalInputBar> {
 
   /// Stop Daily recording and trigger post-hoc transcription
   Future<void> _stopDailyRecording(int durationSeconds) async {
+    _breathingController.stop();
+    _breathingController.reset();
+
     setState(() {
-      _isRecording = false;
       _isProcessing = true;
     });
 
@@ -337,17 +349,8 @@ class _JournalInputBarState extends ConsumerState<JournalInputBar> {
       if (mounted) {
         setState(() {
           _isProcessing = false;
-          _recordingDuration = Duration.zero;
         });
       }
-    }
-  }
-
-  void _toggleRecording() {
-    if (_isRecording) {
-      _stopRecording();
-    } else {
-      _startRecording();
     }
   }
 
@@ -362,6 +365,9 @@ class _JournalInputBarState extends ConsumerState<JournalInputBar> {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
 
+    // Watch provider for recording state — single source of truth
+    final recState = ref.watch(dailyRecordingProvider);
+
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
@@ -375,26 +381,87 @@ class _JournalInputBarState extends ConsumerState<JournalInputBar> {
       ),
       child: SafeArea(
         top: false,
-        child: _isRecording
-            ? _buildRecordingMode(isDark, theme)
-            : _buildInputMode(isDark, theme),
+        child: recState.isRecording
+            ? _buildRecordingMode(isDark, theme, recState)
+            : _buildInputMode(isDark, theme, recState),
       ),
     );
   }
 
-  /// Build the recording mode UI — calm waveform + timer, no live text
-  Widget _buildRecordingMode(bool isDark, ThemeData theme) {
-    final dailyNotifier = ref.read(dailyRecordingProvider.notifier);
+  /// Build the inline recording mode — thin waveform + timer in the text field area
+  Widget _buildRecordingMode(bool isDark, ThemeData theme, DailyRecordingState recState) {
+    final dailyNotifier = ref.watch(dailyRecordingProvider.notifier);
+    final isPaused = recState.isPaused;
 
-    return DailyRecordingOverlay(
-      amplitudeStream: dailyNotifier.amplitudeStream,
-      onStop: _stopRecording,
-      onCancel: _discardRecording,
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        // Recording strip (replaces text field)
+        Expanded(
+          child: Container(
+            constraints: const BoxConstraints(minHeight: 48),
+            decoration: BoxDecoration(
+              color: isDark ? BrandColors.nightSurfaceElevated : BrandColors.cream,
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(
+                color: isPaused
+                    ? (isDark ? BrandColors.charcoal : BrandColors.stone)
+                    : BrandColors.forest.withValues(alpha: 0.4),
+                width: 1.5,
+              ),
+            ),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            child: Row(
+              children: [
+                // Recording indicator: breathing dot when active, static pause icon when paused
+                if (isPaused)
+                  Icon(Icons.pause, size: 14, color: BrandColors.driftwood)
+                else
+                  const _BreathingDot(),
+                const SizedBox(width: 8),
+
+                // Timer
+                Text(
+                  _formatDuration(recState.duration),
+                  style: TextStyle(
+                    color: isPaused ? BrandColors.driftwood : BrandColors.forest,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+
+                // Compact waveform — only visible when actively recording
+                if (!isPaused) ...[
+                  const SizedBox(width: 10),
+                  SizedBox(
+                    width: 80,
+                    child: RecordingWaveform(
+                      amplitudeStream: dailyNotifier.amplitudeStream,
+                      height: 18,
+                      barCount: 12,
+                      color: BrandColors.forest,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+
+        // Pause/Resume button
+        _buildPauseResumeButton(isDark, isPaused),
+        const SizedBox(width: 4),
+
+        // Stop button
+        _buildStopButton(isDark),
+      ],
     );
   }
 
   /// Build the normal input mode UI
-  Widget _buildInputMode(bool isDark, ThemeData theme) {
+  Widget _buildInputMode(bool isDark, ThemeData theme, DailyRecordingState recState) {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -404,27 +471,11 @@ class _JournalInputBarState extends ConsumerState<JournalInputBar> {
           const SizedBox(height: 8),
         ],
 
-        // Input row
+        // Input row: [TextField] [mic] [expand] [send]
         Row(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
-            // Voice record button
-            _buildVoiceButton(isDark),
-            const SizedBox(width: 4),
-
-            // Photo button
-            if (widget.onPhotoCaptured != null)
-              _buildPhotoButton(isDark),
-            if (widget.onPhotoCaptured != null)
-              const SizedBox(width: 4),
-
-            // Handwriting button
-            if (widget.onHandwritingCaptured != null)
-              _buildHandwritingButton(isDark),
-            if (widget.onHandwritingCaptured != null)
-              const SizedBox(width: 8),
-
-            // Text input field
+            // Text input field — takes most of the width
             Expanded(
               child: Container(
                 constraints: const BoxConstraints(maxHeight: 120),
@@ -465,6 +516,10 @@ class _JournalInputBarState extends ConsumerState<JournalInputBar> {
               ),
             ),
             const SizedBox(width: 8),
+
+            // Voice record button
+            _buildMicButton(isDark),
+            const SizedBox(width: 4),
 
             // Expand to full-screen compose
             _buildExpandButton(isDark),
@@ -557,7 +612,7 @@ class _JournalInputBarState extends ConsumerState<JournalInputBar> {
             ),
             const SizedBox(width: 8),
             Text(
-              _formatDuration(_recordingDuration),
+              _formatDuration(ref.watch(dailyRecordingProvider.select((s) => s.duration))),
               style: TextStyle(
                 color: BrandColors.error,
                 fontWeight: FontWeight.w500,
@@ -570,26 +625,23 @@ class _JournalInputBarState extends ConsumerState<JournalInputBar> {
     );
   }
 
-  Widget _buildVoiceButton(bool isDark) {
+  Widget _buildMicButton(bool isDark) {
     final isDisabled = _isProcessing;
-    final isActive = _isRecording;
 
     return GestureDetector(
-      onLongPress: isDisabled || isActive ? null : _showRecordingOptions,
+      onLongPress: isDisabled ? null : _showRecordingOptions,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
         width: 44,
         height: 44,
         decoration: BoxDecoration(
-          color: isActive
-              ? BrandColors.error
-              : (isDisabled
-                  ? (isDark ? BrandColors.charcoal : BrandColors.stone)
-                  : (isDark ? BrandColors.nightSurfaceElevated : BrandColors.forestMist)),
+          color: isDisabled
+              ? (isDark ? BrandColors.charcoal : BrandColors.stone)
+              : (isDark ? BrandColors.nightSurfaceElevated : BrandColors.forestMist),
           shape: BoxShape.circle,
         ),
         child: IconButton(
-          onPressed: isDisabled ? null : _toggleRecording,
+          onPressed: isDisabled ? null : _startRecording,
           icon: _isProcessing
               ? SizedBox(
                   width: 20,
@@ -602,10 +654,8 @@ class _JournalInputBarState extends ConsumerState<JournalInputBar> {
                   ),
                 )
               : Icon(
-                  isActive ? Icons.stop : Icons.mic,
-                  color: isActive
-                      ? BrandColors.softWhite
-                      : (isDisabled ? BrandColors.driftwood : BrandColors.forest),
+                  Icons.mic,
+                  color: isDisabled ? BrandColors.driftwood : BrandColors.forest,
                   size: 22,
                 ),
         ),
@@ -613,53 +663,50 @@ class _JournalInputBarState extends ConsumerState<JournalInputBar> {
     );
   }
 
-  Widget _buildPhotoButton(bool isDark) {
-    final isDisabled = _isRecording || _isProcessing;
-
+  Widget _buildPauseResumeButton(bool isDark, bool isPaused) {
     return AnimatedContainer(
       duration: const Duration(milliseconds: 200),
       width: 44,
       height: 44,
       decoration: BoxDecoration(
-        color: isDisabled
-            ? (isDark ? BrandColors.charcoal : BrandColors.stone)
-            : (isDark ? BrandColors.nightSurfaceElevated : BrandColors.forestMist),
+        color: isPaused
+            ? (isDark ? BrandColors.nightSurfaceElevated : BrandColors.forestMist)
+            : (isDark ? BrandColors.charcoal.withValues(alpha: 0.6) : BrandColors.stone.withValues(alpha: 0.6)),
         shape: BoxShape.circle,
       ),
       child: IconButton(
-        onPressed: isDisabled ? null : _showPhotoOptions,
-        tooltip: 'Add photo',
+        onPressed: isPaused ? _resumeRecording : _pauseRecording,
         icon: Icon(
-          Icons.camera_alt,
-          color: isDisabled ? BrandColors.driftwood : BrandColors.forest,
+          isPaused ? Icons.play_arrow_rounded : Icons.pause_rounded,
+          color: isPaused ? BrandColors.forest : BrandColors.driftwood,
           size: 22,
         ),
       ),
     );
   }
 
-  Widget _buildHandwritingButton(bool isDark) {
-    final isDisabled = _isRecording || _isProcessing;
-
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 200),
-      width: 44,
-      height: 44,
-      decoration: BoxDecoration(
-        color: isDisabled
-            ? (isDark ? BrandColors.charcoal : BrandColors.stone)
-            : (isDark ? BrandColors.nightSurfaceElevated : BrandColors.turquoise.withValues(alpha: 0.15)),
-        shape: BoxShape.circle,
-      ),
+  Widget _buildStopButton(bool isDark) {
+    return AnimatedBuilder(
+      animation: _breathingAnimation,
       child: IconButton(
-        onPressed: isDisabled ? null : _openHandwritingCanvas,
-        tooltip: 'Handwriting',
-        icon: Icon(
-          Icons.edit,
-          color: isDisabled ? BrandColors.driftwood : BrandColors.turquoise,
-          size: 22,
+        onPressed: _stopRecording,
+        icon: const Icon(
+          Icons.stop_rounded,
+          color: BrandColors.softWhite,
+          size: 24,
         ),
       ),
+      builder: (context, child) {
+        return Container(
+          width: 44,
+          height: 44,
+          decoration: BoxDecoration(
+            color: BrandColors.forest.withValues(alpha: _breathingAnimation.value),
+            shape: BoxShape.circle,
+          ),
+          child: child,
+        );
+      },
     );
   }
 
@@ -726,144 +773,6 @@ class _JournalInputBarState extends ConsumerState<JournalInputBar> {
     );
   }
 
-  /// Show photo options bottom sheet (camera / gallery)
-  void _showPhotoOptions() {
-    if (widget.onPhotoCaptured == null) return;
-
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: isDark ? BrandColors.nightSurfaceElevated : BrandColors.softWhite,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // Handle
-            Container(
-              margin: const EdgeInsets.only(top: 8),
-              width: 32,
-              height: 4,
-              decoration: BoxDecoration(
-                color: isDark ? BrandColors.charcoal : BrandColors.stone,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            const SizedBox(height: 16),
-
-            // Header
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: Text(
-                'Add Photo',
-                style: theme.textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w600,
-                  color: isDark ? BrandColors.softWhite : BrandColors.ink,
-                ),
-              ),
-            ),
-            const SizedBox(height: 8),
-
-            // Take photo option
-            ListTile(
-              leading: Icon(Icons.camera_alt, color: BrandColors.forest),
-              title: const Text('Take Photo'),
-              subtitle: const Text('Use your camera'),
-              onTap: () {
-                Navigator.pop(context);
-                _captureFromCamera();
-              },
-            ),
-
-            // Choose from gallery option
-            ListTile(
-              leading: Icon(Icons.photo_library, color: BrandColors.turquoise),
-              title: const Text('Choose from Gallery'),
-              subtitle: const Text('Select an existing photo'),
-              onTap: () {
-                Navigator.pop(context);
-                _selectFromGallery();
-              },
-            ),
-
-            const SizedBox(height: 8),
-          ],
-        ),
-      ),
-    );
-  }
-
-  /// Capture photo from camera (with optional cropping)
-  Future<void> _captureFromCamera() async {
-    if (widget.onPhotoCaptured == null) return;
-
-    try {
-      final captureService = ref.read(photoCaptureServiceProvider);
-      final result = await captureService.captureFromCameraWithCrop();
-
-      if (result != null && mounted) {
-        await widget.onPhotoCaptured!(result.relativePath);
-      }
-    } catch (e) {
-      debugPrint('[JournalInputBar] Camera capture failed: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to capture photo: $e'),
-            duration: const Duration(seconds: 3),
-          ),
-        );
-      }
-    }
-  }
-
-  /// Select photo from gallery (with cropping)
-  Future<void> _selectFromGallery() async {
-    if (widget.onPhotoCaptured == null) return;
-
-    try {
-      final captureService = ref.read(photoCaptureServiceProvider);
-      // Use cropping - great for screenshots where you want to crop to relevant content
-      final result = await captureService.selectFromGalleryWithCrop();
-
-      if (result != null && mounted) {
-        await widget.onPhotoCaptured!(result.relativePath);
-      }
-    } catch (e) {
-      debugPrint('[JournalInputBar] Gallery selection failed: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to select photo: $e'),
-            duration: const Duration(seconds: 3),
-          ),
-        );
-      }
-    }
-  }
-
-  /// Open handwriting canvas
-  Future<void> _openHandwritingCanvas() async {
-    if (widget.onHandwritingCaptured == null) return;
-
-    final result = await Navigator.push<String>(
-      context,
-      MaterialPageRoute(
-        builder: (context) => HandwritingScreen(
-          onSaved: (imagePath, linedBackground) {
-            widget.onHandwritingCaptured!(imagePath, linedBackground);
-          },
-        ),
-      ),
-    );
-
-    debugPrint('[JournalInputBar] Handwriting result: $result');
-  }
-
   Widget _buildExpandButton(bool isDark) {
     return SizedBox(
       width: 44,
@@ -871,7 +780,7 @@ class _JournalInputBarState extends ConsumerState<JournalInputBar> {
       child: Stack(
         children: [
           IconButton(
-            onPressed: _isRecording || _isProcessing ? null : _openComposeScreen,
+            onPressed: ref.watch(dailyRecordingProvider.select((s) => s.isRecording)) || _isProcessing ? null : _openComposeScreen,
             icon: Icon(
               Icons.open_in_full,
               color: isDark ? BrandColors.stone : BrandColors.charcoal,
@@ -937,7 +846,8 @@ class _JournalInputBarState extends ConsumerState<JournalInputBar> {
   }
 
   Widget _buildSendButton(bool isDark) {
-    final canSend = _hasText && !_isSubmitting && !_isRecording && !_isProcessing;
+    final isRecording = ref.watch(dailyRecordingProvider.select((s) => s.isRecording));
+    final canSend = _hasText && !_isSubmitting && !isRecording && !_isProcessing;
 
     return AnimatedContainer(
       duration: const Duration(milliseconds: 200),
@@ -970,6 +880,58 @@ class _JournalInputBarState extends ConsumerState<JournalInputBar> {
                 size: 22,
               ),
       ),
+    );
+  }
+}
+
+/// Small breathing dot indicating active recording
+///
+/// Forest green dot (8px) with opacity pulsing 0.4 → 1.0
+/// on a 1-second cycle. Subtle, non-alarming.
+class _BreathingDot extends StatefulWidget {
+  const _BreathingDot();
+
+  @override
+  State<_BreathingDot> createState() => _BreathingDotState();
+}
+
+class _BreathingDotState extends State<_BreathingDot>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  late final Animation<double> _animation;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1000),
+    )..repeat(reverse: true);
+    _animation = Tween(begin: 0.4, end: 1.0).animate(
+      CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _animation,
+      builder: (context, child) {
+        return Container(
+          width: 8,
+          height: 8,
+          decoration: BoxDecoration(
+            color: BrandColors.forest.withValues(alpha: _animation.value),
+            shape: BoxShape.circle,
+          ),
+        );
+      },
     );
   }
 }
