@@ -1359,10 +1359,15 @@ ref.read(journalScreenStateProvider.notifier).completeTranscription(entry.id);
         audioPlayer: entry.hasAudio ? _buildAudioPlayer(context, entry, isDark) : null,
         onSave: (updatedEntry) async {
           final api = ref.read(dailyApiServiceProvider);
+          final metadata = {
+            'title': updatedEntry.title,
+            if (updatedEntry.tags != null && updatedEntry.tags!.isNotEmpty)
+              'tags': updatedEntry.tags,
+          };
           final serverUpdated = await api.updateEntry(
             updatedEntry.id,
             content: updatedEntry.content,
-            metadata: {'title': updatedEntry.title},
+            metadata: metadata,
           );
           if (serverUpdated == null) {
             // Server unreachable — queue the edit for retry.

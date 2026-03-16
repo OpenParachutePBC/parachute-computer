@@ -61,6 +61,9 @@ class EntryMetadata {
   /// Whether handwriting entry has lined paper background
   final bool? linedBackground;
 
+  /// Tags for organizing entries (e.g., "recipe", "work", "urgent")
+  final List<String>? tags;
+
   const EntryMetadata({
     required this.type,
     this.audioPath,
@@ -69,14 +72,16 @@ class EntryMetadata {
     this.transcriptionStatus,
     this.createdTime,
     this.linedBackground,
+    this.tags,
   });
 
   /// Create from a simple audio path (legacy format compatibility)
-  factory EntryMetadata.fromAudioPath(String audioPath) {
+  factory EntryMetadata.fromAudioPath(String audioPath, {List<String>? tags}) {
     return EntryMetadata(
       type: JournalEntryType.voice,
       audioPath: audioPath,
       transcriptionStatus: TranscriptionStatus.complete,
+      tags: tags,
     );
   }
 
@@ -86,6 +91,7 @@ class EntryMetadata {
     required int durationSeconds,
     required String createdTime,
     bool hasPendingTranscription = false,
+    List<String>? tags,
   }) {
     return EntryMetadata(
       type: JournalEntryType.voice,
@@ -95,14 +101,16 @@ class EntryMetadata {
       transcriptionStatus: hasPendingTranscription
           ? TranscriptionStatus.pending
           : TranscriptionStatus.complete,
+      tags: tags,
     );
   }
 
   /// Create for a text entry
-  factory EntryMetadata.text({String? createdTime}) {
+  factory EntryMetadata.text({String? createdTime, List<String>? tags}) {
     return EntryMetadata(
       type: JournalEntryType.text,
       createdTime: createdTime,
+      tags: tags,
     );
   }
 
@@ -110,11 +118,13 @@ class EntryMetadata {
   factory EntryMetadata.photo({
     required String imagePath,
     required String createdTime,
+    List<String>? tags,
   }) {
     return EntryMetadata(
       type: JournalEntryType.photo,
       imagePath: imagePath,
       createdTime: createdTime,
+      tags: tags,
     );
   }
 
@@ -123,12 +133,14 @@ class EntryMetadata {
     required String imagePath,
     required String createdTime,
     bool linedBackground = false,
+    List<String>? tags,
   }) {
     return EntryMetadata(
       type: JournalEntryType.handwriting,
       imagePath: imagePath,
       createdTime: createdTime,
       linedBackground: linedBackground,
+      tags: tags,
     );
   }
 
@@ -152,6 +164,15 @@ class EntryMetadata {
       );
     }
 
+    // Parse tags from YAML (could be a list or null)
+    List<String>? tags;
+    final tagsValue = yaml['tags'];
+    if (tagsValue != null) {
+      if (tagsValue is List) {
+        tags = List<String>.from(tagsValue);
+      }
+    }
+
     return EntryMetadata(
       type: type,
       audioPath: yaml['audio'] as String?,
@@ -160,6 +181,7 @@ class EntryMetadata {
       transcriptionStatus: status,
       createdTime: yaml['created'] as String?,
       linedBackground: yaml['lined_background'] as bool?,
+      tags: tags,
     );
   }
 
@@ -187,6 +209,9 @@ class EntryMetadata {
     if (linedBackground != null) {
       map['lined_background'] = linedBackground;
     }
+    if (tags != null && tags!.isNotEmpty) {
+      map['tags'] = tags;
+    }
 
     return map;
   }
@@ -213,6 +238,7 @@ class EntryMetadata {
     TranscriptionStatus? transcriptionStatus,
     String? createdTime,
     bool? linedBackground,
+    List<String>? tags,
   }) {
     return EntryMetadata(
       type: type ?? this.type,
@@ -222,10 +248,11 @@ class EntryMetadata {
       transcriptionStatus: transcriptionStatus ?? this.transcriptionStatus,
       createdTime: createdTime ?? this.createdTime,
       linedBackground: linedBackground ?? this.linedBackground,
+      tags: tags ?? this.tags,
     );
   }
 
   @override
   String toString() =>
-      'EntryMetadata(type: $type, audio: $audioPath, image: $imagePath, duration: $durationSeconds, status: $transcriptionStatus)';
+      'EntryMetadata(type: $type, audio: $audioPath, image: $imagePath, duration: $durationSeconds, status: $transcriptionStatus, tags: $tags)';
 }

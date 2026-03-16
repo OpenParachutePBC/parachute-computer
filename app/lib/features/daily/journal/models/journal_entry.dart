@@ -75,6 +75,9 @@ class JournalEntry {
   /// Null means cleanup never ran (pre-pipeline entries).
   final CleanupStatus? cleanupStatus;
 
+  /// Tags for organizing entries (e.g., "recipe", "work", "urgent")
+  final List<String>? tags;
+
   const JournalEntry({
     required this.id,
     required this.title,
@@ -91,6 +94,7 @@ class JournalEntry {
     this.hasPendingEdit = false,
     this.serverTranscriptionStatus,
     this.cleanupStatus,
+    this.tags,
   }) : _isPendingTranscription = isPendingTranscription;
 
   /// Whether this entry has an associated audio file
@@ -239,6 +243,16 @@ class JournalEntry {
         transcriptionStatus == TranscriptionStatus.transcribed;
     final cleanupStr = meta['cleanup_status'] as String?;
     final cleanupStatus = _parseCleanupStatus(cleanupStr);
+
+    // Parse tags from metadata (could be a list or null)
+    List<String>? tags;
+    final tagsValue = meta['tags'];
+    if (tagsValue != null) {
+      if (tagsValue is List) {
+        tags = List<String>.from(tagsValue);
+      }
+    }
+
     return JournalEntry(
       id: json['id'] as String,
       title: meta['title'] as String? ?? '',
@@ -256,6 +270,7 @@ class JournalEntry {
       isPendingTranscription: isPending,
       serverTranscriptionStatus: transcriptionStatus,
       cleanupStatus: cleanupStatus,
+      tags: tags,
     );
   }
 
@@ -338,6 +353,7 @@ class JournalEntry {
     bool? hasPendingEdit,
     TranscriptionStatus? serverTranscriptionStatus,
     CleanupStatus? cleanupStatus,
+    List<String>? tags,
   }) {
     return JournalEntry(
       id: id ?? this.id,
@@ -355,6 +371,7 @@ class JournalEntry {
       hasPendingEdit: hasPendingEdit ?? this.hasPendingEdit,
       serverTranscriptionStatus: serverTranscriptionStatus ?? this.serverTranscriptionStatus,
       cleanupStatus: cleanupStatus ?? this.cleanupStatus,
+      tags: tags ?? this.tags,
     );
   }
 
