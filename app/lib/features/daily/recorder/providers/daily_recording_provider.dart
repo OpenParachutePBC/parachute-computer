@@ -97,6 +97,7 @@ class DailyRecordingNotifier extends StateNotifier<DailyRecordingState> {
 
       state = state.copyWith(
         isRecording: false,
+        isPaused: false,
         audioPath: audioPath,
       );
 
@@ -104,7 +105,7 @@ class DailyRecordingNotifier extends StateNotifier<DailyRecordingState> {
       return audioPath;
     } catch (e) {
       debugPrint('[DailyRecording] Failed to stop: $e');
-      state = state.copyWith(isRecording: false);
+      state = state.copyWith(isRecording: false, isPaused: false);
       return null;
     }
   }
