@@ -430,7 +430,7 @@ class _ActionIcon extends StatelessWidget {
       icon: Icon(
         icon,
         size: 20,
-        color: color ?? (isDark ? BrandColors.nightTextSecondary : BrandColors.stone),
+        color: color ?? (isDark ? BrandColors.nightText : BrandColors.driftwood),
       ),
       onPressed: onTap,
       tooltip: tooltip,
