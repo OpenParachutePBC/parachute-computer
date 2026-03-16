@@ -133,40 +133,6 @@ class WorkspaceContextBar extends ConsumerWidget {
                   ),
               ],
 
-              // Refresh sessions
-              _ActionIcon(
-                icon: Icons.refresh,
-                tooltip: 'Refresh',
-                isDark: isDark,
-                onTap: () {
-                  ref.invalidate(chatSessionsProvider);
-                  ref.invalidate(archivedSessionsProvider);
-                  ref.invalidate(containerSessionsProvider);
-                  ref.invalidate(containersProvider);
-                  ref.invalidate(allContainersProvider);
-                  ref.invalidate(containerSessionCountsProvider);
-                },
-              ),
-
-              // App settings
-              _ActionIcon(
-                icon: Icons.tune,
-                tooltip: 'Settings',
-                isDark: isDark,
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => const SettingsScreen()),
-                ),
-              ),
-
-              // Archive toggle
-              _ActionIcon(
-                icon: showArchived ? Icons.inbox : Icons.archive_outlined,
-                tooltip: showArchived ? 'Show active' : 'Show archived',
-                isDark: isDark,
-                onTap: onToggleArchive,
-              ),
-
               // New chat
               _ActionIcon(
                 icon: Icons.add,
@@ -174,6 +140,68 @@ class WorkspaceContextBar extends ConsumerWidget {
                 isDark: isDark,
                 color: isDark ? BrandColors.nightForest : BrandColors.forest,
                 onTap: onNewChat,
+              ),
+
+              // Overflow menu for secondary actions
+              PopupMenuButton<String>(
+                icon: Icon(
+                  Icons.more_vert,
+                  size: 20,
+                  color: isDark ? BrandColors.nightText : BrandColors.driftwood,
+                ),
+                tooltip: 'More',
+                constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                padding: EdgeInsets.zero,
+                onSelected: (value) {
+                  switch (value) {
+                    case 'refresh':
+                      ref.invalidate(chatSessionsProvider);
+                      ref.invalidate(archivedSessionsProvider);
+                      ref.invalidate(containerSessionsProvider);
+                      ref.invalidate(containersProvider);
+                      ref.invalidate(allContainersProvider);
+                      ref.invalidate(containerSessionCountsProvider);
+                    case 'archive':
+                      onToggleArchive();
+                    case 'settings':
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const SettingsScreen()),
+                      );
+                  }
+                },
+                itemBuilder: (context) => [
+                  const PopupMenuItem(
+                    value: 'refresh',
+                    child: ListTile(
+                      leading: Icon(Icons.refresh, size: 20),
+                      title: Text('Refresh'),
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                  ),
+                  PopupMenuItem(
+                    value: 'archive',
+                    child: ListTile(
+                      leading: Icon(
+                        showArchived ? Icons.inbox : Icons.archive_outlined,
+                        size: 20,
+                      ),
+                      title: Text(showArchived ? 'Show active' : 'Show archived'),
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                  ),
+                  const PopupMenuItem(
+                    value: 'settings',
+                    child: ListTile(
+                      leading: Icon(Icons.tune, size: 20),
+                      title: Text('Settings'),
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
@@ -577,7 +605,8 @@ class _ContainerSettingsSheetState
       builder: (dialogContext) {
         return StatefulBuilder(
           builder: (context, setDialogState) {
-            final nameMatches = confirmController.text == workspaceName;
+            final nameMatches = workspaceName.isNotEmpty &&
+                confirmController.text == workspaceName;
             return AlertDialog(
               title: Text('Delete "$workspaceName"?'),
               content: Column(
@@ -666,8 +695,18 @@ class _ContainerSettingsSheetState
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    // Populate controller once when data first arrives — ref.listen runs
-    // after the frame, not mid-build, so side effects are safe here.
+    // Populate controller from already-loaded data on first build.
+    if (!_controllersPopulated) {
+      ref.read(containersProvider).whenData((envs) {
+        final match = envs.firstWhereOrNull((e) => e.slug == widget.slug);
+        if (match != null) {
+          _nameController.text = match.displayName;
+          _controllersPopulated = true;
+        }
+      });
+    }
+
+    // Also listen for subsequent changes (e.g. if data loads after sheet opens).
     ref.listen<AsyncValue<List<ContainerEnv>>>(containersProvider, (prev, next) {
       if (_controllersPopulated) return;
       next.whenData((envs) {
