@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
@@ -53,11 +54,10 @@ class _SessionConfigSheetState extends ConsumerState<SessionConfigSheet> {
   /// Whether the session's container is an unnamed auto-sandbox (not a workspace).
   bool _hasUnnamedContainer(AsyncValue<List<ContainerEnv>> allContainersAsync) {
     if (_containerId == null) return false;
-    final envs = allContainersAsync.valueOrNull;
-    if (envs == null) return false;
-    final match = envs.where((e) => e.slug == _containerId);
-    if (match.isEmpty) return false;
-    return !match.first.isWorkspace;
+    return allContainersAsync.valueOrNull
+            ?.firstWhereOrNull((e) => e.slug == _containerId)
+            ?.isWorkspace ==
+        false;
   }
 
   bool get _isActivation => widget.session.isPendingInitialization;
@@ -184,7 +184,7 @@ class _SessionConfigSheetState extends ConsumerState<SessionConfigSheet> {
 
     return ConstrainedBox(
       constraints: BoxConstraints(
-        maxHeight: MediaQuery.of(context).size.height * 0.85,
+        maxHeight: MediaQuery.sizeOf(context).height * 0.85,
       ),
       child: Container(
         decoration: BoxDecoration(
