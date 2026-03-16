@@ -127,7 +127,7 @@ class WorkspaceContextBar extends ConsumerWidget {
                     icon: Icons.settings_outlined,
                     tooltip: 'Workspace Settings',
                     isDark: isDark,
-                    onTap: () => _openSettings(context, ref, isDark, activeSlug),
+                    onTap: () => ContainerSettingsSheet.show(context, ref, activeSlug),
                   ),
               ],
 
@@ -152,7 +152,7 @@ class WorkspaceContextBar extends ConsumerWidget {
 
           // Promotion banner for unnamed workspaces
           if (isActiveUnnamed)
-            _WorkspacePromotionBanner(slug: activeSlug, isDark: isDark),
+            _WorkspacePromotionBanner(slug: activeSlug),
 
           // Row 2: session count subtitle
           Padding(
@@ -378,14 +378,6 @@ class WorkspaceContextBar extends ConsumerWidget {
     );
   }
 
-  void _openSettings(
-    BuildContext context,
-    WidgetRef ref,
-    bool isDark,
-    String slug,
-  ) {
-    ContainerSettingsSheet.show(context, ref, slug);
-  }
 }
 
 /// Small icon button used in the context bar action row.
@@ -549,6 +541,7 @@ class _ContainerSettingsSheetState
   Future<void> _delete() async {
     final workspaceName = _nameController.text;
     final sessionCount = ref.read(containerSessionCountsProvider)[widget.slug] ?? 0;
+    final messenger = ScaffoldMessenger.of(context);
 
     final confirmController = TextEditingController();
     final confirmed = await showDialog<bool>(
@@ -634,7 +627,7 @@ class _ContainerSettingsSheetState
       if (mounted) Navigator.of(context).pop();
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        messenger.showSnackBar(
           SnackBar(content: Text('Failed to delete: $e')),
         );
       }
@@ -645,16 +638,17 @@ class _ContainerSettingsSheetState
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    // Watch reactively — populate controllers on first data arrival
-    final containersAsync = ref.watch(containersProvider);
-    containersAsync.whenData((envs) {
-      if (!_controllersPopulated) {
-        final match = envs.where((e) => e.slug == widget.slug);
-        if (match.isNotEmpty) {
-          _nameController.text = match.first.displayName;
+    // Populate controller once when data first arrives — ref.listen runs
+    // after the frame, not mid-build, so side effects are safe here.
+    ref.listen<AsyncValue<List<ContainerEnv>>>(containersProvider, (prev, next) {
+      if (_controllersPopulated) return;
+      next.whenData((envs) {
+        final match = envs.firstWhereOrNull((e) => e.slug == widget.slug);
+        if (match != null) {
+          _nameController.text = match.displayName;
           _controllersPopulated = true;
         }
-      }
+      });
     });
 
     return ConstrainedBox(
@@ -799,9 +793,8 @@ class _ContainerSettingsSheetState
 /// container to a named workspace directly from the context bar.
 class _WorkspacePromotionBanner extends ConsumerStatefulWidget {
   final String slug;
-  final bool isDark;
 
-  const _WorkspacePromotionBanner({required this.slug, required this.isDark});
+  const _WorkspacePromotionBanner({required this.slug});
 
   @override
   ConsumerState<_WorkspacePromotionBanner> createState() =>
@@ -823,6 +816,7 @@ class _WorkspacePromotionBannerState
     final name = _controller.text.trim();
     if (name.isEmpty) return;
 
+    final messenger = ScaffoldMessenger.of(context);
     setState(() => _isNaming = true);
     try {
       final service = ref.read(containerServiceProvider);
@@ -831,13 +825,13 @@ class _WorkspacePromotionBannerState
       ref.invalidate(allContainersProvider);
       if (mounted) {
         _controller.clear();
-        ScaffoldMessenger.of(context).showSnackBar(
+        messenger.showSnackBar(
           SnackBar(content: Text('Workspace named "$name"')),
         );
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        messenger.showSnackBar(
           SnackBar(content: Text('Failed to name workspace: $e')),
         );
       }
@@ -848,7 +842,7 @@ class _WorkspacePromotionBannerState
 
   @override
   Widget build(BuildContext context) {
-    final isDark = widget.isDark;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Container(
       margin: EdgeInsets.only(
         left: Spacing.sm,
