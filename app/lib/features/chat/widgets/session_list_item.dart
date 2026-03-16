@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/features/settings/models/trust_level.dart';
 import '../models/chat_session.dart';
-import 'session_config_sheet.dart';
 
 /// List item for displaying a chat session
 ///
@@ -75,7 +74,6 @@ class SessionListItem extends StatelessWidget {
       color: Colors.transparent,
       child: InkWell(
         onTap: onTap,
-        onLongPress: () => SessionConfigSheet.show(context, session),
         borderRadius: Radii.card,
         child: Container(
           padding: const EdgeInsets.all(Spacing.md),
