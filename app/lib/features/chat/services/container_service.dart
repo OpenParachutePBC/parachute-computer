@@ -16,12 +16,12 @@ class ContainerService {
         if (apiKey != null && apiKey!.isNotEmpty) 'X-API-Key': apiKey!,
       };
 
-  /// List all named containers.
-  Future<List<ContainerEnv>> listContainers() async {
-    final response = await _client.get(
-      Uri.parse('$baseUrl/api/containers'),
-      headers: _headers,
+  /// List containers, optionally filtering to workspaces only.
+  Future<List<ContainerEnv>> listContainers({bool workspacesOnly = false}) async {
+    final uri = Uri.parse(
+      '$baseUrl/api/containers${workspacesOnly ? '?workspaces_only=true' : ''}',
     );
+    final response = await _client.get(uri, headers: _headers);
 
     if (response.statusCode != 200) {
       throw Exception('Failed to list containers: ${response.statusCode}');

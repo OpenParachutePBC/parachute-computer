@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
@@ -50,15 +51,14 @@ class _SessionConfigSheetState extends ConsumerState<SessionConfigSheet> {
 
   static const _trustLevels = ['direct', 'sandboxed'];
 
-  /// UUID v4 pattern — unnamed containers have UUID slugs.
-  static final _uuidPattern = RegExp(
-    r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
-    caseSensitive: false,
-  );
-
-  /// Whether the session's container is unnamed (UUID slug).
-  bool get _hasUnnamedContainer =>
-      _containerId != null && _uuidPattern.hasMatch(_containerId!);
+  /// Whether the session's container is an unnamed auto-sandbox (not a workspace).
+  bool _hasUnnamedContainer(AsyncValue<List<ContainerEnv>> allContainersAsync) {
+    if (_containerId == null) return false;
+    return allContainersAsync.valueOrNull
+            ?.firstWhereOrNull((e) => e.slug == _containerId)
+            ?.isWorkspace ==
+        false;
+  }
 
   bool get _isActivation => widget.session.isPendingInitialization;
   bool get _isBotSession => widget.session.source.isBotSession;
@@ -180,11 +180,11 @@ class _SessionConfigSheetState extends ConsumerState<SessionConfigSheet> {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final session = widget.session;
-    final containerEnvsAsync = ref.watch(containersProvider);
+    final containerEnvsAsync = ref.watch(allContainersProvider);
 
     return ConstrainedBox(
       constraints: BoxConstraints(
-        maxHeight: MediaQuery.of(context).size.height * 0.85,
+        maxHeight: MediaQuery.sizeOf(context).height * 0.85,
       ),
       child: Container(
         decoration: BoxDecoration(
@@ -506,6 +506,7 @@ class _SessionConfigSheetState extends ConsumerState<SessionConfigSheet> {
       final service = ref.read(containerServiceProvider);
       await service.updateContainer(_containerId!, displayName: name);
       ref.invalidate(containersProvider);
+      ref.invalidate(allContainersProvider);
       if (mounted) {
         setState(() {
           _isNaming = false;
@@ -541,7 +542,7 @@ class _SessionConfigSheetState extends ConsumerState<SessionConfigSheet> {
         SizedBox(height: Spacing.xs),
 
         // Promotion banner for unnamed containers
-        if (_hasUnnamedContainer) ...[
+        if (_hasUnnamedContainer(containerEnvsAsync)) ...[
           Container(
             padding: EdgeInsets.all(Spacing.sm),
             decoration: BoxDecoration(

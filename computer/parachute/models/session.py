@@ -302,6 +302,12 @@ class Container(BaseModel):
         serialization_alias="coreMemory",
         description="Markdown context injected into system prompt for all conversations in this container",
     )
+    is_workspace: bool = Field(
+        default=False,
+        alias="isWorkspace",
+        serialization_alias="isWorkspace",
+        description="Whether this container has been promoted to a named workspace",
+    )
     credential_grants: list[dict] = Field(
         default_factory=list,
         alias="credentialGrants",

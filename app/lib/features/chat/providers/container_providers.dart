@@ -20,8 +20,15 @@ final containerServiceProvider = Provider<ContainerService>((ref) {
   return service;
 });
 
-/// Fetches all named containers from the server.
+/// Fetches workspace containers only (is_workspace=true).
 final containersProvider = FutureProvider.autoDispose<List<ContainerEnv>>((ref) async {
+  final service = ref.watch(containerServiceProvider);
+  return await service.listContainers(workspacesOnly: true);
+});
+
+/// Fetches all containers (workspaces + auto-sandboxes).
+/// Used by session config sheet where the user needs to see all containers.
+final allContainersProvider = FutureProvider.autoDispose<List<ContainerEnv>>((ref) async {
   final service = ref.watch(containerServiceProvider);
   return await service.listContainers();
 });

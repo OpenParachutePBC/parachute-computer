@@ -523,6 +523,7 @@ class _ContainerSettingsSheetState
         coreMemory: _memoryController.text.trim(),
       );
       ref.invalidate(containersProvider);
+      ref.invalidate(allContainersProvider);
       if (mounted) Navigator.of(context).pop();
     } catch (e) {
       if (mounted) {
@@ -534,32 +535,86 @@ class _ContainerSettingsSheetState
   }
 
   Future<void> _delete() async {
+    final workspaceName = _nameController.text;
+    final sessionCount = ref.read(containerSessionCountsProvider)[widget.slug] ?? 0;
+
+    final confirmController = TextEditingController();
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text('Delete "${_nameController.text}"?'),
-        content: const Text(
-          'Sessions in this workspace will be unlinked but not deleted.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            style: FilledButton.styleFrom(backgroundColor: BrandColors.error),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            final nameMatches = confirmController.text == workspaceName;
+            return AlertDialog(
+              title: Text('Delete "$workspaceName"?'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (sessionCount > 0)
+                    Padding(
+                      padding: EdgeInsets.only(bottom: Spacing.sm),
+                      child: Text(
+                        'This workspace has $sessionCount conversation${sessionCount == 1 ? '' : 's'} '
+                        'that will be ungrouped.',
+                      ),
+                    ),
+                  const Text(
+                    'The sandbox environment and all files will be permanently deleted.',
+                  ),
+                  SizedBox(height: Spacing.md),
+                  Text(
+                    'Type the workspace name to confirm:',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w500,
+                      fontSize: TypographyTokens.labelSmall,
+                    ),
+                  ),
+                  SizedBox(height: Spacing.xs),
+                  TextField(
+                    controller: confirmController,
+                    autofocus: true,
+                    decoration: InputDecoration(
+                      hintText: workspaceName,
+                      isDense: true,
+                      contentPadding: EdgeInsets.symmetric(
+                        horizontal: Spacing.sm,
+                        vertical: Spacing.sm,
+                      ),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(Spacing.xs),
+                      ),
+                    ),
+                    onChanged: (_) => setDialogState(() {}),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext, false),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: nameMatches
+                      ? () => Navigator.pop(dialogContext, true)
+                      : null,
+                  style: FilledButton.styleFrom(backgroundColor: BrandColors.error),
+                  child: const Text('Delete'),
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
+    confirmController.dispose();
     if (confirmed != true) return;
 
     try {
       final service = ref.read(containerServiceProvider);
       await service.deleteContainer(widget.slug);
       ref.invalidate(containersProvider);
+      ref.invalidate(allContainersProvider);
       final activeSlug = ref.read(activeContainerProvider).valueOrNull;
       if (activeSlug == widget.slug) {
         ref.read(activeContainerProvider.notifier).setContainer(null);
