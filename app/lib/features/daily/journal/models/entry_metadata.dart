@@ -22,6 +22,18 @@ enum TranscriptionStatus {
   failed,
 }
 
+/// Cleanup status for voice entries — whether LLM post-processing ran
+enum CleanupStatus {
+  /// Cleanup ran successfully and wrote cleaned text
+  completed,
+
+  /// Cleanup was skipped (e.g. no OAuth token)
+  skipped,
+
+  /// Cleanup attempted but failed
+  failed,
+}
+
 /// Rich metadata for a journal entry stored in frontmatter.
 ///
 /// This provides additional information beyond what's in the markdown body,

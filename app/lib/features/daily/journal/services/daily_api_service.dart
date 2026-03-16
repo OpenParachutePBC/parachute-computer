@@ -276,15 +276,19 @@ class DailyApiService {
     required File audioFile,
     required int durationSeconds,
     String? date,
+    String? replaceEntryId,
   }) async {
     final uri = Uri.parse('$baseUrl/api/daily/entries/voice');
-    debugPrint('[DailyApiService] POST $uri (voice entry upload)');
+    debugPrint('[DailyApiService] POST $uri (voice entry upload${replaceEntryId != null ? ', replacing $replaceEntryId' : ''})');
     try {
       final dateStr = date ?? _dateStr(DateTime.now());
       final request = http.MultipartRequest('POST', uri)
         ..files.add(await http.MultipartFile.fromPath('file', audioFile.path))
         ..fields['date'] = dateStr
         ..fields['duration_seconds'] = durationSeconds.toString();
+      if (replaceEntryId != null) {
+        request.fields['replace_entry_id'] = replaceEntryId;
+      }
       if (apiKey != null && apiKey!.isNotEmpty) {
         request.headers['X-API-Key'] = apiKey!;
       }
@@ -315,6 +319,28 @@ class DailyApiService {
     } catch (e) {
       debugPrint('[DailyApiService] uploadVoiceEntry error: $e');
       return null;
+    }
+  }
+
+  /// Trigger LLM cleanup on an existing entry's content.
+  ///
+  /// Returns true on success (cleanup started in background on server).
+  Future<bool> cleanupEntry(String entryId) async {
+    final uri = Uri.parse('$baseUrl/api/daily/entries/$entryId/cleanup');
+    debugPrint('[DailyApiService] POST $uri (cleanup entry)');
+    try {
+      final response = await _client
+          .post(uri, headers: _headers)
+          .timeout(const Duration(seconds: 30));
+      if (response.statusCode == 200) {
+        debugPrint('[DailyApiService] Cleanup started for $entryId');
+        return true;
+      }
+      debugPrint('[DailyApiService] cleanupEntry ${response.statusCode}: ${response.body}');
+      return false;
+    } catch (e) {
+      debugPrint('[DailyApiService] cleanupEntry error: $e');
+      return false;
     }
   }
 

@@ -1,5 +1,5 @@
 import 'package:flutter/foundation.dart';
-import 'entry_metadata.dart' show TranscriptionStatus;
+import 'entry_metadata.dart' show CleanupStatus, TranscriptionStatus;
 
 /// The type of a journal entry based on how it was created.
 enum JournalEntryType {
@@ -71,6 +71,10 @@ class JournalEntry {
   /// transcribed (raw text visible, cleanup running).
   final TranscriptionStatus? serverTranscriptionStatus;
 
+  /// Cleanup status from the server pipeline.
+  /// Null means cleanup never ran (pre-pipeline entries).
+  final CleanupStatus? cleanupStatus;
+
   const JournalEntry({
     required this.id,
     required this.title,
@@ -86,6 +90,7 @@ class JournalEntry {
     this.isPending = false,
     this.hasPendingEdit = false,
     this.serverTranscriptionStatus,
+    this.cleanupStatus,
   }) : _isPendingTranscription = isPendingTranscription;
 
   /// Whether this entry has an associated audio file
@@ -115,6 +120,15 @@ class JournalEntry {
   /// Whether server transcription failed
   bool get isTranscriptionFailed =>
       serverTranscriptionStatus == TranscriptionStatus.failed;
+
+  /// Whether this entry has been cleaned up by the LLM
+  bool get isCleanedUp => cleanupStatus == CleanupStatus.completed;
+
+  /// Whether this voice entry needs cleanup (never ran, skipped, or failed)
+  bool get needsCleanup =>
+      type == JournalEntryType.voice &&
+      !isServerProcessing &&
+      cleanupStatus != CleanupStatus.completed;
 
   /// Format the H1 line for this entry
   String get h1Line => '# para:$id $title';
@@ -223,6 +237,8 @@ class JournalEntry {
     final transcriptionStatus = _parseTranscriptionStatus(statusStr);
     final isPending = transcriptionStatus == TranscriptionStatus.processing ||
         transcriptionStatus == TranscriptionStatus.transcribed;
+    final cleanupStr = meta['cleanup_status'] as String?;
+    final cleanupStatus = _parseCleanupStatus(cleanupStr);
     return JournalEntry(
       id: json['id'] as String,
       title: meta['title'] as String? ?? '',
@@ -239,6 +255,7 @@ class JournalEntry {
       },
       isPendingTranscription: isPending,
       serverTranscriptionStatus: transcriptionStatus,
+      cleanupStatus: cleanupStatus,
     );
   }
 
@@ -246,6 +263,15 @@ class JournalEntry {
   static TranscriptionStatus? _parseTranscriptionStatus(String? status) {
     if (status == null) return null;
     return TranscriptionStatus.values.cast<TranscriptionStatus?>().firstWhere(
+      (s) => s?.name == status,
+      orElse: () => null,
+    );
+  }
+
+  /// Parse a server cleanup_status string into a [CleanupStatus].
+  static CleanupStatus? _parseCleanupStatus(String? status) {
+    if (status == null) return null;
+    return CleanupStatus.values.cast<CleanupStatus?>().firstWhere(
       (s) => s?.name == status,
       orElse: () => null,
     );
@@ -311,6 +337,7 @@ class JournalEntry {
     bool? isPending,
     bool? hasPendingEdit,
     TranscriptionStatus? serverTranscriptionStatus,
+    CleanupStatus? cleanupStatus,
   }) {
     return JournalEntry(
       id: id ?? this.id,
@@ -327,6 +354,7 @@ class JournalEntry {
       isPending: isPending ?? this.isPending,
       hasPendingEdit: hasPendingEdit ?? this.hasPendingEdit,
       serverTranscriptionStatus: serverTranscriptionStatus ?? this.serverTranscriptionStatus,
+      cleanupStatus: cleanupStatus ?? this.cleanupStatus,
     );
   }
 
