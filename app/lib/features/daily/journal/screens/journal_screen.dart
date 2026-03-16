@@ -198,9 +198,6 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
                 onVoiceRecorded: (transcript, audioPath, duration) =>
                     _addVoiceEntry(transcript, audioPath, duration),
                 onTranscriptReady: (transcript) => _updatePendingTranscription(transcript),
-                onPhotoCaptured: (imagePath) => _addPhotoEntry(imagePath),
-                onHandwritingCaptured: (imagePath, linedBackground) =>
-                    _addHandwritingEntry(imagePath, linedBackground),
                 onComposeSubmitted: (title, content) =>
                     _addComposeEntry(title, content),
               ),
@@ -719,40 +716,6 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
         _startPollingEntry(entry.id);
       }
     }
-  }
-
-  Future<void> _addPhotoEntry(String imagePath) async {
-    debugPrint('[JournalScreen] Adding photo entry via API...');
-    final api = ref.read(dailyApiServiceProvider);
-    final entry = await api.createEntry(
-      content: '',
-      metadata: {'type': 'photo', 'image_path': imagePath},
-    );
-    await _appendEntryToCache(
-      entry,
-      content: '',
-      type: JournalEntryType.photo,
-      imagePath: imagePath,
-    );
-  }
-
-  Future<void> _addHandwritingEntry(String imagePath, bool linedBackground) async {
-    debugPrint('[JournalScreen] Adding handwriting entry via API...');
-    final api = ref.read(dailyApiServiceProvider);
-    final entry = await api.createEntry(
-      content: '',
-      metadata: {
-        'type': 'handwriting',
-        'image_path': imagePath,
-        if (linedBackground) 'lined_background': true,
-      },
-    );
-    await _appendEntryToCache(
-      entry,
-      content: '',
-      type: JournalEntryType.handwriting,
-      imagePath: imagePath,
-    );
   }
 
   Future<void> _updatePendingTranscription(String transcript) async {

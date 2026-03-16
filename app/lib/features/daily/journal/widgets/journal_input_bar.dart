@@ -5,8 +5,6 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/core/providers/model_download_provider.dart';
-import '../../capture/providers/capture_providers.dart';
-import '../../capture/screens/handwriting_screen.dart';
 import '../../recorder/providers/service_providers.dart';
 import '../screens/compose_screen.dart';
 import '../providers/compose_draft_provider.dart';
@@ -14,7 +12,7 @@ import '../providers/journal_screen_state_provider.dart';
 import '../../recorder/providers/transcription_progress_provider.dart';
 import '../../recorder/providers/daily_recording_provider.dart';
 import '../../recorder/providers/post_hoc_transcription_provider.dart';
-import '../../recorder/widgets/daily_recording_overlay.dart';
+import '../../recorder/widgets/recording_waveform.dart';
 import 'package:parachute/features/settings/screens/settings_screen.dart';
 
 /// Input bar for adding entries to the journal
@@ -27,10 +25,6 @@ class JournalInputBar extends ConsumerStatefulWidget {
       onVoiceRecorded;
   /// Called when background transcription completes - allows updating the entry
   final Future<void> Function(String transcript)? onTranscriptReady;
-  /// Called when a photo is captured from camera or gallery
-  final Future<void> Function(String imagePath)? onPhotoCaptured;
-  /// Called when handwriting canvas is saved
-  final Future<void> Function(String imagePath, bool linedBackground)? onHandwritingCaptured;
   /// Called when the full-screen compose screen saves an entry (title + content)
   final Future<void> Function(String title, String content)? onComposeSubmitted;
 
@@ -39,8 +33,6 @@ class JournalInputBar extends ConsumerStatefulWidget {
     required this.onTextSubmitted,
     this.onVoiceRecorded,
     this.onTranscriptReady,
-    this.onPhotoCaptured,
-    this.onHandwritingCaptured,
     this.onComposeSubmitted,
   });
 
@@ -48,7 +40,8 @@ class JournalInputBar extends ConsumerStatefulWidget {
   ConsumerState<JournalInputBar> createState() => _JournalInputBarState();
 }
 
-class _JournalInputBarState extends ConsumerState<JournalInputBar> {
+class _JournalInputBarState extends ConsumerState<JournalInputBar>
+    with SingleTickerProviderStateMixin {
   final TextEditingController _controller = TextEditingController();
   final FocusNode _focusNode = FocusNode();
   bool _isRecording = false;
@@ -57,9 +50,23 @@ class _JournalInputBarState extends ConsumerState<JournalInputBar> {
   bool _hasPendingDraft = false;
   Duration _recordingDuration = Duration.zero;
   Timer? _durationTimer;
+
+  /// Breathing animation for the stop button during recording
+  late final AnimationController _breathingController;
+  late final Animation<double> _breathingAnimation;
   @override
   void initState() {
     super.initState();
+
+    // Breathing animation for stop button during recording
+    _breathingController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1500),
+    );
+    _breathingAnimation = Tween(begin: 0.85, end: 1.0).animate(
+      CurvedAnimation(parent: _breathingController, curve: Curves.easeInOut),
+    );
+
     // Trigger transcription model initialization in background
     // so it's ready when user wants to record
     _initializeTranscriptionModel();
@@ -104,6 +111,7 @@ class _JournalInputBarState extends ConsumerState<JournalInputBar> {
     _controller.dispose();
     _focusNode.dispose();
     _durationTimer?.cancel();
+    _breathingController.dispose();
     super.dispose();
   }
 
@@ -204,6 +212,9 @@ class _JournalInputBarState extends ConsumerState<JournalInputBar> {
         _recordingDuration = Duration.zero;
       });
 
+      // Start breathing animation for stop button
+      _breathingController.repeat(reverse: true);
+
       // Duration tracking is handled by DailyRecordingProvider,
       // but we keep local state for the minimum duration check
       _durationTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
@@ -238,6 +249,8 @@ class _JournalInputBarState extends ConsumerState<JournalInputBar> {
 
     _durationTimer?.cancel();
     _durationTimer = null;
+    _breathingController.stop();
+    _breathingController.reset();
 
     debugPrint('[JournalInputBar] Discarding recording');
 
@@ -284,6 +297,9 @@ class _JournalInputBarState extends ConsumerState<JournalInputBar> {
 
   /// Stop Daily recording and trigger post-hoc transcription
   Future<void> _stopDailyRecording(int durationSeconds) async {
+    _breathingController.stop();
+    _breathingController.reset();
+
     setState(() {
       _isRecording = false;
       _isProcessing = true;
@@ -343,14 +359,6 @@ class _JournalInputBarState extends ConsumerState<JournalInputBar> {
     }
   }
 
-  void _toggleRecording() {
-    if (_isRecording) {
-      _stopRecording();
-    } else {
-      _startRecording();
-    }
-  }
-
   String _formatDuration(Duration duration) {
     final minutes = duration.inMinutes;
     final seconds = duration.inSeconds.remainder(60);
@@ -382,14 +390,62 @@ class _JournalInputBarState extends ConsumerState<JournalInputBar> {
     );
   }
 
-  /// Build the recording mode UI — calm waveform + timer, no live text
+  /// Build the inline recording mode — thin waveform + timer in the text field area
   Widget _buildRecordingMode(bool isDark, ThemeData theme) {
     final dailyNotifier = ref.read(dailyRecordingProvider.notifier);
 
-    return DailyRecordingOverlay(
-      amplitudeStream: dailyNotifier.amplitudeStream,
-      onStop: _stopRecording,
-      onCancel: _discardRecording,
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        // Recording strip (replaces text field)
+        Expanded(
+          child: Container(
+            constraints: const BoxConstraints(minHeight: 48),
+            decoration: BoxDecoration(
+              color: isDark ? BrandColors.nightSurfaceElevated : BrandColors.cream,
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(
+                color: BrandColors.forest.withValues(alpha: 0.4),
+                width: 1.5,
+              ),
+            ),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            child: Row(
+              children: [
+                // Breathing recording dot
+                const _BreathingDot(),
+                const SizedBox(width: 8),
+
+                // Timer
+                Text(
+                  _formatDuration(_recordingDuration),
+                  style: TextStyle(
+                    color: BrandColors.forest,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+                const SizedBox(width: 12),
+
+                // Thin waveform
+                Expanded(
+                  child: RecordingWaveform(
+                    amplitudeStream: dailyNotifier.amplitudeStream,
+                    height: 24,
+                    barCount: 20,
+                    color: BrandColors.forest,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+
+        // Stop button (same position as mic button)
+        _buildStopButton(isDark),
+      ],
     );
   }
 
@@ -404,27 +460,11 @@ class _JournalInputBarState extends ConsumerState<JournalInputBar> {
           const SizedBox(height: 8),
         ],
 
-        // Input row
+        // Input row: [TextField] [mic] [expand] [send]
         Row(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
-            // Voice record button
-            _buildVoiceButton(isDark),
-            const SizedBox(width: 4),
-
-            // Photo button
-            if (widget.onPhotoCaptured != null)
-              _buildPhotoButton(isDark),
-            if (widget.onPhotoCaptured != null)
-              const SizedBox(width: 4),
-
-            // Handwriting button
-            if (widget.onHandwritingCaptured != null)
-              _buildHandwritingButton(isDark),
-            if (widget.onHandwritingCaptured != null)
-              const SizedBox(width: 8),
-
-            // Text input field
+            // Text input field — takes most of the width
             Expanded(
               child: Container(
                 constraints: const BoxConstraints(maxHeight: 120),
@@ -465,6 +505,10 @@ class _JournalInputBarState extends ConsumerState<JournalInputBar> {
               ),
             ),
             const SizedBox(width: 8),
+
+            // Voice record button
+            _buildMicButton(isDark),
+            const SizedBox(width: 4),
 
             // Expand to full-screen compose
             _buildExpandButton(isDark),
@@ -570,26 +614,23 @@ class _JournalInputBarState extends ConsumerState<JournalInputBar> {
     );
   }
 
-  Widget _buildVoiceButton(bool isDark) {
+  Widget _buildMicButton(bool isDark) {
     final isDisabled = _isProcessing;
-    final isActive = _isRecording;
 
     return GestureDetector(
-      onLongPress: isDisabled || isActive ? null : _showRecordingOptions,
+      onLongPress: isDisabled ? null : _showRecordingOptions,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
         width: 44,
         height: 44,
         decoration: BoxDecoration(
-          color: isActive
-              ? BrandColors.error
-              : (isDisabled
-                  ? (isDark ? BrandColors.charcoal : BrandColors.stone)
-                  : (isDark ? BrandColors.nightSurfaceElevated : BrandColors.forestMist)),
+          color: isDisabled
+              ? (isDark ? BrandColors.charcoal : BrandColors.stone)
+              : (isDark ? BrandColors.nightSurfaceElevated : BrandColors.forestMist),
           shape: BoxShape.circle,
         ),
         child: IconButton(
-          onPressed: isDisabled ? null : _toggleRecording,
+          onPressed: isDisabled ? null : _startRecording,
           icon: _isProcessing
               ? SizedBox(
                   width: 20,
@@ -602,10 +643,8 @@ class _JournalInputBarState extends ConsumerState<JournalInputBar> {
                   ),
                 )
               : Icon(
-                  isActive ? Icons.stop : Icons.mic,
-                  color: isActive
-                      ? BrandColors.softWhite
-                      : (isDisabled ? BrandColors.driftwood : BrandColors.forest),
+                  Icons.mic,
+                  color: isDisabled ? BrandColors.driftwood : BrandColors.forest,
                   size: 22,
                 ),
         ),
@@ -613,53 +652,27 @@ class _JournalInputBarState extends ConsumerState<JournalInputBar> {
     );
   }
 
-  Widget _buildPhotoButton(bool isDark) {
-    final isDisabled = _isRecording || _isProcessing;
-
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 200),
-      width: 44,
-      height: 44,
-      decoration: BoxDecoration(
-        color: isDisabled
-            ? (isDark ? BrandColors.charcoal : BrandColors.stone)
-            : (isDark ? BrandColors.nightSurfaceElevated : BrandColors.forestMist),
-        shape: BoxShape.circle,
-      ),
-      child: IconButton(
-        onPressed: isDisabled ? null : _showPhotoOptions,
-        tooltip: 'Add photo',
-        icon: Icon(
-          Icons.camera_alt,
-          color: isDisabled ? BrandColors.driftwood : BrandColors.forest,
-          size: 22,
-        ),
-      ),
-    );
-  }
-
-  Widget _buildHandwritingButton(bool isDark) {
-    final isDisabled = _isRecording || _isProcessing;
-
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 200),
-      width: 44,
-      height: 44,
-      decoration: BoxDecoration(
-        color: isDisabled
-            ? (isDark ? BrandColors.charcoal : BrandColors.stone)
-            : (isDark ? BrandColors.nightSurfaceElevated : BrandColors.turquoise.withValues(alpha: 0.15)),
-        shape: BoxShape.circle,
-      ),
-      child: IconButton(
-        onPressed: isDisabled ? null : _openHandwritingCanvas,
-        tooltip: 'Handwriting',
-        icon: Icon(
-          Icons.edit,
-          color: isDisabled ? BrandColors.driftwood : BrandColors.turquoise,
-          size: 22,
-        ),
-      ),
+  Widget _buildStopButton(bool isDark) {
+    return AnimatedBuilder(
+      animation: _breathingAnimation,
+      builder: (context, child) {
+        return Container(
+          width: 44,
+          height: 44,
+          decoration: BoxDecoration(
+            color: BrandColors.forest.withValues(alpha: _breathingAnimation.value),
+            shape: BoxShape.circle,
+          ),
+          child: IconButton(
+            onPressed: _stopRecording,
+            icon: Icon(
+              Icons.stop_rounded,
+              color: BrandColors.softWhite,
+              size: 24,
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -724,144 +737,6 @@ class _JournalInputBarState extends ConsumerState<JournalInputBar> {
         ),
       ),
     );
-  }
-
-  /// Show photo options bottom sheet (camera / gallery)
-  void _showPhotoOptions() {
-    if (widget.onPhotoCaptured == null) return;
-
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: isDark ? BrandColors.nightSurfaceElevated : BrandColors.softWhite,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // Handle
-            Container(
-              margin: const EdgeInsets.only(top: 8),
-              width: 32,
-              height: 4,
-              decoration: BoxDecoration(
-                color: isDark ? BrandColors.charcoal : BrandColors.stone,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            const SizedBox(height: 16),
-
-            // Header
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: Text(
-                'Add Photo',
-                style: theme.textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w600,
-                  color: isDark ? BrandColors.softWhite : BrandColors.ink,
-                ),
-              ),
-            ),
-            const SizedBox(height: 8),
-
-            // Take photo option
-            ListTile(
-              leading: Icon(Icons.camera_alt, color: BrandColors.forest),
-              title: const Text('Take Photo'),
-              subtitle: const Text('Use your camera'),
-              onTap: () {
-                Navigator.pop(context);
-                _captureFromCamera();
-              },
-            ),
-
-            // Choose from gallery option
-            ListTile(
-              leading: Icon(Icons.photo_library, color: BrandColors.turquoise),
-              title: const Text('Choose from Gallery'),
-              subtitle: const Text('Select an existing photo'),
-              onTap: () {
-                Navigator.pop(context);
-                _selectFromGallery();
-              },
-            ),
-
-            const SizedBox(height: 8),
-          ],
-        ),
-      ),
-    );
-  }
-
-  /// Capture photo from camera (with optional cropping)
-  Future<void> _captureFromCamera() async {
-    if (widget.onPhotoCaptured == null) return;
-
-    try {
-      final captureService = ref.read(photoCaptureServiceProvider);
-      final result = await captureService.captureFromCameraWithCrop();
-
-      if (result != null && mounted) {
-        await widget.onPhotoCaptured!(result.relativePath);
-      }
-    } catch (e) {
-      debugPrint('[JournalInputBar] Camera capture failed: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to capture photo: $e'),
-            duration: const Duration(seconds: 3),
-          ),
-        );
-      }
-    }
-  }
-
-  /// Select photo from gallery (with cropping)
-  Future<void> _selectFromGallery() async {
-    if (widget.onPhotoCaptured == null) return;
-
-    try {
-      final captureService = ref.read(photoCaptureServiceProvider);
-      // Use cropping - great for screenshots where you want to crop to relevant content
-      final result = await captureService.selectFromGalleryWithCrop();
-
-      if (result != null && mounted) {
-        await widget.onPhotoCaptured!(result.relativePath);
-      }
-    } catch (e) {
-      debugPrint('[JournalInputBar] Gallery selection failed: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to select photo: $e'),
-            duration: const Duration(seconds: 3),
-          ),
-        );
-      }
-    }
-  }
-
-  /// Open handwriting canvas
-  Future<void> _openHandwritingCanvas() async {
-    if (widget.onHandwritingCaptured == null) return;
-
-    final result = await Navigator.push<String>(
-      context,
-      MaterialPageRoute(
-        builder: (context) => HandwritingScreen(
-          onSaved: (imagePath, linedBackground) {
-            widget.onHandwritingCaptured!(imagePath, linedBackground);
-          },
-        ),
-      ),
-    );
-
-    debugPrint('[JournalInputBar] Handwriting result: $result');
   }
 
   Widget _buildExpandButton(bool isDark) {
@@ -970,6 +845,58 @@ class _JournalInputBarState extends ConsumerState<JournalInputBar> {
                 size: 22,
               ),
       ),
+    );
+  }
+}
+
+/// Small breathing dot indicating active recording
+///
+/// Forest green dot (8px) with opacity pulsing 0.4 → 1.0
+/// on a 1-second cycle. Subtle, non-alarming.
+class _BreathingDot extends StatefulWidget {
+  const _BreathingDot();
+
+  @override
+  State<_BreathingDot> createState() => _BreathingDotState();
+}
+
+class _BreathingDotState extends State<_BreathingDot>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  late final Animation<double> _animation;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1000),
+    )..repeat(reverse: true);
+    _animation = Tween(begin: 0.4, end: 1.0).animate(
+      CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _animation,
+      builder: (context, child) {
+        return Container(
+          width: 8,
+          height: 8,
+          decoration: BoxDecoration(
+            color: BrandColors.forest.withValues(alpha: _animation.value),
+            shape: BoxShape.circle,
+          ),
+        );
+      },
     );
   }
 }
