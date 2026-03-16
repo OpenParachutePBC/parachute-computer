@@ -28,7 +28,7 @@ from parachute.core.hooks.runner import HookRunner
 
 class TestHookEvent:
     def test_event_count(self):
-        assert len(HookEvent) == 16
+        assert len(HookEvent) == 17
 
     def test_session_events(self):
         assert HookEvent.SESSION_CREATED == "session.created"

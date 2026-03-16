@@ -84,6 +84,8 @@ class DailyAgentConfig:
         tools: list[str] | None = None,
         raw_metadata: dict[str, Any] | None = None,
         trust_level: str = "sandboxed",
+        trigger_event: str = "",
+        trigger_filter: dict[str, Any] | None = None,
     ):
         self.name = name
         self.display_name = display_name
@@ -94,6 +96,8 @@ class DailyAgentConfig:
         self.tools = tools or ["read_journal", "read_chat_log", "read_recent_journals"]
         self.raw_metadata = raw_metadata or {}
         self.trust_level = trust_level if trust_level in ("sandboxed", "direct") else "sandboxed"
+        self.trigger_event = trigger_event
+        self.trigger_filter = trigger_filter or {}
 
     @classmethod
     def from_row(cls, row: dict) -> "DailyAgentConfig":
@@ -106,6 +110,13 @@ class DailyAgentConfig:
         schedule_enabled = row.get("schedule_enabled", "true")
         if isinstance(schedule_enabled, str):
             schedule_enabled = schedule_enabled.lower() == "true"
+        # Parse trigger_filter JSON
+        trigger_filter_raw = row.get("trigger_filter") or "{}"
+        try:
+            trigger_filter = json.loads(trigger_filter_raw) if isinstance(trigger_filter_raw, str) else trigger_filter_raw
+        except (json.JSONDecodeError, TypeError):
+            trigger_filter = {}
+
         return cls(
             name=row["name"],
             display_name=row.get("display_name") or row["name"].replace("-", " ").title(),
@@ -116,6 +127,8 @@ class DailyAgentConfig:
             tools=tools,
             raw_metadata={"model": row.get("model", "")},
             trust_level=row.get("trust_level") or "sandboxed",
+            trigger_event=row.get("trigger_event") or "",
+            trigger_filter=trigger_filter,
         )
 
     def get_schedule_hour_minute(self) -> tuple[int, int]:
@@ -721,3 +734,131 @@ Use the tools available to you:
 
 When you're ready, use `write_output` with date "{output_date}" to save your output.
 """
+
+
+# ---------------------------------------------------------------------------
+# Triggered Caller execution — runs a Caller on a specific Note
+# ---------------------------------------------------------------------------
+
+_EVENT_DESCRIPTIONS = {
+    "note.created": "created",
+    "note.transcription_complete": "transcribed (voice transcription completed)",
+}
+
+
+async def run_triggered_caller(
+    vault_path: Path,
+    agent_name: str,
+    entry_id: str,
+    event: str,
+    entry_data: dict | None = None,
+) -> dict[str, Any]:
+    """
+    Run a triggered Caller on a specific Note.
+
+    Unlike run_daily_agent() which is day-scoped and produces Cards, this
+    function is note-scoped and transforms the triggering Note in place.
+
+    Args:
+        vault_path: Path to the vault
+        agent_name: Name of the Caller (e.g., "transcription-cleanup")
+        entry_id: The Note entry_id to process
+        event: The event that triggered this (e.g., "note.transcription_complete")
+        entry_data: Pre-fetched entry data (avoids extra graph read)
+
+    Returns:
+        Result dict with status, agent, entry_id, etc.
+    """
+    config = await get_daily_agent_config(vault_path, agent_name)
+    if not config:
+        return {
+            "status": "error",
+            "agent": agent_name,
+            "entry_id": entry_id,
+            "error": f"Caller '{agent_name}' not found",
+        }
+
+    graph = _get_graph()
+    if graph is None:
+        return {
+            "status": "error",
+            "agent": agent_name,
+            "entry_id": entry_id,
+            "error": "BrainDB unavailable",
+        }
+
+    # Load entry data if not pre-fetched
+    if entry_data is None:
+        rows = await graph.execute_cypher(
+            "MATCH (e:Note {entry_id: $entry_id}) RETURN e",
+            {"entry_id": entry_id},
+        )
+        if not rows:
+            return {
+                "status": "error",
+                "agent": agent_name,
+                "entry_id": entry_id,
+                "error": f"Entry '{entry_id}' not found",
+            }
+        entry_data = rows[0]
+
+    entry_type = entry_data.get("entry_type") or "text"
+    entry_date = entry_data.get("date") or ""
+
+    # Load runtime state from the Caller graph node
+    caller_state = await _load_caller_state(graph, agent_name)
+
+    # Build system prompt with user context
+    user_name, user_context = load_user_context(vault_path)
+    system_prompt = config.system_prompt
+    if "{user_name}" in system_prompt or "{user_context}" in system_prompt:
+        system_prompt = system_prompt.format(user_name=user_name, user_context=user_context)
+    elif user_context:
+        system_prompt = system_prompt + f"\n\n## User Context\n\n{user_context}"
+
+    # Build note-scoped prompt
+    event_desc = _EVENT_DESCRIPTIONS.get(event, event)
+    prompt_text = (
+        f"A note has been {event_desc}. Use your tools to process it.\n\n"
+        f"Entry ID: {entry_id}\n"
+        f"Entry type: {entry_type}\n"
+        f"Date: {entry_date}\n\n"
+        f"Start by using `read_entry` to read the note's content, then process it "
+        f"according to your instructions."
+    )
+
+    # Create note-scoped tools
+    from parachute.core.triggered_caller_tools import create_triggered_caller_tools
+
+    async def _create_tools(vp, cfg):
+        return create_triggered_caller_tools(
+            graph=graph,
+            entry_id=entry_id,
+            allowed_tools=cfg.tools,
+            caller_name=cfg.name,
+        )
+
+    logger.info(
+        f"Running triggered caller '{agent_name}' on entry {entry_id} "
+        f"(event={event}, tools={config.tools})"
+    )
+
+    # Triggered callers run direct (no sandbox, no Card)
+    result = await _run_direct(
+        config=config,
+        system_prompt=system_prompt,
+        prompt_text=prompt_text,
+        caller_state=caller_state,
+        card_id="",  # No Card for triggered callers
+        date=entry_date,
+        output_date=entry_date,
+        vault_path=vault_path,
+        graph=graph,
+        create_tools_fn=_create_tools,
+    )
+
+    result["entry_id"] = entry_id
+    result["event"] = event
+    result["execution_type"] = "triggered"
+
+    return result

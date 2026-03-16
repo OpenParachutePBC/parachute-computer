@@ -26,6 +26,7 @@ class HookEvent(str, Enum):
     # Daily events
     DAILY_ENTRY_CREATED = "daily.entry.created"
     DAILY_ENTRY_UPDATED = "daily.entry.updated"
+    DAILY_ENTRY_TRANSCRIPTION_COMPLETE = "daily.entry.transcription_complete"
 
     # Bot events
     BOT_MESSAGE_RECEIVED = "bot.message.received"

@@ -50,7 +50,7 @@ logger = logging.getLogger(__name__)
 # shape as the POST /callers body so the client can create directly from them.
 
 
-class CallerTemplateDict(TypedDict):
+class CallerTemplateDict(TypedDict, total=False):
     name: str
     display_name: str
     description: str
@@ -58,6 +58,8 @@ class CallerTemplateDict(TypedDict):
     tools: list[str]
     schedule_time: str
     trust_level: str
+    trigger_event: str
+    trigger_filter: str
 
 
 CALLER_TEMPLATES: list[CallerTemplateDict] = [
@@ -92,6 +94,31 @@ CALLER_TEMPLATES: list[CallerTemplateDict] = [
         "tools": ["read_journal", "read_chat_log", "read_recent_journals"],
         "schedule_time": "21:00",
         "trust_level": "sandboxed",
+    },
+    {
+        "name": "auto-tagger",
+        "display_name": "Auto Tagger",
+        "description": "Automatically tags new journal entries based on their content",
+        "system_prompt": (
+            "You are a journal entry tagger. Read the note and assign relevant tags "
+            "based on its content.\n\n"
+            "## Rules\n\n"
+            "- Assign 1-5 tags per entry\n"
+            "- Use lowercase, hyphenated tags (e.g., 'project-update', 'personal', 'idea')\n"
+            "- Common tags: personal, work, idea, question, gratitude, health, "
+            "project-update, meeting, learning, reflection\n"
+            "- Be specific when content warrants it (e.g., 'python', 'design-review')\n"
+            "- Don't over-tag — only tags that genuinely apply\n\n"
+            "## Process\n\n"
+            "1. Read the entry with `read_entry`\n"
+            "2. Determine relevant tags\n"
+            "3. Apply them with `update_entry_tags`"
+        ),
+        "tools": ["read_entry", "update_entry_tags"],
+        "schedule_time": "",
+        "trust_level": "direct",
+        "trigger_event": "note.created",
+        "trigger_filter": "{}",
     },
 ]
 
@@ -194,8 +221,14 @@ async def _transcribe_and_cleanup(
     graph,
     entry_id: str,
     audio_path: Path,
+    dispatch_event_fn=None,
 ) -> None:
-    """Background task: transcribe audio → update entry → clean up via LLM."""
+    """Background task: transcribe audio → dispatch event for cleanup.
+
+    If dispatch_event_fn is provided, fires 'note.transcription_complete'
+    event which triggers Callers (e.g., transcription-cleanup).
+    Falls back to direct _cleanup_transcription() if no dispatcher.
+    """
     from parachute.core.interfaces import get_registry
 
     ts = get_registry().get("TranscriptionService")
@@ -255,12 +288,20 @@ async def _transcribe_and_cleanup(
             logger.warning(f"Daily: failed to clean up audio file {audio_path}: {cleanup_err}")
         return
 
-    # Clean up the raw transcription via LLM — outside the try block so
-    # a cleanup failure doesn't delete the audio file.
-    try:
-        await _cleanup_transcription(graph, entry_id, raw_text)
-    except Exception as e:
-        logger.error(f"Daily: cleanup failed for {entry_id} (transcription preserved): {e}", exc_info=True)
+    # Dispatch note.transcription_complete event to triggered Callers.
+    # The cleanup_transcription Caller (if enabled) will handle text cleanup.
+    # We pass a callback since _transcribe_and_cleanup is module-level.
+    if dispatch_event_fn is not None:
+        try:
+            await dispatch_event_fn("note.transcription_complete", entry_id)
+        except Exception as e:
+            logger.error(f"Daily: event dispatch failed for {entry_id} (transcription preserved): {e}", exc_info=True)
+    else:
+        # Fallback: direct cleanup if no dispatch function provided
+        try:
+            await _cleanup_transcription(graph, entry_id, raw_text)
+        except Exception as e:
+            logger.error(f"Daily: cleanup failed for {entry_id} (transcription preserved): {e}", exc_info=True)
 
 
 async def _cleanup_transcription(
@@ -484,6 +525,19 @@ class DailyModule:
             primary_key="name",
         )
 
+        await graph.ensure_node_table(
+            "CallerRun",
+            {
+                "run_id": "STRING",         # PK: "{caller_name}:{entry_id}:{timestamp}"
+                "caller_name": "STRING",
+                "entry_id": "STRING",
+                "status": "STRING",         # "completed" | "error" | etc.
+                "ran_at": "STRING",         # ISO timestamp
+                "session_id": "STRING",     # Claude SDK session ID
+            },
+            primary_key="run_id",
+        )
+
         # Add new columns to existing databases (idempotent schema migration)
         await self._ensure_new_columns(graph)
 
@@ -531,6 +585,8 @@ class DailyModule:
                 "last_run_at": ("STRING", "''"),
                 "last_processed_date": ("STRING", "''"),
                 "run_count": ("INT64", "0"),
+                "trigger_event": ("STRING", "''"),
+                "trigger_filter": ("STRING", "'{}'"),
             }
             missing = {col: v for col, v in caller_new.items() if col not in caller_cols}
             if missing:
@@ -555,11 +611,13 @@ class DailyModule:
                     "Preserves the speaker's voice."
                 ),
                 "system_prompt": CLEANUP_SYSTEM_PROMPT,
-                "tools": json.dumps(["read_journal", "update_entry"]),
+                "tools": json.dumps(["read_entry", "update_entry_content"]),
                 "schedule_enabled": "false",
                 "schedule_time": "",
                 "enabled": "true",
-                "trust_level": "sandboxed",
+                "trust_level": "direct",
+                "trigger_event": "note.transcription_complete",
+                "trigger_filter": json.dumps({"entry_type": "voice"}),
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             },
@@ -586,6 +644,8 @@ class DailyModule:
                         "  schedule_time: $schedule_time,"
                         "  enabled: $enabled,"
                         "  trust_level: $trust_level,"
+                        "  trigger_event: $trigger_event,"
+                        "  trigger_filter: $trigger_filter,"
                         "  created_at: $created_at,"
                         "  updated_at: $updated_at"
                         "})",
@@ -824,6 +884,40 @@ class DailyModule:
         """Return BrainDB from registry, or None if unavailable."""
         from parachute.core.interfaces import get_registry
         return get_registry().get("BrainDB")
+
+    async def _dispatch_event(self, event: str, entry_id: str) -> None:
+        """Dispatch a Note lifecycle event to matching triggered Callers.
+
+        Runs as a background task. Errors are logged but don't propagate.
+        """
+        from parachute.core.caller_dispatch import CallerDispatcher
+
+        graph = self._get_graph()
+        if graph is None:
+            return
+
+        try:
+            entry = await self.get_entry(entry_id)
+            if not entry:
+                logger.warning(f"Daily: dispatch event {event} — entry {entry_id} not found")
+                return
+
+            meta = entry.get("metadata", {})
+            entry_meta = {
+                "entry_type": meta.get("type", "text"),
+                "tags": meta.get("tags", []),
+                "date": meta.get("date", "") or entry.get("metadata", {}).get("date", ""),
+            }
+
+            dispatcher = CallerDispatcher(graph=graph, vault_path=self.vault_path)
+            results = await dispatcher.dispatch(event, entry_id, entry_meta)
+
+            for r in results:
+                logger.info(
+                    f"Daily: triggered caller '{r.get('agent')}' on {entry_id} → {r.get('status')}"
+                )
+        except Exception as e:
+            logger.error(f"Daily: event dispatch failed ({event}, {entry_id}): {e}", exc_info=True)
 
     async def _write_to_graph(
         self,
@@ -1577,9 +1671,9 @@ class DailyModule:
                 result = await self.create_entry("", meta)
                 entry_id = result["id"]
 
-            # Kick off background transcription + cleanup
+            # Kick off background transcription + event dispatch
             task = asyncio.create_task(
-                _transcribe_and_cleanup(graph, entry_id, audio_path)
+                _transcribe_and_cleanup(graph, entry_id, audio_path, dispatch_event_fn=self._dispatch_event)
             )
             _background_tasks.add(task)
 
@@ -1654,9 +1748,9 @@ class DailyModule:
                     {"entry_id": entry_id, "meta": json.dumps(existing_meta)},
                 )
 
-            # Kick off background cleanup
+            # Dispatch transcription_complete event to triggered Callers
             task = asyncio.create_task(
-                _cleanup_transcription(graph, entry_id, content)
+                self._dispatch_event("note.transcription_complete", entry_id)
             )
             _background_tasks.add(task)
 
@@ -1705,6 +1799,49 @@ class DailyModule:
                     content={"error": "Entry not found", "id": entry_id},
                 )
             return entry
+
+        @router.get("/entries/{entry_id}/caller-activity")
+        async def get_entry_caller_activity(entry_id: str):
+            """Get Caller activity history for a specific entry."""
+            graph = self._get_graph()
+            if graph is None:
+                return JSONResponse(status_code=503, content={"error": "BrainDB not available"})
+
+            try:
+                rows = await graph.execute_cypher(
+                    "MATCH (r:CallerRun) "
+                    "WHERE r.entry_id = $entry_id "
+                    "RETURN r ORDER BY r.ran_at DESC",
+                    {"entry_id": entry_id},
+                )
+                # Enrich with Caller display names
+                activity = []
+                for row in rows:
+                    caller_name = row.get("caller_name", "")
+                    display_name = caller_name.replace("-", " ").title()
+                    # Try to get display name from Caller node
+                    try:
+                        caller_rows = await graph.execute_cypher(
+                            "MATCH (c:Caller {name: $name}) RETURN c.display_name AS dn",
+                            {"name": caller_name},
+                        )
+                        if caller_rows and caller_rows[0].get("dn"):
+                            display_name = caller_rows[0]["dn"]
+                    except Exception:
+                        pass
+
+                    activity.append({
+                        "caller_name": caller_name,
+                        "display_name": display_name,
+                        "status": row.get("status", ""),
+                        "ran_at": row.get("ran_at", ""),
+                        "session_id": row.get("session_id", ""),
+                    })
+
+                return {"activity": activity, "count": len(activity)}
+            except Exception as e:
+                logger.warning(f"Failed to get caller activity for {entry_id}: {e}")
+                return {"activity": [], "count": 0}
 
         @router.patch("/entries/{entry_id}")
         async def update_entry(entry_id: str, body: UpdateEntryRequest):
@@ -1954,6 +2091,16 @@ class DailyModule:
             """
             return {"templates": CALLER_TEMPLATES}
 
+        @router.get("/callers/events")
+        def list_caller_events():
+            """Return available trigger events for Callers."""
+            return {
+                "events": [
+                    {"event": "note.created", "description": "Fires when a new note is saved"},
+                    {"event": "note.transcription_complete", "description": "Fires when voice transcription finishes"},
+                ]
+            }
+
         @router.get("/callers")
         @router.get("/agents")  # backward-compat alias
         async def list_callers():
@@ -1993,6 +2140,11 @@ class DailyModule:
             trust_level = body.get("trust_level", "sandboxed")
             if trust_level not in ("sandboxed", "direct"):
                 trust_level = "sandboxed"
+            # Normalize trigger_filter to JSON string
+            trigger_filter = body.get("trigger_filter") or {}
+            if isinstance(trigger_filter, dict):
+                trigger_filter = json.dumps(trigger_filter)
+
             await graph.execute_cypher(
                 "MERGE (c:Caller {name: $name}) "
                 "SET c.display_name = $display_name, c.description = $description, "
@@ -2000,6 +2152,8 @@ class DailyModule:
                 "    c.model = $model, c.schedule_enabled = $schedule_enabled, "
                 "    c.schedule_time = $schedule_time, c.enabled = $enabled, "
                 "    c.trust_level = $trust_level, "
+                "    c.trigger_event = $trigger_event, "
+                "    c.trigger_filter = $trigger_filter, "
                 "    c.updated_at = $now",
                 {
                     "name": name,
@@ -2012,6 +2166,8 @@ class DailyModule:
                     "schedule_time": body.get("schedule_time") or "3:00",
                     "enabled": "true" if body.get("enabled", True) else "false",
                     "trust_level": trust_level,
+                    "trigger_event": body.get("trigger_event") or "",
+                    "trigger_filter": trigger_filter,
                     "now": now,
                 },
             )
@@ -2037,6 +2193,11 @@ class DailyModule:
             trust_level = body.get("trust_level", existing.get("trust_level") or "sandboxed")
             if trust_level not in ("sandboxed", "direct"):
                 trust_level = "sandboxed"
+            # Normalize trigger_filter
+            trigger_filter = body.get("trigger_filter", existing.get("trigger_filter") or "{}")
+            if isinstance(trigger_filter, dict):
+                trigger_filter = json.dumps(trigger_filter)
+
             await graph.execute_cypher(
                 "MATCH (c:Caller {name: $name}) "
                 "SET c.display_name = $display_name, c.description = $description, "
@@ -2044,6 +2205,8 @@ class DailyModule:
                 "    c.model = $model, c.schedule_enabled = $schedule_enabled, "
                 "    c.schedule_time = $schedule_time, c.enabled = $enabled, "
                 "    c.trust_level = $trust_level, "
+                "    c.trigger_event = $trigger_event, "
+                "    c.trigger_filter = $trigger_filter, "
                 "    c.updated_at = $now",
                 {
                     "name": name,
@@ -2056,6 +2219,8 @@ class DailyModule:
                     "schedule_time": body.get("schedule_time", existing.get("schedule_time") or "3:00"),
                     "enabled": "true" if body.get("enabled", existing.get("enabled") == "true") else "false",
                     "trust_level": trust_level,
+                    "trigger_event": body.get("trigger_event", existing.get("trigger_event") or ""),
+                    "trigger_filter": trigger_filter,
                     "now": now,
                 },
             )
@@ -2063,6 +2228,39 @@ class DailyModule:
                 "MATCH (c:Caller {name: $name}) RETURN c", {"name": name}
             )
             return rows[0] if rows else {"name": name}
+
+        @router.post("/callers/{name}/trigger")
+        async def trigger_caller(name: str, body: dict):
+            """Manually trigger a Caller on a specific entry (ignores filters).
+
+            Body: { "entry_id": "..." }
+            """
+            entry_id = body.get("entry_id", "").strip()
+            if not entry_id:
+                return JSONResponse(status_code=400, content={"error": "entry_id required"})
+
+            graph = self._get_graph()
+            if graph is None:
+                return JSONResponse(status_code=503, content={"error": "BrainDB not available"})
+
+            # Verify caller exists
+            rows = await graph.execute_cypher(
+                "MATCH (c:Caller {name: $name}) RETURN c.trigger_event AS trigger_event",
+                {"name": name},
+            )
+            if not rows:
+                return JSONResponse(status_code=404, content={"error": "Caller not found"})
+
+            event = rows[0].get("trigger_event") or "note.created"
+
+            from parachute.core.daily_agent import run_triggered_caller
+            task = asyncio.create_task(
+                run_triggered_caller(self.vault_path, name, entry_id, event)
+            )
+            _background_tasks.add(task)
+            task.add_done_callback(lambda t: _background_tasks.discard(t))
+
+            return {"status": "triggered", "caller": name, "entry_id": entry_id, "event": event}
 
         @router.post("/callers/{name}/reset", status_code=200)
         async def reset_caller(name: str):
