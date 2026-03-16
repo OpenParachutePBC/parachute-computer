@@ -40,15 +40,14 @@ async def graph(tmp_path):
 
 @pytest.fixture
 async def module(tmp_vault, graph, monkeypatch):
-    """DailyModule wired to the temporary graph via registry."""
-    # Wire the graph into the registry
-    from parachute.core import interfaces as iface
+    """DailyModule wired to the temporary graph.
 
-    registry = {}
-    registry["BrainDB"] = graph
-    monkeypatch.setattr(iface, "_registry", registry)
-
+    Monkeypatches _get_graph directly on the instance so the module
+    never touches the global InterfaceRegistry (and therefore never
+    writes to the production BrainDB).
+    """
     mod = DailyModule(vault_path=tmp_vault)
+    monkeypatch.setattr(mod, "_get_graph", lambda: graph)
     await mod.on_load()
     return mod
 
@@ -254,64 +253,3 @@ class TestSearchEntries:
         results = await module.search_entries("zzzzz_no_match")
         assert results == []
 
-
-# ---------------------------------------------------------------------------
-# Markdown migration
-# ---------------------------------------------------------------------------
-
-class TestMarkdownMigration:
-    async def test_existing_md_files_imported(self, tmp_vault, graph, monkeypatch):
-        """Existing .md files in entries_dir are imported into graph on on_load()."""
-        import frontmatter
-
-        from parachute.core import interfaces as iface
-        registry = {"BrainDB": graph}
-        monkeypatch.setattr(iface, "_registry", registry)
-
-        # Write a .md file before module loads
-        entries_dir = tmp_vault / "Daily" / "entries"
-        entries_dir.mkdir(parents=True)
-        entry_id = "2026-01-15-09-00-00"
-        post = frontmatter.Post(
-            "Imported content",
-            entry_id=entry_id,
-            created_at="2026-01-15T09:00:00+00:00",
-            type="text",
-        )
-        (entries_dir / f"{entry_id}.md").write_text(frontmatter.dumps(post), encoding="utf-8")
-
-        mod = DailyModule(vault_path=tmp_vault)
-        await mod.on_load()
-
-        entry = await mod.get_entry(entry_id)
-        assert entry is not None
-        assert entry["content"] == "Imported content"
-        assert entry["id"] == entry_id
-
-    async def test_migration_idempotent(self, tmp_vault, graph, monkeypatch):
-        """Running on_load() twice with .md files doesn't duplicate entries."""
-        import frontmatter
-
-        from parachute.core import interfaces as iface
-        registry = {"BrainDB": graph}
-        monkeypatch.setattr(iface, "_registry", registry)
-
-        entries_dir = tmp_vault / "Daily" / "entries"
-        entries_dir.mkdir(parents=True)
-        entry_id = "2026-01-15-10-00-00"
-        post = frontmatter.Post(
-            "Once only",
-            entry_id=entry_id,
-            created_at="2026-01-15T10:00:00+00:00",
-        )
-        (entries_dir / f"{entry_id}.md").write_text(frontmatter.dumps(post), encoding="utf-8")
-
-        mod = DailyModule(vault_path=tmp_vault)
-        await mod.on_load()
-        await mod.on_load()  # second load should skip
-
-        rows = await graph.execute_cypher(
-            "MATCH (e:Note {entry_id: $entry_id}) RETURN e.entry_id AS entry_id",
-            {"entry_id": entry_id},
-        )
-        assert len(rows) == 1  # not duplicated

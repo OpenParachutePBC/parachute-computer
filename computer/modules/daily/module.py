@@ -38,8 +38,10 @@ _background_tasks: set[asyncio.Task] = set()
 MAX_VOICE_BYTES = 200 * 1024 * 1024  # 200 MB
 ALLOWED_AUDIO_EXTENSIONS = {".wav", ".m4a", ".mp3", ".aac", ".ogg", ".webm", ".mp4"}
 
-# Append-only JSONL redo log for crash recovery (rolled to 90 days)
-REDO_LOG_PATH = Path.home() / ".parachute" / "daily" / "entries.jsonl"
+# Default redo log path for crash recovery (rolled to 90 days).
+# DailyModule derives the actual path from its vault_path at init time,
+# so tests with a temp vault don't pollute the production log.
+_DEFAULT_REDO_LOG_PATH = Path.home() / ".parachute" / "daily" / "entries.jsonl"
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +97,7 @@ CALLER_TEMPLATES: list[CallerTemplateDict] = [
 
 
 def _append_redo_log(
+    redo_log_path: Path,
     entry_id: str,
     date: str,
     content: str,
@@ -116,26 +119,26 @@ def _append_redo_log(
         "extra_meta": extra_meta or {},
     }
     try:
-        REDO_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with REDO_LOG_PATH.open("a", encoding="utf-8") as f:
+        redo_log_path.parent.mkdir(parents=True, exist_ok=True)
+        with redo_log_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
     except Exception as e:
         logger.warning(f"Daily: redo log append failed: {e}")
 
 
-def _trim_redo_log() -> list[dict]:
+def _trim_redo_log(redo_log_path: Path) -> list[dict]:
     """Remove entries older than 90 days and return the kept records.
 
     Uses an atomic write-to-temp + os.replace so a crash mid-trim cannot
     truncate the log. Never raises — returns an empty list on any error.
     """
-    if not REDO_LOG_PATH.exists():
+    if not redo_log_path.exists():
         return []
     cutoff = (datetime.now(timezone.utc) - timedelta(days=90)).strftime("%Y-%m-%d")
     try:
         kept_lines: list[str] = []
         kept_records: list[dict] = []
-        for line in REDO_LOG_PATH.read_text(encoding="utf-8").splitlines():
+        for line in redo_log_path.read_text(encoding="utf-8").splitlines():
             if not line.strip():
                 continue
             try:
@@ -145,11 +148,11 @@ def _trim_redo_log() -> list[dict]:
                     kept_records.append(rec)
             except json.JSONDecodeError:
                 logger.warning(f"Daily: redo log corrupt line skipped: {line[:80]!r}")
-        fd, tmp_path = tempfile.mkstemp(dir=REDO_LOG_PATH.parent, suffix=".tmp")
+        fd, tmp_path = tempfile.mkstemp(dir=redo_log_path.parent, suffix=".tmp")
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 f.write("\n".join(kept_lines) + ("\n" if kept_lines else ""))
-            os.replace(tmp_path, REDO_LOG_PATH)
+            os.replace(tmp_path, redo_log_path)
         except Exception:
             os.unlink(tmp_path)
             raise
@@ -413,11 +416,11 @@ class DailyModule:
 
     def __init__(self, vault_path: Path, **kwargs):
         self.vault_path = vault_path
+        self._redo_log_path = vault_path / ".parachute" / "daily" / "entries.jsonl"
 
     async def on_load(self) -> None:
         """Register Daily schema in shared graph."""
-        from parachute.core.interfaces import get_registry
-        graph = get_registry().get("BrainDB")
+        graph = self._get_graph()
         if graph is None:
             logger.warning("Daily: BrainDB not in registry — module will not function")
             return
@@ -491,7 +494,7 @@ class DailyModule:
         await self._migrate_audio_paths_to_absolute(graph)
 
         # Trim redo log (90-day rolling), then replay any entries missing from graph
-        redo_records = _trim_redo_log()
+        redo_records = _trim_redo_log(self._redo_log_path)
         await self._recover_from_redo_log(graph, redo_records)
 
         logger.info("Daily: graph schema ready (Kuzu primary storage)")
@@ -971,7 +974,7 @@ class DailyModule:
             audio_path=audio_path,
             extra_meta=extra_meta,
         )
-        _append_redo_log(entry_id, date, content, created_at, title, entry_type, audio_path, extra_meta)
+        _append_redo_log(self._redo_log_path, entry_id, date, content, created_at, title, entry_type, audio_path, extra_meta)
 
         logger.info(f"Daily: created entry {entry_id}")
         return {
