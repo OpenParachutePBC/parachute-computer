@@ -114,14 +114,26 @@ class _PlaybackControlsState extends ConsumerState<PlaybackControls> {
         return;
       }
 
-      final success = await audioService.playRecording(widget.filePath);
-      if (!success && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Failed to play recording'),
-            duration: Duration(seconds: 2),
-          ),
-        );
+      try {
+        final success = await audioService.playRecording(widget.filePath);
+        if (!success && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Failed to play recording'),
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
+      } catch (e) {
+        debugPrint('Error playing recording: $e');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Playback error: $e'),
+              duration: const Duration(seconds: 3),
+            ),
+          );
+        }
       }
     }
   }

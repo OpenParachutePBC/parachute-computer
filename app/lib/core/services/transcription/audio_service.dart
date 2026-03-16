@@ -1,6 +1,8 @@
 import 'package:flutter/foundation.dart';
 import 'dart:async';
 import 'dart:io';
+import 'package:http/http.dart' as http;
+import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -337,39 +339,76 @@ class AudioService {
     }
   }
 
+  /// Cache of downloaded audio files: URL → local temp path.
+  final Map<String, String> _audioCache = {};
+
   Future<bool> playRecording(String filePath) async {
-    try {
-      if (filePath.isEmpty) {
-        debugPrint('Cannot play: empty file path');
-        return false;
-      }
-
-      // Opus files are no longer supported for playback
-      if (filePath.endsWith('.opus')) {
-        debugPrint('Cannot play opus file: $filePath (opus support removed)');
-        return false;
-      }
-
-      if (filePath.startsWith('http://') || filePath.startsWith('https://')) {
-        // Server-hosted audio: stream via HTTP
-        await _player.setUrl(filePath);
-      } else {
-        // Local file
-        final file = File(filePath);
-        if (!await file.exists()) {
-          debugPrint('File not found: $filePath');
-          return false;
-        }
-        await _player.setFilePath(filePath);
-      }
-      await _player.play();
-
-      debugPrint('Playing recording: $filePath');
-      return true;
-    } catch (e, stackTrace) {
-      debugPrint('Error playing recording: $e');
-      debugPrint('Stack trace: $stackTrace');
+    if (filePath.isEmpty) {
+      debugPrint('Cannot play: empty file path');
       return false;
+    }
+
+    // Opus files are no longer supported for playback
+    if (filePath.endsWith('.opus')) {
+      debugPrint('Cannot play opus file: $filePath (opus support removed)');
+      return false;
+    }
+
+    if (filePath.startsWith('http://') || filePath.startsWith('https://')) {
+      // Download via Dart HTTP first, then play locally.
+      // ExoPlayer/AVPlayer HTTP clients can hit platform networking restrictions
+      // (Android cleartext policy, macOS ATS) that Dart's client bypasses.
+      final localPath = await _downloadForPlayback(filePath);
+      if (localPath == null) {
+        debugPrint('Failed to download audio for playback: $filePath');
+        return false;
+      }
+      await _player.setFilePath(localPath);
+    } else {
+      // Local file
+      final file = File(filePath);
+      if (!await file.exists()) {
+        debugPrint('File not found: $filePath');
+        return false;
+      }
+      await _player.setFilePath(filePath);
+    }
+    await _player.play();
+
+    debugPrint('Playing recording: $filePath');
+    return true;
+  }
+
+  /// Download an audio URL to a temp file for local playback.
+  /// Results are cached so repeated plays don't re-download.
+  Future<String?> _downloadForPlayback(String url) async {
+    // Return cached file if it still exists
+    final cached = _audioCache[url];
+    if (cached != null && await File(cached).exists()) {
+      debugPrint('Playing from cache: $cached');
+      return cached;
+    }
+
+    debugPrint('Downloading audio: $url');
+    try {
+      final response = await http.get(Uri.parse(url));
+      if (response.statusCode != 200) {
+        debugPrint('Audio download failed: HTTP ${response.statusCode}');
+        return null;
+      }
+
+      final tempDir = await getTemporaryDirectory();
+      final fileName = url.hashCode.toRadixString(36);
+      final ext = url.contains('.') ? url.split('.').last.split('?').first : 'wav';
+      final tempFile = File('${tempDir.path}/audio_cache_$fileName.$ext');
+      await tempFile.writeAsBytes(response.bodyBytes);
+
+      _audioCache[url] = tempFile.path;
+      debugPrint('Audio cached: ${tempFile.path} (${response.bodyBytes.length} bytes)');
+      return tempFile.path;
+    } catch (e) {
+      debugPrint('Audio download error: $e');
+      return null;
     }
   }
 

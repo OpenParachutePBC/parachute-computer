@@ -359,6 +359,11 @@ async def api_key_middleware(request: Request, call_next):
     if request.url.path.startswith("/api/auth") and _is_localhost(request):
         return await call_next(request)
 
+    # Skip auth for static asset endpoints (audio/image files).
+    # Native media players (ExoPlayer, AVPlayer) can't send custom auth headers.
+    if "/assets/" in request.url.path:
+        return await call_next(request)
+
     # Determine if auth is required
     if server_config:
         auth_mode = server_config.security.require_auth

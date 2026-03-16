@@ -30,6 +30,11 @@
 	<string>NSApplication</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Parachute uses the microphone for voice journaling and voice input to chat.</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>

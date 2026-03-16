@@ -24,7 +24,7 @@ from datetime import date as _date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal, Optional, TypedDict
 
-from fastapi import APIRouter, Form, Query, UploadFile
+from fastapi import APIRouter, Form, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, field_validator
 
@@ -238,21 +238,26 @@ async def _transcribe_and_cleanup(
 
         logger.info(f"Daily: transcribed voice entry {entry_id} ({len(raw_text)} chars)")
 
-        # Clean up the raw transcription via a direct LLM call
-        await _cleanup_transcription(graph, entry_id, raw_text)
-
     except Exception as e:
         logger.error(f"Daily: transcription failed for {entry_id}: {e}", exc_info=True)
         await _update_entry_transcription_status(
             graph, entry_id, "failed", error=str(e)
         )
-        # Clean up orphaned audio file on failure
+        # Clean up orphaned audio file only if transcription itself failed
         try:
             if audio_path.exists():
                 audio_path.unlink()
                 logger.info(f"Daily: cleaned up audio file after failed transcription: {audio_path}")
         except OSError as cleanup_err:
             logger.warning(f"Daily: failed to clean up audio file {audio_path}: {cleanup_err}")
+        return
+
+    # Clean up the raw transcription via LLM — outside the try block so
+    # a cleanup failure doesn't delete the audio file.
+    try:
+        await _cleanup_transcription(graph, entry_id, raw_text)
+    except Exception as e:
+        logger.error(f"Daily: cleanup failed for {entry_id} (transcription preserved): {e}", exc_info=True)
 
 
 async def _cleanup_transcription(
@@ -1777,13 +1782,17 @@ class DailyModule:
             return {"path": str(dest_path), "filename": safe_name}
 
         @router.get("/assets/{path:path}")
-        async def serve_asset(path: str):
+        async def serve_asset(path: str, request: Request):
             """Stream an audio/image file. Path is relative to ASSETS_DIR."""
+            client_host = request.client.host if request.client else "unknown"
+            logger.info(f"Daily: asset request from {client_host}: {path}")
             assets_root = ASSETS_DIR.resolve()
             full_path = (assets_root / path).resolve()
             if not full_path.is_relative_to(assets_root):
+                logger.warning(f"Daily: asset forbidden (path escape): {path}")
                 return JSONResponse(status_code=403, content={"error": "forbidden"})
             if not full_path.exists():
+                logger.warning(f"Daily: asset not found: {full_path}")
                 return JSONResponse(status_code=404, content={"error": "not found"})
             return FileResponse(full_path)
 

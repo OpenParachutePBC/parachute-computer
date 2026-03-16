@@ -94,7 +94,7 @@ class JournalEntry {
   }) : _isPendingTranscription = isPendingTranscription;
 
   /// Whether this entry has an associated audio file
-  bool get hasAudio => audioPath != null;
+  bool get hasAudio => audioPath != null && audioPath!.isNotEmpty;
 
   /// Whether this entry has an associated image file
   bool get hasImage => imagePath != null;
