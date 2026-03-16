@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/features/settings/screens/settings_screen.dart';
 import '../models/container_env.dart';
+import '../providers/chat_providers.dart';
 import '../providers/container_providers.dart';
 import '../screens/container_file_browser_screen.dart';
 
@@ -132,9 +133,24 @@ class WorkspaceContextBar extends ConsumerWidget {
                   ),
               ],
 
+              // Refresh sessions
+              _ActionIcon(
+                icon: Icons.refresh,
+                tooltip: 'Refresh',
+                isDark: isDark,
+                onTap: () {
+                  ref.invalidate(chatSessionsProvider);
+                  ref.invalidate(archivedSessionsProvider);
+                  ref.invalidate(containerSessionsProvider);
+                  ref.invalidate(containersProvider);
+                  ref.invalidate(allContainersProvider);
+                  ref.invalidate(containerSessionCountsProvider);
+                },
+              ),
+
               // App settings
               _ActionIcon(
-                icon: Icons.settings_outlined,
+                icon: Icons.tune,
                 tooltip: 'Settings',
                 isDark: isDark,
                 onTap: () => Navigator.push(
