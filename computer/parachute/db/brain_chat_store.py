@@ -96,8 +96,17 @@ class BrainChatStore:
             },
             primary_key="slug",
         )
-        # Migration: add is_workspace column to existing Container tables
+        # Migrations for existing tables
         async with self.graph.write_lock:
+            # Rename project_id → container_id (from the container rename PR #265)
+            chat_cols = await self.graph.get_table_columns("Chat")
+            if "project_id" in chat_cols and "container_id" not in chat_cols:
+                await self.graph.execute_cypher(
+                    "ALTER TABLE Chat RENAME project_id TO container_id"
+                )
+                logger.info("Renamed Chat.project_id → container_id")
+
+            # Add is_workspace column to Container table
             container_cols = await self.graph.get_table_columns("Container")
             if "is_workspace" not in container_cols:
                 await self.graph.execute_cypher(
