@@ -386,6 +386,7 @@ class FlexibleImportRequest(BaseModel):
     dry_run: bool = False
     date_from: Optional[str] = None  # YYYY-MM-DD inclusive filter
     date_to: Optional[str] = None    # YYYY-MM-DD inclusive filter
+    assets_source_dir: Optional[str] = None  # root for resolving relative audio paths
 
     @field_validator("date_from", "date_to", mode="before")
     @classmethod
@@ -1324,8 +1325,15 @@ class DailyModule:
         dry_run: bool,
         date_from: str | None,
         date_to: str | None,
+        assets_source_dir: Path | None = None,
     ) -> dict:
-        """Parse files from source_dir using fmt, optionally write to graph."""
+        """Parse files from source_dir using fmt, optionally write to graph.
+
+        When assets_source_dir is provided, relative audio paths are resolved
+        against it.  Audio files are copied into ASSETS_DIR (preserving the
+        date-subfolder structure) and the entry's audio_path is rewritten to
+        the new absolute path.
+        """
         date_pattern = re.compile(r'^\d{4}-\d{2}-\d{2}')
 
         md_files = await asyncio.to_thread(
@@ -1360,10 +1368,57 @@ class DailyModule:
         already_imported = sum(1 for e in all_entries if e["entry_id"] in existing_ids)
         to_import = [e for e in all_entries if e["entry_id"] not in existing_ids]
 
+        # ── Resolve and copy audio assets ─────────────────────────────────
+        audio_found = 0
+        audio_missing = 0
+        audio_copied = 0
+        audio_already_existed = 0
+
+        if assets_source_dir:
+            for entry in to_import:
+                rel_audio = entry.get("audio_path", "")
+                if not rel_audio or rel_audio.startswith("/"):
+                    continue  # no audio or already absolute
+
+                source_file = assets_source_dir / rel_audio
+                if not source_file.exists():
+                    audio_missing += 1
+                    logger.debug(
+                        f"Daily import: audio not found: {source_file} "
+                        f"(entry {entry['entry_id']})"
+                    )
+                    entry["audio_path"] = ""
+                    continue
+
+                audio_found += 1
+
+                # Destination: ASSETS_DIR / date / original_filename
+                entry_date = entry.get("date", "")
+                filename = source_file.name
+                dest_dir = ASSETS_DIR / entry_date
+                dest_file = dest_dir / filename
+
+                if dest_file.exists():
+                    audio_already_existed += 1
+                elif not dry_run:
+                    await asyncio.to_thread(dest_dir.mkdir, parents=True, exist_ok=True)
+                    await asyncio.to_thread(shutil.copy2, source_file, dest_file)
+                    audio_copied += 1
+
+                # Rewrite to absolute path (even in dry_run so sample looks right)
+                entry["audio_path"] = str(dest_file)
+
         sample = [
             {"id": e["entry_id"], "date": e["date"], "snippet": e["content"][:100]}
             for e in all_entries[:3]
         ]
+
+        audio_stats = {
+            "audio_found": audio_found,
+            "audio_missing": audio_missing,
+            "audio_copied": audio_copied,
+            "audio_already_existed": audio_already_existed,
+        }
 
         if dry_run:
             return {
@@ -1373,12 +1428,17 @@ class DailyModule:
                 "already_imported": already_imported,
                 "to_import": len(to_import),
                 "sample": sample,
+                **audio_stats,
             }
 
         imported = 0
+        # _write_to_graph accepts a fixed set of kwargs; strip any extras
+        # that parsers may produce (e.g. brain_links from _parse_md_file).
+        _graph_keys = {"entry_id", "date", "content", "created_at", "title", "entry_type", "audio_path", "extra_meta"}
         for entry in to_import:
             try:
-                await self._write_to_graph(graph, **entry)
+                graph_entry = {k: v for k, v in entry.items() if k in _graph_keys}
+                await self._write_to_graph(graph, **graph_entry)
                 imported += 1
             except Exception as e:
                 logger.error(f"Daily flexible import: write failed for {entry['entry_id']!r}: {e}")
@@ -1391,6 +1451,7 @@ class DailyModule:
             "to_import": len(to_import),
             "sample": sample,
             "imported": imported,
+            **audio_stats,
         }
 
     # ── Routes ────────────────────────────────────────────────────────────────
@@ -1740,6 +1801,15 @@ class DailyModule:
                     content={"error": f"source_dir not found: {body.source_dir}"},
                 )
 
+            assets_source: Path | None = None
+            if body.assets_source_dir:
+                assets_source = Path(body.assets_source_dir).expanduser()
+                if not assets_source.is_dir():
+                    return JSONResponse(
+                        status_code=400,
+                        content={"error": f"assets_source_dir not found: {body.assets_source_dir}"},
+                    )
+
             result = await self._flexible_import(
                 graph,
                 source_dir=source,
@@ -1747,6 +1817,7 @@ class DailyModule:
                 dry_run=body.dry_run,
                 date_from=body.date_from,
                 date_to=body.date_to,
+                assets_source_dir=assets_source,
             )
             return result
 
