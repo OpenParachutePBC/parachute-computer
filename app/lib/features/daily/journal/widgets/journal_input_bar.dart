@@ -45,6 +45,7 @@ class _JournalInputBarState extends ConsumerState<JournalInputBar>
   final TextEditingController _controller = TextEditingController();
   final FocusNode _focusNode = FocusNode();
   bool _isRecording = false;
+  bool _isPaused = false;
   bool _isSubmitting = false;
   bool _isProcessing = false;
   bool _hasPendingDraft = false;
@@ -239,10 +240,45 @@ class _JournalInputBarState extends ConsumerState<JournalInputBar>
     }
   }
 
-  // Note: _startStreamingRecording, _startStandardRecording, _pauseRecording,
-  // _resumeRecording removed — Daily now uses DailyRecordingProvider for
-  // audio-only recording without live transcription. Chat voice input
-  // (StreamingVoiceService) is separate and unaffected.
+  Future<void> _pauseRecording() async {
+    if (!_isRecording || _isPaused) return;
+
+    final dailyNotifier = ref.read(dailyRecordingProvider.notifier);
+    final paused = await dailyNotifier.pauseRecording();
+    if (!paused) return;
+
+    _durationTimer?.cancel();
+    _durationTimer = null;
+    _breathingController.stop();
+
+    HapticFeedback.lightImpact();
+    setState(() => _isPaused = true);
+
+    debugPrint('[JournalInputBar] Recording paused');
+  }
+
+  Future<void> _resumeRecording() async {
+    if (!_isRecording || !_isPaused) return;
+
+    final dailyNotifier = ref.read(dailyRecordingProvider.notifier);
+    final resumed = await dailyNotifier.resumeRecording();
+    if (!resumed) return;
+
+    // Restart local timer and breathing animation
+    _breathingController.repeat(reverse: true);
+    _durationTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (mounted && _isRecording && !_isPaused) {
+        setState(() {
+          _recordingDuration = _recordingDuration + const Duration(seconds: 1);
+        });
+      }
+    });
+
+    HapticFeedback.lightImpact();
+    setState(() => _isPaused = false);
+
+    debugPrint('[JournalInputBar] Recording resumed');
+  }
 
   Future<void> _discardRecording() async {
     if (!_isRecording) return;
@@ -262,6 +298,7 @@ class _JournalInputBarState extends ConsumerState<JournalInputBar>
 
     setState(() {
       _isRecording = false;
+      _isPaused = false;
       _recordingDuration = Duration.zero;
     });
 
@@ -302,6 +339,7 @@ class _JournalInputBarState extends ConsumerState<JournalInputBar>
 
     setState(() {
       _isRecording = false;
+      _isPaused = false;
       _isProcessing = true;
     });
 
@@ -405,45 +443,57 @@ class _JournalInputBarState extends ConsumerState<JournalInputBar>
               color: isDark ? BrandColors.nightSurfaceElevated : BrandColors.cream,
               borderRadius: BorderRadius.circular(24),
               border: Border.all(
-                color: BrandColors.forest.withValues(alpha: 0.4),
+                color: _isPaused
+                    ? (isDark ? BrandColors.charcoal : BrandColors.stone)
+                    : BrandColors.forest.withValues(alpha: 0.4),
                 width: 1.5,
               ),
             ),
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             child: Row(
               children: [
-                // Breathing recording dot
-                const _BreathingDot(),
+                // Recording indicator: breathing dot when active, static pause icon when paused
+                if (_isPaused)
+                  Icon(Icons.pause, size: 14, color: BrandColors.driftwood)
+                else
+                  const _BreathingDot(),
                 const SizedBox(width: 8),
 
                 // Timer
                 Text(
                   _formatDuration(_recordingDuration),
                   style: TextStyle(
-                    color: BrandColors.forest,
+                    color: _isPaused ? BrandColors.driftwood : BrandColors.forest,
                     fontSize: 13,
                     fontWeight: FontWeight.w500,
                     fontFeatures: const [FontFeature.tabularFigures()],
                   ),
                 ),
-                const SizedBox(width: 12),
 
-                // Thin waveform
-                Expanded(
-                  child: RecordingWaveform(
-                    amplitudeStream: dailyNotifier.amplitudeStream,
-                    height: 24,
-                    barCount: 20,
-                    color: BrandColors.forest,
+                // Compact waveform — only visible when actively recording
+                if (!_isPaused) ...[
+                  const SizedBox(width: 10),
+                  SizedBox(
+                    width: 80,
+                    child: RecordingWaveform(
+                      amplitudeStream: dailyNotifier.amplitudeStream,
+                      height: 18,
+                      barCount: 12,
+                      color: BrandColors.forest,
+                    ),
                   ),
-                ),
+                ],
               ],
             ),
           ),
         ),
         const SizedBox(width: 8),
 
-        // Stop button (same position as mic button)
+        // Pause/Resume button
+        _buildPauseResumeButton(isDark),
+        const SizedBox(width: 4),
+
+        // Stop button
         _buildStopButton(isDark),
       ],
     );
@@ -647,6 +697,28 @@ class _JournalInputBarState extends ConsumerState<JournalInputBar>
                   color: isDisabled ? BrandColors.driftwood : BrandColors.forest,
                   size: 22,
                 ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPauseResumeButton(bool isDark) {
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 200),
+      width: 44,
+      height: 44,
+      decoration: BoxDecoration(
+        color: _isPaused
+            ? (isDark ? BrandColors.nightSurfaceElevated : BrandColors.forestMist)
+            : (isDark ? BrandColors.charcoal.withValues(alpha: 0.6) : BrandColors.stone.withValues(alpha: 0.6)),
+        shape: BoxShape.circle,
+      ),
+      child: IconButton(
+        onPressed: _isPaused ? _resumeRecording : _pauseRecording,
+        icon: Icon(
+          _isPaused ? Icons.play_arrow_rounded : Icons.pause_rounded,
+          color: _isPaused ? BrandColors.forest : BrandColors.driftwood,
+          size: 22,
         ),
       ),
     );
