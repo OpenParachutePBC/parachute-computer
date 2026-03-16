@@ -465,19 +465,14 @@ class _TriggerInfo extends StatelessWidget {
   });
 
   /// Human-readable label for a trigger event name.
-  String _eventLabel(String event) {
-    switch (event) {
-      case 'note.transcription_complete':
-        return 'When transcription completes';
-      case 'note.created':
-        return 'When a new note is created';
-      default:
-        return event;
-    }
-  }
+  static String _eventLabel(String event) => switch (event) {
+    'note.transcription_complete' => 'When transcription completes',
+    'note.created' => 'When a new note is created',
+    _ => event,
+  };
 
   /// Human-readable label for a trigger filter.
-  String? _filterLabel(Map<String, dynamic>? filter) {
+  static String? _filterLabel(Map<String, dynamic>? filter) {
     if (filter == null || filter.isEmpty) return null;
     final parts = <String>[];
     if (filter.containsKey('entry_type')) {

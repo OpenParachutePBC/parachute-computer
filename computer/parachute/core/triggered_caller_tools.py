@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 def create_triggered_caller_tools(
-    graph,
+    graph: Any,
     entry_id: str,
     allowed_tools: list[str],
     caller_name: str = "triggered-caller",
@@ -129,17 +129,17 @@ def create_triggered_caller_tools(
             }
 
         try:
-            rows = await graph.execute_cypher(
-                "MATCH (e:Note {entry_id: $entry_id}) RETURN e.entry_id AS eid",
-                {"entry_id": entry_id},
-            )
-            if not rows:
-                return {
-                    "content": [{"type": "text", "text": f"Error: no entry found with id {entry_id}"}],
-                    "is_error": True,
-                }
-
             async with graph.write_lock:
+                rows = await graph.execute_cypher(
+                    "MATCH (e:Note {entry_id: $entry_id}) RETURN e.entry_id AS eid",
+                    {"entry_id": entry_id},
+                )
+                if not rows:
+                    return {
+                        "content": [{"type": "text", "text": f"Error: no entry found with id {entry_id}"}],
+                        "is_error": True,
+                    }
+
                 await graph.execute_cypher(
                     "MATCH (e:Note {entry_id: $entry_id}) SET e.content = $content",
                     {"entry_id": entry_id, "content": new_content},
@@ -301,7 +301,7 @@ def create_triggered_caller_tools(
 
     if not all_tools:
         logger.warning(
-            f"Triggered caller '{caller_name}' has no matching note-scopedtools "
+            f"Triggered caller '{caller_name}' has no matching note-scoped tools "
             f"(requested: {allowed_tools})"
         )
 

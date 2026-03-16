@@ -460,19 +460,6 @@ class CallerTemplate {
     if (rawTools is List) {
       tools = rawTools.cast<String>();
     }
-    // Parse trigger_filter from JSON string or map
-    Map<String, dynamic>? triggerFilter;
-    final rawFilter = json['trigger_filter'];
-    if (rawFilter is Map) {
-      triggerFilter = Map<String, dynamic>.from(rawFilter);
-    } else if (rawFilter is String && rawFilter.isNotEmpty) {
-      try {
-        final parsed = jsonDecode(rawFilter);
-        if (parsed is Map) {
-          triggerFilter = Map<String, dynamic>.from(parsed);
-        }
-      } catch (_) {}
-    }
     return CallerTemplate(
       name: json['name'] as String? ?? '',
       displayName:
@@ -483,9 +470,50 @@ class CallerTemplate {
       scheduleTime: json['schedule_time'] as String? ?? '21:00',
       trustLevel: json['trust_level'] as String? ?? 'sandboxed',
       triggerEvent: json['trigger_event'] as String? ?? '',
-      triggerFilter: triggerFilter,
+      triggerFilter: parseTriggerFilter(json['trigger_filter']),
     );
   }
+}
+
+/// Parse a trigger_filter value from JSON string or map.
+///
+/// Shared by [CallerTemplate.fromJson] and [DailyApiService.fetchCallers].
+Map<String, dynamic>? parseTriggerFilter(dynamic raw) {
+  if (raw is Map) return Map<String, dynamic>.from(raw);
+  if (raw is String && raw.isNotEmpty) {
+    try {
+      final parsed = jsonDecode(raw);
+      if (parsed is Map) return Map<String, dynamic>.from(parsed);
+    } catch (e) {
+      debugPrint('[parseTriggerFilter] failed to parse: $e');
+    }
+  }
+  return null;
+}
+
+/// Record of a triggered Caller having run on a specific entry.
+class CallerActivity {
+  final String callerName;
+  final String displayName;
+  final String status;
+  final String ranAt;
+  final String sessionId;
+
+  const CallerActivity({
+    required this.callerName,
+    required this.displayName,
+    required this.status,
+    required this.ranAt,
+    this.sessionId = '',
+  });
+
+  factory CallerActivity.fromJson(Map<String, dynamic> json) => CallerActivity(
+        callerName: json['caller_name'] as String? ?? '',
+        displayName: json['display_name'] as String? ?? '',
+        status: json['status'] as String? ?? '',
+        ranAt: json['ran_at'] as String? ?? '',
+        sessionId: json['session_id'] as String? ?? '',
+      );
 }
 
 /// Result of triggering a daily agent

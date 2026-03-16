@@ -376,15 +376,17 @@ class _CallerEditScreenState extends ConsumerState<CallerEditScreen> {
         'description': description,
         'system_prompt': prompt,
         'tools': tools,
-        'schedule_enabled': _scheduleEnabled,
-        'schedule_time': _scheduleTime,
       };
-      // Preserve trigger fields for triggered Callers
-      if (widget.caller!.isTriggered) {
+      if (_isTriggered) {
+        // Preserve trigger fields; schedule is irrelevant
         fields['trigger_event'] = widget.caller!.triggerEvent;
         if (widget.caller!.triggerFilter != null) {
           fields['trigger_filter'] = widget.caller!.triggerFilter;
         }
+      } else {
+        // Only include schedule fields for scheduled Callers
+        fields['schedule_enabled'] = _scheduleEnabled;
+        fields['schedule_time'] = _scheduleTime;
       }
       success = await api.updateCaller(widget.caller!.name, fields);
     } else {
@@ -408,15 +410,19 @@ class _CallerEditScreenState extends ConsumerState<CallerEditScreen> {
         'description': description,
         'system_prompt': prompt,
         'tools': tools,
-        'schedule_enabled': _scheduleEnabled,
-        'schedule_time': _scheduleTime,
       };
-      // Copy trigger fields from template if present
-      if (widget.template != null && widget.template!.isTriggered) {
-        body['trigger_event'] = widget.template!.triggerEvent;
-        if (widget.template!.triggerFilter != null) {
-          body['trigger_filter'] = widget.template!.triggerFilter;
+      if (_isTriggered) {
+        // Copy trigger fields from template
+        if (widget.template != null) {
+          body['trigger_event'] = widget.template!.triggerEvent;
+          if (widget.template!.triggerFilter != null) {
+            body['trigger_filter'] = widget.template!.triggerFilter;
+          }
         }
+      } else {
+        // Only include schedule fields for scheduled Callers
+        body['schedule_enabled'] = _scheduleEnabled;
+        body['schedule_time'] = _scheduleTime;
       }
       final result = await api.createCaller(body);
       success = result != null;

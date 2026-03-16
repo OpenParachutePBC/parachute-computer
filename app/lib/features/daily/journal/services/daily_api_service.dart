@@ -6,7 +6,7 @@ import '../models/entry_metadata.dart' show TranscriptionStatus;
 import '../models/journal_entry.dart';
 import '../models/agent_card.dart';
 import 'package:parachute/core/services/computer_service.dart'
-    show DailyAgentInfo, AgentRunResult, CallerTemplate;
+    show DailyAgentInfo, AgentRunResult, CallerTemplate, CallerActivity, parseTriggerFilter;
 
 /// Raw search result from the server API.
 ///
@@ -508,22 +508,11 @@ class DailyApiService {
             if (parsed is List) {
               tools = parsed.cast<String>();
             }
-          } catch (_) {}
+          } catch (e) {
+            debugPrint('[DailyApiService] Failed to parse tools JSON: $e');
+          }
         } else if (rawTools is List) {
           tools = rawTools.cast<String>();
-        }
-        // Parse trigger_filter from JSON string or map
-        Map<String, dynamic>? triggerFilter;
-        final rawFilter = j['trigger_filter'];
-        if (rawFilter is Map) {
-          triggerFilter = Map<String, dynamic>.from(rawFilter);
-        } else if (rawFilter is String && rawFilter.isNotEmpty) {
-          try {
-            final parsed = jsonDecode(rawFilter);
-            if (parsed is Map) {
-              triggerFilter = Map<String, dynamic>.from(parsed);
-            }
-          } catch (_) {}
         }
         return DailyAgentInfo(
           name: j['name'] as String? ?? '',
@@ -536,7 +525,7 @@ class DailyApiService {
           scheduleEnabled: scheduleEnabled,
           scheduleTime: j['schedule_time'] as String? ?? '03:00',
           triggerEvent: j['trigger_event'] as String? ?? '',
-          triggerFilter: triggerFilter,
+          triggerFilter: parseTriggerFilter(j['trigger_filter']),
         );
       }).toList();
     } catch (e) {
@@ -713,7 +702,7 @@ class DailyApiService {
     try {
       final response = await _client
           .post(uri, headers: _headers, body: jsonEncode({'entry_id': entryId}))
-          .timeout(const Duration(seconds: 30));
+          .timeout(_timeout);
       if (response.statusCode >= 200 && response.statusCode < 300) {
         return jsonDecode(response.body) as Map<String, dynamic>;
       }
@@ -729,8 +718,8 @@ class DailyApiService {
 
   /// Fetch Caller activity (CallerRun nodes) for a specific entry.
   ///
-  /// Returns a list of activity records, or empty list on error.
-  Future<List<Map<String, dynamic>>> fetchCallerActivity(
+  /// Returns a list of [CallerActivity] records, or empty list on error.
+  Future<List<CallerActivity>> fetchCallerActivity(
     String entryId,
   ) async {
     final uri = Uri.parse(
@@ -749,7 +738,9 @@ class DailyApiService {
       }
       final decoded = jsonDecode(response.body) as Map<String, dynamic>;
       final List<dynamic> data = decoded['activity'] as List<dynamic>? ?? [];
-      return data.cast<Map<String, dynamic>>();
+      return data
+          .map((j) => CallerActivity.fromJson(j as Map<String, dynamic>))
+          .toList();
     } catch (e) {
       debugPrint('[DailyApiService] fetchCallerActivity error: $e');
       return [];

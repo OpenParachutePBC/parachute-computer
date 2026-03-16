@@ -34,6 +34,15 @@ ASSETS_DIR = Path.home() / ".parachute" / "daily" / "assets"
 # Background task references — prevent GC from swallowing exceptions
 _background_tasks: set[asyncio.Task] = set()
 
+
+def _log_task_exception(task: asyncio.Task) -> None:
+    """Done-callback for background tasks: log exceptions, then discard."""
+    _background_tasks.discard(task)
+    if not task.cancelled():
+        exc = task.exception()
+        if exc:
+            logger.error("Background task failed: %s", exc, exc_info=exc)
+
 # Upload constraints
 MAX_VOICE_BYTES = 200 * 1024 * 1024  # 200 MB
 ALLOWED_AUDIO_EXTENSIONS = {".wav", ".m4a", ".mp3", ".aac", ".ogg", ".webm", ".mp4"}
@@ -530,6 +539,7 @@ class DailyModule:
             {
                 "run_id": "STRING",         # PK: "{caller_name}:{entry_id}:{timestamp}"
                 "caller_name": "STRING",
+                "display_name": "STRING",   # Human-readable name (avoids N+1 lookup)
                 "entry_id": "STRING",
                 "status": "STRING",         # "completed" | "error" | etc.
                 "ran_at": "STRING",         # ISO timestamp
@@ -888,6 +898,10 @@ class DailyModule:
     async def _dispatch_event(self, event: str, entry_id: str) -> None:
         """Dispatch a Note lifecycle event to matching triggered Callers.
 
+        Lifecycle bookkeeping (cleanup_status, transcription_status) lives here
+        because it's domain-specific to the Daily module — the dispatcher stays
+        event-agnostic.
+
         Runs as a background task. Errors are logged but don't propagate.
         """
         from parachute.core.caller_dispatch import CallerDispatcher
@@ -906,11 +920,29 @@ class DailyModule:
             entry_meta = {
                 "entry_type": meta.get("type", "text"),
                 "tags": meta.get("tags", []),
-                "date": meta.get("date", "") or entry.get("metadata", {}).get("date", ""),
+                "date": meta.get("date", ""),
             }
+
+            # Pre-dispatch lifecycle bookkeeping
+            if event == "note.transcription_complete":
+                await self._set_entry_meta(graph, entry_id, {"cleanup_status": "running"})
 
             dispatcher = CallerDispatcher(graph=graph, vault_path=self.vault_path)
             results = await dispatcher.dispatch(event, entry_id, entry_meta)
+
+            # Post-dispatch lifecycle bookkeeping
+            if event == "note.transcription_complete" and results:
+                all_ok = all(
+                    r.get("status") in ("completed", "completed_no_output")
+                    for r in results
+                )
+                if all_ok:
+                    await self._set_entry_meta(graph, entry_id, {
+                        "transcription_status": "complete",
+                        "cleanup_status": "completed",
+                    })
+                else:
+                    await self._set_entry_meta(graph, entry_id, {"cleanup_status": "failed"})
 
             for r in results:
                 logger.info(
@@ -918,6 +950,41 @@ class DailyModule:
                 )
         except Exception as e:
             logger.error(f"Daily: event dispatch failed ({event}, {entry_id}): {e}", exc_info=True)
+            # If we set cleanup_status=running but dispatch crashed, mark failed
+            if event == "note.transcription_complete" and graph:
+                try:
+                    await self._set_entry_meta(graph, entry_id, {"cleanup_status": "failed"})
+                except Exception:
+                    pass
+
+    @staticmethod
+    async def _set_entry_meta(graph: Any, entry_id: str, updates: dict[str, Any]) -> None:
+        """Update fields in an entry's metadata_json (read-modify-write under lock)."""
+        try:
+            async with graph.write_lock:
+                rows = await graph.execute_cypher(
+                    "MATCH (e:Note {entry_id: $entry_id}) RETURN e.metadata_json AS meta",
+                    {"entry_id": entry_id},
+                )
+                if not rows:
+                    return
+
+                meta: dict[str, Any] = {}
+                blob = rows[0].get("meta") or ""
+                if blob:
+                    try:
+                        meta = json.loads(blob)
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+
+                meta.update(updates)
+
+                await graph.execute_cypher(
+                    "MATCH (e:Note {entry_id: $entry_id}) SET e.metadata_json = $meta",
+                    {"entry_id": entry_id, "meta": json.dumps(meta)},
+                )
+        except Exception as e:
+            logger.warning(f"Daily: failed to set entry meta on {entry_id}: {e}")
 
     async def _write_to_graph(
         self,
@@ -1071,6 +1138,12 @@ class DailyModule:
         _append_redo_log(self._redo_log_path, entry_id, date, content, created_at, title, entry_type, audio_path, extra_meta)
 
         logger.info(f"Daily: created entry {entry_id}")
+
+        # Dispatch note.created event (non-blocking background task)
+        task = asyncio.create_task(self._dispatch_event("note.created", entry_id))
+        _background_tasks.add(task)
+        task.add_done_callback(_log_task_exception)
+
         return {
             "id": entry_id,
             "created_at": created_at,
@@ -1814,22 +1887,14 @@ class DailyModule:
                     "RETURN r ORDER BY r.ran_at DESC",
                     {"entry_id": entry_id},
                 )
-                # Enrich with Caller display names
                 activity = []
                 for row in rows:
                     caller_name = row.get("caller_name", "")
-                    display_name = caller_name.replace("-", " ").title()
-                    # Try to get display name from Caller node
-                    try:
-                        caller_rows = await graph.execute_cypher(
-                            "MATCH (c:Caller {name: $name}) RETURN c.display_name AS dn",
-                            {"name": caller_name},
-                        )
-                        if caller_rows and caller_rows[0].get("dn"):
-                            display_name = caller_rows[0]["dn"]
-                    except Exception:
-                        pass
-
+                    # display_name is stored on CallerRun at write time
+                    display_name = (
+                        row.get("display_name")
+                        or caller_name.replace("-", " ").title()
+                    )
                     activity.append({
                         "caller_name": caller_name,
                         "display_name": display_name,
@@ -2258,7 +2323,7 @@ class DailyModule:
                 run_triggered_caller(self.vault_path, name, entry_id, event)
             )
             _background_tasks.add(task)
-            task.add_done_callback(lambda t: _background_tasks.discard(t))
+            task.add_done_callback(_log_task_exception)
 
             return {"status": "triggered", "caller": name, "entry_id": entry_id, "event": event}
 

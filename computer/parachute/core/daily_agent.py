@@ -740,18 +740,11 @@ When you're ready, use `write_output` with date "{output_date}" to save your out
 # Triggered Caller execution — runs a Caller on a specific Note
 # ---------------------------------------------------------------------------
 
-_EVENT_DESCRIPTIONS = {
-    "note.created": "created",
-    "note.transcription_complete": "transcribed (voice transcription completed)",
-}
-
-
 async def run_triggered_caller(
     vault_path: Path,
     agent_name: str,
     entry_id: str,
     event: str,
-    entry_data: dict | None = None,
 ) -> dict[str, Any]:
     """
     Run a triggered Caller on a specific Note.
@@ -764,7 +757,6 @@ async def run_triggered_caller(
         agent_name: Name of the Caller (e.g., "transcription-cleanup")
         entry_id: The Note entry_id to process
         event: The event that triggered this (e.g., "note.transcription_complete")
-        entry_data: Pre-fetched entry data (avoids extra graph read)
 
     Returns:
         Result dict with status, agent, entry_id, etc.
@@ -787,20 +779,18 @@ async def run_triggered_caller(
             "error": "BrainDB unavailable",
         }
 
-    # Load entry data if not pre-fetched
-    if entry_data is None:
-        rows = await graph.execute_cypher(
-            "MATCH (e:Note {entry_id: $entry_id}) RETURN e",
-            {"entry_id": entry_id},
-        )
-        if not rows:
-            return {
-                "status": "error",
-                "agent": agent_name,
-                "entry_id": entry_id,
-                "error": f"Entry '{entry_id}' not found",
-            }
-        entry_data = rows[0]
+    rows = await graph.execute_cypher(
+        "MATCH (e:Note {entry_id: $entry_id}) RETURN e",
+        {"entry_id": entry_id},
+    )
+    if not rows:
+        return {
+            "status": "error",
+            "agent": agent_name,
+            "entry_id": entry_id,
+            "error": f"Entry '{entry_id}' not found",
+        }
+    entry_data = rows[0]
 
     entry_type = entry_data.get("entry_type") or "text"
     entry_date = entry_data.get("date") or ""
@@ -817,7 +807,10 @@ async def run_triggered_caller(
         system_prompt = system_prompt + f"\n\n## User Context\n\n{user_context}"
 
     # Build note-scoped prompt
-    event_desc = _EVENT_DESCRIPTIONS.get(event, event)
+    event_desc = {
+        "note.created": "created",
+        "note.transcription_complete": "transcribed (voice transcription completed)",
+    }.get(event, event.replace("note.", "").replace("_", " "))
     prompt_text = (
         f"A note has been {event_desc}. Use your tools to process it.\n\n"
         f"Entry ID: {entry_id}\n"

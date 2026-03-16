@@ -5,8 +5,9 @@ Discovers triggered Callers matching a Note lifecycle event (e.g.,
 "note.transcription_complete") and invokes them sequentially on the
 triggering entry.
 
-Handles lifecycle bookkeeping (cleanup_status, transcription_status)
-so triggered Callers stay focused on their core task.
+The dispatcher is event-agnostic — it finds, invokes, and records.
+Lifecycle bookkeeping (cleanup_status, transcription_status) belongs
+in the module that owns the domain semantics (DailyModule).
 """
 
 import json
@@ -21,7 +22,7 @@ logger = logging.getLogger(__name__)
 class CallerDispatcher:
     """Discovers triggered Callers and invokes them when events fire."""
 
-    def __init__(self, graph, vault_path: Path):
+    def __init__(self, graph: Any, vault_path: Path):
         self.graph = graph
         self.vault_path = vault_path
 
@@ -63,7 +64,11 @@ class CallerDispatcher:
         results = []
         for caller_row in callers:
             caller_name = caller_row["name"]
-            result = await self._invoke_caller(caller_name, entry_id, event, entry_meta)
+            display_name = caller_row.get("display_name") or caller_name.replace("-", " ").title()
+            result = await self._invoke_caller(
+                caller_name, entry_id, event, entry_meta,
+                display_name=display_name,
+            )
             results.append(result)
 
         return results
@@ -151,17 +156,11 @@ class CallerDispatcher:
         entry_id: str,
         event: str,
         entry_meta: dict[str, Any],
+        display_name: str = "",
     ) -> dict[str, Any]:
-        """Invoke a single triggered Caller with lifecycle bookkeeping."""
+        """Invoke a single triggered Caller. Event-agnostic — just invoke + record."""
         from parachute.core.daily_agent import run_triggered_caller
 
-        # Pre-invocation: set cleanup_status = "running" for transcription callers
-        if event == "note.transcription_complete":
-            await self._set_entry_status(
-                entry_id, cleanup_status="running"
-            )
-
-        # Record activity start
         ran_at = datetime.now(timezone.utc).isoformat()
 
         try:
@@ -175,22 +174,9 @@ class CallerDispatcher:
             status = result.get("status", "error")
             session_id = result.get("sdk_session_id")
 
-            # Post-invocation: update transcription status
-            if event == "note.transcription_complete":
-                if status in ("completed", "completed_no_output"):
-                    await self._set_entry_status(
-                        entry_id,
-                        transcription_status="complete",
-                        cleanup_status="completed",
-                    )
-                else:
-                    await self._set_entry_status(
-                        entry_id, cleanup_status="failed"
-                    )
-
-            # Record activity on the Caller→Note relationship
             await self._record_activity(
                 caller_name=caller_name,
+                display_name=display_name,
                 entry_id=entry_id,
                 status=status,
                 ran_at=ran_at,
@@ -209,13 +195,9 @@ class CallerDispatcher:
                 exc_info=True,
             )
 
-            if event == "note.transcription_complete":
-                await self._set_entry_status(
-                    entry_id, cleanup_status="failed"
-                )
-
             await self._record_activity(
                 caller_name=caller_name,
+                display_name=display_name,
                 entry_id=entry_id,
                 status="error",
                 ran_at=ran_at,
@@ -229,45 +211,10 @@ class CallerDispatcher:
                 "error": str(e),
             }
 
-    async def _set_entry_status(
-        self,
-        entry_id: str,
-        transcription_status: str | None = None,
-        cleanup_status: str | None = None,
-    ) -> None:
-        """Update transcription/cleanup status in the entry's metadata_json."""
-        try:
-            async with self.graph.write_lock:
-                rows = await self.graph.execute_cypher(
-                    "MATCH (e:Note {entry_id: $entry_id}) RETURN e.metadata_json AS meta",
-                    {"entry_id": entry_id},
-                )
-                if not rows:
-                    return
-
-                meta = {}
-                blob = rows[0].get("meta") or ""
-                if blob:
-                    try:
-                        meta = json.loads(blob)
-                    except (json.JSONDecodeError, TypeError):
-                        pass
-
-                if transcription_status is not None:
-                    meta["transcription_status"] = transcription_status
-                if cleanup_status is not None:
-                    meta["cleanup_status"] = cleanup_status
-
-                await self.graph.execute_cypher(
-                    "MATCH (e:Note {entry_id: $entry_id}) SET e.metadata_json = $meta",
-                    {"entry_id": entry_id, "meta": json.dumps(meta)},
-                )
-        except Exception as e:
-            logger.warning(f"CallerDispatcher: failed to set status on {entry_id}: {e}")
-
     async def _record_activity(
         self,
         caller_name: str,
+        display_name: str,
         entry_id: str,
         status: str,
         ran_at: str,
@@ -276,13 +223,12 @@ class CallerDispatcher:
         """Record that a Caller ran on a Note (for UI display)."""
         try:
             async with self.graph.write_lock:
-                # Store as a CallerRun node linked to the Note.
-                # (Kuzu doesn't support dynamic relationship properties on MERGE
-                # reliably, so we use a node-based approach.)
-                run_id = f"{caller_name}:{entry_id}:{ran_at[:19]}"
+                # Use full ISO timestamp (microsecond precision) to avoid collisions
+                run_id = f"{caller_name}:{entry_id}:{ran_at}"
                 await self.graph.execute_cypher(
                     "MERGE (r:CallerRun {run_id: $run_id}) "
                     "SET r.caller_name = $caller_name, "
+                    "    r.display_name = $display_name, "
                     "    r.entry_id = $entry_id, "
                     "    r.status = $status, "
                     "    r.ran_at = $ran_at, "
@@ -290,6 +236,7 @@ class CallerDispatcher:
                     {
                         "run_id": run_id,
                         "caller_name": caller_name,
+                        "display_name": display_name,
                         "entry_id": entry_id,
                         "status": status,
                         "ran_at": ran_at,
