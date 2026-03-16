@@ -49,6 +49,8 @@ User -> App (Flutter) -> Parachute Computer -> Claude Agent SDK -> AI
 
 ## Starting the Server
 
+**IMPORTANT**: Do NOT restart or install the server yourself. Ask the user to restart the server when needed — the daemon management requires their shell environment.
+
 ```bash
 cd computer
 ./install.sh                  # First-time: venv + deps + config + daemon

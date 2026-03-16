@@ -22,6 +22,7 @@ class JournalEntryCard extends ConsumerWidget {
   final VoidCallback? onEdit;
   final VoidCallback? onDelete;
   final VoidCallback? onTranscribe;
+  final VoidCallback? onEnhance;
   final VoidCallback? onSendToChat;
 
   const JournalEntryCard({
@@ -32,6 +33,7 @@ class JournalEntryCard extends ConsumerWidget {
     this.onEdit,
     this.onDelete,
     this.onTranscribe,
+    this.onEnhance,
     this.onSendToChat,
   });
 
@@ -132,7 +134,7 @@ class JournalEntryCard extends ConsumerWidget {
                   color: BrandColors.error,
                 ),
               ]
-              // Content preview (with optional cleanup indicator)
+              // Content preview (with cleanup status indicator)
               else if (entry.content.isNotEmpty) ...[
                 const SizedBox(height: 12),
                 Text(
@@ -147,6 +149,12 @@ class JournalEntryCard extends ConsumerWidget {
                 if (entry.isCleanupInProgress) ...[
                   const SizedBox(height: 8),
                   _buildCleanupIndicator(isDark),
+                ] else if (entry.isCleanedUp) ...[
+                  const SizedBox(height: 8),
+                  _buildCleanupStatusChip(isDark, enhanced: true),
+                ] else if (entry.needsCleanup && entry.content.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  _buildCleanupStatusChip(isDark, enhanced: false),
                 ],
               ],
 
@@ -173,6 +181,26 @@ class JournalEntryCard extends ConsumerWidget {
               if (entry.isPendingTranscription && !entry.isServerProcessing) ...[
                 const SizedBox(height: 12),
                 _buildTranscribeButton(context, isDark, canTranscribe),
+              ]
+              // Smart action: Re-transcribe (has audio) or Clean up (text only)
+              else if (entry.needsCleanup && entry.content.isNotEmpty && !entry.isServerProcessing) ...[
+                const SizedBox(height: 8),
+                if (entry.hasAudio && onTranscribe != null)
+                  _buildActionChip(
+                    isDark,
+                    icon: Icons.replay,
+                    label: 'Re-transcribe',
+                    color: BrandColors.forest,
+                    onTap: onTranscribe!,
+                  )
+                else if (onEnhance != null)
+                  _buildActionChip(
+                    isDark,
+                    icon: Icons.auto_fix_high,
+                    label: 'Clean up',
+                    color: BrandColors.turquoise,
+                    onTap: onEnhance!,
+                  ),
               ],
 
               // Sync status indicators
@@ -708,6 +736,70 @@ class JournalEntryCard extends ConsumerWidget {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildCleanupStatusChip(bool isDark, {required bool enhanced}) {
+    final color = enhanced ? BrandColors.forest : BrandColors.driftwood;
+    final icon = enhanced ? Icons.auto_awesome : Icons.notes;
+    final label = enhanced ? 'Enhanced' : 'Raw';
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: isDark ? 0.15 : 0.1),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 12, color: color),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 11,
+              color: color,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildActionChip(
+    bool isDark, {
+    required IconData icon,
+    required String label,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(6),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: isDark ? 0.2 : 0.1),
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 14, color: color),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                color: color,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 

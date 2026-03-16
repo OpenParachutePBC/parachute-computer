@@ -13,6 +13,7 @@ import 'package:parachute/core/providers/app_state_provider.dart' show apiKeyPro
 import 'package:parachute/core/providers/feature_flags_provider.dart' show aiServerUrlProvider;
 import 'package:parachute/core/providers/sync_provider.dart';
 import '../../recorder/providers/service_providers.dart';
+import '../models/entry_metadata.dart' show TranscriptionStatus;
 import '../models/journal_day.dart';
 import '../models/journal_entry.dart';
 import '../providers/journal_providers.dart';
@@ -974,41 +975,110 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
       return;
     }
 
+    // Respect transcription mode setting — same pattern as _addVoiceEntry
+    final mode = await ref.read(transcriptionModeProvider.future);
+    if (!mounted) return;
+
+    final useServer = switch (mode) {
+      TranscriptionMode.local => false,
+      TranscriptionMode.server => true,
+      TranscriptionMode.auto => ref.read(serverTranscriptionAvailableProvider),
+    };
+
+    if (useServer) {
+      await _retranscribeViaServer(entry, audioPath);
+    } else {
+      await _retranscribeLocally(entry, audioPath, mode);
+    }
+  }
+
+  /// Re-transcribe via server: upload audio with replace_entry_id, let server pipeline handle it.
+  Future<void> _retranscribeViaServer(JournalEntry entry, String audioPath) async {
     ref.read(journalScreenStateProvider.notifier).startTranscription(entry.id);
-    debugPrint('[JournalScreen] Starting transcription for entry ${entry.id}');
+    debugPrint('[JournalScreen] Re-transcribing entry ${entry.id} via server');
 
     File? tempAudioFile;
     try {
-      // Use local file if it exists (absolute path on same machine as server).
-      // Otherwise download from server to a temp file (cross-device or relative path).
-      String fullAudioPath;
-      if (audioPath.startsWith('/') && await File(audioPath).exists()) {
-        fullAudioPath = audioPath;
-      } else {
-        final serverBaseUrl = await ref.read(aiServerUrlProvider.future);
-        final apiKey = await ref.read(apiKeyProvider.future);
-        final audioUrl = JournalHelpers.getAudioUrl(audioPath, serverBaseUrl);
-        final headers = <String, String>{
-          if (apiKey != null && apiKey.isNotEmpty) 'X-API-Key': apiKey,
-        };
-        final response = await http
-            .get(Uri.parse(audioUrl), headers: headers)
-            .timeout(const Duration(minutes: 2),
-                onTimeout: () => throw TimeoutException('Audio download timed out'));
-        if (response.statusCode != 200) {
-          throw Exception('Audio not available (HTTP ${response.statusCode})');
-        }
-        final tempDir = await getTemporaryDirectory();
-        final ext = audioPath.contains('.') ? audioPath.split('.').last : 'wav';
-        tempAudioFile = File('${tempDir.path}/transcribe_${entry.id}.$ext');
-        await tempAudioFile.writeAsBytes(response.bodyBytes);
-        fullAudioPath = tempAudioFile.path;
+      // Get the audio file — download from server if needed
+      final audioFile = await _resolveAudioFile(audioPath, entry.id);
+      if (audioFile == null) throw Exception('Audio file not available');
+      if (audioFile.path != audioPath) tempAudioFile = audioFile;
+
+      if (!mounted) return;
+      final api = ref.read(dailyApiServiceProvider);
+
+      final result = await api.uploadVoiceEntry(
+        audioFile: audioFile,
+        durationSeconds: entry.durationSeconds ?? 0,
+        replaceEntryId: entry.id,
+      );
+      if (!mounted) return;
+
+      if (result == null) {
+        throw Exception('Server upload failed');
       }
+
+      // Update local cache to show processing state
+      final updatedEntry = entry.copyWith(
+        content: '',
+        serverTranscriptionStatus: TranscriptionStatus.processing,
+      );
+      if (_cachedJournal != null) {
+        setState(() {
+          _cachedJournal = _cachedJournal!.updateEntry(updatedEntry);
+        });
+      }
+
+      // Start polling for transcription + cleanup completion
+      _startPollingEntry(entry.id);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Re-transcribing on server...'),
+            backgroundColor: BrandColors.turquoise,
+            duration: const Duration(seconds: 2),
+            behavior: SnackBarBehavior.floating,
+            margin: const EdgeInsets.all(16),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('[JournalScreen] Server re-transcribe failed: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Re-transcription failed: $e'),
+            backgroundColor: BrandColors.error,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+ref.read(journalScreenStateProvider.notifier).completeTranscription(entry.id);
+      }
+      try { await tempAudioFile?.delete(); } catch (_) {}
+    }
+  }
+
+  /// Re-transcribe locally via Parakeet, then trigger server cleanup.
+  Future<void> _retranscribeLocally(JournalEntry entry, String audioPath, TranscriptionMode mode) async {
+    ref.read(journalScreenStateProvider.notifier).startTranscription(entry.id);
+    debugPrint('[JournalScreen] Re-transcribing entry ${entry.id} locally');
+
+    File? tempAudioFile;
+    try {
+      // Get the audio file — download from server if needed
+      final audioFile = await _resolveAudioFile(audioPath, entry.id);
+      if (audioFile == null) throw Exception('Audio file not available');
+      if (audioFile.path != audioPath) tempAudioFile = audioFile;
 
       if (!mounted) return;
       final postProcessingService = ref.read(recordingPostProcessingProvider);
       final result = await postProcessingService.process(
-        audioPath: fullAudioPath,
+        audioPath: audioFile.path,
         onProgress: (status, progress) {
           if (mounted) {
             ref.read(journalScreenStateProvider.notifier).updateTranscriptionProgress(
@@ -1020,7 +1090,7 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
       );
       final transcript = result.transcript;
 
-      debugPrint('[JournalScreen] Transcription complete: ${transcript.length} chars');
+      debugPrint('[JournalScreen] Local transcription complete: ${transcript.length} chars');
 
       if (transcript.isEmpty) {
         if (mounted) {
@@ -1064,18 +1134,13 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
           );
         }
 
-        // Auto-enhance if enabled
-        final autoEnhance = await ref.read(autoEnhanceProvider.future);
-        if (autoEnhance) {
-          debugPrint('[JournalScreen] Auto-enhancing transcription...');
-          await Future.delayed(const Duration(milliseconds: 100));
-          if (mounted) {
-            _handleEnhance(updatedEntry);
-          }
+        // After local transcription, trigger server-side cleanup
+        if (mounted) {
+          _handleEnhance(updatedEntry);
         }
       }
     } catch (e) {
-      debugPrint('[JournalScreen] Transcription failed: $e');
+      debugPrint('[JournalScreen] Local transcription failed: $e');
       if (mounted) {
         final msg = e is SocketException
             ? 'Cannot reach server to download audio'
@@ -1096,17 +1161,80 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
     }
   }
 
+  /// Resolve an audio path to a local file, downloading from server if needed.
+  Future<File?> _resolveAudioFile(String audioPath, String entryId) async {
+    // Use local file if it exists (absolute path on same machine as server)
+    if (audioPath.startsWith('/') && await File(audioPath).exists()) {
+      return File(audioPath);
+    }
+    // Otherwise download from server to a temp file
+    final serverBaseUrl = await ref.read(aiServerUrlProvider.future);
+    final apiKey = await ref.read(apiKeyProvider.future);
+    final audioUrl = JournalHelpers.getAudioUrl(audioPath, serverBaseUrl);
+    final headers = <String, String>{
+      if (apiKey != null && apiKey.isNotEmpty) 'X-API-Key': apiKey,
+    };
+    final response = await http
+        .get(Uri.parse(audioUrl), headers: headers)
+        .timeout(const Duration(minutes: 2),
+            onTimeout: () => throw TimeoutException('Audio download timed out'));
+    if (response.statusCode != 200) {
+      throw Exception('Audio not available (HTTP ${response.statusCode})');
+    }
+    final tempDir = await getTemporaryDirectory();
+    final ext = audioPath.contains('.') ? audioPath.split('.').last : 'wav';
+    final tempFile = File('${tempDir.path}/transcribe_$entryId.$ext');
+    await tempFile.writeAsBytes(response.bodyBytes);
+    return tempFile;
+  }
+
   Future<void> _handleEnhance(JournalEntry entry) async {
-    // Enhancement not yet available in Parachute Daily
-    if (mounted) {
+    if (entry.content.trim().isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('No content to clean up'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+      return;
+    }
+
+    final api = ref.read(dailyApiServiceProvider);
+    final success = await api.cleanupEntry(entry.id);
+    if (!mounted) return;
+
+    if (success) {
+      // Update local state to show cleanup in progress
+      final updatedEntry = entry.copyWith(
+        serverTranscriptionStatus: TranscriptionStatus.transcribed,
+      );
+      if (_cachedJournal != null) {
+        setState(() {
+          _cachedJournal = _cachedJournal!.updateEntry(updatedEntry);
+        });
+      }
+
+      // Start polling for cleanup completion
+      _startPollingEntry(entry.id);
+
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: const Text('AI enhancement coming soon!'),
+          content: const Text('Cleaning up text...'),
           backgroundColor: BrandColors.turquoise,
           duration: const Duration(seconds: 2),
           behavior: SnackBarBehavior.floating,
           margin: const EdgeInsets.all(16),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        ),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Cleanup unavailable — check server connection'),
+          backgroundColor: BrandColors.error,
+          duration: const Duration(seconds: 3),
         ),
       );
     }

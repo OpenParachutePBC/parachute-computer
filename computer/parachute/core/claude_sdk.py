@@ -226,7 +226,7 @@ async def query_streaming(
         if permission_mode in valid_modes:
             options_kwargs["permission_mode"] = permission_mode  # type: ignore
 
-    if tools:
+    if tools is not None:
         options_kwargs["allowed_tools"] = tools
 
     if resume:

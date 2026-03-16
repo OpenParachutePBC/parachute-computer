@@ -333,6 +333,12 @@ class _JournalEntryRowState extends ConsumerState<JournalEntryRow> {
               entry.durationSeconds! > 0)
             _buildDurationBadge(isDark),
 
+          // Enhanced badge for cleaned-up voice entries
+          if (entry.isCleanedUp) ...[
+            const SizedBox(width: 6),
+            _buildEnhancedBadge(isDark),
+          ],
+
           // Copy button - show for entries with content
           if (widget.entry.content.isNotEmpty && !widget.isEditing) ...[
             const SizedBox(width: 8),
@@ -353,11 +359,14 @@ class _JournalEntryRowState extends ConsumerState<JournalEntryRow> {
   }
 
   /// Check if this entry can be enhanced with AI
-  /// Only voice entries benefit from cleanup (typed text is already clean)
+  /// Voice entries that haven't been cleaned up benefit from LLM cleanup.
+  /// Already-cleaned entries don't need the button.
   bool get _canEnhance =>
       widget.entry.type == JournalEntryType.voice &&
       !_isImportedMarkdown &&
       !widget.entry.isPendingTranscription &&
+      !widget.entry.isServerProcessing &&
+      !widget.entry.isCleanedUp &&
       widget.entry.content.isNotEmpty &&
       widget.onEnhance != null;
 
@@ -459,7 +468,7 @@ class _JournalEntryRowState extends ConsumerState<JournalEntryRow> {
     }
 
     return Tooltip(
-      message: 'AI enhance: clean up text & generate title',
+      message: 'Clean up text with AI',
       child: InkWell(
         onTap: widget.onEnhance,
         borderRadius: BorderRadius.circular(6),
@@ -525,6 +534,31 @@ class _JournalEntryRowState extends ConsumerState<JournalEntryRow> {
           color: BrandColors.turquoise,
           fontWeight: FontWeight.w500,
         ),
+      ),
+    );
+  }
+
+  Widget _buildEnhancedBadge(bool isDark) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: BrandColors.forest.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.auto_awesome, size: 10, color: BrandColors.forest),
+          const SizedBox(width: 3),
+          Text(
+            'Enhanced',
+            style: TextStyle(
+              fontSize: 10,
+              color: BrandColors.forest,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
       ),
     );
   }
