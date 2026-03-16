@@ -10,7 +10,7 @@ import logging
 import re
 import uuid
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from parachute.models.session import ContainerCreate, ContainerUpdate
 
@@ -28,10 +28,13 @@ def _slugify(name: str) -> str:
 
 
 @router.get("")
-async def list_containers(request: Request):
-    """List all named containers."""
+async def list_containers(
+    request: Request,
+    workspace: bool | None = Query(None, description="Filter: true=workspaces only, false=non-workspaces only, omit=all"),
+):
+    """List containers, optionally filtering to workspaces only."""
     db = request.app.state.session_store
-    containers = await db.list_containers()
+    containers = await db.list_containers(workspace_only=bool(workspace))
     return {"containers": [c.model_dump(by_alias=True) for c in containers]}
 
 
@@ -61,6 +64,7 @@ async def create_container(request: Request, body: ContainerCreate):
         slug=slug,
         display_name=body.display_name,
         core_memory=body.core_memory,
+        is_workspace=True,  # Explicit creation = workspace
     )
     return {"container": container.model_dump(by_alias=True)}
 
@@ -77,10 +81,16 @@ async def update_container(request: Request, slug: str, body: ContainerUpdate):
     if not existing:
         raise HTTPException(status_code=404, detail=f"Container '{slug}' not found")
 
+    # Auto-promote to workspace when display_name is set on a non-workspace
+    is_workspace = body.is_workspace
+    if body.display_name is not None and not existing.is_workspace and is_workspace is None:
+        is_workspace = True
+
     updated = await db.update_container(
         slug=slug,
         display_name=body.display_name,
         core_memory=body.core_memory,
+        is_workspace=is_workspace,
     )
     if not updated:
         raise HTTPException(

@@ -90,11 +90,20 @@ class BrainChatStore:
                 "slug": "STRING",
                 "display_name": "STRING",
                 "core_memory": "STRING",
+                "is_workspace": "BOOLEAN",
                 "credential_grants_json": "STRING",
                 "created_at": "STRING",
             },
             primary_key="slug",
         )
+        # Migration: add is_workspace column to existing Container tables
+        container_cols = await self.graph.get_table_columns("Container")
+        if "is_workspace" not in container_cols:
+            async with self.graph.write_lock:
+                await self.graph.execute_cypher(
+                    "ALTER TABLE Container ADD is_workspace BOOLEAN DEFAULT false"
+                )
+                logger.info("Added is_workspace column to Container table")
         await self.graph.ensure_node_table(
             "Parachute_PairingRequest",
             {
@@ -811,19 +820,26 @@ class BrainChatStore:
     # ── Containers ─────────────────────────────────────────────────────────────
 
     async def create_container(
-        self, slug: str, display_name: str, core_memory: Optional[str] = None
+        self, slug: str, display_name: str, core_memory: Optional[str] = None,
+        is_workspace: bool = False,
     ) -> Container:
         """Create a container environment."""
         now = _now()
         async with self.graph.write_lock:
             await self.graph._execute(
-                "CREATE (:Container {slug: $slug, display_name: $display_name, core_memory: $core_memory, created_at: $created_at})",
-{"slug": slug, "display_name": display_name, "core_memory": core_memory, "created_at": now},
+                "CREATE (:Container {slug: $slug, display_name: $display_name, "
+                "core_memory: $core_memory, is_workspace: $is_workspace, created_at: $created_at})",
+                {
+                    "slug": slug, "display_name": display_name,
+                    "core_memory": core_memory, "is_workspace": is_workspace,
+                    "created_at": now,
+                },
             )
         return Container(
             slug=slug,
             display_name=display_name,
             core_memory=core_memory,
+            is_workspace=is_workspace,
             created_at=datetime.fromisoformat(now),
         )
 
@@ -837,22 +853,34 @@ class BrainChatStore:
             return self._node_to_container(rows[0])
         return None
 
-    async def list_containers(self) -> list[Container]:
-        """List all container environments."""
-        rows = await self.graph.execute_cypher(
-            "MATCH (c:Container) RETURN c ORDER BY c.created_at DESC"
-        )
+    async def list_containers(
+        self, workspace_only: bool = False,
+    ) -> list[Container]:
+        """List container environments, optionally filtering to workspaces only."""
+        if workspace_only:
+            rows = await self.graph.execute_cypher(
+                "MATCH (c:Container) WHERE c.is_workspace = true "
+                "RETURN c ORDER BY c.created_at DESC"
+            )
+        else:
+            rows = await self.graph.execute_cypher(
+                "MATCH (c:Container) RETURN c ORDER BY c.created_at DESC"
+            )
         return [self._node_to_container(r) for r in rows]
 
     async def update_container(
-        self, slug: str, display_name: Optional[str] = None, core_memory: Optional[str] = None
+        self, slug: str, display_name: Optional[str] = None,
+        core_memory: Optional[str] = None, is_workspace: Optional[bool] = None,
     ) -> Optional[Container]:
-        """Update a container's display name or core memory."""
+        """Update a container's display name, core memory, or workspace flag."""
         set_parts: list[str] = []
         params: dict[str, Any] = {"slug": slug}
         if display_name is not None:
             set_parts.append("c.display_name = $display_name")
             params["display_name"] = display_name
+        if is_workspace is not None:
+            set_parts.append("c.is_workspace = $is_workspace")
+            params["is_workspace"] = is_workspace
         if core_memory is not None:
             set_parts.append("c.core_memory = $core_memory")
             params["core_memory"] = core_memory
@@ -915,8 +943,11 @@ class BrainChatStore:
             datetime.now(timezone.utc) - timedelta(minutes=min_age_minutes)
         ).isoformat()
 
+        # Only consider non-workspace containers for pruning.
+        # Named workspaces are durable — never auto-pruned.
         all_envs = await self.graph.execute_cypher(
-            "MATCH (c:Container) WHERE c.created_at < $cutoff RETURN c.slug",
+            "MATCH (c:Container) WHERE c.created_at < $cutoff "
+            "AND (c.is_workspace = false OR c.is_workspace IS NULL) RETURN c.slug",
             {"cutoff": cutoff},
         )
 
@@ -1015,6 +1046,7 @@ class BrainChatStore:
             slug=row["slug"],
             display_name=row["display_name"],
             core_memory=row.get("core_memory"),
+            is_workspace=bool(row.get("is_workspace", False)),
             credential_grants=grants,
             created_at=datetime.fromisoformat(row["created_at"]),
         )

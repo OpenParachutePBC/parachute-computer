@@ -9,12 +9,14 @@ class ContainerEnv {
   final String slug;
   final String displayName;
   final String? coreMemory;
+  final bool isWorkspace;
   final DateTime createdAt;
 
   const ContainerEnv({
     required this.slug,
     required this.displayName,
     this.coreMemory,
+    this.isWorkspace = false,
     required this.createdAt,
   });
 
@@ -22,6 +24,7 @@ class ContainerEnv {
         slug: json['slug'] as String,
         displayName: json['displayName'] as String,
         coreMemory: json['coreMemory'] as String?,
+        isWorkspace: json['isWorkspace'] as bool? ?? false,
         createdAt: DateTime.parse(json['createdAt'] as String),
       );
 
@@ -29,14 +32,22 @@ class ContainerEnv {
         'slug': slug,
         'displayName': displayName,
         if (coreMemory != null) 'coreMemory': coreMemory,
+        'isWorkspace': isWorkspace,
         'createdAt': createdAt.toIso8601String(),
       };
 
-  ContainerEnv copyWith({String? slug, String? displayName, String? coreMemory, DateTime? createdAt}) =>
+  ContainerEnv copyWith({
+    String? slug,
+    String? displayName,
+    String? coreMemory,
+    bool? isWorkspace,
+    DateTime? createdAt,
+  }) =>
       ContainerEnv(
         slug: slug ?? this.slug,
         displayName: displayName ?? this.displayName,
         coreMemory: coreMemory ?? this.coreMemory,
+        isWorkspace: isWorkspace ?? this.isWorkspace,
         createdAt: createdAt ?? this.createdAt,
       );
 }
