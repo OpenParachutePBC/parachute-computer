@@ -354,9 +354,6 @@ class ContainerUpdate(BaseModel):
     core_memory: str | None = Field(
         default=None, max_length=4000, description="New core memory content"
     )
-    is_workspace: bool | None = Field(
-        default=None, description="Promote to workspace (auto-set when display_name is set on a non-workspace)"
-    )
 
 
 class SessionCreate(BaseModel):

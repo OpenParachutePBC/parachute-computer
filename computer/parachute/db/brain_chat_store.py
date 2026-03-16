@@ -97,9 +97,9 @@ class BrainChatStore:
             primary_key="slug",
         )
         # Migration: add is_workspace column to existing Container tables
-        container_cols = await self.graph.get_table_columns("Container")
-        if "is_workspace" not in container_cols:
-            async with self.graph.write_lock:
+        async with self.graph.write_lock:
+            container_cols = await self.graph.get_table_columns("Container")
+            if "is_workspace" not in container_cols:
                 await self.graph.execute_cypher(
                     "ALTER TABLE Container ADD is_workspace BOOLEAN DEFAULT false"
                 )
@@ -945,6 +945,7 @@ class BrainChatStore:
 
         # Only consider non-workspace containers for pruning.
         # Named workspaces are durable — never auto-pruned.
+        # IS NULL covers pre-migration rows where the column didn't exist yet.
         all_envs = await self.graph.execute_cypher(
             "MATCH (c:Container) WHERE c.created_at < $cutoff "
             "AND (c.is_workspace = false OR c.is_workspace IS NULL) RETURN c.slug",

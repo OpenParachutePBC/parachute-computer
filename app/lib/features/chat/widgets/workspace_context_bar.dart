@@ -538,10 +538,10 @@ class _ContainerSettingsSheetState
     final workspaceName = _nameController.text;
     final sessionCount = ref.read(containerSessionCountsProvider)[widget.slug] ?? 0;
 
+    final confirmController = TextEditingController();
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) {
-        final confirmController = TextEditingController();
         return StatefulBuilder(
           builder: (context, setDialogState) {
             final nameMatches = confirmController.text == workspaceName;
@@ -607,6 +607,7 @@ class _ContainerSettingsSheetState
         );
       },
     );
+    confirmController.dispose();
     if (confirmed != true) return;
 
     try {

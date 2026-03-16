@@ -30,11 +30,11 @@ def _slugify(name: str) -> str:
 @router.get("")
 async def list_containers(
     request: Request,
-    workspace: bool | None = Query(None, description="Filter: true=workspaces only, false=non-workspaces only, omit=all"),
+    workspaces_only: bool = Query(False, description="Filter to workspaces only"),
 ):
     """List containers, optionally filtering to workspaces only."""
     db = request.app.state.session_store
-    containers = await db.list_containers(workspace_only=bool(workspace))
+    containers = await db.list_containers(workspace_only=workspaces_only)
     return {"containers": [c.model_dump(by_alias=True) for c in containers]}
 
 
@@ -82,9 +82,7 @@ async def update_container(request: Request, slug: str, body: ContainerUpdate):
         raise HTTPException(status_code=404, detail=f"Container '{slug}' not found")
 
     # Auto-promote to workspace when display_name is set on a non-workspace
-    is_workspace = body.is_workspace
-    if body.display_name is not None and not existing.is_workspace and is_workspace is None:
-        is_workspace = True
+    is_workspace = True if (body.display_name is not None and not existing.is_workspace) else None
 
     updated = await db.update_container(
         slug=slug,
