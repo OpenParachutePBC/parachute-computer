@@ -163,9 +163,9 @@ def _trim_redo_log() -> list[dict]:
 VALID_TRANSCRIPTION_STATUSES = {"processing", "transcribed", "complete", "failed"}
 VALID_TRANSCRIPTION_TRANSITIONS = {
     "processing": {"transcribed", "complete", "failed"},
-    "transcribed": {"complete", "failed"},
+    "transcribed": {"processing", "complete", "failed"},  # +processing for re-transcribe
     "failed": {"processing"},       # retry
-    "complete": set(),              # terminal — no transitions out
+    "complete": {"processing"},     # re-transcribe from finished state
 }
 
 
