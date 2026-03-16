@@ -1,9 +1,9 @@
+import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
 import '../models/container_env.dart';
 import '../providers/container_providers.dart';
-import '../providers/chat_providers.dart';
 import '../screens/container_file_browser_screen.dart';
 
 /// Unified workspace context bar shown at the top of the session list.
@@ -35,6 +35,7 @@ class WorkspaceContextBar extends ConsumerWidget {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final activeSlug = ref.watch(activeContainerProvider).valueOrNull;
     final containersAsync = ref.watch(containersProvider);
+    final allContainersAsync = ref.watch(allContainersProvider);
     final counts = ref.watch(containerSessionCountsProvider);
 
     // Resolve the display name for the active workspace
@@ -45,6 +46,15 @@ class WorkspaceContextBar extends ConsumerWidget {
         return match.isNotEmpty ? match.first.displayName : activeSlug;
       },
     );
+
+    // Check if active container is an unnamed sandbox (not yet a workspace)
+    final isActiveUnnamed = activeSlug != null &&
+        (allContainersAsync.whenOrNull(
+              data: (all) =>
+                  all.firstWhereOrNull((e) => e.slug == activeSlug)?.isWorkspace == false,
+            ) ??
+            false);
+    final isActiveNamed = activeSlug != null && !isActiveUnnamed;
 
     final sessionCount = activeSlug != null
         ? (counts[activeSlug] ?? 0)
@@ -111,12 +121,14 @@ class WorkspaceContextBar extends ConsumerWidget {
                     activeDisplayName ?? activeSlug,
                   ),
                 ),
-                _ActionIcon(
-                  icon: Icons.settings_outlined,
-                  tooltip: 'Workspace Settings',
-                  isDark: isDark,
-                  onTap: () => _openSettings(context, ref, isDark, activeSlug),
-                ),
+                // Gear icon only for named workspaces (unnamed ones get the promotion banner)
+                if (isActiveNamed)
+                  _ActionIcon(
+                    icon: Icons.settings_outlined,
+                    tooltip: 'Workspace Settings',
+                    isDark: isDark,
+                    onTap: () => ContainerSettingsSheet.show(context, ref, activeSlug),
+                  ),
               ],
 
               // Archive toggle
@@ -137,6 +149,10 @@ class WorkspaceContextBar extends ConsumerWidget {
               ),
             ],
           ),
+
+          // Promotion banner for unnamed workspaces
+          if (isActiveUnnamed)
+            _WorkspacePromotionBanner(slug: activeSlug),
 
           // Row 2: session count subtitle
           Padding(
@@ -362,14 +378,6 @@ class WorkspaceContextBar extends ConsumerWidget {
     );
   }
 
-  void _openSettings(
-    BuildContext context,
-    WidgetRef ref,
-    bool isDark,
-    String slug,
-  ) {
-    ContainerSettingsSheet.show(context, ref, slug);
-  }
 }
 
 /// Small icon button used in the context bar action row.
@@ -463,7 +471,7 @@ class _WorkspacePickerItem extends StatelessWidget {
   }
 }
 
-/// Bottom sheet for workspace settings (rename, core memory, delete).
+/// Bottom sheet for workspace settings (rename and delete).
 class ContainerSettingsSheet extends ConsumerStatefulWidget {
   final String slug;
 
@@ -486,7 +494,6 @@ class ContainerSettingsSheet extends ConsumerStatefulWidget {
 class _ContainerSettingsSheetState
     extends ConsumerState<ContainerSettingsSheet> {
   late TextEditingController _nameController;
-  late TextEditingController _memoryController;
   bool _isSaving = false;
   String? _error;
 
@@ -496,13 +503,11 @@ class _ContainerSettingsSheetState
   void initState() {
     super.initState();
     _nameController = TextEditingController();
-    _memoryController = TextEditingController();
   }
 
   @override
   void dispose() {
     _nameController.dispose();
-    _memoryController.dispose();
     super.dispose();
   }
 
@@ -520,7 +525,6 @@ class _ContainerSettingsSheetState
       await service.updateContainer(
         widget.slug,
         displayName: name,
-        coreMemory: _memoryController.text.trim(),
       );
       ref.invalidate(containersProvider);
       ref.invalidate(allContainersProvider);
@@ -537,6 +541,7 @@ class _ContainerSettingsSheetState
   Future<void> _delete() async {
     final workspaceName = _nameController.text;
     final sessionCount = ref.read(containerSessionCountsProvider)[widget.slug] ?? 0;
+    final messenger = ScaffoldMessenger.of(context);
 
     final confirmController = TextEditingController();
     final confirmed = await showDialog<bool>(
@@ -622,7 +627,7 @@ class _ContainerSettingsSheetState
       if (mounted) Navigator.of(context).pop();
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        messenger.showSnackBar(
           SnackBar(content: Text('Failed to delete: $e')),
         );
       }
@@ -633,17 +638,17 @@ class _ContainerSettingsSheetState
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    // Watch reactively — populate controllers on first data arrival
-    final containersAsync = ref.watch(containersProvider);
-    containersAsync.whenData((envs) {
-      if (!_controllersPopulated) {
-        final match = envs.where((e) => e.slug == widget.slug);
-        if (match.isNotEmpty) {
-          _nameController.text = match.first.displayName;
-          _memoryController.text = match.first.coreMemory ?? '';
+    // Populate controller once when data first arrives — ref.listen runs
+    // after the frame, not mid-build, so side effects are safe here.
+    ref.listen<AsyncValue<List<ContainerEnv>>>(containersProvider, (prev, next) {
+      if (_controllersPopulated) return;
+      next.whenData((envs) {
+        final match = envs.firstWhereOrNull((e) => e.slug == widget.slug);
+        if (match != null) {
+          _nameController.text = match.displayName;
           _controllersPopulated = true;
         }
-      }
+      });
     });
 
     return ConstrainedBox(
@@ -719,35 +724,6 @@ class _ContainerSettingsSheetState
                         color: isDark ? BrandColors.nightText : BrandColors.ink,
                       ),
                     ),
-                    SizedBox(height: Spacing.md),
-
-                    // Core memory
-                    Text(
-                      'Core Memory',
-                      style: TextStyle(
-                        fontSize: TypographyTokens.bodySmall,
-                        fontWeight: FontWeight.w500,
-                        color: isDark
-                            ? BrandColors.nightTextSecondary
-                            : BrandColors.driftwood,
-                      ),
-                    ),
-                    SizedBox(height: Spacing.xs),
-                    TextField(
-                      controller: _memoryController,
-                      maxLines: 4,
-                      decoration: InputDecoration(
-                        hintText: 'Persistent context for sessions in this workspace...',
-                        isDense: true,
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(Spacing.xs),
-                        ),
-                      ),
-                      style: TextStyle(
-                        fontSize: TypographyTokens.bodySmall,
-                        color: isDark ? BrandColors.nightText : BrandColors.ink,
-                      ),
-                    ),
 
                     if (_error != null) ...[
                       SizedBox(height: Spacing.sm),
@@ -806,6 +782,143 @@ class _ContainerSettingsSheetState
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Inline banner shown when the active workspace is unnamed.
+///
+/// Provides a text field + "Name" button so users can promote an unnamed
+/// container to a named workspace directly from the context bar.
+class _WorkspacePromotionBanner extends ConsumerStatefulWidget {
+  final String slug;
+
+  const _WorkspacePromotionBanner({required this.slug});
+
+  @override
+  ConsumerState<_WorkspacePromotionBanner> createState() =>
+      _WorkspacePromotionBannerState();
+}
+
+class _WorkspacePromotionBannerState
+    extends ConsumerState<_WorkspacePromotionBanner> {
+  final _controller = TextEditingController();
+  bool _isNaming = false;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Future<void> _nameWorkspace() async {
+    final name = _controller.text.trim();
+    if (name.isEmpty) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() => _isNaming = true);
+    try {
+      final service = ref.read(containerServiceProvider);
+      await service.updateContainer(widget.slug, displayName: name);
+      ref.invalidate(containersProvider);
+      ref.invalidate(allContainersProvider);
+      if (mounted) {
+        _controller.clear();
+        messenger.showSnackBar(
+          SnackBar(content: Text('Workspace named "$name"')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        messenger.showSnackBar(
+          SnackBar(content: Text('Failed to name workspace: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isNaming = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Container(
+      margin: EdgeInsets.only(
+        left: Spacing.sm,
+        right: Spacing.xs,
+        top: Spacing.xs,
+      ),
+      padding: EdgeInsets.all(Spacing.sm),
+      decoration: BoxDecoration(
+        color: (isDark ? BrandColors.nightForest : BrandColors.forest)
+            .withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(Spacing.xs),
+        border: Border.all(
+          color: (isDark ? BrandColors.nightForest : BrandColors.forest)
+              .withValues(alpha: 0.2),
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            Icons.edit_outlined,
+            size: 14,
+            color: isDark ? BrandColors.nightForest : BrandColors.forest,
+          ),
+          SizedBox(width: Spacing.xs),
+          Expanded(
+            child: SizedBox(
+              height: 30,
+              child: TextField(
+                controller: _controller,
+                decoration: InputDecoration(
+                  hintText: 'Name this workspace',
+                  isDense: true,
+                  contentPadding: EdgeInsets.symmetric(
+                    horizontal: Spacing.sm,
+                    vertical: Spacing.xs,
+                  ),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(Spacing.xs),
+                  ),
+                ),
+                style: TextStyle(
+                  fontSize: TypographyTokens.labelSmall,
+                  color: isDark ? BrandColors.nightText : BrandColors.ink,
+                ),
+                onSubmitted: (_) => _nameWorkspace(),
+              ),
+            ),
+          ),
+          SizedBox(width: Spacing.sm),
+          SizedBox(
+            height: 30,
+            child: FilledButton(
+              onPressed: _isNaming ? null : _nameWorkspace,
+              style: FilledButton.styleFrom(
+                backgroundColor:
+                    isDark ? BrandColors.nightForest : BrandColors.forest,
+                padding: EdgeInsets.symmetric(horizontal: Spacing.sm),
+              ),
+              child: _isNaming
+                  ? const SizedBox(
+                      height: 14,
+                      width: 14,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : Text(
+                      'Name',
+                      style: TextStyle(
+                        fontSize: TypographyTokens.labelSmall,
+                      ),
+                    ),
+            ),
+          ),
+        ],
       ),
     );
   }

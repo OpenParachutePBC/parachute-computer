@@ -1,23 +1,20 @@
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:http/http.dart' as http;
 import 'package:parachute/core/theme/design_tokens.dart';
-import 'package:parachute/core/providers/app_state_provider.dart' show apiKeyProvider;
-import 'package:parachute/core/providers/feature_flags_provider.dart';
-import '../../settings/models/trust_level.dart';
 import '../models/chat_session.dart';
 import '../models/prompt_metadata.dart';
+import '../providers/container_providers.dart';
 
-/// Unified bottom sheet that consolidates session config, context settings,
-/// and session info into a single scrollable sheet.
+/// Unified bottom sheet that consolidates session context and info
+/// into a single scrollable sheet.
 ///
 /// Sections:
 ///   1. Header - title, workspace badge, model badge, agent badge
-///   2. Trust Level - segmented button (from SessionConfigSheet)
-///   3. Context - working directory and CLAUDE.md status (from ContextSettingsSheet)
-///   4. Session Info - ID, model, tokens, prompt source (from SessionInfoSheet)
+///   2. Workspace - name display or promotion banner for unnamed sandboxes
+///   3. Context - working directory and CLAUDE.md status
+///   4. Capabilities - agents, skills, MCPs
+///   5. Session Info - ID, model, tokens, prompt source
 class UnifiedSessionSettings extends ConsumerStatefulWidget {
   final ChatSession session;
   final String? model;
@@ -72,56 +69,39 @@ class UnifiedSessionSettings extends ConsumerStatefulWidget {
 
 class _UnifiedSessionSettingsState
     extends ConsumerState<UnifiedSessionSettings> {
-  late String _trustLevel;
-  bool _isSaving = false;
-  String? _saveError;
+  final _workspaceNameController = TextEditingController();
+  bool _isNamingWorkspace = false;
 
   @override
-  void initState() {
-    super.initState();
-    _trustLevel = TrustLevel.fromString(widget.session.trustLevel).name;
+  void dispose() {
+    _workspaceNameController.dispose();
+    super.dispose();
   }
 
-  Future<void> _saveTrustLevel() async {
-    if (_trustLevel == TrustLevel.fromString(widget.session.trustLevel).name) return;
-    setState(() {
-      _isSaving = true;
-      _saveError = null;
-    });
+  Future<void> _nameWorkspace(String slug) async {
+    final name = _workspaceNameController.text.trim();
+    if (name.isEmpty) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() => _isNamingWorkspace = true);
     try {
-      final featureFlags = ref.read(featureFlagsServiceProvider);
-      final serverUrl = await featureFlags.getAiServerUrl();
-      final apiKey = await ref.read(apiKeyProvider.future);
-
-      final response = await http.patch(
-        Uri.parse('$serverUrl/api/chat/${widget.session.id}/config'),
-        headers: {
-          'Content-Type': 'application/json',
-          if (apiKey != null && apiKey.isNotEmpty)
-            'Authorization': 'Bearer $apiKey',
-        },
-        body: json.encode({'trustLevel': _trustLevel}),
-      );
-
+      final service = ref.read(containerServiceProvider);
+      await service.updateContainer(slug, displayName: name);
+      ref.invalidate(containersProvider);
+      ref.invalidate(allContainersProvider);
       if (mounted) {
-        if (response.statusCode == 200) {
-          widget.onConfigSaved?.call();
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: const Text('Trust level updated'),
-              backgroundColor: BrandColors.forest,
-              duration: const Duration(seconds: 1),
-              behavior: SnackBarBehavior.floating,
-            ),
-          );
-        } else {
-          setState(() => _saveError = 'Save failed (${response.statusCode})');
-        }
+        messenger.showSnackBar(
+          SnackBar(content: Text('Workspace named "$name"')),
+        );
       }
     } catch (e) {
-      if (mounted) setState(() => _saveError = 'Save failed: $e');
+      if (mounted) {
+        messenger.showSnackBar(
+          SnackBar(content: Text('Failed to name workspace: $e')),
+        );
+      }
     } finally {
-      if (mounted) setState(() => _isSaving = false);
+      if (mounted) setState(() => _isNamingWorkspace = false);
     }
   }
 
@@ -210,12 +190,15 @@ class _UnifiedSessionSettingsState
                   _divider(isDark),
                   const SizedBox(height: Spacing.lg),
 
-                  // --- Section 2: Trust Level ---
-                  _buildTrustSection(isDark),
+                  // --- Section 2: Workspace ---
+                  if (session.containerId != null)
+                    _buildWorkspaceSection(isDark, session.containerId!),
 
-                  const SizedBox(height: Spacing.lg),
-                  _divider(isDark),
-                  const SizedBox(height: Spacing.lg),
+                  if (session.containerId != null) ...[
+                    const SizedBox(height: Spacing.lg),
+                    _divider(isDark),
+                    const SizedBox(height: Spacing.lg),
+                  ],
 
                   // --- Section 3: Context ---
                   _buildContextSection(isDark, claudeMdPath),
@@ -335,72 +318,182 @@ class _UnifiedSessionSettingsState
     );
   }
 
-  // ---- Trust Level Section ----
+  // ---- Workspace Section ----
 
-  Widget _buildTrustSection(bool isDark) {
-    const levels = ['direct', 'sandboxed'];
+  Widget _buildWorkspaceSection(bool isDark, String containerSlug) {
+    final allContainers = ref.watch(allContainersProvider);
+    final container = allContainers.whenOrNull(
+      data: (all) => all.where((e) => e.slug == containerSlug).firstOrNull,
+    );
+
+    final isNamed = container?.isWorkspace == true;
+    final displayName = container?.displayName ?? containerSlug;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _sectionLabel(isDark, 'Trust Level'),
+        _sectionLabel(isDark, 'Workspace'),
         const SizedBox(height: Spacing.sm),
-        SegmentedButton<String>(
-          segments: levels.map((level) {
-            final tl = TrustLevel.fromString(level);
-            return ButtonSegment(
-              value: level,
-              label: Text(
-                tl.displayName,
-                style: const TextStyle(fontSize: TypographyTokens.labelSmall),
-              ),
-            );
-          }).toList(),
-          selected: {_trustLevel},
-          onSelectionChanged: (selected) {
-            setState(() => _trustLevel = selected.first);
-            _saveTrustLevel();
-          },
-          style: ButtonStyle(
-            backgroundColor: WidgetStateProperty.resolveWith((states) {
-              if (states.contains(WidgetState.selected)) {
-                return _trustColor(_trustLevel).withValues(alpha: 0.15);
-              }
-              return null;
-            }),
-          ),
-        ),
-        const SizedBox(height: Spacing.xs),
-        Text(
-          TrustLevel.fromString(_trustLevel).description,
-          style: TextStyle(
-            fontSize: TypographyTokens.labelSmall,
-            color:
-                isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
-          ),
-        ),
-        if (_isSaving)
-          Padding(
-            padding: const EdgeInsets.only(top: Spacing.xs),
-            child: SizedBox(
-              width: 14,
-              height: 14,
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                color: isDark ? BrandColors.nightForest : BrandColors.forest,
-              ),
+        if (isNamed) ...[
+          // Named workspace — show name with edit option
+          Container(
+            padding: const EdgeInsets.all(Spacing.md),
+            decoration: BoxDecoration(
+              color: isDark
+                  ? BrandColors.nightSurfaceElevated
+                  : BrandColors.stone.withValues(alpha: 0.3),
+              borderRadius: BorderRadius.circular(Radii.md),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.dns_outlined,
+                  size: 18,
+                  color: isDark ? BrandColors.nightForest : BrandColors.forest,
+                ),
+                const SizedBox(width: Spacing.sm),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        displayName,
+                        style: TextStyle(
+                          fontSize: TypographyTokens.bodyMedium,
+                          fontWeight: FontWeight.w500,
+                          color: isDark
+                              ? BrandColors.nightText
+                              : BrandColors.charcoal,
+                        ),
+                      ),
+                      const SizedBox(height: Spacing.xxs),
+                      Text(
+                        containerSlug,
+                        style: TextStyle(
+                          fontSize: TypographyTokens.labelSmall,
+                          fontFamily: 'monospace',
+                          color: isDark
+                              ? BrandColors.nightTextSecondary
+                              : BrandColors.driftwood,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
           ),
-        if (_saveError != null)
-          Padding(
-            padding: const EdgeInsets.only(top: Spacing.xs),
-            child: Text(
-              _saveError!,
-              style: TextStyle(
-                fontSize: TypographyTokens.labelSmall,
-                color: BrandColors.error,
+        ] else ...[
+          // Unnamed sandbox — show promotion banner
+          Container(
+            padding: const EdgeInsets.all(Spacing.md),
+            decoration: BoxDecoration(
+              color: (isDark ? BrandColors.nightForest : BrandColors.forest)
+                  .withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(Radii.md),
+              border: Border.all(
+                color: (isDark ? BrandColors.nightForest : BrandColors.forest)
+                    .withValues(alpha: 0.2),
               ),
             ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+Icon(
+                      Icons.dns_outlined,
+                      size: 16,
+                      color: isDark
+                          ? BrandColors.nightTextSecondary
+                          : BrandColors.driftwood,
+                    ),
+                    const SizedBox(width: Spacing.sm),
+                    Expanded(
+                      child: Text(
+                        'Unnamed sandbox',
+                        style: TextStyle(
+                          fontSize: TypographyTokens.bodySmall,
+                          color: isDark
+                              ? BrandColors.nightTextSecondary
+                              : BrandColors.driftwood,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: Spacing.sm),
+                Text(
+                  'Name this workspace to find it easily in the sidebar.',
+                  style: TextStyle(
+                    fontSize: TypographyTokens.labelSmall,
+                    color: isDark
+                        ? BrandColors.nightTextSecondary
+                        : BrandColors.driftwood,
+                  ),
+                ),
+                const SizedBox(height: Spacing.sm),
+                Row(
+                  children: [
+                    Expanded(
+                      child: SizedBox(
+                        height: 36,
+                        child: TextField(
+                          controller: _workspaceNameController,
+                          decoration: InputDecoration(
+                            hintText: 'Workspace name',
+                            isDense: true,
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: Spacing.sm,
+                              vertical: Spacing.xs,
+                            ),
+                            border: OutlineInputBorder(
+                              borderRadius:
+                                  BorderRadius.circular(Spacing.xs),
+                            ),
+                          ),
+                          style: TextStyle(
+                            fontSize: TypographyTokens.bodySmall,
+                            color: isDark
+                                ? BrandColors.nightText
+                                : BrandColors.ink,
+                          ),
+                          onSubmitted: (_) => _nameWorkspace(containerSlug),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: Spacing.sm),
+                    SizedBox(
+                      height: 36,
+                      child: FilledButton(
+                        onPressed: _isNamingWorkspace
+                            ? null
+                            : () => _nameWorkspace(containerSlug),
+                        style: FilledButton.styleFrom(
+                          backgroundColor: isDark
+                              ? BrandColors.nightForest
+                              : BrandColors.forest,
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: Spacing.md),
+                        ),
+                        child: _isNamingWorkspace
+                            ? const SizedBox(
+                                height: 14,
+                                width: 14,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                ),
+                              )
+                            : const Text('Name'),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
+        ],
       ],
     );
   }
@@ -844,11 +937,6 @@ class _UnifiedSessionSettingsState
           ? BrandColors.nightSurface
           : BrandColors.driftwood.withValues(alpha: 0.2),
     );
-  }
-
-  Color _trustColor(String level) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    return TrustLevel.fromString(level).iconColor(isDark);
   }
 
   String _formatTokens(int tokens) {
