@@ -16,7 +16,8 @@ class _ToolDef {
   const _ToolDef(this.key, this.label, this.description, this.icon);
 }
 
-const _availableTools = [
+/// Tools for scheduled (day-scoped) Callers — operate across a day's entries.
+const _scheduledTools = [
   _ToolDef(
     'read_journal',
     "Today's journal",
@@ -40,6 +41,34 @@ const _availableTools = [
     'Recent chat sessions',
     'Read AI chat sessions from the past 7 days',
     Icons.forum_outlined,
+  ),
+];
+
+/// Tools for triggered (note-scoped) Callers — operate on a single note.
+const _triggeredTools = [
+  _ToolDef(
+    'read_entry',
+    'Read note',
+    'Read the note that triggered this caller',
+    Icons.article_outlined,
+  ),
+  _ToolDef(
+    'update_entry_content',
+    'Update content',
+    'Replace the note content with processed text',
+    Icons.edit_note,
+  ),
+  _ToolDef(
+    'update_entry_tags',
+    'Update tags',
+    'Set tags on the note',
+    Icons.label_outlined,
+  ),
+  _ToolDef(
+    'update_entry_metadata',
+    'Update metadata',
+    'Set metadata fields on the note',
+    Icons.data_object,
   ),
 ];
 
@@ -72,6 +101,17 @@ class _CallerEditScreenState extends ConsumerState<CallerEditScreen> {
   late bool _scheduleEnabled;
   late String _scheduleTime;
   bool _isSaving = false;
+
+  /// Whether this Caller is event-driven (triggered) rather than scheduled.
+  bool get _isTriggered {
+    if (widget.isEditing) return widget.caller!.isTriggered;
+    if (widget.template != null) return widget.template!.isTriggered;
+    return false;
+  }
+
+  /// Available tools based on the Caller type.
+  List<_ToolDef> get _availableTools =>
+      _isTriggered ? _triggeredTools : _scheduledTools;
 
   @override
   void initState() {
@@ -244,7 +284,7 @@ class _CallerEditScreenState extends ConsumerState<CallerEditScreen> {
             // ── Context Sources ───────────────────────────────────────
             SizedBox(height: Spacing.xl),
             Text(
-              'Context Sources',
+              _isTriggered ? 'Tools' : 'Context Sources',
               style: theme.textTheme.titleSmall?.copyWith(
                 fontWeight: FontWeight.w600,
                 color: isDark ? BrandColors.softWhite : BrandColors.ink,
@@ -252,7 +292,9 @@ class _CallerEditScreenState extends ConsumerState<CallerEditScreen> {
             ),
             SizedBox(height: Spacing.xs),
             Text(
-              'Choose what information this caller can access.',
+              _isTriggered
+                  ? 'Choose what this caller can do with the note.'
+                  : 'Choose what information this caller can access.',
               style: theme.textTheme.bodySmall?.copyWith(
                 color: BrandColors.driftwood,
               ),
@@ -275,23 +317,26 @@ class _CallerEditScreenState extends ConsumerState<CallerEditScreen> {
               ),
             ),
 
-            // ── Schedule ──────────────────────────────────────────────
-            SizedBox(height: Spacing.xl),
-            Text(
-              'Schedule',
-              style: theme.textTheme.titleSmall?.copyWith(
-                fontWeight: FontWeight.w600,
-                color: isDark ? BrandColors.softWhite : BrandColors.ink,
+            // ── Schedule (only for scheduled Callers) ──────────────────
+            if (!_isTriggered) ...[
+              SizedBox(height: Spacing.xl),
+              Text(
+                'Schedule',
+                style: theme.textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.w600,
+                  color: isDark ? BrandColors.softWhite : BrandColors.ink,
+                ),
               ),
-            ),
-            SizedBox(height: Spacing.sm),
-            _ScheduleConfig(
-              enabled: _scheduleEnabled,
-              time: _scheduleTime,
-              isDark: isDark,
-              onToggle: (enabled) => setState(() => _scheduleEnabled = enabled),
-              onTimeTap: _pickTime,
-            ),
+              SizedBox(height: Spacing.sm),
+              _ScheduleConfig(
+                enabled: _scheduleEnabled,
+                time: _scheduleTime,
+                isDark: isDark,
+                onToggle: (enabled) =>
+                    setState(() => _scheduleEnabled = enabled),
+                onTimeTap: _pickTime,
+              ),
+            ],
 
             // Bottom padding
             SizedBox(height: Spacing.xxl),
@@ -325,15 +370,23 @@ class _CallerEditScreenState extends ConsumerState<CallerEditScreen> {
     bool success;
 
     if (widget.isEditing) {
-      // Update existing caller
-      success = await api.updateCaller(widget.caller!.name, {
+      // Update existing caller — preserve trigger fields
+      final fields = <String, dynamic>{
         'display_name': displayName,
         'description': description,
         'system_prompt': prompt,
         'tools': tools,
         'schedule_enabled': _scheduleEnabled,
         'schedule_time': _scheduleTime,
-      });
+      };
+      // Preserve trigger fields for triggered Callers
+      if (widget.caller!.isTriggered) {
+        fields['trigger_event'] = widget.caller!.triggerEvent;
+        if (widget.caller!.triggerFilter != null) {
+          fields['trigger_filter'] = widget.caller!.triggerFilter;
+        }
+      }
+      success = await api.updateCaller(widget.caller!.name, fields);
     } else {
       // Create new caller
       final name = widget.template?.name ?? _toSlug(displayName);
@@ -349,7 +402,7 @@ class _CallerEditScreenState extends ConsumerState<CallerEditScreen> {
         }
         return;
       }
-      final result = await api.createCaller({
+      final body = <String, dynamic>{
         'name': name,
         'display_name': displayName,
         'description': description,
@@ -357,7 +410,15 @@ class _CallerEditScreenState extends ConsumerState<CallerEditScreen> {
         'tools': tools,
         'schedule_enabled': _scheduleEnabled,
         'schedule_time': _scheduleTime,
-      });
+      };
+      // Copy trigger fields from template if present
+      if (widget.template != null && widget.template!.isTriggered) {
+        body['trigger_event'] = widget.template!.triggerEvent;
+        if (widget.template!.triggerFilter != null) {
+          body['trigger_filter'] = widget.template!.triggerFilter;
+        }
+      }
+      final result = await api.createCaller(body);
       success = result != null;
     }
 

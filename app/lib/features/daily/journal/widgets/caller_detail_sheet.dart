@@ -129,25 +129,46 @@ class _CallerDetailSheetState extends ConsumerState<CallerDetailSheet> {
                       ),
                     ],
 
-                    // Schedule section
+                    // Trigger / Schedule section
                     SizedBox(height: Spacing.xl),
-                    Text(
-                      'Schedule',
-                      style: theme.textTheme.titleSmall?.copyWith(
-                        fontWeight: FontWeight.w600,
-                        color: isDark ? BrandColors.softWhite : BrandColors.ink,
+                    if (widget.caller.isTriggered) ...[
+                      Text(
+                        'Trigger',
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w600,
+                          color: isDark
+                              ? BrandColors.softWhite
+                              : BrandColors.ink,
+                        ),
                       ),
-                    ),
-                    SizedBox(height: Spacing.sm),
-                    _ScheduleRow(
-                      enabled: _scheduleEnabled,
-                      time: _scheduleTime,
-                      isDark: isDark,
-                      agentColor: agentTheme.color,
-                      callerName: widget.caller.displayName,
-                      onToggle: _toggleSchedule,
-                      onTimeTap: _pickTime,
-                    ),
+                      SizedBox(height: Spacing.sm),
+                      _TriggerInfo(
+                        triggerEvent: widget.caller.triggerEvent,
+                        triggerFilter: widget.caller.triggerFilter,
+                        isDark: isDark,
+                        agentColor: agentTheme.color,
+                      ),
+                    ] else ...[
+                      Text(
+                        'Schedule',
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w600,
+                          color: isDark
+                              ? BrandColors.softWhite
+                              : BrandColors.ink,
+                        ),
+                      ),
+                      SizedBox(height: Spacing.sm),
+                      _ScheduleRow(
+                        enabled: _scheduleEnabled,
+                        time: _scheduleTime,
+                        isDark: isDark,
+                        agentColor: agentTheme.color,
+                        callerName: widget.caller.displayName,
+                        onToggle: _toggleSchedule,
+                        onTimeTap: _pickTime,
+                      ),
+                    ],
 
                     // Actions
                     SizedBox(height: Spacing.xl),
@@ -169,17 +190,22 @@ class _CallerDetailSheetState extends ConsumerState<CallerDetailSheet> {
                       showChevron: true,
                       onTap: () => _editCaller(context),
                     ),
-                    SizedBox(height: Spacing.sm),
-                    _ActionButton(
-                      icon: Icons.play_arrow,
-                      label: _isRunning ? 'Running...' : 'Run now',
-                      color: isDark
-                          ? BrandColors.nightForest
-                          : BrandColors.forest,
-                      isDark: isDark,
-                      enabled: !_isRunning,
-                      onTap: _runNow,
-                    ),
+                    // Only show "Run now" for scheduled (day-scoped) Callers.
+                    // Triggered Callers run automatically on events — they need
+                    // a specific entry to operate on, so "Run now" doesn't apply.
+                    if (!widget.caller.isTriggered) ...[
+                      SizedBox(height: Spacing.sm),
+                      _ActionButton(
+                        icon: Icons.play_arrow,
+                        label: _isRunning ? 'Running...' : 'Run now',
+                        color: isDark
+                            ? BrandColors.nightForest
+                            : BrandColors.forest,
+                        isDark: isDark,
+                        enabled: !_isRunning,
+                        onTap: _runNow,
+                      ),
+                    ],
                     SizedBox(height: Spacing.sm),
                     _ActionButton(
                       icon: Icons.history,
@@ -413,6 +439,101 @@ class _ScheduleRow extends StatelessWidget {
               activeColor: isDark
                   ? BrandColors.nightForest
                   : BrandColors.forest,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Trigger info — shows event name and filter for event-driven Callers
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _TriggerInfo extends StatelessWidget {
+  final String triggerEvent;
+  final Map<String, dynamic>? triggerFilter;
+  final bool isDark;
+  final Color agentColor;
+
+  const _TriggerInfo({
+    required this.triggerEvent,
+    this.triggerFilter,
+    required this.isDark,
+    required this.agentColor,
+  });
+
+  /// Human-readable label for a trigger event name.
+  String _eventLabel(String event) {
+    switch (event) {
+      case 'note.transcription_complete':
+        return 'When transcription completes';
+      case 'note.created':
+        return 'When a new note is created';
+      default:
+        return event;
+    }
+  }
+
+  /// Human-readable label for a trigger filter.
+  String? _filterLabel(Map<String, dynamic>? filter) {
+    if (filter == null || filter.isEmpty) return null;
+    final parts = <String>[];
+    if (filter.containsKey('entry_type')) {
+      parts.add('type: ${filter['entry_type']}');
+    }
+    if (filter.containsKey('tags')) {
+      final tags = filter['tags'];
+      if (tags is List) {
+        parts.add('tags: ${tags.join(', ')}');
+      }
+    }
+    return parts.isEmpty ? null : parts.join(' \u2022 ');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final filterLabel = _filterLabel(triggerFilter);
+
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: Spacing.lg,
+        vertical: Spacing.md,
+      ),
+      decoration: BoxDecoration(
+        color: isDark ? BrandColors.nightSurfaceElevated : BrandColors.cream,
+        borderRadius: Radii.card,
+      ),
+      child: Row(
+        children: [
+          Icon(
+            Icons.bolt,
+            size: 20,
+            color: agentColor,
+          ),
+          SizedBox(width: Spacing.md),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _eventLabel(triggerEvent),
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: isDark ? BrandColors.softWhite : BrandColors.ink,
+                  ),
+                ),
+                if (filterLabel != null) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    filterLabel,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: BrandColors.driftwood,
+                    ),
+                  ),
+                ],
+              ],
             ),
           ),
         ],

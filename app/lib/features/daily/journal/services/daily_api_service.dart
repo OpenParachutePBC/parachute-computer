@@ -512,6 +512,19 @@ class DailyApiService {
         } else if (rawTools is List) {
           tools = rawTools.cast<String>();
         }
+        // Parse trigger_filter from JSON string or map
+        Map<String, dynamic>? triggerFilter;
+        final rawFilter = j['trigger_filter'];
+        if (rawFilter is Map) {
+          triggerFilter = Map<String, dynamic>.from(rawFilter);
+        } else if (rawFilter is String && rawFilter.isNotEmpty) {
+          try {
+            final parsed = jsonDecode(rawFilter);
+            if (parsed is Map) {
+              triggerFilter = Map<String, dynamic>.from(parsed);
+            }
+          } catch (_) {}
+        }
         return DailyAgentInfo(
           name: j['name'] as String? ?? '',
           displayName:
@@ -522,6 +535,8 @@ class DailyApiService {
           trustLevel: j['trust_level'] as String? ?? 'sandboxed',
           scheduleEnabled: scheduleEnabled,
           scheduleTime: j['schedule_time'] as String? ?? '03:00',
+          triggerEvent: j['trigger_event'] as String? ?? '',
+          triggerFilter: triggerFilter,
         );
       }).toList();
     } catch (e) {
@@ -683,6 +698,61 @@ class DailyApiService {
     } catch (e) {
       debugPrint('[DailyApiService] reloadScheduler error: $e');
       return false;
+    }
+  }
+
+  /// Trigger a Caller on a specific entry (for event-driven Callers).
+  ///
+  /// Returns the result from the server, or null on error.
+  Future<Map<String, dynamic>?> triggerCallerOnEntry(
+    String callerName,
+    String entryId,
+  ) async {
+    final uri = Uri.parse('$baseUrl/api/daily/callers/$callerName/trigger');
+    debugPrint('[DailyApiService] POST $uri (entry_id=$entryId)');
+    try {
+      final response = await _client
+          .post(uri, headers: _headers, body: jsonEncode({'entry_id': entryId}))
+          .timeout(const Duration(seconds: 30));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      }
+      debugPrint(
+        '[DailyApiService] triggerCallerOnEntry ${response.statusCode}',
+      );
+      return null;
+    } catch (e) {
+      debugPrint('[DailyApiService] triggerCallerOnEntry error: $e');
+      return null;
+    }
+  }
+
+  /// Fetch Caller activity (CallerRun nodes) for a specific entry.
+  ///
+  /// Returns a list of activity records, or empty list on error.
+  Future<List<Map<String, dynamic>>> fetchCallerActivity(
+    String entryId,
+  ) async {
+    final uri = Uri.parse(
+      '$baseUrl/api/daily/entries/$entryId/caller-activity',
+    );
+    debugPrint('[DailyApiService] GET $uri');
+    try {
+      final response = await _client
+          .get(uri, headers: _headers)
+          .timeout(_timeout);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        debugPrint(
+          '[DailyApiService] fetchCallerActivity ${response.statusCode}',
+        );
+        return [];
+      }
+      final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+      final List<dynamic> data = decoded['activity'] as List<dynamic>? ?? [];
+      return data.cast<Map<String, dynamic>>();
+    } catch (e) {
+      debugPrint('[DailyApiService] fetchCallerActivity error: $e');
+      return [];
     }
   }
 

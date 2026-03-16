@@ -395,6 +395,13 @@ class DailyAgentInfo {
   final String? lastProcessedDate;
   final int runCount;
 
+  /// Event that triggers this Caller (e.g. "note.transcription_complete").
+  /// Empty string means this is a scheduled (day-scoped) Caller.
+  final String triggerEvent;
+
+  /// JSON filter for matching entries on the trigger event.
+  final Map<String, dynamic>? triggerFilter;
+
   DailyAgentInfo({
     required this.name,
     required this.displayName,
@@ -407,7 +414,12 @@ class DailyAgentInfo {
     this.lastRunAt,
     this.lastProcessedDate,
     this.runCount = 0,
+    this.triggerEvent = '',
+    this.triggerFilter,
   });
+
+  /// Whether this Caller is event-driven (triggered) rather than scheduled.
+  bool get isTriggered => triggerEvent.isNotEmpty;
 }
 
 /// Starter caller template returned by the templates endpoint.
@@ -420,6 +432,13 @@ class CallerTemplate {
   final String scheduleTime;
   final String trustLevel;
 
+  /// Event that triggers this Caller (e.g. "note.transcription_complete").
+  /// Empty string means this is a scheduled (day-scoped) template.
+  final String triggerEvent;
+
+  /// JSON filter for matching entries on the trigger event.
+  final Map<String, dynamic>? triggerFilter;
+
   const CallerTemplate({
     required this.name,
     required this.displayName,
@@ -428,13 +447,31 @@ class CallerTemplate {
     required this.tools,
     this.scheduleTime = '21:00',
     this.trustLevel = 'sandboxed',
+    this.triggerEvent = '',
+    this.triggerFilter,
   });
+
+  /// Whether this template is for an event-driven (triggered) Caller.
+  bool get isTriggered => triggerEvent.isNotEmpty;
 
   factory CallerTemplate.fromJson(Map<String, dynamic> json) {
     final rawTools = json['tools'];
     List<String> tools = [];
     if (rawTools is List) {
       tools = rawTools.cast<String>();
+    }
+    // Parse trigger_filter from JSON string or map
+    Map<String, dynamic>? triggerFilter;
+    final rawFilter = json['trigger_filter'];
+    if (rawFilter is Map) {
+      triggerFilter = Map<String, dynamic>.from(rawFilter);
+    } else if (rawFilter is String && rawFilter.isNotEmpty) {
+      try {
+        final parsed = jsonDecode(rawFilter);
+        if (parsed is Map) {
+          triggerFilter = Map<String, dynamic>.from(parsed);
+        }
+      } catch (_) {}
     }
     return CallerTemplate(
       name: json['name'] as String? ?? '',
@@ -445,6 +482,8 @@ class CallerTemplate {
       tools: tools,
       scheduleTime: json['schedule_time'] as String? ?? '21:00',
       trustLevel: json['trust_level'] as String? ?? 'sandboxed',
+      triggerEvent: json['trigger_event'] as String? ?? '',
+      triggerFilter: triggerFilter,
     );
   }
 }
