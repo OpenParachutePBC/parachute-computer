@@ -331,7 +331,9 @@ class Container(BaseModel):
 class ContainerCreate(BaseModel):
     """Data for creating a new container."""
 
-    display_name: str = Field(min_length=1, max_length=100, description="Human-readable name")
+    display_name: str = Field(
+        min_length=1, max_length=100, alias="displayName", description="Human-readable name",
+    )
     slug: str | None = Field(
         default=None,
         min_length=2,
@@ -341,19 +343,26 @@ class ContainerCreate(BaseModel):
     core_memory: Optional[str] = Field(
         default=None,
         max_length=4000,
+        alias="coreMemory",
         description="Initial core memory content",
     )
+
+    model_config = {"populate_by_name": True}
 
 
 class ContainerUpdate(BaseModel):
     """Data for updating a container."""
 
     display_name: str | None = Field(
-        default=None, min_length=1, max_length=100, description="New display name"
+        default=None, min_length=1, max_length=100, alias="displayName",
+        description="New display name",
     )
     core_memory: str | None = Field(
-        default=None, max_length=4000, description="New core memory content"
+        default=None, max_length=4000, alias="coreMemory",
+        description="New core memory content",
     )
+
+    model_config = {"populate_by_name": True}
 
 
 class SessionCreate(BaseModel):

@@ -85,6 +85,11 @@ class _SessionListPanelState extends ConsumerState<SessionListPanel> {
         return RefreshIndicator(
           onRefresh: () async {
             ref.invalidate(chatSessionsProvider);
+            ref.invalidate(archivedSessionsProvider);
+            ref.invalidate(containerSessionsProvider);
+            ref.invalidate(containerSessionCountsProvider);
+            ref.invalidate(containersProvider);
+            ref.invalidate(allContainersProvider);
           },
           child: ListView.builder(
             itemCount: sessions.length,

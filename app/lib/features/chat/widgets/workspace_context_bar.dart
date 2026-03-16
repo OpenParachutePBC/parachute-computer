@@ -2,6 +2,7 @@ import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
+import 'package:parachute/features/settings/screens/settings_screen.dart';
 import '../models/container_env.dart';
 import '../providers/container_providers.dart';
 import '../screens/container_file_browser_screen.dart';
@@ -130,6 +131,17 @@ class WorkspaceContextBar extends ConsumerWidget {
                     onTap: () => ContainerSettingsSheet.show(context, ref, activeSlug),
                   ),
               ],
+
+              // App settings
+              _ActionIcon(
+                icon: Icons.settings_outlined,
+                tooltip: 'Settings',
+                isDark: isDark,
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const SettingsScreen()),
+                ),
+              ),
 
               // Archive toggle
               _ActionIcon(

@@ -57,8 +57,8 @@ class ContainerService {
     String? coreMemory,
   }) async {
     final body = <String, dynamic>{};
-    if (displayName != null) body['displayName'] = displayName;
-    if (coreMemory != null) body['coreMemory'] = coreMemory;
+    if (displayName != null) body['display_name'] = displayName;
+    if (coreMemory != null) body['core_memory'] = coreMemory;
 
     final response = await _client.patch(
       Uri.parse('$baseUrl/api/containers/$slug'),
