@@ -274,7 +274,9 @@ async def _cleanup_transcription(
         claude_token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
     if not claude_token:
         logger.warning(f"Daily: skipping cleanup for {entry_id} — no OAuth token")
-        await _update_entry_transcription_status(graph, entry_id, "complete")
+        await _update_entry_transcription_status(
+            graph, entry_id, "complete", cleanup_status="skipped"
+        )
         return
 
     try:
@@ -303,7 +305,9 @@ async def _cleanup_transcription(
         cleaned_text = cleaned_text.strip()
         if not cleaned_text:
             logger.warning(f"Daily: cleanup returned empty text for {entry_id}, keeping raw")
-            await _update_entry_transcription_status(graph, entry_id, "complete")
+            await _update_entry_transcription_status(
+                graph, entry_id, "complete", cleanup_status="failed"
+            )
             return
 
         # Write cleaned text back to the entry
@@ -314,23 +318,33 @@ async def _cleanup_transcription(
                 {"entry_id": entry_id, "content": cleaned_text},
             )
 
-        await _update_entry_transcription_status(graph, entry_id, "complete")
+        await _update_entry_transcription_status(
+            graph, entry_id, "complete", cleanup_status="completed"
+        )
         logger.info(f"Daily: cleaned up entry {entry_id} ({len(raw_text)} → {len(cleaned_text)} chars)")
 
     except Exception as e:
         logger.error(f"Daily: cleanup failed for {entry_id}: {e}", exc_info=True)
         # Don't mark as failed — raw transcription is still readable.
         # Mark as complete so polling resolves on the client.
-        await _update_entry_transcription_status(graph, entry_id, "complete")
+        await _update_entry_transcription_status(
+            graph, entry_id, "complete", cleanup_status="failed"
+        )
 
 
 async def _update_entry_transcription_status(
-    graph, entry_id: str, status: str, error: str | None = None
+    graph,
+    entry_id: str,
+    status: str,
+    error: str | None = None,
+    cleanup_status: str | None = None,
 ) -> None:
-    """Update an entry's transcription_status in metadata_json.
+    """Update an entry's transcription_status (and optionally cleanup_status) in metadata_json.
 
     The full read-modify-write is inside write_lock to avoid race conditions
     with concurrent PATCH requests on the same entry.
+
+    cleanup_status values: "completed", "skipped", "failed", or None (don't update).
     """
     try:
         async with graph.write_lock:
@@ -349,6 +363,8 @@ async def _update_entry_transcription_status(
             existing_meta["transcription_status"] = status
             if error:
                 existing_meta["transcription_error"] = error
+            if cleanup_status is not None:
+                existing_meta["cleanup_status"] = cleanup_status
 
             await graph.execute_cypher(
                 "MATCH (e:Note {entry_id: $entry_id}) SET e.metadata_json = $meta",
@@ -1398,10 +1414,12 @@ class DailyModule:
             file: UploadFile,
             date: str | None = Form(None),
             duration_seconds: float | None = Form(None),
+            replace_entry_id: str | None = Form(None),
         ):
-            """Upload audio and create a voice entry.
+            """Upload audio and create (or replace) a voice entry.
 
-            Saves the audio file, creates an entry with status "processing",
+            Saves the audio file, creates an entry with status "processing"
+            (or resets an existing entry if replace_entry_id is given),
             and kicks off background transcription + LLM cleanup.
             """
             from parachute.core.interfaces import get_registry
@@ -1463,18 +1481,38 @@ class DailyModule:
             await asyncio.to_thread(audio_path.write_bytes, contents)
             logger.info(f"Daily: saved voice recording to {audio_path}")
 
-            # Create entry with status "processing"
-            meta: dict[str, Any] = {
-                "type": "voice",
-                "audio_path": str(audio_path),
-                "transcription_status": "processing",
-            }
-            if duration_seconds is not None:
-                meta["duration_seconds"] = duration_seconds
-            result = await self.create_entry("", meta)
+            if replace_entry_id:
+                # Re-transcribe: update existing entry in place
+                entry_id = replace_entry_id
+                meta_updates: dict[str, Any] = {
+                    "audio_path": str(audio_path),
+                    "transcription_status": "processing",
+                    "cleanup_status": None,  # Clear stale cleanup state
+                }
+                if duration_seconds is not None:
+                    meta_updates["duration_seconds"] = duration_seconds
+                updated = await self.update_entry(
+                    entry_id, content="", metadata=meta_updates
+                )
+                if updated is None:
+                    return JSONResponse(
+                        status_code=404,
+                        content={"error": f"Entry {entry_id} not found"},
+                    )
+                logger.info(f"Daily: re-transcribing entry {entry_id} with new audio")
+            else:
+                # New entry
+                meta: dict[str, Any] = {
+                    "type": "voice",
+                    "audio_path": str(audio_path),
+                    "transcription_status": "processing",
+                }
+                if duration_seconds is not None:
+                    meta["duration_seconds"] = duration_seconds
+                result = await self.create_entry("", meta)
+                entry_id = result["id"]
 
             # Kick off background transcription + cleanup
-            entry_id = result["id"]
             task = asyncio.create_task(
                 _transcribe_and_cleanup(graph, entry_id, audio_path)
             )
@@ -1494,6 +1532,83 @@ class DailyModule:
                 "entry_id": entry_id,
                 "status": "processing",
                 "audio_path": str(audio_path),
+            }
+
+        @router.post("/entries/{entry_id}/cleanup")
+        async def cleanup_entry(entry_id: str):
+            """Run LLM cleanup on an existing entry's content.
+
+            Used for:
+            - Entries where audio is gone (can't re-transcribe, but can clean up text)
+            - Local-mode re-transcribe follow-up (Parakeet transcribed on-device)
+            - The "Clean up" action button on voice entry cards
+            """
+            graph = self._get_graph()
+            if graph is None:
+                return JSONResponse(
+                    status_code=503,
+                    content={"error": "BrainDB not available"},
+                )
+
+            # Fetch the entry's current content
+            rows = await graph.execute_cypher(
+                "MATCH (e:Note {entry_id: $entry_id}) "
+                "RETURN e.content AS content, e.metadata_json AS meta",
+                {"entry_id": entry_id},
+            )
+            if not rows:
+                return JSONResponse(
+                    status_code=404,
+                    content={"error": "Entry not found", "id": entry_id},
+                )
+
+            content = rows[0].get("content") or ""
+            if not content.strip():
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": "Entry has no content to clean up"},
+                )
+
+            # Save current content as transcription_raw if not already set
+            existing_meta = {}
+            blob = rows[0].get("meta") or ""
+            try:
+                existing_meta = json.loads(blob) if blob else {}
+            except (json.JSONDecodeError, TypeError):
+                existing_meta = {}
+
+            if not existing_meta.get("transcription_raw"):
+                existing_meta["transcription_raw"] = content
+
+            # Mark as cleanup in progress
+            existing_meta["transcription_status"] = "transcribed"
+            existing_meta["cleanup_status"] = None
+            async with graph.write_lock:
+                await graph.execute_cypher(
+                    "MATCH (e:Note {entry_id: $entry_id}) SET e.metadata_json = $meta",
+                    {"entry_id": entry_id, "meta": json.dumps(existing_meta)},
+                )
+
+            # Kick off background cleanup
+            task = asyncio.create_task(
+                _cleanup_transcription(graph, entry_id, content)
+            )
+            _background_tasks.add(task)
+
+            def _on_done(t: asyncio.Task, eid: str = entry_id) -> None:
+                _background_tasks.discard(t)
+                if not t.cancelled() and (exc := t.exception()):
+                    logger.error(
+                        "Background cleanup failed for entry %s: %s",
+                        eid, exc, exc_info=exc,
+                    )
+
+            task.add_done_callback(_on_done)
+
+            return {
+                "entry_id": entry_id,
+                "status": "transcribed",
+                "message": "Cleanup started",
             }
 
         @router.get("/entries")
