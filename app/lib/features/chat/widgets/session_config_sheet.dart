@@ -42,11 +42,23 @@ class _SessionConfigSheetState extends ConsumerState<SessionConfigSheet> {
   late String _trustLevel;
   late String _responseMode;
   late TextEditingController _mentionPatternController;
+  late TextEditingController _workspaceNameController;
   String? _containerId;
   bool _isSaving = false;
+  bool _isNaming = false;
   String? _error;
 
   static const _trustLevels = ['direct', 'sandboxed'];
+
+  /// UUID v4 pattern — unnamed containers have UUID slugs.
+  static final _uuidPattern = RegExp(
+    r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+    caseSensitive: false,
+  );
+
+  /// Whether the session's container is unnamed (UUID slug).
+  bool get _hasUnnamedContainer =>
+      _containerId != null && _uuidPattern.hasMatch(_containerId!);
 
   bool get _isActivation => widget.session.isPendingInitialization;
   bool get _isBotSession => widget.session.source.isBotSession;
@@ -62,11 +74,13 @@ class _SessionConfigSheetState extends ConsumerState<SessionConfigSheet> {
     _mentionPatternController = TextEditingController(
       text: widget.session.mentionPattern ?? '',
     );
+    _workspaceNameController = TextEditingController();
   }
 
   @override
   void dispose() {
     _mentionPatternController.dispose();
+    _workspaceNameController.dispose();
     super.dispose();
   }
 
@@ -483,12 +497,41 @@ class _SessionConfigSheetState extends ConsumerState<SessionConfigSheet> {
     );
   }
 
+  Future<void> _nameWorkspace() async {
+    final name = _workspaceNameController.text.trim();
+    if (name.isEmpty || _containerId == null) return;
+
+    setState(() => _isNaming = true);
+    try {
+      final service = ref.read(containerServiceProvider);
+      await service.updateContainer(_containerId!, displayName: name);
+      ref.invalidate(containersProvider);
+      if (mounted) {
+        setState(() {
+          _isNaming = false;
+          _workspaceNameController.clear();
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Workspace named "$name"')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to name workspace: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isNaming = false);
+    }
+  }
+
   Widget _buildContainerPicker(bool isDark, AsyncValue<List<ContainerEnv>> containerEnvsAsync) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Environment',
+          'Workspace',
           style: TextStyle(
             fontSize: TypographyTokens.bodySmall,
             fontWeight: FontWeight.w500,
@@ -496,17 +539,135 @@ class _SessionConfigSheetState extends ConsumerState<SessionConfigSheet> {
           ),
         ),
         SizedBox(height: Spacing.xs),
+
+        // Promotion banner for unnamed containers
+        if (_hasUnnamedContainer) ...[
+          Container(
+            padding: EdgeInsets.all(Spacing.sm),
+            decoration: BoxDecoration(
+              color: (isDark ? BrandColors.nightForest : BrandColors.forest)
+                  .withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(Spacing.xs),
+              border: Border.all(
+                color: (isDark ? BrandColors.nightForest : BrandColors.forest)
+                    .withValues(alpha: 0.2),
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      Icons.edit_outlined,
+                      size: 16,
+                      color: isDark ? BrandColors.nightForest : BrandColors.forest,
+                    ),
+                    SizedBox(width: Spacing.xs),
+                    Expanded(
+                      child: Text(
+                        'This session runs in an unnamed workspace. Name it to find it later.',
+                        style: TextStyle(
+                          fontSize: TypographyTokens.labelSmall,
+                          color: isDark ? BrandColors.nightText : BrandColors.ink,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                SizedBox(height: Spacing.sm),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _workspaceNameController,
+                        decoration: InputDecoration(
+                          hintText: 'Workspace name',
+                          isDense: true,
+                          contentPadding: EdgeInsets.symmetric(
+                            horizontal: Spacing.sm,
+                            vertical: Spacing.sm,
+                          ),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(Spacing.xs),
+                          ),
+                        ),
+                        style: TextStyle(
+                          fontSize: TypographyTokens.bodySmall,
+                          color: isDark ? BrandColors.nightText : BrandColors.ink,
+                        ),
+                      ),
+                    ),
+                    SizedBox(width: Spacing.sm),
+                    SizedBox(
+                      height: 36,
+                      child: FilledButton(
+                        onPressed: _isNaming ? null : _nameWorkspace,
+                        style: FilledButton.styleFrom(
+                          backgroundColor: isDark
+                              ? BrandColors.nightForest
+                              : BrandColors.forest,
+                          padding: EdgeInsets.symmetric(horizontal: Spacing.sm),
+                        ),
+                        child: _isNaming
+                            ? const SizedBox(
+                                height: 16,
+                                width: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                ),
+                              )
+                            : const Text('Name'),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          SizedBox(height: Spacing.sm),
+        ],
+
+        // Workspace dropdown
         containerEnvsAsync.when(
           data: (envs) {
-            if (envs.isEmpty) {
-              return Text(
-                'No named environments configured',
-                style: TextStyle(
-                  fontSize: TypographyTokens.labelSmall,
-                  color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+            // Build items: the current unnamed container (if any) + named envs
+            final items = <DropdownMenuItem<String>>[
+              DropdownMenuItem<String>(
+                value: null,
+                child: Text(
+                  'Private',
+                  style: TextStyle(
+                    fontSize: TypographyTokens.bodySmall,
+                    color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+                  ),
                 ),
-              );
+              ),
+            ];
+
+            // If the current containerId is a UUID not in the envs list,
+            // add it as a special item so DropdownButton doesn't error
+            if (_containerId != null &&
+                !envs.any((e) => e.slug == _containerId)) {
+              items.add(DropdownMenuItem<String>(
+                value: _containerId,
+                child: Text(
+                  'Unnamed sandbox',
+                  style: TextStyle(
+                    fontSize: TypographyTokens.bodySmall,
+                    fontStyle: FontStyle.italic,
+                    color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+                  ),
+                ),
+              ));
             }
+
+            items.addAll(envs.map((env) => DropdownMenuItem<String>(
+              value: env.slug,
+              child: Text(env.displayName),
+            )));
+
             return Container(
               padding: EdgeInsets.symmetric(horizontal: Spacing.sm),
               decoration: BoxDecoration(
@@ -524,22 +685,7 @@ class _SessionConfigSheetState extends ConsumerState<SessionConfigSheet> {
                   fontSize: TypographyTokens.bodySmall,
                   color: isDark ? BrandColors.nightText : BrandColors.ink,
                 ),
-                items: [
-                  DropdownMenuItem<String>(
-                    value: null,
-                    child: Text(
-                      'Private',
-                      style: TextStyle(
-                        fontSize: TypographyTokens.bodySmall,
-                        color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
-                      ),
-                    ),
-                  ),
-                  ...envs.map((env) => DropdownMenuItem<String>(
-                    value: env.slug,
-                    child: Text(env.displayName),
-                  )),
-                ],
+                items: items,
                 onChanged: (value) {
                   setState(() => _containerId = value);
                 },
@@ -555,7 +701,7 @@ class _SessionConfigSheetState extends ConsumerState<SessionConfigSheet> {
             ),
           ),
           error: (_, __) => Text(
-            'Failed to load environments',
+            'Failed to load workspaces',
             style: TextStyle(
               fontSize: TypographyTokens.labelSmall,
               color: BrandColors.error,
