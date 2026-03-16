@@ -183,11 +183,7 @@ CLEANUP_SYSTEM_PROMPT = (
     "- Do NOT summarize, add commentary, or change the substance\n"
     "- Do NOT add headers, bullet points, or other structural formatting "
     "unless the speaker clearly intended a list\n"
-    "- Output ONLY the cleaned text — no preamble, no explanation\n\n"
-    "## Process\n\n"
-    "1. Read the journal entry for the given date using read_journal\n"
-    "2. Clean up the text following the rules above\n"
-    "3. Write the cleaned text back using update_entry with the entry_id provided\n"
+    "- Output ONLY the cleaned text — no preamble, no explanation"
 )
 
 
