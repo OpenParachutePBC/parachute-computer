@@ -490,23 +490,13 @@ class _ContainerSettingsSheetState
   bool _isSaving = false;
   String? _error;
 
+  bool _controllersPopulated = false;
+
   @override
   void initState() {
     super.initState();
     _nameController = TextEditingController();
     _memoryController = TextEditingController();
-    _loadContainer();
-  }
-
-  void _loadContainer() {
-    final containersAsync = ref.read(containersProvider);
-    containersAsync.whenData((envs) {
-      final match = envs.where((e) => e.slug == widget.slug);
-      if (match.isNotEmpty) {
-        _nameController.text = match.first.displayName;
-        _memoryController.text = match.first.coreMemory ?? '';
-      }
-    });
   }
 
   @override
@@ -588,9 +578,22 @@ class _ContainerSettingsSheetState
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
+    // Watch reactively — populate controllers on first data arrival
+    final containersAsync = ref.watch(containersProvider);
+    containersAsync.whenData((envs) {
+      if (!_controllersPopulated) {
+        final match = envs.where((e) => e.slug == widget.slug);
+        if (match.isNotEmpty) {
+          _nameController.text = match.first.displayName;
+          _memoryController.text = match.first.coreMemory ?? '';
+          _controllersPopulated = true;
+        }
+      }
+    });
+
     return ConstrainedBox(
       constraints: BoxConstraints(
-        maxHeight: MediaQuery.of(context).size.height * 0.85,
+        maxHeight: MediaQuery.sizeOf(context).height * 0.85,
       ),
       child: Container(
         decoration: BoxDecoration(

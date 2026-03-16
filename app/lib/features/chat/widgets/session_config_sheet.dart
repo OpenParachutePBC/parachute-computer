@@ -517,11 +517,12 @@ class _SessionConfigSheetState extends ConsumerState<SessionConfigSheet> {
       }
     } catch (e) {
       if (mounted) {
-        setState(() => _isNaming = false);
         ScaffoldMessenger.of(context).showSnackBar(
-SnackBar(content: Text('Failed to name workspace: $e')),
+          SnackBar(content: Text('Failed to name workspace: $e')),
         );
       }
+    } finally {
+      if (mounted) setState(() => _isNaming = false);
     }
   }
 
