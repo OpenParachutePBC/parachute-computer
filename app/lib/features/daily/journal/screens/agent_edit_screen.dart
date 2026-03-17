@@ -64,12 +64,6 @@ const _triggeredTools = [
     'Set tags on the note',
     Icons.label_outlined,
   ),
-  _ToolDef(
-    'update_entry_metadata',
-    'Update metadata',
-    'Set metadata fields on the note',
-    Icons.data_object,
-  ),
 ];
 
 /// Full-screen form for creating or editing an Agent.
