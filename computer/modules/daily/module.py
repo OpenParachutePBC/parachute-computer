@@ -102,7 +102,7 @@ AGENT_TEMPLATES: list[AgentTemplateDict] = [
             "{user_context}"
         ),
         "tools": ["read_journal", "read_chat_log", "read_recent_journals"],
-        "schedule_time": "21:00",
+        "schedule_time": "4:00",
         "trust_level": "sandboxed",
         "memory_mode": "persistent",
     },
@@ -187,9 +187,12 @@ VALID_TRANSCRIPTION_TRANSITIONS = {
 
 # ── Cleanup Agent system prompt ───────────────────────────────────────────────
 POST_PROCESS_SYSTEM_PROMPT = (
-    "You are a transcription cleanup assistant. You receive raw speech-to-text "
-    "output and produce clean, readable text.\n\n"
-    "## Rules\n\n"
+    "You are a post-processing assistant for journal entries.\n\n"
+    "## Your Job\n\n"
+    "Read the entry with `read_entry`. If it came from a voice recording, "
+    "clean up the transcript and save it with `update_entry_content`. "
+    "If the entry was typed (not voice), do nothing — just return.\n\n"
+    "## Transcription Cleanup Rules\n\n"
     "- Remove filler words: \"um\", \"uh\", \"like\", \"you know\", \"I mean\", \"so\", \"right\"\n"
     "- Fix grammar and sentence structure\n"
     "- Add proper punctuation (periods, commas, question marks)\n"
@@ -526,9 +529,6 @@ class DailyModule:
             primary_key="run_id",
         )
 
-        # Migrate from old Caller/CallerRun tables if they exist
-        await self._migrate_caller_to_agent(graph)
-
         # Add new columns to existing databases (idempotent schema migration)
         await self._ensure_new_columns(graph)
 
@@ -591,158 +591,6 @@ class DailyModule:
         except Exception:
             pass  # Agent table may not exist yet on first run
 
-    async def _migrate_caller_to_agent(self, graph) -> None:
-        """Migrate data from old Caller/CallerRun tables to Agent/AgentRun.
-
-        LadybugDB doesn't support ALTER TABLE RENAME, so we copy data to the
-        new tables and drop the old ones. Runs on startup, idempotent.
-        """
-        try:
-            # Check if old Caller table exists by trying to query it
-            old_rows = await graph.execute_cypher(
-                "MATCH (c:Caller) RETURN c"
-            )
-        except Exception:
-            return  # No old Caller table — nothing to migrate
-
-        if not old_rows:
-            # Table exists but is empty — just drop it
-            try:
-                async with graph.write_lock:
-                    await graph.execute_cypher("DROP TABLE Caller")
-                logger.info("Daily: dropped empty Caller table")
-            except Exception:
-                pass
-            try:
-                async with graph.write_lock:
-                    await graph.execute_cypher("DROP TABLE CallerRun")
-                logger.info("Daily: dropped empty CallerRun table")
-            except Exception:
-                pass
-            return
-
-        logger.info(f"Daily: migrating {len(old_rows)} Caller(s) to Agent table")
-
-        # Copy each Caller row into Agent (skip if already exists)
-        for row in old_rows:
-            name = row.get("name")
-            if not name:
-                continue
-
-            # Check if already migrated
-            existing = await graph.execute_cypher(
-                "MATCH (a:Agent {name: $name}) RETURN a.name",
-                {"name": name},
-            )
-            if existing:
-                continue
-
-            try:
-                async with graph.write_lock:
-                    await graph.execute_cypher(
-                        "CREATE (a:Agent {"
-                        "  name: $name,"
-                        "  display_name: $display_name,"
-                        "  description: $description,"
-                        "  system_prompt: $system_prompt,"
-                        "  tools: $tools,"
-                        "  model: $model,"
-                        "  schedule_enabled: $schedule_enabled,"
-                        "  schedule_time: $schedule_time,"
-                        "  enabled: $enabled,"
-                        "  trust_level: $trust_level,"
-                        "  created_at: $created_at,"
-                        "  updated_at: $updated_at,"
-                        "  sdk_session_id: $sdk_session_id,"
-                        "  last_run_at: $last_run_at,"
-                        "  last_processed_date: $last_processed_date,"
-                        "  run_count: $run_count,"
-                        "  trigger_event: $trigger_event,"
-                        "  trigger_filter: $trigger_filter,"
-                        "  memory_mode: $memory_mode"
-                        "})",
-                        {
-                            "name": name,
-                            "display_name": row.get("display_name") or "",
-                            "description": row.get("description") or "",
-                            "system_prompt": row.get("system_prompt") or "",
-                            "tools": row.get("tools") or "[]",
-                            "model": row.get("model") or "",
-                            "schedule_enabled": row.get("schedule_enabled") or "true",
-                            "schedule_time": row.get("schedule_time") or "3:00",
-                            "enabled": row.get("enabled") or "true",
-                            "trust_level": row.get("trust_level") or "sandboxed",
-                            "created_at": row.get("created_at") or "",
-                            "updated_at": row.get("updated_at") or "",
-                            "sdk_session_id": row.get("sdk_session_id") or "",
-                            "last_run_at": row.get("last_run_at") or "",
-                            "last_processed_date": row.get("last_processed_date") or "",
-                            "run_count": row.get("run_count") or 0,
-                            "trigger_event": row.get("trigger_event") or "",
-                            "trigger_filter": row.get("trigger_filter") or "{}",
-                            "memory_mode": "persistent",
-                        },
-                    )
-                logger.info(f"Daily: migrated Caller '{name}' → Agent")
-            except Exception as e:
-                logger.warning(f"Daily: failed to migrate Caller '{name}': {e}")
-
-        # Copy CallerRun rows to AgentRun
-        try:
-            old_runs = await graph.execute_cypher("MATCH (r:CallerRun) RETURN r")
-            for run_row in old_runs:
-                run_id = run_row.get("run_id")
-                if not run_id:
-                    continue
-                existing = await graph.execute_cypher(
-                    "MATCH (r:AgentRun {run_id: $run_id}) RETURN r.run_id",
-                    {"run_id": run_id},
-                )
-                if existing:
-                    continue
-                try:
-                    async with graph.write_lock:
-                        await graph.execute_cypher(
-                            "CREATE (r:AgentRun {"
-                            "  run_id: $run_id,"
-                            "  agent_name: $agent_name,"
-                            "  display_name: $display_name,"
-                            "  entry_id: $entry_id,"
-                            "  status: $status,"
-                            "  ran_at: $ran_at,"
-                            "  session_id: $session_id"
-                            "})",
-                            {
-                                "run_id": run_id,
-                                "agent_name": run_row.get("caller_name") or run_row.get("agent_name") or "",
-                                "display_name": run_row.get("display_name") or "",
-                                "entry_id": run_row.get("entry_id") or "",
-                                "status": run_row.get("status") or "",
-                                "ran_at": run_row.get("ran_at") or "",
-                                "session_id": run_row.get("session_id") or "",
-                            },
-                        )
-                except Exception as e:
-                    logger.warning(f"Daily: failed to migrate CallerRun '{run_id}': {e}")
-        except Exception:
-            pass  # CallerRun table may not exist
-
-        # Drop old tables
-        try:
-            async with graph.write_lock:
-                await graph.execute_cypher("DROP TABLE CallerRun")
-            logger.info("Daily: dropped old CallerRun table")
-        except Exception:
-            pass
-        try:
-            async with graph.write_lock:
-                await graph.execute_cypher("DROP TABLE Caller")
-            logger.info("Daily: dropped old Caller table")
-        except Exception:
-            pass
-
-        logger.info("Daily: Caller → Agent migration complete")
-
     async def _seed_builtin_agents(self, graph) -> None:
         """Seed built-in Agents that ship with Parachute. Idempotent — skips existing."""
         now = datetime.now(timezone.utc).isoformat()
@@ -751,9 +599,8 @@ class DailyModule:
                 "name": "post-process",
                 "display_name": "Post-Process",
                 "description": (
-                    "Cleans up voice transcriptions: removes filler words, "
-                    "fixes grammar, adds punctuation and paragraph breaks. "
-                    "Preserves the speaker's voice."
+                    "Runs after voice transcription completes. Cleans up filler "
+                    "words, fixes grammar, adds punctuation."
                 ),
                 "system_prompt": POST_PROCESS_SYSTEM_PROMPT,
                 "tools": json.dumps(["read_entry", "update_entry_content"]),
@@ -762,7 +609,7 @@ class DailyModule:
                 "enabled": "true",
                 "trust_level": "direct",
                 "trigger_event": "note.transcription_complete",
-                "trigger_filter": json.dumps({"entry_type": "voice"}),
+                "trigger_filter": "{}",
                 "memory_mode": "fresh",
                 "created_at": now,
                 "updated_at": now,
@@ -817,6 +664,23 @@ class DailyModule:
                 logger.info(f"Daily: seeded built-in Agent '{agent['name']}'")
             except Exception as e:
                 logger.warning(f"Daily: failed to seed Agent '{agent['name']}': {e}")
+
+        # Clean up renamed/retired Agent nodes
+        for old_name in ["transcription-cleanup"]:
+            try:
+                rows = await graph.execute_cypher(
+                    "MATCH (a:Agent {name: $name}) RETURN a.name",
+                    {"name": old_name},
+                )
+                if rows:
+                    async with graph.write_lock:
+                        await graph.execute_cypher(
+                            "MATCH (a:Agent {name: $name}) DELETE a",
+                            {"name": old_name},
+                        )
+                    logger.info(f"Daily: removed retired Agent '{old_name}'")
+            except Exception:
+                pass
 
     async def _migrate_audio_paths_to_absolute(self, graph) -> None:
         """One-time: convert relative audio_path values in graph to absolute.
@@ -2061,11 +1925,6 @@ class DailyModule:
                 logger.warning(f"Failed to get agent activity for {entry_id}: {e}")
                 return {"activity": [], "count": 0}
 
-        # Backward-compat alias
-        @router.get("/entries/{entry_id}/caller-activity")
-        async def get_entry_caller_activity_compat(entry_id: str):
-            return await get_entry_agent_activity(entry_id)
-
         @router.patch("/entries/{entry_id}")
         async def update_entry(entry_id: str, body: UpdateEntryRequest):
             """Update content and/or metadata of an existing entry."""
@@ -2194,7 +2053,6 @@ class DailyModule:
             return result
 
         @router.get("/cards")
-        @router.get("/agent-cards")  # backward-compat alias
         async def list_cards(date: str | None = Query(None)):
             """Fetch all Card nodes, optionally filtered by date."""
             graph = self._get_graph()
@@ -2214,7 +2072,6 @@ class DailyModule:
             return {"cards": rows, "count": len(rows)}
 
         @router.get("/cards/{agent_name}")
-        @router.get("/agent-cards/{agent_name}")  # backward-compat alias
         async def get_card(agent_name: str, date: str | None = Query(None)):
             """Get a specific agent's card, optionally filtered to a specific date."""
             graph = self._get_graph()
@@ -2238,7 +2095,6 @@ class DailyModule:
             return rows[0] if date else {"cards": rows, "count": len(rows)}
 
         @router.post("/cards/{agent_name}/run", status_code=202)
-        @router.post("/agent-cards/{agent_name}/run", status_code=202)  # backward-compat alias
         async def run_card(
             agent_name: str,
             date: str | None = Query(None),
@@ -2306,7 +2162,6 @@ class DailyModule:
         # so FastAPI matches the literal path before the path parameter.
 
         @router.get("/agents/templates")
-        @router.get("/callers/templates")  # backward-compat alias
         def list_agent_templates() -> dict[str, list[AgentTemplateDict]]:
             """Return starter Agent templates for onboarding.
 
@@ -2316,7 +2171,6 @@ class DailyModule:
             return {"templates": AGENT_TEMPLATES}
 
         @router.get("/agents/events")
-        @router.get("/callers/events")  # backward-compat alias
         def list_agent_events():
             """Return available trigger events for Agents."""
             return {
@@ -2327,7 +2181,6 @@ class DailyModule:
             }
 
         @router.get("/agents")
-        @router.get("/callers")  # backward-compat alias
         async def list_agents():
             """List all Agent nodes from the graph."""
             graph = self._get_graph()
@@ -2339,7 +2192,6 @@ class DailyModule:
             return {"agents": rows, "count": len(rows)}
 
         @router.get("/agents/{name}")
-        @router.get("/callers/{name}")  # backward-compat alias
         async def get_agent(name: str):
             """Get a specific Agent node."""
             graph = self._get_graph()
@@ -2354,7 +2206,6 @@ class DailyModule:
             return rows[0]
 
         @router.get("/agents/{name}/transcript")
-        @router.get("/callers/{name}/transcript")  # backward-compat alias
         async def get_agent_transcript(name: str, limit: int = Query(50)):
             """Get the SDK conversation transcript for an Agent's latest session.
 
@@ -2480,7 +2331,6 @@ class DailyModule:
             }
 
         @router.post("/agents", status_code=201)
-        @router.post("/callers", status_code=201)  # backward-compat alias
         async def create_agent(body: dict):
             """Create or update an Agent node (MERGE on name)."""
             graph = self._get_graph()
@@ -2536,7 +2386,6 @@ class DailyModule:
             return rows[0] if rows else {"name": name}
 
         @router.put("/agents/{name}")
-        @router.put("/callers/{name}")  # backward-compat alias
         async def update_agent(name: str, body: dict):
             """Update fields on an existing Agent node."""
             graph = self._get_graph()
@@ -2596,7 +2445,6 @@ class DailyModule:
             return rows[0] if rows else {"name": name}
 
         @router.post("/agents/{name}/trigger")
-        @router.post("/callers/{name}/trigger")  # backward-compat alias
         async def trigger_agent(name: str, body: dict):
             """Manually trigger an Agent on a specific entry (ignores filters).
 
@@ -2630,7 +2478,6 @@ class DailyModule:
             return {"status": "triggered", "agent": name, "entry_id": entry_id, "event": event}
 
         @router.post("/agents/{name}/reset", status_code=200)
-        @router.post("/callers/{name}/reset", status_code=200)  # backward-compat alias
         async def reset_agent(name: str):
             """Reset an Agent's session state so its next run starts fresh."""
             # Validate name to prevent path traversal
@@ -2654,7 +2501,6 @@ class DailyModule:
             return {"status": "reset", "agent": name}
 
         @router.delete("/agents/{name}", status_code=204)
-        @router.delete("/callers/{name}", status_code=204)  # backward-compat alias
         async def delete_agent(name: str):
             """Delete an Agent node."""
             graph = self._get_graph()

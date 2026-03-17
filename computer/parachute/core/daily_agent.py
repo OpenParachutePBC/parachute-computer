@@ -744,12 +744,28 @@ async def run_daily_agent(
 
 
 def _default_prompt(config: DailyAgentConfig, journal_date: str, output_date: str) -> str:
-    """Build a default prompt for an agent."""
-    return f"""Today is {output_date}. Please run your daily process based on yesterday ({journal_date}).
+    """Build a default prompt for an agent.
+
+    NOTE: The date is stated explicitly and redundantly because agents with
+    persistent memory resume a prior SDK session that may carry stale date
+    references from a previous run. The triple-emphasis ensures the model
+    uses the correct date.
+    """
+    from datetime import datetime as _dt
+    try:
+        jd = _dt.strptime(journal_date, "%Y-%m-%d")
+        day_name = jd.strftime("%A")  # e.g. "Monday"
+        date_label = f"{day_name}, {journal_date}"
+    except ValueError:
+        date_label = journal_date
+
+    return f"""IMPORTANT — This run is for **{date_label}**. Ignore any dates from prior conversations.
+
+Today's date is {output_date}. Reflect on the journal entries from yesterday, {date_label}.
 
 Use the tools available to you:
-- `read_journal` with date "{journal_date}" to read yesterday's journal entries
-- `read_chat_log` with date "{journal_date}" to read AI conversations from yesterday
+- `read_journal` with date "{journal_date}" to read the journal entries from {date_label}
+- `read_chat_log` with date "{journal_date}" to read AI conversations from {date_label}
 - `read_recent_journals` for broader context from recent days
 
 When you're ready, use `write_output` with date "{output_date}" to save your output.
