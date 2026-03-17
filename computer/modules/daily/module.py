@@ -106,32 +106,6 @@ AGENT_TEMPLATES: list[AgentTemplateDict] = [
         "trust_level": "sandboxed",
         "memory_mode": "persistent",
     },
-    {
-        "name": "auto-tagger",
-        "display_name": "Auto Tagger",
-        "description": "Automatically tags new journal entries based on their content",
-        "system_prompt": (
-            "You are a journal entry tagger. Read the note and assign relevant tags "
-            "based on its content.\n\n"
-            "## Rules\n\n"
-            "- Assign 1-5 tags per entry\n"
-            "- Use lowercase, hyphenated tags (e.g., 'project-update', 'personal', 'idea')\n"
-            "- Common tags: personal, work, idea, question, gratitude, health, "
-            "project-update, meeting, learning, reflection\n"
-            "- Be specific when content warrants it (e.g., 'python', 'design-review')\n"
-            "- Don't over-tag — only tags that genuinely apply\n\n"
-            "## Process\n\n"
-            "1. Read the entry with `read_entry`\n"
-            "2. Determine relevant tags\n"
-            "3. Apply them with `update_entry_tags`"
-        ),
-        "tools": ["read_entry", "update_entry_tags"],
-        "schedule_time": "",
-        "trust_level": "direct",
-        "trigger_event": "note.created",
-        "trigger_filter": "{}",
-        "memory_mode": "fresh",
-    },
 ]
 
 
@@ -806,22 +780,6 @@ class DailyModule:
                 "trigger_event": "",
                 "trigger_filter": "{}",
                 "memory_mode": AGENT_TEMPLATES[0].get("memory_mode", "persistent"),
-                "created_at": now,
-                "updated_at": now,
-            },
-            {
-                "name": "auto-tagger",
-                "display_name": "Auto Tagger",
-                "description": AGENT_TEMPLATES[1]["description"],
-                "system_prompt": AGENT_TEMPLATES[1]["system_prompt"],
-                "tools": json.dumps(AGENT_TEMPLATES[1]["tools"]),
-                "schedule_enabled": "false",
-                "schedule_time": "",
-                "enabled": "true",
-                "trust_level": AGENT_TEMPLATES[1].get("trust_level", "direct"),
-                "trigger_event": AGENT_TEMPLATES[1].get("trigger_event", "note.created"),
-                "trigger_filter": AGENT_TEMPLATES[1].get("trigger_filter", "{}"),
-                "memory_mode": AGENT_TEMPLATES[1].get("memory_mode", "fresh"),
                 "created_at": now,
                 "updated_at": now,
             },
