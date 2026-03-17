@@ -381,7 +381,7 @@ class TranscriptBlock {
 // Daily Agent Models
 // ============================================================
 
-/// Configuration for a daily agent (Caller node from the graph database).
+/// Configuration for a daily agent (Agent node from the graph database).
 class DailyAgentInfo {
   final String name;
   final String displayName;
@@ -395,12 +395,15 @@ class DailyAgentInfo {
   final String? lastProcessedDate;
   final int runCount;
 
-  /// Event that triggers this Caller (e.g. "note.transcription_complete").
-  /// Empty string means this is a scheduled (day-scoped) Caller.
+  /// Event that triggers this Agent (e.g. "note.transcription_complete").
+  /// Empty string means this is a scheduled (day-scoped) Agent.
   final String triggerEvent;
 
   /// JSON filter for matching entries on the trigger event.
   final Map<String, dynamic>? triggerFilter;
+
+  /// Memory mode: "persistent" (resume prior session) or "fresh" (new session each run).
+  final String memoryMode;
 
   DailyAgentInfo({
     required this.name,
@@ -416,14 +419,15 @@ class DailyAgentInfo {
     this.runCount = 0,
     this.triggerEvent = '',
     this.triggerFilter,
+    this.memoryMode = 'persistent',
   });
 
-  /// Whether this Caller is event-driven (triggered) rather than scheduled.
+  /// Whether this Agent is event-driven (triggered) rather than scheduled.
   bool get isTriggered => triggerEvent.isNotEmpty;
 }
 
-/// Starter caller template returned by the templates endpoint.
-class CallerTemplate {
+/// Starter agent template returned by the templates endpoint.
+class AgentTemplate {
   final String name;
   final String displayName;
   final String description;
@@ -432,14 +436,17 @@ class CallerTemplate {
   final String scheduleTime;
   final String trustLevel;
 
-  /// Event that triggers this Caller (e.g. "note.transcription_complete").
+  /// Event that triggers this Agent (e.g. "note.transcription_complete").
   /// Empty string means this is a scheduled (day-scoped) template.
   final String triggerEvent;
 
   /// JSON filter for matching entries on the trigger event.
   final Map<String, dynamic>? triggerFilter;
 
-  const CallerTemplate({
+  /// Memory mode: "persistent" (resume prior session) or "fresh" (new session each run).
+  final String memoryMode;
+
+  const AgentTemplate({
     required this.name,
     required this.displayName,
     required this.description,
@@ -449,18 +456,19 @@ class CallerTemplate {
     this.trustLevel = 'sandboxed',
     this.triggerEvent = '',
     this.triggerFilter,
+    this.memoryMode = 'persistent',
   });
 
-  /// Whether this template is for an event-driven (triggered) Caller.
+  /// Whether this template is for an event-driven (triggered) Agent.
   bool get isTriggered => triggerEvent.isNotEmpty;
 
-  factory CallerTemplate.fromJson(Map<String, dynamic> json) {
+  factory AgentTemplate.fromJson(Map<String, dynamic> json) {
     final rawTools = json['tools'];
     List<String> tools = [];
     if (rawTools is List) {
       tools = rawTools.cast<String>();
     }
-    return CallerTemplate(
+    return AgentTemplate(
       name: json['name'] as String? ?? '',
       displayName:
           json['display_name'] as String? ?? json['name'] as String? ?? '',
@@ -471,13 +479,14 @@ class CallerTemplate {
       trustLevel: json['trust_level'] as String? ?? 'sandboxed',
       triggerEvent: json['trigger_event'] as String? ?? '',
       triggerFilter: parseTriggerFilter(json['trigger_filter']),
+      memoryMode: json['memory_mode'] as String? ?? 'persistent',
     );
   }
 }
 
 /// Parse a trigger_filter value from JSON string or map.
 ///
-/// Shared by [CallerTemplate.fromJson] and [DailyApiService.fetchCallers].
+/// Shared by [AgentTemplate.fromJson] and [DailyApiService.fetchAgents].
 Map<String, dynamic>? parseTriggerFilter(dynamic raw) {
   if (raw is Map) return Map<String, dynamic>.from(raw);
   if (raw is String && raw.isNotEmpty) {
@@ -491,24 +500,24 @@ Map<String, dynamic>? parseTriggerFilter(dynamic raw) {
   return null;
 }
 
-/// Record of a triggered Caller having run on a specific entry.
-class CallerActivity {
-  final String callerName;
+/// Record of a triggered Agent having run on a specific entry.
+class AgentActivity {
+  final String agentName;
   final String displayName;
   final String status;
   final String ranAt;
   final String sessionId;
 
-  const CallerActivity({
-    required this.callerName,
+  const AgentActivity({
+    required this.agentName,
     required this.displayName,
     required this.status,
     required this.ranAt,
     this.sessionId = '',
   });
 
-  factory CallerActivity.fromJson(Map<String, dynamic> json) => CallerActivity(
-        callerName: json['caller_name'] as String? ?? '',
+  factory AgentActivity.fromJson(Map<String, dynamic> json) => AgentActivity(
+        agentName: json['agent_name'] as String? ?? json['caller_name'] as String? ?? '',
         displayName: json['display_name'] as String? ?? '',
         status: json['status'] as String? ?? '',
         ranAt: json['ran_at'] as String? ?? '',

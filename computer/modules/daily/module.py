@@ -54,12 +54,12 @@ _DEFAULT_REDO_LOG_PATH = Path.home() / ".parachute" / "daily" / "entries.jsonl"
 
 logger = logging.getLogger(__name__)
 
-# ── Caller templates ─────────────────────────────────────────────────────────
-# Starter definitions returned by GET /callers/templates. Each has the same
-# shape as the POST /callers body so the client can create directly from them.
+# ── Agent templates ──────────────────────────────────────────────────────────
+# Starter definitions returned by GET /agents/templates. Each has the same
+# shape as the POST /agents body so the client can create directly from them.
 
 
-class CallerTemplateDict(TypedDict, total=False):
+class AgentTemplateDict(TypedDict, total=False):
     name: str
     display_name: str
     description: str
@@ -69,9 +69,10 @@ class CallerTemplateDict(TypedDict, total=False):
     trust_level: str
     trigger_event: str
     trigger_filter: str
+    memory_mode: str  # "persistent" (default) | "fresh"
 
 
-CALLER_TEMPLATES: list[CallerTemplateDict] = [
+AGENT_TEMPLATES: list[AgentTemplateDict] = [
     {
         "name": "daily-reflection",
         "display_name": "Daily Reflection",
@@ -103,6 +104,7 @@ CALLER_TEMPLATES: list[CallerTemplateDict] = [
         "tools": ["read_journal", "read_chat_log", "read_recent_journals"],
         "schedule_time": "21:00",
         "trust_level": "sandboxed",
+        "memory_mode": "persistent",
     },
     {
         "name": "auto-tagger",
@@ -128,6 +130,7 @@ CALLER_TEMPLATES: list[CallerTemplateDict] = [
         "trust_level": "direct",
         "trigger_event": "note.created",
         "trigger_filter": "{}",
+        "memory_mode": "fresh",
     },
 ]
 
@@ -208,7 +211,7 @@ VALID_TRANSCRIPTION_TRANSITIONS = {
 }
 
 
-# ── Cleanup Caller system prompt ──────────────────────────────────────────────
+# ── Cleanup Agent system prompt ───────────────────────────────────────────────
 CLEANUP_SYSTEM_PROMPT = (
     "You are a transcription cleanup assistant. You receive raw speech-to-text "
     "output and produce clean, readable text.\n\n"
@@ -235,7 +238,7 @@ async def _transcribe_and_cleanup(
     """Background task: transcribe audio → dispatch event for cleanup.
 
     If dispatch_event_fn is provided, fires 'note.transcription_complete'
-    event which triggers Callers (e.g., transcription-cleanup).
+    event which triggers Agents (e.g., transcription-cleanup).
     Falls back to direct _cleanup_transcription() if no dispatcher.
     """
     from parachute.core.interfaces import get_registry
@@ -297,8 +300,8 @@ async def _transcribe_and_cleanup(
             logger.warning(f"Daily: failed to clean up audio file {audio_path}: {cleanup_err}")
         return
 
-    # Dispatch note.transcription_complete event to triggered Callers.
-    # The cleanup_transcription Caller (if enabled) will handle text cleanup.
+    # Dispatch note.transcription_complete event to triggered Agents.
+    # The cleanup_transcription Agent (if enabled) will handle text cleanup.
     # We pass a callback since _transcribe_and_cleanup is module-level.
     if dispatch_event_fn is not None:
         try:
@@ -511,7 +514,7 @@ class DailyModule:
         )
         # No Day table or HAS_ENTRY/HAS_CARD rels — query Note/Card by date field directly
         await graph.ensure_node_table(
-            "Caller",
+            "Agent",
             {
                 "name": "STRING",           # PK: agent name, e.g. "reflection"
                 "display_name": "STRING",
@@ -525,20 +528,21 @@ class DailyModule:
                 "trust_level": "STRING",    # "sandboxed" (default) | "direct"
                 "created_at": "STRING",
                 "updated_at": "STRING",
-                # Runtime state (previously in DailyAgentState JSON files)
+                # Runtime state
                 "sdk_session_id": "STRING",      # Claude SDK session ID for resume
                 "last_run_at": "STRING",         # ISO timestamp of last completed run
                 "last_processed_date": "STRING", # YYYY-MM-DD of last processed journal date
                 "run_count": "INT64",            # Total number of completed runs
+                "memory_mode": "STRING",         # "persistent" (default) | "fresh"
             },
             primary_key="name",
         )
 
         await graph.ensure_node_table(
-            "CallerRun",
+            "AgentRun",
             {
-                "run_id": "STRING",         # PK: "{caller_name}:{entry_id}:{timestamp}"
-                "caller_name": "STRING",
+                "run_id": "STRING",         # PK: "{agent_name}:{entry_id}:{timestamp}"
+                "agent_name": "STRING",
                 "display_name": "STRING",   # Human-readable name (avoids N+1 lookup)
                 "entry_id": "STRING",
                 "status": "STRING",         # "completed" | "error" | etc.
@@ -548,11 +552,14 @@ class DailyModule:
             primary_key="run_id",
         )
 
+        # Migrate from old Caller/CallerRun tables if they exist
+        await self._migrate_caller_to_agent(graph)
+
         # Add new columns to existing databases (idempotent schema migration)
         await self._ensure_new_columns(graph)
 
-        # Seed built-in Callers (idempotent — skips if already exists)
-        await self._seed_builtin_callers(graph)
+        # Seed built-in Agents (idempotent — skips if already exists)
+        await self._seed_builtin_agents(graph)
 
         # Migrate relative audio paths to absolute (one-time, idempotent)
         await self._migrate_audio_paths_to_absolute(graph)
@@ -586,10 +593,10 @@ class DailyModule:
                     )
                     logger.info(f"Daily: added column Note.{col}")
 
-        # Caller table migrations
+        # Agent table migrations
         try:
-            caller_cols = await graph.get_table_columns("Caller")
-            caller_new = {
+            agent_cols = await graph.get_table_columns("Agent")
+            agent_new = {
                 "trust_level": ("STRING", "'sandboxed'"),
                 "sdk_session_id": ("STRING", "''"),
                 "last_run_at": ("STRING", "''"),
@@ -597,21 +604,174 @@ class DailyModule:
                 "run_count": ("INT64", "0"),
                 "trigger_event": ("STRING", "''"),
                 "trigger_filter": ("STRING", "'{}'"),
+                "memory_mode": ("STRING", "'persistent'"),
             }
-            missing = {col: v for col, v in caller_new.items() if col not in caller_cols}
+            missing = {col: v for col, v in agent_new.items() if col not in agent_cols}
             if missing:
                 async with graph.write_lock:
                     for col, (typ, default) in missing.items():
                         await graph.execute_cypher(
-                            f"ALTER TABLE Caller ADD {col} {typ} DEFAULT {default}"
+                            f"ALTER TABLE Agent ADD {col} {typ} DEFAULT {default}"
                         )
-                        logger.info(f"Daily: added column Caller.{col}")
+                        logger.info(f"Daily: added column Agent.{col}")
         except Exception:
-            pass  # Caller table may not exist yet on first run
+            pass  # Agent table may not exist yet on first run
 
-    async def _seed_builtin_callers(self, graph) -> None:
-        """Seed built-in Callers that ship with Parachute. Idempotent — skips existing."""
-        builtin_callers = [
+    async def _migrate_caller_to_agent(self, graph) -> None:
+        """Migrate data from old Caller/CallerRun tables to Agent/AgentRun.
+
+        LadybugDB doesn't support ALTER TABLE RENAME, so we copy data to the
+        new tables and drop the old ones. Runs on startup, idempotent.
+        """
+        try:
+            # Check if old Caller table exists by trying to query it
+            old_rows = await graph.execute_cypher(
+                "MATCH (c:Caller) RETURN c"
+            )
+        except Exception:
+            return  # No old Caller table — nothing to migrate
+
+        if not old_rows:
+            # Table exists but is empty — just drop it
+            try:
+                async with graph.write_lock:
+                    await graph.execute_cypher("DROP TABLE Caller")
+                logger.info("Daily: dropped empty Caller table")
+            except Exception:
+                pass
+            try:
+                async with graph.write_lock:
+                    await graph.execute_cypher("DROP TABLE CallerRun")
+                logger.info("Daily: dropped empty CallerRun table")
+            except Exception:
+                pass
+            return
+
+        logger.info(f"Daily: migrating {len(old_rows)} Caller(s) to Agent table")
+
+        # Copy each Caller row into Agent (skip if already exists)
+        for row in old_rows:
+            name = row.get("name")
+            if not name:
+                continue
+
+            # Check if already migrated
+            existing = await graph.execute_cypher(
+                "MATCH (a:Agent {name: $name}) RETURN a.name",
+                {"name": name},
+            )
+            if existing:
+                continue
+
+            try:
+                async with graph.write_lock:
+                    await graph.execute_cypher(
+                        "CREATE (a:Agent {"
+                        "  name: $name,"
+                        "  display_name: $display_name,"
+                        "  description: $description,"
+                        "  system_prompt: $system_prompt,"
+                        "  tools: $tools,"
+                        "  model: $model,"
+                        "  schedule_enabled: $schedule_enabled,"
+                        "  schedule_time: $schedule_time,"
+                        "  enabled: $enabled,"
+                        "  trust_level: $trust_level,"
+                        "  created_at: $created_at,"
+                        "  updated_at: $updated_at,"
+                        "  sdk_session_id: $sdk_session_id,"
+                        "  last_run_at: $last_run_at,"
+                        "  last_processed_date: $last_processed_date,"
+                        "  run_count: $run_count,"
+                        "  trigger_event: $trigger_event,"
+                        "  trigger_filter: $trigger_filter,"
+                        "  memory_mode: $memory_mode"
+                        "})",
+                        {
+                            "name": name,
+                            "display_name": row.get("display_name") or "",
+                            "description": row.get("description") or "",
+                            "system_prompt": row.get("system_prompt") or "",
+                            "tools": row.get("tools") or "[]",
+                            "model": row.get("model") or "",
+                            "schedule_enabled": row.get("schedule_enabled") or "true",
+                            "schedule_time": row.get("schedule_time") or "3:00",
+                            "enabled": row.get("enabled") or "true",
+                            "trust_level": row.get("trust_level") or "sandboxed",
+                            "created_at": row.get("created_at") or "",
+                            "updated_at": row.get("updated_at") or "",
+                            "sdk_session_id": row.get("sdk_session_id") or "",
+                            "last_run_at": row.get("last_run_at") or "",
+                            "last_processed_date": row.get("last_processed_date") or "",
+                            "run_count": row.get("run_count") or 0,
+                            "trigger_event": row.get("trigger_event") or "",
+                            "trigger_filter": row.get("trigger_filter") or "{}",
+                            "memory_mode": "persistent",
+                        },
+                    )
+                logger.info(f"Daily: migrated Caller '{name}' → Agent")
+            except Exception as e:
+                logger.warning(f"Daily: failed to migrate Caller '{name}': {e}")
+
+        # Copy CallerRun rows to AgentRun
+        try:
+            old_runs = await graph.execute_cypher("MATCH (r:CallerRun) RETURN r")
+            for run_row in old_runs:
+                run_id = run_row.get("run_id")
+                if not run_id:
+                    continue
+                existing = await graph.execute_cypher(
+                    "MATCH (r:AgentRun {run_id: $run_id}) RETURN r.run_id",
+                    {"run_id": run_id},
+                )
+                if existing:
+                    continue
+                try:
+                    async with graph.write_lock:
+                        await graph.execute_cypher(
+                            "CREATE (r:AgentRun {"
+                            "  run_id: $run_id,"
+                            "  agent_name: $agent_name,"
+                            "  display_name: $display_name,"
+                            "  entry_id: $entry_id,"
+                            "  status: $status,"
+                            "  ran_at: $ran_at,"
+                            "  session_id: $session_id"
+                            "})",
+                            {
+                                "run_id": run_id,
+                                "agent_name": run_row.get("caller_name") or run_row.get("agent_name") or "",
+                                "display_name": run_row.get("display_name") or "",
+                                "entry_id": run_row.get("entry_id") or "",
+                                "status": run_row.get("status") or "",
+                                "ran_at": run_row.get("ran_at") or "",
+                                "session_id": run_row.get("session_id") or "",
+                            },
+                        )
+                except Exception as e:
+                    logger.warning(f"Daily: failed to migrate CallerRun '{run_id}': {e}")
+        except Exception:
+            pass  # CallerRun table may not exist
+
+        # Drop old tables
+        try:
+            async with graph.write_lock:
+                await graph.execute_cypher("DROP TABLE CallerRun")
+            logger.info("Daily: dropped old CallerRun table")
+        except Exception:
+            pass
+        try:
+            async with graph.write_lock:
+                await graph.execute_cypher("DROP TABLE Caller")
+            logger.info("Daily: dropped old Caller table")
+        except Exception:
+            pass
+
+        logger.info("Daily: Caller → Agent migration complete")
+
+    async def _seed_builtin_agents(self, graph) -> None:
+        """Seed built-in Agents that ship with Parachute. Idempotent — skips existing."""
+        builtin_agents = [
             {
                 "name": "transcription-cleanup",
                 "display_name": "Transcription Cleanup",
@@ -628,15 +788,16 @@ class DailyModule:
                 "trust_level": "direct",
                 "trigger_event": "note.transcription_complete",
                 "trigger_filter": json.dumps({"entry_type": "voice"}),
+                "memory_mode": "fresh",
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             },
         ]
 
-        for caller in builtin_callers:
+        for agent in builtin_agents:
             rows = await graph.execute_cypher(
-                "MATCH (c:Caller {name: $name}) RETURN c.name AS name",
-                {"name": caller["name"]},
+                "MATCH (a:Agent {name: $name}) RETURN a.name AS name",
+                {"name": agent["name"]},
             )
             if rows:
                 continue  # Already exists — don't overwrite user customizations
@@ -644,7 +805,7 @@ class DailyModule:
             try:
                 async with graph.write_lock:
                     await graph.execute_cypher(
-                        "CREATE (c:Caller {"
+                        "CREATE (a:Agent {"
                         "  name: $name,"
                         "  display_name: $display_name,"
                         "  description: $description,"
@@ -656,14 +817,15 @@ class DailyModule:
                         "  trust_level: $trust_level,"
                         "  trigger_event: $trigger_event,"
                         "  trigger_filter: $trigger_filter,"
+                        "  memory_mode: $memory_mode,"
                         "  created_at: $created_at,"
                         "  updated_at: $updated_at"
                         "})",
-                        caller,
+                        agent,
                     )
-                logger.info(f"Daily: seeded built-in Caller '{caller['name']}'")
+                logger.info(f"Daily: seeded built-in Agent '{agent['name']}'")
             except Exception as e:
-                logger.warning(f"Daily: failed to seed Caller '{caller['name']}': {e}")
+                logger.warning(f"Daily: failed to seed Agent '{agent['name']}': {e}")
 
     async def _migrate_audio_paths_to_absolute(self, graph) -> None:
         """One-time: convert relative audio_path values in graph to absolute.
@@ -896,7 +1058,7 @@ class DailyModule:
         return get_registry().get("BrainDB")
 
     async def _dispatch_event(self, event: str, entry_id: str) -> None:
-        """Dispatch a Note lifecycle event to matching triggered Callers.
+        """Dispatch a Note lifecycle event to matching triggered Agents.
 
         Lifecycle bookkeeping (cleanup_status, transcription_status) lives here
         because it's domain-specific to the Daily module — the dispatcher stays
@@ -904,7 +1066,7 @@ class DailyModule:
 
         Runs as a background task. Errors are logged but don't propagate.
         """
-        from parachute.core.caller_dispatch import CallerDispatcher
+        from parachute.core.agent_dispatch import AgentDispatcher
 
         graph = self._get_graph()
         if graph is None:
@@ -927,7 +1089,7 @@ class DailyModule:
             if event == "note.transcription_complete":
                 await self._set_entry_meta(graph, entry_id, {"cleanup_status": "running"})
 
-            dispatcher = CallerDispatcher(graph=graph, vault_path=self.vault_path)
+            dispatcher = AgentDispatcher(graph=graph, vault_path=self.vault_path)
             results = await dispatcher.dispatch(event, entry_id, entry_meta)
 
             # Post-dispatch lifecycle bookkeeping
@@ -946,7 +1108,7 @@ class DailyModule:
 
             for r in results:
                 logger.info(
-                    f"Daily: triggered caller '{r.get('agent')}' on {entry_id} → {r.get('status')}"
+                    f"Daily: triggered agent '{r.get('agent')}' on {entry_id} → {r.get('status')}"
                 )
         except Exception as e:
             logger.error(f"Daily: event dispatch failed ({event}, {entry_id}): {e}", exc_info=True)
@@ -1821,7 +1983,7 @@ class DailyModule:
                     {"entry_id": entry_id, "meta": json.dumps(existing_meta)},
                 )
 
-            # Dispatch transcription_complete event to triggered Callers
+            # Dispatch transcription_complete event to triggered Agents
             task = asyncio.create_task(
                 self._dispatch_event("note.transcription_complete", entry_id)
             )
@@ -1873,30 +2035,30 @@ class DailyModule:
                 )
             return entry
 
-        @router.get("/entries/{entry_id}/caller-activity")
-        async def get_entry_caller_activity(entry_id: str):
-            """Get Caller activity history for a specific entry."""
+        @router.get("/entries/{entry_id}/agent-activity")
+        async def get_entry_agent_activity(entry_id: str):
+            """Get Agent activity history for a specific entry."""
             graph = self._get_graph()
             if graph is None:
                 return JSONResponse(status_code=503, content={"error": "BrainDB not available"})
 
             try:
                 rows = await graph.execute_cypher(
-                    "MATCH (r:CallerRun) "
+                    "MATCH (r:AgentRun) "
                     "WHERE r.entry_id = $entry_id "
                     "RETURN r ORDER BY r.ran_at DESC",
                     {"entry_id": entry_id},
                 )
                 activity = []
                 for row in rows:
-                    caller_name = row.get("caller_name", "")
-                    # display_name is stored on CallerRun at write time
+                    agent_name = row.get("agent_name", "")
+                    # display_name is stored on AgentRun at write time
                     display_name = (
                         row.get("display_name")
-                        or caller_name.replace("-", " ").title()
+                        or agent_name.replace("-", " ").title()
                     )
                     activity.append({
-                        "caller_name": caller_name,
+                        "agent_name": agent_name,
                         "display_name": display_name,
                         "status": row.get("status", ""),
                         "ran_at": row.get("ran_at", ""),
@@ -1905,8 +2067,13 @@ class DailyModule:
 
                 return {"activity": activity, "count": len(activity)}
             except Exception as e:
-                logger.warning(f"Failed to get caller activity for {entry_id}: {e}")
+                logger.warning(f"Failed to get agent activity for {entry_id}: {e}")
                 return {"activity": [], "count": 0}
+
+        # Backward-compat alias
+        @router.get("/entries/{entry_id}/caller-activity")
+        async def get_entry_caller_activity_compat(entry_id: str):
+            return await get_entry_agent_activity(entry_id)
 
         @router.patch("/entries/{entry_id}")
         async def update_entry(entry_id: str, body: UpdateEntryRequest):
@@ -2114,13 +2281,13 @@ class DailyModule:
                 return JSONResponse(status_code=400, content={"error": "invalid agent_name format"})
             if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_str):
                 return JSONResponse(status_code=400, content={"error": "invalid date format"})
-            # Verify agent_name corresponds to a known Caller
-            caller_rows = await graph.execute_cypher(
-                "MATCH (c:Caller {name: $name}) RETURN c.name",
+            # Verify agent_name corresponds to a known Agent
+            agent_rows = await graph.execute_cypher(
+                "MATCH (a:Agent {name: $name}) RETURN a.name",
                 {"name": agent_name},
             )
-            if not caller_rows:
-                return JSONResponse(status_code=403, content={"error": "unknown caller"})
+            if not agent_rows:
+                return JSONResponse(status_code=403, content={"error": "unknown agent"})
             card_id = f"{agent_name}:{date_str}"
             display_name = body.get("display_name") or agent_name.replace("-", " ").title()
             generated_at = datetime.now(timezone.utc).isoformat()
@@ -2143,22 +2310,24 @@ class DailyModule:
             )
             return {"card_id": card_id, "status": "done", "date": date_str}
 
-        # ── Callers (agent definitions) ──────────────────────────────────────
-        # IMPORTANT: /callers/templates must be registered before /callers/{name}
+        # ── Agents (autonomous agent definitions) ─────────────────────────────
+        # IMPORTANT: /agents/templates must be registered before /agents/{name}
         # so FastAPI matches the literal path before the path parameter.
 
-        @router.get("/callers/templates")
-        def list_caller_templates() -> dict[str, list[CallerTemplateDict]]:
-            """Return starter Caller templates for onboarding.
+        @router.get("/agents/templates")
+        @router.get("/callers/templates")  # backward-compat alias
+        def list_agent_templates() -> dict[str, list[AgentTemplateDict]]:
+            """Return starter Agent templates for onboarding.
 
-            Templates have the same shape as POST /callers bodies so the
-            client can create a caller directly from a template.
+            Templates have the same shape as POST /agents bodies so the
+            client can create an agent directly from a template.
             """
-            return {"templates": CALLER_TEMPLATES}
+            return {"templates": AGENT_TEMPLATES}
 
-        @router.get("/callers/events")
-        def list_caller_events():
-            """Return available trigger events for Callers."""
+        @router.get("/agents/events")
+        @router.get("/callers/events")  # backward-compat alias
+        def list_agent_events():
+            """Return available trigger events for Agents."""
             return {
                 "events": [
                     {"event": "note.created", "description": "Fires when a new note is saved"},
@@ -2166,35 +2335,37 @@ class DailyModule:
                 ]
             }
 
-        @router.get("/callers")
-        @router.get("/agents")  # backward-compat alias
-        async def list_callers():
-            """List all Caller nodes from the graph."""
+        @router.get("/agents")
+        @router.get("/callers")  # backward-compat alias
+        async def list_agents():
+            """List all Agent nodes from the graph."""
             graph = self._get_graph()
             if graph is None:
                 return JSONResponse(status_code=503, content={"error": "BrainDB not available"})
             rows = await graph.execute_cypher(
-                "MATCH (c:Caller) RETURN c ORDER BY c.name"
+                "MATCH (a:Agent) RETURN a ORDER BY a.name"
             )
-            return {"callers": rows, "count": len(rows)}
+            return {"agents": rows, "count": len(rows)}
 
-        @router.get("/callers/{name}")
-        async def get_caller(name: str):
-            """Get a specific Caller node."""
+        @router.get("/agents/{name}")
+        @router.get("/callers/{name}")  # backward-compat alias
+        async def get_agent(name: str):
+            """Get a specific Agent node."""
             graph = self._get_graph()
             if graph is None:
                 return JSONResponse(status_code=503, content={"error": "BrainDB not available"})
             rows = await graph.execute_cypher(
-                "MATCH (c:Caller {name: $name}) RETURN c",
+                "MATCH (a:Agent {name: $name}) RETURN a",
                 {"name": name},
             )
             if not rows:
                 return JSONResponse(status_code=404, content={"error": "not found"})
             return rows[0]
 
-        @router.post("/callers", status_code=201)
-        async def create_caller(body: dict):
-            """Create or update a Caller node (MERGE on name)."""
+        @router.post("/agents", status_code=201)
+        @router.post("/callers", status_code=201)  # backward-compat alias
+        async def create_agent(body: dict):
+            """Create or update an Agent node (MERGE on name)."""
             graph = self._get_graph()
             if graph is None:
                 return JSONResponse(status_code=503, content={"error": "BrainDB not available"})
@@ -2210,16 +2381,21 @@ class DailyModule:
             if isinstance(trigger_filter, dict):
                 trigger_filter = json.dumps(trigger_filter)
 
+            memory_mode = body.get("memory_mode", "persistent")
+            if memory_mode not in ("persistent", "fresh"):
+                memory_mode = "persistent"
+
             await graph.execute_cypher(
-                "MERGE (c:Caller {name: $name}) "
-                "SET c.display_name = $display_name, c.description = $description, "
-                "    c.system_prompt = $system_prompt, c.tools = $tools, "
-                "    c.model = $model, c.schedule_enabled = $schedule_enabled, "
-                "    c.schedule_time = $schedule_time, c.enabled = $enabled, "
-                "    c.trust_level = $trust_level, "
-                "    c.trigger_event = $trigger_event, "
-                "    c.trigger_filter = $trigger_filter, "
-                "    c.updated_at = $now",
+                "MERGE (a:Agent {name: $name}) "
+                "SET a.display_name = $display_name, a.description = $description, "
+                "    a.system_prompt = $system_prompt, a.tools = $tools, "
+                "    a.model = $model, a.schedule_enabled = $schedule_enabled, "
+                "    a.schedule_time = $schedule_time, a.enabled = $enabled, "
+                "    a.trust_level = $trust_level, "
+                "    a.trigger_event = $trigger_event, "
+                "    a.trigger_filter = $trigger_filter, "
+                "    a.memory_mode = $memory_mode, "
+                "    a.updated_at = $now",
                 {
                     "name": name,
                     "display_name": body.get("display_name") or name.replace("-", " ").title(),
@@ -2233,24 +2409,26 @@ class DailyModule:
                     "trust_level": trust_level,
                     "trigger_event": body.get("trigger_event") or "",
                     "trigger_filter": trigger_filter,
+                    "memory_mode": memory_mode,
                     "now": now,
                 },
             )
             rows = await graph.execute_cypher(
-                "MATCH (c:Caller {name: $name}) RETURN c", {"name": name}
+                "MATCH (a:Agent {name: $name}) RETURN a", {"name": name}
             )
             return rows[0] if rows else {"name": name}
 
-        @router.put("/callers/{name}")
-        async def update_caller(name: str, body: dict):
-            """Update fields on an existing Caller node."""
+        @router.put("/agents/{name}")
+        @router.put("/callers/{name}")  # backward-compat alias
+        async def update_agent(name: str, body: dict):
+            """Update fields on an existing Agent node."""
             graph = self._get_graph()
             if graph is None:
                 return JSONResponse(status_code=503, content={"error": "BrainDB not available"})
             now = datetime.now(timezone.utc).isoformat()
             # Fetch existing
             rows = await graph.execute_cypher(
-                "MATCH (c:Caller {name: $name}) RETURN c", {"name": name}
+                "MATCH (a:Agent {name: $name}) RETURN a", {"name": name}
             )
             if not rows:
                 return JSONResponse(status_code=404, content={"error": "not found"})
@@ -2262,17 +2440,22 @@ class DailyModule:
             trigger_filter = body.get("trigger_filter", existing.get("trigger_filter") or "{}")
             if isinstance(trigger_filter, dict):
                 trigger_filter = json.dumps(trigger_filter)
+            # Normalize memory_mode
+            memory_mode = body.get("memory_mode", existing.get("memory_mode") or "persistent")
+            if memory_mode not in ("persistent", "fresh"):
+                memory_mode = "persistent"
 
             await graph.execute_cypher(
-                "MATCH (c:Caller {name: $name}) "
-                "SET c.display_name = $display_name, c.description = $description, "
-                "    c.system_prompt = $system_prompt, c.tools = $tools, "
-                "    c.model = $model, c.schedule_enabled = $schedule_enabled, "
-                "    c.schedule_time = $schedule_time, c.enabled = $enabled, "
-                "    c.trust_level = $trust_level, "
-                "    c.trigger_event = $trigger_event, "
-                "    c.trigger_filter = $trigger_filter, "
-                "    c.updated_at = $now",
+                "MATCH (a:Agent {name: $name}) "
+                "SET a.display_name = $display_name, a.description = $description, "
+                "    a.system_prompt = $system_prompt, a.tools = $tools, "
+                "    a.model = $model, a.schedule_enabled = $schedule_enabled, "
+                "    a.schedule_time = $schedule_time, a.enabled = $enabled, "
+                "    a.trust_level = $trust_level, "
+                "    a.trigger_event = $trigger_event, "
+                "    a.trigger_filter = $trigger_filter, "
+                "    a.memory_mode = $memory_mode, "
+                "    a.updated_at = $now",
                 {
                     "name": name,
                     "display_name": body.get("display_name", existing.get("display_name") or name),
@@ -2286,17 +2469,19 @@ class DailyModule:
                     "trust_level": trust_level,
                     "trigger_event": body.get("trigger_event", existing.get("trigger_event") or ""),
                     "trigger_filter": trigger_filter,
+                    "memory_mode": memory_mode,
                     "now": now,
                 },
             )
             rows = await graph.execute_cypher(
-                "MATCH (c:Caller {name: $name}) RETURN c", {"name": name}
+                "MATCH (a:Agent {name: $name}) RETURN a", {"name": name}
             )
             return rows[0] if rows else {"name": name}
 
-        @router.post("/callers/{name}/trigger")
-        async def trigger_caller(name: str, body: dict):
-            """Manually trigger a Caller on a specific entry (ignores filters).
+        @router.post("/agents/{name}/trigger")
+        @router.post("/callers/{name}/trigger")  # backward-compat alias
+        async def trigger_agent(name: str, body: dict):
+            """Manually trigger an Agent on a specific entry (ignores filters).
 
             Body: { "entry_id": "..." }
             """
@@ -2308,56 +2493,58 @@ class DailyModule:
             if graph is None:
                 return JSONResponse(status_code=503, content={"error": "BrainDB not available"})
 
-            # Verify caller exists
+            # Verify agent exists
             rows = await graph.execute_cypher(
-                "MATCH (c:Caller {name: $name}) RETURN c.trigger_event AS trigger_event",
+                "MATCH (a:Agent {name: $name}) RETURN a.trigger_event AS trigger_event",
                 {"name": name},
             )
             if not rows:
-                return JSONResponse(status_code=404, content={"error": "Caller not found"})
+                return JSONResponse(status_code=404, content={"error": "Agent not found"})
 
             event = rows[0].get("trigger_event") or "note.created"
 
-            from parachute.core.daily_agent import run_triggered_caller
+            from parachute.core.daily_agent import run_triggered_agent
             task = asyncio.create_task(
-                run_triggered_caller(self.vault_path, name, entry_id, event)
+                run_triggered_agent(self.vault_path, name, entry_id, event)
             )
             _background_tasks.add(task)
             task.add_done_callback(_log_task_exception)
 
-            return {"status": "triggered", "caller": name, "entry_id": entry_id, "event": event}
+            return {"status": "triggered", "agent": name, "entry_id": entry_id, "event": event}
 
-        @router.post("/callers/{name}/reset", status_code=200)
-        async def reset_caller(name: str):
-            """Reset a Caller's session state so its next run starts fresh."""
+        @router.post("/agents/{name}/reset", status_code=200)
+        @router.post("/callers/{name}/reset", status_code=200)  # backward-compat alias
+        async def reset_agent(name: str):
+            """Reset an Agent's session state so its next run starts fresh."""
             # Validate name to prevent path traversal
             if not re.fullmatch(r"[a-z0-9][a-z0-9\-]{0,63}", name):
-                return JSONResponse(status_code=400, content={"error": "invalid caller name format"})
+                return JSONResponse(status_code=400, content={"error": "invalid agent name format"})
             graph = self._get_graph()
             if graph is None:
                 return JSONResponse(status_code=503, content={"error": "BrainDB not available"})
-            # Verify Caller exists
+            # Verify Agent exists
             rows = await graph.execute_cypher(
-                "MATCH (c:Caller {name: $name}) RETURN c", {"name": name}
+                "MATCH (a:Agent {name: $name}) RETURN a", {"name": name}
             )
             if not rows:
                 return JSONResponse(status_code=404, content={"error": "not found"})
             # Clear the agent's SDK session so next run starts fresh
             async with graph.write_lock:
                 await graph.execute_cypher(
-                    "MATCH (c:Caller {name: $name}) SET c.sdk_session_id = ''",
+                    "MATCH (a:Agent {name: $name}) SET a.sdk_session_id = ''",
                     {"name": name},
                 )
             return {"status": "reset", "agent": name}
 
-        @router.delete("/callers/{name}", status_code=204)
-        async def delete_caller(name: str):
-            """Delete a Caller node."""
+        @router.delete("/agents/{name}", status_code=204)
+        @router.delete("/callers/{name}", status_code=204)  # backward-compat alias
+        async def delete_agent(name: str):
+            """Delete an Agent node."""
             graph = self._get_graph()
             if graph is None:
                 return JSONResponse(status_code=503, content={"error": "BrainDB not available"})
             await graph.execute_cypher(
-                "MATCH (c:Caller {name: $name}) DELETE c", {"name": name}
+                "MATCH (a:Agent {name: $name}) DELETE a", {"name": name}
             )
             return Response(status_code=204)
 

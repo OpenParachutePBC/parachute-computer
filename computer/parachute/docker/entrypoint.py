@@ -259,7 +259,7 @@ async def run():
                     emit({"type": "warning", "message": f"Failed to load system prompt: {e}"})
         if system_prompt:
             # Check whether to use the Claude Code preset.
-            # Callers opt out (use_preset=False via stdin JSON payload) so they
+            # Agents opt out (use_preset=False via stdin JSON payload) so they
             # get only their personality prompt without Claude Code noise
             # (git, Bash, file editing, etc.).
             # Chat sessions keep the preset (default) for full tool guidance.

@@ -6,7 +6,7 @@ import '../models/entry_metadata.dart' show TranscriptionStatus;
 import '../models/journal_entry.dart';
 import '../models/agent_card.dart';
 import 'package:parachute/core/services/computer_service.dart'
-    show DailyAgentInfo, AgentRunResult, CallerTemplate, CallerActivity, parseTriggerFilter;
+    show DailyAgentInfo, AgentRunResult, AgentTemplate, AgentActivity, parseTriggerFilter;
 
 /// Raw search result from the server API.
 ///
@@ -479,22 +479,22 @@ class DailyApiService {
     }
   }
 
-  /// Fetch all configured Caller (agent definition) nodes from the server.
+  /// Fetch all configured Agent nodes from the server.
   ///
   /// Returns an empty list on error or if the server is unreachable.
-  Future<List<DailyAgentInfo>> fetchCallers() async {
-    final uri = Uri.parse('$baseUrl/api/daily/callers');
+  Future<List<DailyAgentInfo>> fetchAgents() async {
+    final uri = Uri.parse('$baseUrl/api/daily/agents');
     debugPrint('[DailyApiService] GET $uri');
     try {
       final response = await _client
           .get(uri, headers: _headers)
           .timeout(_timeout);
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        debugPrint('[DailyApiService] fetchCallers ${response.statusCode}');
+        debugPrint('[DailyApiService] fetchAgents ${response.statusCode}');
         return [];
       }
       final decoded = jsonDecode(response.body) as Map<String, dynamic>;
-      final List<dynamic> data = decoded['callers'] as List<dynamic>? ?? [];
+      final List<dynamic> data = decoded['agents'] as List<dynamic>? ?? [];
       return data.map((raw) {
         final j = raw as Map<String, dynamic>;
         final scheduleEnabled =
@@ -526,19 +526,20 @@ class DailyApiService {
           scheduleTime: j['schedule_time'] as String? ?? '03:00',
           triggerEvent: j['trigger_event'] as String? ?? '',
           triggerFilter: parseTriggerFilter(j['trigger_filter']),
+          memoryMode: j['memory_mode'] as String? ?? 'persistent',
         );
       }).toList();
     } catch (e) {
-      debugPrint('[DailyApiService] fetchCallers error: $e');
+      debugPrint('[DailyApiService] fetchAgents error: $e');
       return [];
     }
   }
 
-  /// Fetch starter Caller templates for onboarding.
+  /// Fetch starter Agent templates for onboarding.
   ///
-  /// Returns typed [CallerTemplate] objects parsed from the server response.
-  Future<List<CallerTemplate>> fetchTemplates() async {
-    final uri = Uri.parse('$baseUrl/api/daily/callers/templates');
+  /// Returns typed [AgentTemplate] objects parsed from the server response.
+  Future<List<AgentTemplate>> fetchTemplates() async {
+    final uri = Uri.parse('$baseUrl/api/daily/agents/templates');
     debugPrint('[DailyApiService] GET $uri');
     try {
       final response = await _client
@@ -551,7 +552,7 @@ class DailyApiService {
       final decoded = jsonDecode(response.body) as Map<String, dynamic>;
       final List<dynamic> data = decoded['templates'] as List<dynamic>? ?? [];
       return data
-          .map((json) => CallerTemplate.fromJson(json as Map<String, dynamic>))
+          .map((json) => AgentTemplate.fromJson(json as Map<String, dynamic>))
           .toList();
     } catch (e) {
       debugPrint('[DailyApiService] fetchTemplates error: $e');
@@ -559,12 +560,12 @@ class DailyApiService {
     }
   }
 
-  /// Create a new Caller node on the server.
+  /// Create a new Agent node on the server.
   ///
-  /// [body] has the same shape as the Caller graph node fields.
-  /// Returns the created caller data on success, or null on error.
-  Future<Map<String, dynamic>?> createCaller(Map<String, dynamic> body) async {
-    final uri = Uri.parse('$baseUrl/api/daily/callers');
+  /// [body] has the same shape as the Agent graph node fields.
+  /// Returns the created agent data on success, or null on error.
+  Future<Map<String, dynamic>?> createAgent(Map<String, dynamic> body) async {
+    final uri = Uri.parse('$baseUrl/api/daily/agents');
     debugPrint('[DailyApiService] POST $uri');
     try {
       final response = await _client
@@ -574,17 +575,17 @@ class DailyApiService {
           (response.statusCode >= 200 && response.statusCode < 300)) {
         return jsonDecode(response.body) as Map<String, dynamic>;
       }
-      debugPrint('[DailyApiService] createCaller ${response.statusCode}');
+      debugPrint('[DailyApiService] createAgent ${response.statusCode}');
       return null;
     } catch (e) {
-      debugPrint('[DailyApiService] createCaller error: $e');
+      debugPrint('[DailyApiService] createAgent error: $e');
       return null;
     }
   }
 
-  /// Delete a Caller node. Returns true on success.
-  Future<bool> deleteCaller(String name) async {
-    final uri = Uri.parse('$baseUrl/api/daily/callers/$name');
+  /// Delete an Agent node. Returns true on success.
+  Future<bool> deleteAgent(String name) async {
+    final uri = Uri.parse('$baseUrl/api/daily/agents/$name');
     debugPrint('[DailyApiService] DELETE $uri');
     try {
       final response = await _client
@@ -593,7 +594,7 @@ class DailyApiService {
       return response.statusCode == 204 ||
           (response.statusCode >= 200 && response.statusCode < 300);
     } catch (e) {
-      debugPrint('[DailyApiService] deleteCaller error: $e');
+      debugPrint('[DailyApiService] deleteAgent error: $e');
       return false;
     }
   }
@@ -633,13 +634,13 @@ class DailyApiService {
     }
   }
 
-  /// Update fields on an existing Caller node.
+  /// Update fields on an existing Agent node.
   ///
   /// [fields] is a map of field names to new values, e.g.
   /// `{'schedule_enabled': true, 'schedule_time': '08:00'}`.
   /// Returns true on success.
-  Future<bool> updateCaller(String name, Map<String, dynamic> fields) async {
-    final uri = Uri.parse('$baseUrl/api/daily/callers/$name');
+  Future<bool> updateAgent(String name, Map<String, dynamic> fields) async {
+    final uri = Uri.parse('$baseUrl/api/daily/agents/$name');
     debugPrint('[DailyApiService] PUT $uri $fields');
     try {
       final response = await _client
@@ -648,19 +649,19 @@ class DailyApiService {
       if (response.statusCode >= 200 && response.statusCode < 300) {
         return true;
       }
-      debugPrint('[DailyApiService] updateCaller ${response.statusCode}');
+      debugPrint('[DailyApiService] updateAgent ${response.statusCode}');
       return false;
     } catch (e) {
-      debugPrint('[DailyApiService] updateCaller error: $e');
+      debugPrint('[DailyApiService] updateAgent error: $e');
       return false;
     }
   }
 
-  /// Reset a Caller's session so the next run starts fresh.
+  /// Reset an Agent's session so the next run starts fresh.
   ///
   /// Returns true on success.
-  Future<bool> resetCaller(String name) async {
-    final uri = Uri.parse('$baseUrl/api/daily/callers/$name/reset');
+  Future<bool> resetAgent(String name) async {
+    final uri = Uri.parse('$baseUrl/api/daily/agents/$name/reset');
     debugPrint('[DailyApiService] POST $uri');
     try {
       final response = await _client
@@ -668,7 +669,7 @@ class DailyApiService {
           .timeout(_timeout);
       return response.statusCode >= 200 && response.statusCode < 300;
     } catch (e) {
-      debugPrint('[DailyApiService] resetCaller error: $e');
+      debugPrint('[DailyApiService] resetAgent error: $e');
       return false;
     }
   }
@@ -690,14 +691,14 @@ class DailyApiService {
     }
   }
 
-  /// Trigger a Caller on a specific entry (for event-driven Callers).
+  /// Trigger an Agent on a specific entry (for event-driven Agents).
   ///
   /// Returns the result from the server, or null on error.
-  Future<Map<String, dynamic>?> triggerCallerOnEntry(
-    String callerName,
+  Future<Map<String, dynamic>?> triggerAgentOnEntry(
+    String agentName,
     String entryId,
   ) async {
-    final uri = Uri.parse('$baseUrl/api/daily/callers/$callerName/trigger');
+    final uri = Uri.parse('$baseUrl/api/daily/agents/$agentName/trigger');
     debugPrint('[DailyApiService] POST $uri (entry_id=$entryId)');
     try {
       final response = await _client
@@ -707,23 +708,23 @@ class DailyApiService {
         return jsonDecode(response.body) as Map<String, dynamic>;
       }
       debugPrint(
-        '[DailyApiService] triggerCallerOnEntry ${response.statusCode}',
+        '[DailyApiService] triggerAgentOnEntry ${response.statusCode}',
       );
       return null;
     } catch (e) {
-      debugPrint('[DailyApiService] triggerCallerOnEntry error: $e');
+      debugPrint('[DailyApiService] triggerAgentOnEntry error: $e');
       return null;
     }
   }
 
-  /// Fetch Caller activity (CallerRun nodes) for a specific entry.
+  /// Fetch Agent activity (AgentRun nodes) for a specific entry.
   ///
-  /// Returns a list of [CallerActivity] records, or empty list on error.
-  Future<List<CallerActivity>> fetchCallerActivity(
+  /// Returns a list of [AgentActivity] records, or empty list on error.
+  Future<List<AgentActivity>> fetchAgentActivity(
     String entryId,
   ) async {
     final uri = Uri.parse(
-      '$baseUrl/api/daily/entries/$entryId/caller-activity',
+      '$baseUrl/api/daily/entries/$entryId/agent-activity',
     );
     debugPrint('[DailyApiService] GET $uri');
     try {
@@ -732,17 +733,17 @@ class DailyApiService {
           .timeout(_timeout);
       if (response.statusCode < 200 || response.statusCode >= 300) {
         debugPrint(
-          '[DailyApiService] fetchCallerActivity ${response.statusCode}',
+          '[DailyApiService] fetchAgentActivity ${response.statusCode}',
         );
         return [];
       }
       final decoded = jsonDecode(response.body) as Map<String, dynamic>;
       final List<dynamic> data = decoded['activity'] as List<dynamic>? ?? [];
       return data
-          .map((j) => CallerActivity.fromJson(j as Map<String, dynamic>))
+          .map((j) => AgentActivity.fromJson(j as Map<String, dynamic>))
           .toList();
     } catch (e) {
-      debugPrint('[DailyApiService] fetchCallerActivity error: $e');
+      debugPrint('[DailyApiService] fetchAgentActivity error: $e');
       return [];
     }
   }

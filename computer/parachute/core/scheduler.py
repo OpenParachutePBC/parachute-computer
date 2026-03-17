@@ -2,11 +2,11 @@
 Scheduler for automated tasks.
 
 Uses APScheduler to run background jobs like:
-- Daily agents (Callers) at configured times from the graph database
+- Daily agents at configured times from the graph database
 - Future: Weekly summaries, cleanup tasks, etc.
 
-Each Caller node has schedule_enabled and schedule_time fields. The scheduler
-discovers enabled Callers and schedules them accordingly.
+Each Agent node has schedule_enabled and schedule_time fields. The scheduler
+discovers enabled agents and schedules them accordingly.
 """
 
 import logging

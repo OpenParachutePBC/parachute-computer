@@ -1,8 +1,8 @@
 """
 Generic Daily Agent Runner.
 
-Runs scheduled daily agents (Callers). Each Caller is a node in the graph
-database with configuration (system_prompt, tools, schedule) and runtime state
+Runs scheduled daily agents. Each Agent is a node in the graph database with
+configuration (system_prompt, tools, schedule) and runtime state
 (sdk_session_id, last_run_at, run_count). Output is written as Card nodes.
 """
 
@@ -18,42 +18,62 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Caller state helpers — read/write runtime state on the Caller graph node
+# Agent state helpers — read/write runtime state on the Agent graph node
 # ---------------------------------------------------------------------------
 
-async def _load_caller_state(graph, agent_name: str) -> dict[str, Any]:
-    """Load runtime state fields from the Caller graph node."""
+async def _load_agent_state(graph, agent_name: str) -> dict[str, Any]:
+    """Load runtime state fields from the Agent graph node.
+
+    When memory_mode is "fresh", sdk_session_id is cleared so the agent
+    always starts a new conversation instead of resuming a prior one.
+    """
     rows = await graph.execute_cypher(
-        "MATCH (c:Caller {name: $name}) "
-        "RETURN c.sdk_session_id AS sdk_session_id, "
-        "       c.last_run_at AS last_run_at, "
-        "       c.last_processed_date AS last_processed_date, "
-        "       c.run_count AS run_count",
+        "MATCH (a:Agent {name: $name}) "
+        "RETURN a.sdk_session_id AS sdk_session_id, "
+        "       a.last_run_at AS last_run_at, "
+        "       a.last_processed_date AS last_processed_date, "
+        "       a.run_count AS run_count, "
+        "       a.memory_mode AS memory_mode",
         {"name": agent_name},
     )
     if not rows:
-        return {"sdk_session_id": None, "last_run_at": None, "last_processed_date": None, "run_count": 0}
+        return {"sdk_session_id": None, "last_run_at": None, "last_processed_date": None, "run_count": 0, "memory_mode": "persistent"}
     row = rows[0]
+    memory_mode = row.get("memory_mode") or "persistent"
+    # Fresh mode — never resume a prior session
+    sdk_session_id = row.get("sdk_session_id") or None
+    if memory_mode == "fresh":
+        sdk_session_id = None
     return {
-        "sdk_session_id": row.get("sdk_session_id") or None,
+        "sdk_session_id": sdk_session_id,
         "last_run_at": row.get("last_run_at") or None,
         "last_processed_date": row.get("last_processed_date") or None,
         "run_count": row.get("run_count") or 0,
+        "memory_mode": memory_mode,
     }
 
 
-async def _record_caller_run(graph, agent_name: str, date: str,
-                              session_id: str | None, run_count: int) -> None:
-    """Record a completed run on the Caller graph node."""
+async def _record_agent_run(graph, agent_name: str, date: str,
+                             session_id: str | None, run_count: int,
+                             memory_mode: str = "persistent") -> None:
+    """Record a completed run on the Agent graph node.
+
+    When memory_mode is "fresh", sdk_session_id is NOT persisted — this
+    ensures the next run starts a new conversation rather than resuming.
+    """
     now = datetime.now(timezone.utc).isoformat()
+    # Fresh mode — don't persist session ID so next run starts clean
+    sid = session_id or ""
+    if memory_mode == "fresh":
+        sid = ""
     async with graph.write_lock:
         await graph.execute_cypher(
-            "MATCH (c:Caller {name: $name}) "
-            "SET c.sdk_session_id = $sid, c.last_run_at = $now, "
-            "    c.last_processed_date = $date, c.run_count = $rc",
+            "MATCH (a:Agent {name: $name}) "
+            "SET a.sdk_session_id = $sid, a.last_run_at = $now, "
+            "    a.last_processed_date = $date, a.run_count = $rc",
             {
                 "name": agent_name,
-                "sid": session_id or "",
+                "sid": sid,
                 "now": now,
                 "date": date,
                 "rc": run_count + 1,
@@ -61,11 +81,11 @@ async def _record_caller_run(graph, agent_name: str, date: str,
         )
 
 
-async def _clear_caller_session(graph, agent_name: str) -> None:
+async def _clear_agent_session(graph, agent_name: str) -> None:
     """Clear sdk_session_id on resume failure so next run starts fresh."""
     async with graph.write_lock:
         await graph.execute_cypher(
-            "MATCH (c:Caller {name: $name}) SET c.sdk_session_id = ''",
+            "MATCH (a:Agent {name: $name}) SET a.sdk_session_id = ''",
             {"name": agent_name},
         )
 
@@ -101,7 +121,7 @@ class DailyAgentConfig:
 
     @classmethod
     def from_row(cls, row: dict) -> "DailyAgentConfig":
-        """Build config from a Caller graph node row."""
+        """Build config from an Agent graph node row."""
         tools_raw = row.get("tools") or '["read_journal", "read_chat_log", "read_recent_journals"]'
         try:
             tools = json.loads(tools_raw)
@@ -153,7 +173,7 @@ def _get_graph() -> Any | None:
 
 
 async def discover_daily_agents(vault_path: Path, graph=None) -> list[DailyAgentConfig]:
-    """Discover all enabled Callers from the graph database.
+    """Discover all enabled Agents from the graph database.
 
     Returns a list of agent configurations sorted by name, or empty if graph
     is unavailable.
@@ -164,10 +184,10 @@ async def discover_daily_agents(vault_path: Path, graph=None) -> list[DailyAgent
         return []
     try:
         rows = await g.execute_cypher(
-            "MATCH (c:Caller) WHERE c.enabled = 'true' RETURN c ORDER BY c.name"
+            "MATCH (a:Agent) WHERE a.enabled = 'true' RETURN a ORDER BY a.name"
         )
         agents = [DailyAgentConfig.from_row(r) for r in rows]
-        logger.info(f"Discovered {len(agents)} callers from graph")
+        logger.info(f"Discovered {len(agents)} agents from graph")
         return agents
     except Exception as e:
         logger.warning(f"Graph discovery failed: {e}")
@@ -175,19 +195,19 @@ async def discover_daily_agents(vault_path: Path, graph=None) -> list[DailyAgent
 
 
 async def get_daily_agent_config(vault_path: Path, agent_name: str, graph=None) -> Optional[DailyAgentConfig]:
-    """Get configuration for a specific Caller from the graph database."""
+    """Get configuration for a specific Agent from the graph database."""
     g = graph or _get_graph()
     if g is None:
         return None
     try:
         rows = await g.execute_cypher(
-            "MATCH (c:Caller {name: $name}) RETURN c",
+            "MATCH (a:Agent {name: $name}) RETURN a",
             {"name": agent_name},
         )
         if rows:
             return DailyAgentConfig.from_row(rows[0])
     except Exception as e:
-        logger.warning(f"Graph lookup for caller '{agent_name}' failed: {e}")
+        logger.warning(f"Graph lookup for agent '{agent_name}' failed: {e}")
     return None
 
 
@@ -195,8 +215,8 @@ async def load_vault_mcps(vault_path: Path) -> dict[str, dict[str, Any]]:
     """
     Load stdio MCP servers from the vault's .mcp.json.
 
-    Used by direct-mode (non-sandboxed) callers. Filters to stdio-only since
-    direct callers run in-process and don't need the HTTP MCP bridge.
+    Used by direct-mode (non-sandboxed) agents. Filters to stdio-only since
+    direct agents run in-process and don't need the HTTP MCP bridge.
     """
     from parachute.lib.mcp_loader import load_mcp_servers, filter_stdio_servers
 
@@ -297,7 +317,7 @@ async def _run_sandboxed(
     config: DailyAgentConfig,
     system_prompt: str,
     prompt_text: str,
-    caller_state: dict[str, Any],
+    agent_state: dict[str, Any],
     card_id: str,
     date: str,
     output_date: str,
@@ -309,19 +329,19 @@ async def _run_sandboxed(
 
     agent_name = config.name
 
-    # Create a sandbox token for this caller session
+    # Create a sandbox token for this agent session
     from parachute.core.interfaces import get_registry
     from parachute.lib.sandbox_tokens import SandboxTokenContext
 
     token_store = get_registry().get("SandboxTokenStore")
     if token_store is None:
         raise RuntimeError(
-            f"SandboxTokenStore not available — cannot run caller '{agent_name}' "
+            f"SandboxTokenStore not available — cannot run agent '{agent_name}' "
             f"in sandbox without MCP tools"
         )
 
     token_ctx = SandboxTokenContext(
-        session_id=f"caller-{agent_name}",
+        session_id=f"agent-{agent_name}",
         trust_level="sandboxed",
         agent_name=agent_name,
         allowed_writes=["write_output"],
@@ -333,7 +353,7 @@ async def _run_sandboxed(
     all_mcp_servers = {"parachute": mcp_config}
 
     # Slug used as both session ID (for resume) and project slug (for container)
-    slug = f"caller-{agent_name}"
+    slug = f"agent-{agent_name}"
 
     # Ensure container record exists in session store
     try:
@@ -345,27 +365,27 @@ async def _run_sandboxed(
             if not existing:
                 await session_store.create_container(
                     slug=slug,
-                    display_name=f"Caller: {config.display_name}",
+                    display_name=f"Agent: {config.display_name}",
                 )
-                logger.info(f"Created container record for caller '{agent_name}'")
+                logger.info(f"Created container record for agent '{agent_name}'")
     except Exception as e:
-        logger.warning(f"Could not ensure container record for caller '{agent_name}': {e}")
+        logger.warning(f"Could not ensure container record for agent '{agent_name}': {e}")
 
     # Build sandbox config
     sandbox_config = AgentSandboxConfig(
         session_id=slug,
-        agent_type="caller",
-        allowed_paths=[],  # Callers get read-only vault access (default)
+        agent_type="agent",
+        allowed_paths=[],  # Agents get read-only vault access (default)
         network_enabled=True,  # Needs to reach host API for daily tools
         mcp_servers=all_mcp_servers,
         system_prompt=system_prompt,
-        use_preset=False,  # Callers don't need Claude Code preset
+        use_preset=False,  # Agents don't need Claude Code preset
         model=config.raw_metadata.get("model") or None,
-        session_source=None,  # No credential injection for Callers
+        session_source=None,  # No credential injection for agents
     )
 
     logger.info(
-        f"Running caller '{agent_name}' in sandbox (container=parachute-env-{slug}, "
+        f"Running agent '{agent_name}' in sandbox (container=parachute-env-{slug}, "
         f"mcps={list(all_mcp_servers.keys())})"
     )
 
@@ -387,7 +407,7 @@ async def _run_sandboxed(
             session_id=slug,
             config=sandbox_config,
             message=prompt_text,
-            resume_session_id=caller_state["sdk_session_id"] if caller_state["sdk_session_id"] else None,
+            resume_session_id=agent_state["sdk_session_id"] if agent_state["sdk_session_id"] else None,
             container_slug=slug,
         ):
             event_type = event.get("type", "")
@@ -404,7 +424,7 @@ async def _run_sandboxed(
                     output_written = True
             elif event_type == "error":
                 error_msg = event.get("error", "Unknown sandbox error")
-                logger.error(f"Caller '{agent_name}' sandbox error: {error_msg}")
+                logger.error(f"Agent '{agent_name}' sandbox error: {error_msg}")
                 result["status"] = "error"
                 result["error"] = error_msg
                 await _mark_card_failed(graph, card_id)
@@ -412,15 +432,15 @@ async def _run_sandboxed(
             elif event_type == "resume_failed":
                 # Clear stale session and retry will happen via container's entrypoint
                 logger.warning(
-                    f"Caller '{agent_name}' resume failed, container will retry fresh"
+                    f"Agent '{agent_name}' resume failed, container will retry fresh"
                 )
                 if graph is not None:
-                    await _clear_caller_session(graph, agent_name)
-                    caller_state["sdk_session_id"] = None
+                    await _clear_agent_session(graph, agent_name)
+                    agent_state["sdk_session_id"] = None
 
-        # Update state on Caller graph node
+        # Update state on Agent graph node
         if graph is not None:
-            await _record_caller_run(graph, agent_name, date, captured_session_id, caller_state["run_count"])
+            await _record_agent_run(graph, agent_name, date, captured_session_id, agent_state["run_count"], agent_state.get("memory_mode", "persistent"))
 
         result["status"] = "completed" if output_written else "completed_no_output"
         result["sdk_session_id"] = captured_session_id
@@ -430,12 +450,12 @@ async def _run_sandboxed(
         result["journal_date"] = date
 
         logger.info(
-            f"Caller '{agent_name}' completed (sandboxed) for {date}: "
+            f"Agent '{agent_name}' completed (sandboxed) for {date}: "
             f"output_written={output_written}"
         )
 
     except Exception as e:
-        logger.error(f"Caller '{agent_name}' sandbox error: {e}", exc_info=True)
+        logger.error(f"Agent '{agent_name}' sandbox error: {e}", exc_info=True)
         result["status"] = "error"
         result["error"] = str(e)
         await _mark_card_failed(graph, card_id)
@@ -451,7 +471,7 @@ async def _run_direct(
     config: DailyAgentConfig,
     system_prompt: str,
     prompt_text: str,
-    caller_state: dict[str, Any],
+    agent_state: dict[str, Any],
     card_id: str,
     date: str,
     output_date: str,
@@ -497,8 +517,8 @@ async def _run_direct(
         "debug_stderr": sys.stderr,
     }
 
-    if caller_state["sdk_session_id"]:
-        options_kwargs["resume"] = caller_state["sdk_session_id"]
+    if agent_state["sdk_session_id"]:
+        options_kwargs["resume"] = agent_state["sdk_session_id"]
 
     options = ClaudeAgentOptions(**options_kwargs)
 
@@ -508,7 +528,7 @@ async def _run_direct(
         "date": date,
         "output_date": output_date,
         "execution_mode": "direct",
-        "sdk_session_id": caller_state["sdk_session_id"],
+        "sdk_session_id": agent_state["sdk_session_id"],
         "mcp_servers": list(all_mcp_servers.keys()),
     }
 
@@ -547,8 +567,8 @@ async def _run_direct(
                     "clearing and retrying with fresh session"
                 )
                 if graph is not None:
-                    await _clear_caller_session(graph, agent_name)
-                    caller_state["sdk_session_id"] = None
+                    await _clear_agent_session(graph, agent_name)
+                    agent_state["sdk_session_id"] = None
                 fresh_opts_kwargs = {
                     "system_prompt": opts.system_prompt,
                     "max_turns": opts.max_turns,
@@ -567,7 +587,7 @@ async def _run_direct(
         output_written = query_result["output_written"]
 
         if graph is not None:
-            await _record_caller_run(graph, agent_name, date, new_session_id, caller_state["run_count"])
+            await _record_agent_run(graph, agent_name, date, new_session_id, agent_state["run_count"], agent_state.get("memory_mode", "persistent"))
 
         result["status"] = "completed" if output_written else "completed_no_output"
         result["sdk_session_id"] = new_session_id
@@ -599,7 +619,7 @@ async def run_daily_agent(
     """
     Run a daily agent for a specific date.
 
-    Routes through Docker sandbox when the Caller's trust_level is "sandboxed"
+    Routes through Docker sandbox when the Agent's trust_level is "sandboxed"
     and Docker is available. Falls back to direct (in-process) execution otherwise.
 
     Args:
@@ -634,18 +654,18 @@ async def run_daily_agent(
 
     graph = _get_graph()
 
-    # Load runtime state from the Caller graph node
+    # Load runtime state from the Agent graph node
     if graph is not None:
-        caller_state = await _load_caller_state(graph, agent_name)
+        agent_state = await _load_agent_state(graph, agent_name)
     else:
-        caller_state = {"sdk_session_id": None, "last_run_at": None, "last_processed_date": None, "run_count": 0}
+        agent_state = {"sdk_session_id": None, "last_run_at": None, "last_processed_date": None, "run_count": 0}
 
     # Check if already processed (unless forced)
-    if not force and caller_state["last_processed_date"] == date:
+    if not force and agent_state["last_processed_date"] == date:
         return {
             "status": "skipped",
             "reason": f"Already processed {date}",
-            "last_run_at": caller_state["last_run_at"],
+            "last_run_at": agent_state["last_run_at"],
         }
 
     # Check if journal entries exist for this date in the graph
@@ -688,13 +708,13 @@ async def run_daily_agent(
     if use_sandbox and sandbox is not None:
         # Check Docker availability
         if await sandbox.is_available() and await sandbox.image_exists():
-            logger.info(f"Caller '{agent_name}' routing to sandbox (trust_level=sandboxed)")
+            logger.info(f"Agent '{agent_name}' routing to sandbox (trust_level=sandboxed)")
             return await _run_sandboxed(
                 sandbox=sandbox,
                 config=config,
                 system_prompt=system_prompt,
                 prompt_text=prompt_text,
-                caller_state=caller_state,
+                agent_state=agent_state,
                 card_id=card_id,
                 date=date,
                 output_date=output_date,
@@ -703,17 +723,17 @@ async def run_daily_agent(
             )
         else:
             logger.warning(
-                f"Caller '{agent_name}' trust_level=sandboxed but Docker unavailable, "
+                f"Agent '{agent_name}' trust_level=sandboxed but Docker unavailable, "
                 f"falling back to direct execution"
             )
 
     # Direct execution (trust_level=direct, Docker unavailable, or no sandbox instance)
-    logger.info(f"Caller '{agent_name}' running directly (trust_level={config.trust_level})")
+    logger.info(f"Agent '{agent_name}' running directly (trust_level={config.trust_level})")
     return await _run_direct(
         config=config,
         system_prompt=system_prompt,
         prompt_text=prompt_text,
-        caller_state=caller_state,
+        agent_state=agent_state,
         card_id=card_id,
         date=date,
         output_date=output_date,
@@ -737,24 +757,24 @@ When you're ready, use `write_output` with date "{output_date}" to save your out
 
 
 # ---------------------------------------------------------------------------
-# Triggered Caller execution — runs a Caller on a specific Note
+# Triggered Agent execution — runs an Agent on a specific Note
 # ---------------------------------------------------------------------------
 
-async def run_triggered_caller(
+async def run_triggered_agent(
     vault_path: Path,
     agent_name: str,
     entry_id: str,
     event: str,
 ) -> dict[str, Any]:
     """
-    Run a triggered Caller on a specific Note.
+    Run a triggered Agent on a specific Note.
 
     Unlike run_daily_agent() which is day-scoped and produces Cards, this
     function is note-scoped and transforms the triggering Note in place.
 
     Args:
         vault_path: Path to the vault
-        agent_name: Name of the Caller (e.g., "transcription-cleanup")
+        agent_name: Name of the Agent (e.g., "transcription-cleanup")
         entry_id: The Note entry_id to process
         event: The event that triggered this (e.g., "note.transcription_complete")
 
@@ -767,7 +787,7 @@ async def run_triggered_caller(
             "status": "error",
             "agent": agent_name,
             "entry_id": entry_id,
-            "error": f"Caller '{agent_name}' not found",
+            "error": f"Agent '{agent_name}' not found",
         }
 
     graph = _get_graph()
@@ -795,8 +815,8 @@ async def run_triggered_caller(
     entry_type = entry_data.get("entry_type") or "text"
     entry_date = entry_data.get("date") or ""
 
-    # Load runtime state from the Caller graph node
-    caller_state = await _load_caller_state(graph, agent_name)
+    # Load runtime state from the Agent graph node
+    agent_state = await _load_agent_state(graph, agent_name)
 
     # Build system prompt with user context
     user_name, user_context = load_user_context(vault_path)
@@ -821,28 +841,28 @@ async def run_triggered_caller(
     )
 
     # Create note-scoped tools
-    from parachute.core.triggered_caller_tools import create_triggered_caller_tools
+    from parachute.core.triggered_agent_tools import create_triggered_agent_tools
 
     async def _create_tools(vp, cfg):
-        return create_triggered_caller_tools(
+        return create_triggered_agent_tools(
             graph=graph,
             entry_id=entry_id,
             allowed_tools=cfg.tools,
-            caller_name=cfg.name,
+            agent_name=cfg.name,
         )
 
     logger.info(
-        f"Running triggered caller '{agent_name}' on entry {entry_id} "
+        f"Running triggered agent '{agent_name}' on entry {entry_id} "
         f"(event={event}, tools={config.tools})"
     )
 
-    # Triggered callers run direct (no sandbox, no Card)
+    # Triggered agents run direct (no sandbox, no Card)
     result = await _run_direct(
         config=config,
         system_prompt=system_prompt,
         prompt_text=prompt_text,
-        caller_state=caller_state,
-        card_id="",  # No Card for triggered callers
+        agent_state=agent_state,
+        card_id="",  # No Card for triggered agents
         date=entry_date,
         output_date=entry_date,
         vault_path=vault_path,

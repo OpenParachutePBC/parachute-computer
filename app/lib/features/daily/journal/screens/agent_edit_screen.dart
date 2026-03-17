@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/core/services/computer_service.dart'
-    show CallerTemplate, DailyAgentInfo;
+    show AgentTemplate, DailyAgentInfo;
 import '../providers/journal_providers.dart';
 import '../utils/time_helpers.dart';
 
@@ -16,7 +16,7 @@ class _ToolDef {
   const _ToolDef(this.key, this.label, this.description, this.icon);
 }
 
-/// Tools for scheduled (day-scoped) Callers — operate across a day's entries.
+/// Tools for scheduled (day-scoped) Agents — operate across a day's entries.
 const _scheduledTools = [
   _ToolDef(
     'read_journal',
@@ -44,12 +44,12 @@ const _scheduledTools = [
   ),
 ];
 
-/// Tools for triggered (note-scoped) Callers — operate on a single note.
+/// Tools for triggered (note-scoped) Agents — operate on a single note.
 const _triggeredTools = [
   _ToolDef(
     'read_entry',
     'Read note',
-    'Read the note that triggered this caller',
+    'Read the note that triggered this agent',
     Icons.article_outlined,
   ),
   _ToolDef(
@@ -72,26 +72,26 @@ const _triggeredTools = [
   ),
 ];
 
-/// Full-screen form for creating or editing a Caller.
+/// Full-screen form for creating or editing an Agent.
 ///
-/// Pass [caller] for edit mode, or [template] for creating from a template.
+/// Pass [agent] for edit mode, or [template] for creating from a template.
 /// Both null = blank creation.
-class CallerEditScreen extends ConsumerStatefulWidget {
-  /// Non-null when editing an existing caller.
-  final DailyAgentInfo? caller;
+class AgentEditScreen extends ConsumerStatefulWidget {
+  /// Non-null when editing an existing agent.
+  final DailyAgentInfo? agent;
 
   /// Non-null when creating from a template.
-  final CallerTemplate? template;
+  final AgentTemplate? template;
 
-  const CallerEditScreen({super.key, this.caller, this.template});
+  const AgentEditScreen({super.key, this.agent, this.template});
 
-  bool get isEditing => caller != null;
+  bool get isEditing => agent != null;
 
   @override
-  ConsumerState<CallerEditScreen> createState() => _CallerEditScreenState();
+  ConsumerState<AgentEditScreen> createState() => _AgentEditScreenState();
 }
 
-class _CallerEditScreenState extends ConsumerState<CallerEditScreen> {
+class _AgentEditScreenState extends ConsumerState<AgentEditScreen> {
   final _formKey = GlobalKey<FormState>();
 
   late TextEditingController _nameController;
@@ -100,16 +100,17 @@ class _CallerEditScreenState extends ConsumerState<CallerEditScreen> {
   late Set<String> _enabledTools;
   late bool _scheduleEnabled;
   late String _scheduleTime;
+  late String _memoryMode; // "persistent" or "fresh"
   bool _isSaving = false;
 
-  /// Whether this Caller is event-driven (triggered) rather than scheduled.
+  /// Whether this Agent is event-driven (triggered) rather than scheduled.
   bool get _isTriggered {
-    if (widget.isEditing) return widget.caller!.isTriggered;
+    if (widget.isEditing) return widget.agent!.isTriggered;
     if (widget.template != null) return widget.template!.isTriggered;
     return false;
   }
 
-  /// Available tools based on the Caller type.
+  /// Available tools based on the Agent type.
   List<_ToolDef> get _availableTools =>
       _isTriggered ? _triggeredTools : _scheduledTools;
 
@@ -118,14 +119,15 @@ class _CallerEditScreenState extends ConsumerState<CallerEditScreen> {
     super.initState();
 
     if (widget.isEditing) {
-      // Edit mode — populate from existing caller
-      final c = widget.caller!;
+      // Edit mode — populate from existing agent
+      final c = widget.agent!;
       _nameController = TextEditingController(text: c.displayName);
       _descriptionController = TextEditingController(text: c.description);
       _promptController = TextEditingController(text: c.systemPrompt);
       _enabledTools = Set.from(c.tools);
       _scheduleEnabled = c.scheduleEnabled;
       _scheduleTime = c.scheduleTime;
+      _memoryMode = c.memoryMode;
     } else if (widget.template != null) {
       // Template mode — populate from template
       final t = widget.template!;
@@ -135,6 +137,7 @@ class _CallerEditScreenState extends ConsumerState<CallerEditScreen> {
       _enabledTools = Set.from(t.tools);
       _scheduleEnabled = false; // Templates start unscheduled
       _scheduleTime = t.scheduleTime;
+      _memoryMode = t.memoryMode;
     } else {
       // Blank creation
       _nameController = TextEditingController();
@@ -143,6 +146,7 @@ class _CallerEditScreenState extends ConsumerState<CallerEditScreen> {
       _enabledTools = {'read_journal', 'read_recent_journals'};
       _scheduleEnabled = false;
       _scheduleTime = '21:00';
+      _memoryMode = 'persistent';
     }
   }
 
@@ -154,7 +158,7 @@ class _CallerEditScreenState extends ConsumerState<CallerEditScreen> {
     super.dispose();
   }
 
-  /// Convert display name to a slug for the caller name field.
+  /// Convert display name to a slug for the agent name field.
   String _toSlug(String displayName) {
     return displayName
         .toLowerCase()
@@ -167,7 +171,7 @@ class _CallerEditScreenState extends ConsumerState<CallerEditScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
-    final title = widget.isEditing ? 'Edit Caller' : 'New Caller';
+    final title = widget.isEditing ? 'Edit Agent' : 'New Agent';
 
     return Scaffold(
       backgroundColor: isDark ? BrandColors.nightSurface : BrandColors.cream,
@@ -234,7 +238,7 @@ class _CallerEditScreenState extends ConsumerState<CallerEditScreen> {
               controller: _descriptionController,
               decoration: InputDecoration(
                 labelText: 'Description',
-                hintText: 'What does this caller do?',
+                hintText: 'What does this agent do?',
                 filled: true,
                 fillColor: isDark
                     ? BrandColors.nightSurfaceElevated
@@ -264,7 +268,7 @@ class _CallerEditScreenState extends ConsumerState<CallerEditScreen> {
             TextFormField(
               controller: _promptController,
               decoration: InputDecoration(
-                hintText: 'Write the system prompt for this caller...',
+                hintText: 'Write the system prompt for this agent...',
                 filled: true,
                 fillColor: isDark
                     ? BrandColors.nightSurfaceElevated
@@ -293,8 +297,8 @@ class _CallerEditScreenState extends ConsumerState<CallerEditScreen> {
             SizedBox(height: Spacing.xs),
             Text(
               _isTriggered
-                  ? 'Choose what this caller can do with the note.'
-                  : 'Choose what information this caller can access.',
+                  ? 'Choose what this agent can do with the note.'
+                  : 'Choose what information this agent can access.',
               style: theme.textTheme.bodySmall?.copyWith(
                 color: BrandColors.driftwood,
               ),
@@ -317,7 +321,72 @@ class _CallerEditScreenState extends ConsumerState<CallerEditScreen> {
               ),
             ),
 
-            // ── Schedule (only for scheduled Callers) ──────────────────
+            // ── Memory Mode ───────────────────────────────────────────
+            SizedBox(height: Spacing.xl),
+            Text(
+              'Memory',
+              style: theme.textTheme.titleSmall?.copyWith(
+                fontWeight: FontWeight.w600,
+                color: isDark ? BrandColors.softWhite : BrandColors.ink,
+              ),
+            ),
+            SizedBox(height: Spacing.xs),
+            Text(
+              _memoryMode == 'persistent'
+                  ? 'Agent remembers previous runs and builds on them.'
+                  : 'Agent starts fresh each run with no memory of prior runs.',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: BrandColors.driftwood,
+              ),
+            ),
+            SizedBox(height: Spacing.sm),
+            Container(
+              padding: EdgeInsets.symmetric(
+                horizontal: Spacing.lg,
+                vertical: Spacing.sm,
+              ),
+              decoration: BoxDecoration(
+                color: isDark
+                    ? BrandColors.nightSurfaceElevated
+                    : BrandColors.softWhite,
+                borderRadius: Radii.button,
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    _memoryMode == 'persistent'
+                        ? Icons.psychology
+                        : Icons.restart_alt,
+                    size: 20,
+                    color: isDark ? BrandColors.nightForest : BrandColors.forest,
+                  ),
+                  SizedBox(width: Spacing.md),
+                  Expanded(
+                    child: Text(
+                      _memoryMode == 'persistent'
+                          ? 'Persistent memory'
+                          : 'Fresh each run',
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: isDark ? BrandColors.softWhite : BrandColors.ink,
+                      ),
+                    ),
+                  ),
+                  Switch.adaptive(
+                    value: _memoryMode == 'persistent',
+                    onChanged: (persistent) {
+                      setState(() {
+                        _memoryMode = persistent ? 'persistent' : 'fresh';
+                      });
+                    },
+                    activeColor: isDark
+                        ? BrandColors.nightForest
+                        : BrandColors.forest,
+                  ),
+                ],
+              ),
+            ),
+
+            // ── Schedule (only for scheduled Agents) ──────────────────
             if (!_isTriggered) ...[
               SizedBox(height: Spacing.xl),
               Text(
@@ -370,27 +439,28 @@ class _CallerEditScreenState extends ConsumerState<CallerEditScreen> {
     bool success;
 
     if (widget.isEditing) {
-      // Update existing caller — preserve trigger fields
+      // Update existing agent — preserve trigger fields
       final fields = <String, dynamic>{
         'display_name': displayName,
         'description': description,
         'system_prompt': prompt,
         'tools': tools,
+        'memory_mode': _memoryMode,
       };
       if (_isTriggered) {
         // Preserve trigger fields; schedule is irrelevant
-        fields['trigger_event'] = widget.caller!.triggerEvent;
-        if (widget.caller!.triggerFilter != null) {
-          fields['trigger_filter'] = widget.caller!.triggerFilter;
+        fields['trigger_event'] = widget.agent!.triggerEvent;
+        if (widget.agent!.triggerFilter != null) {
+          fields['trigger_filter'] = widget.agent!.triggerFilter;
         }
       } else {
-        // Only include schedule fields for scheduled Callers
+        // Only include schedule fields for scheduled Agents
         fields['schedule_enabled'] = _scheduleEnabled;
         fields['schedule_time'] = _scheduleTime;
       }
-      success = await api.updateCaller(widget.caller!.name, fields);
+      success = await api.updateAgent(widget.agent!.name, fields);
     } else {
-      // Create new caller
+      // Create new agent
       final name = widget.template?.name ?? _toSlug(displayName);
       if (name.isEmpty) {
         if (mounted) {
@@ -410,6 +480,7 @@ class _CallerEditScreenState extends ConsumerState<CallerEditScreen> {
         'description': description,
         'system_prompt': prompt,
         'tools': tools,
+        'memory_mode': _memoryMode,
       };
       if (_isTriggered) {
         // Copy trigger fields from template
@@ -420,11 +491,11 @@ class _CallerEditScreenState extends ConsumerState<CallerEditScreen> {
           }
         }
       } else {
-        // Only include schedule fields for scheduled Callers
+        // Only include schedule fields for scheduled Agents
         body['schedule_enabled'] = _scheduleEnabled;
         body['schedule_time'] = _scheduleTime;
       }
-      final result = await api.createCaller(body);
+      final result = await api.createAgent(body);
       success = result != null;
     }
 
@@ -433,9 +504,9 @@ class _CallerEditScreenState extends ConsumerState<CallerEditScreen> {
     if (success) {
       final reloaded = await api.reloadScheduler();
       if (!reloaded) {
-        debugPrint('[CallerEditScreen] reloadScheduler failed');
+        debugPrint('[AgentEditScreen] reloadScheduler failed');
       }
-      ref.invalidate(callersProvider);
+      ref.invalidate(agentsProvider);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
