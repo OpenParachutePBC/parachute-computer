@@ -771,6 +771,7 @@ class DailyModule:
 
     async def _seed_builtin_agents(self, graph) -> None:
         """Seed built-in Agents that ship with Parachute. Idempotent — skips existing."""
+        now = datetime.now(timezone.utc).isoformat()
         builtin_agents = [
             {
                 "name": "transcription-cleanup",
@@ -789,8 +790,40 @@ class DailyModule:
                 "trigger_event": "note.transcription_complete",
                 "trigger_filter": json.dumps({"entry_type": "voice"}),
                 "memory_mode": "fresh",
-                "created_at": datetime.now(timezone.utc).isoformat(),
-                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "created_at": now,
+                "updated_at": now,
+            },
+            {
+                "name": "daily-reflection",
+                "display_name": "Daily Reflection",
+                "description": AGENT_TEMPLATES[0]["description"],
+                "system_prompt": AGENT_TEMPLATES[0]["system_prompt"],
+                "tools": json.dumps(AGENT_TEMPLATES[0]["tools"]),
+                "schedule_enabled": "true",
+                "schedule_time": AGENT_TEMPLATES[0].get("schedule_time", "21:00"),
+                "enabled": "true",
+                "trust_level": AGENT_TEMPLATES[0].get("trust_level", "sandboxed"),
+                "trigger_event": "",
+                "trigger_filter": "{}",
+                "memory_mode": AGENT_TEMPLATES[0].get("memory_mode", "persistent"),
+                "created_at": now,
+                "updated_at": now,
+            },
+            {
+                "name": "auto-tagger",
+                "display_name": "Auto Tagger",
+                "description": AGENT_TEMPLATES[1]["description"],
+                "system_prompt": AGENT_TEMPLATES[1]["system_prompt"],
+                "tools": json.dumps(AGENT_TEMPLATES[1]["tools"]),
+                "schedule_enabled": "false",
+                "schedule_time": "",
+                "enabled": "true",
+                "trust_level": AGENT_TEMPLATES[1].get("trust_level", "direct"),
+                "trigger_event": AGENT_TEMPLATES[1].get("trigger_event", "note.created"),
+                "trigger_filter": AGENT_TEMPLATES[1].get("trigger_filter", "{}"),
+                "memory_mode": AGENT_TEMPLATES[1].get("memory_mode", "fresh"),
+                "created_at": now,
+                "updated_at": now,
             },
         ]
 
@@ -2361,6 +2394,132 @@ class DailyModule:
             if not rows:
                 return JSONResponse(status_code=404, content={"error": "not found"})
             return rows[0]
+
+        @router.get("/agents/{name}/transcript")
+        @router.get("/callers/{name}/transcript")  # backward-compat alias
+        async def get_agent_transcript(name: str, limit: int = Query(50)):
+            """Get the SDK conversation transcript for an Agent's latest session.
+
+            Returns parsed JSONL events in the shape the Flutter AgentLogScreen
+            expects: ``{ hasTranscript, sessionId, totalMessages, messages }``.
+            """
+            graph = self._get_graph()
+            if graph is None:
+                return {"hasTranscript": False, "message": "BrainDB not available"}
+
+            rows = await graph.execute_cypher(
+                "MATCH (a:Agent {name: $name}) RETURN a.sdk_session_id AS sid",
+                {"name": name},
+            )
+            if not rows:
+                return {"hasTranscript": False, "message": "Agent not found."}
+
+            sid = (rows[0].get("sid") or "").strip()
+            if not sid:
+                return {"hasTranscript": False, "message": "This agent hasn't run yet."}
+
+            # Search for the JSONL transcript file
+            session_file = None
+            for projects_dir in [
+                Path.home() / ".claude" / "projects",
+                Path.home() / "Parachute" / ".claude" / "projects",
+            ]:
+                if not projects_dir.exists():
+                    continue
+                for project_dir in projects_dir.iterdir():
+                    if project_dir.is_dir():
+                        candidate = project_dir / f"{sid}.jsonl"
+                        if candidate.exists():
+                            session_file = candidate
+                            break
+                if session_file:
+                    break
+
+            if not session_file:
+                return {"hasTranscript": False, "message": "Transcript file not found."}
+
+            messages: list[dict] = []
+            try:
+                with open(session_file, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            event = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        etype = event.get("type")
+                        if etype not in ("user", "assistant"):
+                            continue
+                        msg = event.get("message", {})
+                        content_raw = msg.get("content", "")
+
+                        if etype == "user":
+                            if isinstance(content_raw, list):
+                                content_raw = " ".join(
+                                    b.get("text", "") for b in content_raw if b.get("type") == "text"
+                                )
+                            messages.append({
+                                "type": "user",
+                                "timestamp": event.get("timestamp"),
+                                "content": content_raw,
+                            })
+                        elif etype == "assistant":
+                            if isinstance(content_raw, str):
+                                messages.append({
+                                    "type": "assistant",
+                                    "timestamp": event.get("timestamp"),
+                                    "content": content_raw,
+                                    "model": event.get("model"),
+                                })
+                            else:
+                                text_parts = []
+                                blocks = []
+                                for block in content_raw:
+                                    bt = block.get("type", "")
+                                    if bt == "text":
+                                        text_parts.append(block.get("text", ""))
+                                        blocks.append({"type": "text", "text": block.get("text", "")})
+                                    elif bt == "tool_use":
+                                        blocks.append({
+                                            "type": "tool_use",
+                                            "name": block.get("name", ""),
+                                            "input": json.dumps(block.get("input", {}), indent=2),
+                                            "tool_use_id": block.get("id"),
+                                        })
+                                    elif bt == "tool_result":
+                                        rc = block.get("content", "")
+                                        if isinstance(rc, list):
+                                            rc = " ".join(
+                                                r.get("text", "") for r in rc if r.get("type") == "text"
+                                            )
+                                        blocks.append({
+                                            "type": "tool_result",
+                                            "text": str(rc)[:500],
+                                            "tool_use_id": block.get("tool_use_id"),
+                                        })
+                                messages.append({
+                                    "type": "assistant",
+                                    "timestamp": event.get("timestamp"),
+                                    "content": "\n".join(text_parts),
+                                    "blocks": blocks or None,
+                                    "model": event.get("model"),
+                                })
+            except Exception as e:
+                logger.warning(f"Failed to read agent transcript: {e}")
+                return {"hasTranscript": False, "message": "Failed to read transcript."}
+
+            # Return most recent messages
+            if len(messages) > limit:
+                messages = messages[-limit:]
+
+            return {
+                "hasTranscript": True,
+                "sessionId": sid,
+                "totalMessages": len(messages),
+                "messages": messages,
+            }
 
         @router.post("/agents", status_code=201)
         @router.post("/callers", status_code=201)  # backward-compat alias

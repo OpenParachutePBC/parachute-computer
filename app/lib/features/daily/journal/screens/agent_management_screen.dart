@@ -156,46 +156,65 @@ class _AgentCard extends ConsumerWidget {
                         ),
                       ],
                       SizedBox(height: Spacing.xs),
-                      // Schedule badge
+                      // Status badge — trigger info or schedule
                       Row(
                         children: [
-                          Icon(
-                            agent.scheduleEnabled
-                                ? Icons.schedule
-                                : Icons.schedule_outlined,
-                            size: 12,
-                            color: agent.scheduleEnabled
-                                ? agentTheme.color
-                                : BrandColors.driftwood,
-                          ),
-                          SizedBox(width: Spacing.xs),
-                          Text(
-                            agent.scheduleEnabled
-                                ? 'Runs at ${agent.scheduleTime}'
-                                : 'Schedule off',
-                            style: theme.textTheme.labelSmall?.copyWith(
+                          if (agent.isTriggered) ...[
+                            Icon(
+                              Icons.bolt,
+                              size: 12,
+                              color: agentTheme.color,
+                            ),
+                            SizedBox(width: Spacing.xs),
+                            Text(
+                              'Triggers on ${agent.triggerEvent.replaceAll(".", " ")}',
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                color: agentTheme.color,
+                              ),
+                            ),
+                          ] else ...[
+                            Icon(
+                              agent.scheduleEnabled
+                                  ? Icons.schedule
+                                  : Icons.schedule_outlined,
+                              size: 12,
                               color: agent.scheduleEnabled
                                   ? agentTheme.color
                                   : BrandColors.driftwood,
                             ),
-                          ),
+                            SizedBox(width: Spacing.xs),
+                            Text(
+                              agent.scheduleEnabled
+                                  ? 'Runs at ${agent.scheduleTime}'
+                                  : 'Schedule off',
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                color: agent.scheduleEnabled
+                                    ? agentTheme.color
+                                    : BrandColors.driftwood,
+                              ),
+                            ),
+                          ],
                         ],
                       ),
                     ],
                   ),
                 ),
-                // Schedule toggle
-                Semantics(
-                  label: 'Schedule ${agent.displayName}',
-                  child: Switch.adaptive(
-                    value: agent.scheduleEnabled,
-                    onChanged: (enabled) =>
-                        _toggleSchedule(context, ref, enabled),
-                    activeColor: isDark
-                        ? BrandColors.nightForest
-                        : BrandColors.forest,
-                  ),
-                ),
+                // Schedule toggle (only for scheduled agents)
+                if (!agent.isTriggered)
+                  Semantics(
+                    label: 'Schedule ${agent.displayName}',
+                    child: Switch.adaptive(
+                      value: agent.scheduleEnabled,
+                      onChanged: (enabled) =>
+                          _toggleSchedule(context, ref, enabled),
+                      activeColor: isDark
+                          ? BrandColors.nightForest
+                          : BrandColors.forest,
+                    ),
+                  )
+                else
+                  // Chevron for triggered agents — tap to see detail
+                  Icon(Icons.chevron_right, color: BrandColors.driftwood),
               ],
             ),
           ),

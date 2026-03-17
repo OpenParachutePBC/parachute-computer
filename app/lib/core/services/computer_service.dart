@@ -157,7 +157,7 @@ class ComputerService {
   }) async {
     try {
       final url =
-          '${await getServerUrl()}/api/modules/daily/agents/$agentName/transcript?limit=$limit';
+          '${await getServerUrl()}/api/daily/agents/$agentName/transcript?limit=$limit';
       debugPrint('[ComputerService] Fetching agent transcript from: $url');
 
       final response = await http
@@ -204,7 +204,7 @@ class ComputerService {
       final response = await http
           .post(
             Uri.parse(
-              '${await getServerUrl()}/api/modules/daily/agents/$agentName/run',
+              '${await getServerUrl()}/api/daily/agents/$agentName/run',
             ),
             headers: await _getHeaders(json: true),
             body: json.encode(body),
@@ -250,7 +250,7 @@ class ComputerService {
       if (date != null) queryParams['date'] = date;
 
       final uri = Uri.parse(
-        '${await getServerUrl()}/api/modules/daily/agents/status',
+        '${await getServerUrl()}/api/daily/agents/status',
       ).replace(queryParameters: queryParams.isNotEmpty ? queryParams : null);
 
       final response = await http

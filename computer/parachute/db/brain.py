@@ -140,7 +140,15 @@ class BrainService:
         if self._conn is not None:
             await self.checkpoint()
             try:
-                self._conn.close()
+                # Workaround for real_ladybug bug: AsyncConnection.close()
+                # frees native connections BEFORE draining the thread pool,
+                # causing a segfault if a worker is mid-query. We reverse
+                # the order: drain first, then close.
+                self._conn.executor.shutdown(wait=True)
+                for conn in self._conn.connections:
+                    conn.close()
+                # Don't call self._conn.close() — we already did both steps.
+                # If __del__ fires later, both ops are idempotent.
             except Exception as e:
                 logger.warning(f"BrainService: error closing connection: {e}")
         self._connected = False
