@@ -2,14 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/core/services/computer_service.dart'
-    show DailyAgentInfo;
+    show DailyAgentInfo, MemoryMode;
 import '../providers/journal_providers.dart';
 import '../utils/agent_theme.dart';
 import '../utils/time_helpers.dart';
 
-/// Bottom sheet showing Caller details with schedule config and actions.
-class CallerDetailSheet extends ConsumerStatefulWidget {
-  final DailyAgentInfo caller;
+/// Bottom sheet showing Agent details with schedule config and actions.
+class AgentDetailSheet extends ConsumerStatefulWidget {
+  final DailyAgentInfo agent;
 
   /// Called when the user taps "View history". The sheet pops itself first,
   /// then invokes this callback so navigation uses the parent's context.
@@ -19,18 +19,18 @@ class CallerDetailSheet extends ConsumerStatefulWidget {
   /// then invokes this callback so navigation uses the parent's context.
   final VoidCallback? onEdit;
 
-  const CallerDetailSheet({
+  const AgentDetailSheet({
     super.key,
-    required this.caller,
+    required this.agent,
     this.onViewHistory,
     this.onEdit,
   });
 
   @override
-  ConsumerState<CallerDetailSheet> createState() => _CallerDetailSheetState();
+  ConsumerState<AgentDetailSheet> createState() => _AgentDetailSheetState();
 }
 
-class _CallerDetailSheetState extends ConsumerState<CallerDetailSheet> {
+class _AgentDetailSheetState extends ConsumerState<AgentDetailSheet> {
   late bool _scheduleEnabled;
   late String _scheduleTime;
   bool _isRunning = false;
@@ -38,15 +38,15 @@ class _CallerDetailSheetState extends ConsumerState<CallerDetailSheet> {
   @override
   void initState() {
     super.initState();
-    _scheduleEnabled = widget.caller.scheduleEnabled;
-    _scheduleTime = widget.caller.scheduleTime;
+    _scheduleEnabled = widget.agent.scheduleEnabled;
+    _scheduleTime = widget.agent.scheduleTime;
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
-    final agentTheme = AgentTheme.forAgent(widget.caller.name);
+    final agentTheme = AgentTheme.forAgent(widget.agent.name);
     final maxHeight = MediaQuery.sizeOf(context).height * 0.85;
 
     return ConstrainedBox(
@@ -103,7 +103,7 @@ class _CallerDetailSheetState extends ConsumerState<CallerDetailSheet> {
                         SizedBox(width: Spacing.lg),
                         Expanded(
                           child: Text(
-                            widget.caller.displayName,
+                            widget.agent.displayName,
                             style: theme.textTheme.titleLarge?.copyWith(
                               fontWeight: FontWeight.w600,
                               color: isDark
@@ -116,10 +116,10 @@ class _CallerDetailSheetState extends ConsumerState<CallerDetailSheet> {
                     ),
 
                     // Description
-                    if (widget.caller.description.isNotEmpty) ...[
+                    if (widget.agent.description.isNotEmpty) ...[
                       SizedBox(height: Spacing.lg),
                       Text(
-                        widget.caller.description,
+                        widget.agent.description,
                         style: theme.textTheme.bodyMedium?.copyWith(
                           color: isDark
                               ? BrandColors.stone
@@ -131,7 +131,7 @@ class _CallerDetailSheetState extends ConsumerState<CallerDetailSheet> {
 
                     // Trigger / Schedule section
                     SizedBox(height: Spacing.xl),
-                    if (widget.caller.isTriggered) ...[
+                    if (widget.agent.isTriggered) ...[
                       Text(
                         'Trigger',
                         style: theme.textTheme.titleSmall?.copyWith(
@@ -143,8 +143,8 @@ class _CallerDetailSheetState extends ConsumerState<CallerDetailSheet> {
                       ),
                       SizedBox(height: Spacing.sm),
                       _TriggerInfo(
-                        triggerEvent: widget.caller.triggerEvent,
-                        triggerFilter: widget.caller.triggerFilter,
+                        triggerEvent: widget.agent.triggerEvent,
+                        triggerFilter: widget.agent.triggerFilter,
                         isDark: isDark,
                         agentColor: agentTheme.color,
                       ),
@@ -164,11 +164,74 @@ class _CallerDetailSheetState extends ConsumerState<CallerDetailSheet> {
                         time: _scheduleTime,
                         isDark: isDark,
                         agentColor: agentTheme.color,
-                        callerName: widget.caller.displayName,
+                        agentName: widget.agent.displayName,
                         onToggle: _toggleSchedule,
                         onTimeTap: _pickTime,
                       ),
                     ],
+
+                    // Memory mode
+                    SizedBox(height: Spacing.xl),
+                    Text(
+                      'Memory',
+                      style: theme.textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: isDark
+                            ? BrandColors.softWhite
+                            : BrandColors.ink,
+                      ),
+                    ),
+                    SizedBox(height: Spacing.sm),
+                    Container(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: Spacing.lg,
+                        vertical: Spacing.md,
+                      ),
+                      decoration: BoxDecoration(
+                        color: isDark
+                            ? BrandColors.nightSurfaceElevated
+                            : BrandColors.cream,
+                        borderRadius: Radii.card,
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            widget.agent.memoryMode == MemoryMode.persistent
+                                ? Icons.psychology
+                                : Icons.restart_alt,
+                            size: 20,
+                            color: agentTheme.color,
+                          ),
+                          SizedBox(width: Spacing.md),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  widget.agent.memoryMode == MemoryMode.persistent
+                                      ? 'Persistent memory'
+                                      : 'Fresh each run',
+                                  style: theme.textTheme.bodyMedium?.copyWith(
+                                    color: isDark
+                                        ? BrandColors.softWhite
+                                        : BrandColors.ink,
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  widget.agent.memoryMode == MemoryMode.persistent
+                                      ? 'Remembers previous runs'
+                                      : 'Starts clean every time',
+                                  style: theme.textTheme.bodySmall?.copyWith(
+                                    color: BrandColors.driftwood,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
 
                     // Actions
                     SizedBox(height: Spacing.xl),
@@ -182,18 +245,18 @@ class _CallerDetailSheetState extends ConsumerState<CallerDetailSheet> {
                     SizedBox(height: Spacing.sm),
                     _ActionButton(
                       icon: Icons.edit_outlined,
-                      label: 'Edit caller',
+                      label: 'Edit agent',
                       color: isDark
                           ? BrandColors.nightTurquoise
                           : BrandColors.turquoise,
                       isDark: isDark,
                       showChevron: true,
-                      onTap: () => _editCaller(context),
+                      onTap: () => _editAgent(context),
                     ),
-                    // Only show "Run now" for scheduled (day-scoped) Callers.
-                    // Triggered Callers run automatically on events — they need
+                    // Only show "Run now" for scheduled (day-scoped) Agents.
+                    // Triggered Agents run automatically on events — they need
                     // a specific entry to operate on, so "Run now" doesn't apply.
-                    if (!widget.caller.isTriggered) ...[
+                    if (!widget.agent.isTriggered) ...[
                       SizedBox(height: Spacing.sm),
                       _ActionButton(
                         icon: Icons.play_arrow,
@@ -223,7 +286,7 @@ class _CallerDetailSheetState extends ConsumerState<CallerDetailSheet> {
                       label: 'Reset session',
                       color: BrandColors.warning,
                       isDark: isDark,
-                      onTap: () => _resetCaller(context),
+                      onTap: () => _resetAgent(context),
                     ),
                   ],
                 ),
@@ -238,13 +301,13 @@ class _CallerDetailSheetState extends ConsumerState<CallerDetailSheet> {
   Future<void> _toggleSchedule(bool enabled) async {
     setState(() => _scheduleEnabled = enabled);
     final api = ref.read(dailyApiServiceProvider);
-    final success = await api.updateCaller(widget.caller.name, {
+    final success = await api.updateAgent(widget.agent.name, {
       'schedule_enabled': enabled,
     });
     if (!mounted) return;
     if (success) {
       await api.reloadScheduler();
-      if (mounted) ref.invalidate(callersProvider);
+      if (mounted) ref.invalidate(agentsProvider);
     } else {
       // Revert on failure
       setState(() => _scheduleEnabled = !enabled);
@@ -265,13 +328,13 @@ class _CallerDetailSheetState extends ConsumerState<CallerDetailSheet> {
     setState(() => _scheduleTime = newTime);
 
     final api = ref.read(dailyApiServiceProvider);
-    final success = await api.updateCaller(widget.caller.name, {
+    final success = await api.updateAgent(widget.agent.name, {
       'schedule_time': newTime,
     });
     if (!mounted) return;
     if (success) {
       await api.reloadScheduler();
-      if (mounted) ref.invalidate(callersProvider);
+      if (mounted) ref.invalidate(agentsProvider);
     }
   }
 
@@ -279,11 +342,11 @@ class _CallerDetailSheetState extends ConsumerState<CallerDetailSheet> {
     setState(() => _isRunning = true);
     final api = ref.read(dailyApiServiceProvider);
     try {
-      await api.triggerAgentRun(widget.caller.name);
+      await api.triggerAgentRun(widget.agent.name);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('${widget.caller.displayName} started'),
+            content: Text('${widget.agent.displayName} started'),
             backgroundColor: BrandColors.success,
           ),
         );
@@ -310,16 +373,16 @@ class _CallerDetailSheetState extends ConsumerState<CallerDetailSheet> {
     widget.onViewHistory?.call();
   }
 
-  void _editCaller(BuildContext context) {
+  void _editAgent(BuildContext context) {
     Navigator.pop(context); // Close sheet first
     widget.onEdit?.call();
   }
 
-  Future<void> _resetCaller(BuildContext context) async {
+  Future<void> _resetAgent(BuildContext context) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text('Reset ${widget.caller.displayName}?'),
+        title: Text('Reset ${widget.agent.displayName}?'),
         content: const Text(
           'This clears the agent\'s conversation history. '
           'The next run will start fresh without previous context.',
@@ -339,13 +402,13 @@ class _CallerDetailSheetState extends ConsumerState<CallerDetailSheet> {
     if (confirmed != true || !mounted) return;
 
     final api = ref.read(dailyApiServiceProvider);
-    final success = await api.resetCaller(widget.caller.name);
+    final success = await api.resetAgent(widget.agent.name);
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
             success
-                ? '${widget.caller.displayName} reset — next run starts fresh'
+                ? '${widget.agent.displayName} reset — next run starts fresh'
                 : 'Failed to reset',
           ),
           backgroundColor: success ? BrandColors.success : BrandColors.error,
@@ -364,7 +427,7 @@ class _ScheduleRow extends StatelessWidget {
   final String time;
   final bool isDark;
   final Color agentColor;
-  final String callerName;
+  final String agentName;
   final ValueChanged<bool> onToggle;
   final VoidCallback onTimeTap;
 
@@ -373,7 +436,7 @@ class _ScheduleRow extends StatelessWidget {
     required this.time,
     required this.isDark,
     required this.agentColor,
-    required this.callerName,
+    required this.agentName,
     required this.onToggle,
     required this.onTimeTap,
   });
@@ -432,7 +495,7 @@ class _ScheduleRow extends StatelessWidget {
             ),
           ),
           Semantics(
-            label: 'Schedule ${callerName}',
+            label: 'Schedule ${agentName}',
             child: Switch.adaptive(
               value: enabled,
               onChanged: onToggle,
@@ -448,7 +511,7 @@ class _ScheduleRow extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Trigger info — shows event name and filter for event-driven Callers
+// Trigger info — shows event name and filter for event-driven Agents
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _TriggerInfo extends StatelessWidget {

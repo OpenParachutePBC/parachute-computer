@@ -3,7 +3,7 @@ Scheduler management API endpoints.
 
 Provides endpoints to view scheduled tasks and reload configuration.
 
-Schedule configuration is read from Caller nodes in the graph database.
+Schedule configuration is read from Agent nodes in the graph database.
 """
 
 import logging
@@ -41,9 +41,9 @@ async def get_scheduler_info() -> dict[str, Any]:
 @router.post("/scheduler/reload")
 async def reload_scheduler_config() -> dict[str, Any]:
     """
-    Reload scheduler configuration from Caller graph nodes.
+    Reload scheduler configuration from Agent graph nodes.
 
-    Call this after updating Caller schedule settings to apply changes.
+    Call this after updating Agent schedule settings to apply changes.
     """
     result = await reload_scheduler(Path.home())
 

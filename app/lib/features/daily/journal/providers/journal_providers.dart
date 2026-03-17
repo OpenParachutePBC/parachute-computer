@@ -9,7 +9,7 @@ import 'package:parachute/core/providers/app_state_provider.dart'
 import 'package:parachute/core/providers/backend_health_provider.dart'
     show periodicServerHealthProvider;
 import 'package:parachute/core/services/computer_service.dart'
-    show CallerTemplate, DailyAgentInfo;
+    show AgentTemplate, DailyAgentInfo;
 import '../models/chat_log.dart';
 import '../models/journal_entry.dart';
 import '../models/journal_day.dart';
@@ -294,22 +294,22 @@ final cardsProvider = FutureProvider.autoDispose
       return api.fetchCards(dateStr);
     });
 
-/// Fetch registered Caller (agent definition) nodes from the server.
+/// Fetch registered Agent (agent definition) nodes from the server.
 ///
 /// Used by [AgentTriggerCard] to enumerate agents without local file reads.
-final callersProvider = FutureProvider.autoDispose<List<DailyAgentInfo>>((
+final agentsProvider = FutureProvider.autoDispose<List<DailyAgentInfo>>((
   ref,
 ) async {
   ref.watch(journalRefreshTriggerProvider);
   final api = ref.watch(dailyApiServiceProvider);
-  return api.fetchCallers();
+  return api.fetchAgents();
 });
 
-/// Fetch starter Caller templates for onboarding.
+/// Fetch starter Agent templates for onboarding.
 ///
-/// Used by the empty state in [CallerManagementScreen] to offer one-tap creation.
-final callerTemplatesProvider =
-    FutureProvider.autoDispose<List<CallerTemplate>>((ref) async {
+/// Used by the empty state in [AgentManagementScreen] to offer one-tap creation.
+final agentTemplatesProvider =
+    FutureProvider.autoDispose<List<AgentTemplate>>((ref) async {
       final api = ref.watch(dailyApiServiceProvider);
       return api.fetchTemplates();
     });

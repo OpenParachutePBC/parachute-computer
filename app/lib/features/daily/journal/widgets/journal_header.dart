@@ -5,7 +5,7 @@ import 'package:parachute/core/providers/sync_provider.dart';
 import 'package:parachute/core/services/sync_service.dart' show SyncStatus;
 import '../models/journal_day.dart';
 import '../providers/journal_providers.dart';
-import '../screens/caller_management_screen.dart';
+import '../screens/agent_management_screen.dart';
 import 'package:parachute/features/settings/screens/settings_screen.dart';
 
 /// Journal screen header with date navigation and sync controls
@@ -117,7 +117,7 @@ class JournalHeader extends ConsumerWidget {
               Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (context) => const CallerManagementScreen(),
+                  builder: (context) => const AgentManagementScreen(),
                 ),
               );
             },

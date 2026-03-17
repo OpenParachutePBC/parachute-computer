@@ -1,8 +1,8 @@
 """
-Note-scoped tools for triggered Callers.
+Note-scoped tools for triggered Agents.
 
 These tools operate on a single Note (bound to a specific entry_id at creation time).
-Used by event-driven Callers that process individual notes after lifecycle events
+Used by event-driven Agents that process individual notes after lifecycle events
 like transcription completion or entry creation.
 
 Distinct from the day-scoped tools in daily_agent_tools.py which operate across
@@ -18,24 +18,24 @@ from claude_agent_sdk import tool, create_sdk_mcp_server, SdkMcpTool
 logger = logging.getLogger(__name__)
 
 
-def create_triggered_caller_tools(
+def create_triggered_agent_tools(
     graph: Any,
     entry_id: str,
     allowed_tools: list[str],
-    caller_name: str = "triggered-caller",
+    agent_name: str = "triggered-agent",
 ) -> tuple[list[SdkMcpTool], dict[str, Any]]:
     """
-    Create note-scoped tools for a triggered Caller.
+    Create note-scoped tools for a triggered Agent.
 
-    Each tool is pre-bound to the specific entry_id via closure. The Caller
-    only gets tools listed in `allowed_tools` — a cleanup Caller with
+    Each tool is pre-bound to the specific entry_id via closure. The Agent
+    only gets tools listed in `allowed_tools` — a cleanup Agent with
     ["read_entry", "update_entry_content"] literally cannot modify tags or metadata.
 
     Args:
         graph: GraphDB instance
-        entry_id: The Note entry_id this Caller is operating on
-        allowed_tools: Which tools to include (from the Caller's tools config)
-        caller_name: Name of the Caller (for logging and MCP server naming)
+        entry_id: The Note entry_id this Agent is operating on
+        allowed_tools: Which tools to include (from the Agent's tools config)
+        agent_name: Name of the Agent (for logging and MCP server naming)
 
     Returns:
         Tuple of (list of SdkMcpTool instances, server config dict)
@@ -45,7 +45,7 @@ def create_triggered_caller_tools(
 
     @tool(
         "read_entry",
-        "Read the note that triggered this Caller. Returns the note's content, "
+        "Read the note that triggered this Agent. Returns the note's content, "
         "metadata, tags, and type.",
         {},
     )
@@ -145,7 +145,7 @@ def create_triggered_caller_tools(
                     {"entry_id": entry_id, "content": new_content},
                 )
 
-            logger.info(f"Triggered caller '{caller_name}' updated content of {entry_id}")
+            logger.info(f"Triggered agent '{agent_name}' updated content of {entry_id}")
             return {
                 "content": [{"type": "text", "text": f"Successfully updated content of entry {entry_id}"}],
             }
@@ -205,7 +205,7 @@ def create_triggered_caller_tools(
                     {"entry_id": entry_id, "meta": json.dumps(meta)},
                 )
 
-            logger.info(f"Triggered caller '{caller_name}' set tags on {entry_id}: {tags}")
+            logger.info(f"Triggered agent '{agent_name}' set tags on {entry_id}: {tags}")
             return {
                 "content": [{"type": "text", "text": f"Successfully set tags on entry {entry_id}: {tags}"}],
             }
@@ -274,7 +274,7 @@ def create_triggered_caller_tools(
                     {"entry_id": entry_id, "meta": json.dumps(meta)},
                 )
 
-            logger.info(f"Triggered caller '{caller_name}' set metadata {key}={value!r} on {entry_id}")
+            logger.info(f"Triggered agent '{agent_name}' set metadata {key}={value!r} on {entry_id}")
             return {
                 "content": [{"type": "text", "text": f"Successfully set {key}={value!r} on entry {entry_id}"}],
             }
@@ -294,20 +294,20 @@ def create_triggered_caller_tools(
         "update_entry_metadata": update_entry_metadata,
     }
 
-    # Only include tools the Caller is allowed to use
+    # Only include tools the Agent is allowed to use
     for name in allowed_tools:
         if name in tool_map:
             all_tools.append(tool_map[name])
 
     if not all_tools:
         logger.warning(
-            f"Triggered caller '{caller_name}' has no matching note-scoped tools "
+            f"Triggered agent '{agent_name}' has no matching note-scoped tools "
             f"(requested: {allowed_tools})"
         )
 
     # Create the MCP server config
     server_config = create_sdk_mcp_server(
-        name=f"triggered_{caller_name}",
+        name=f"triggered_{agent_name}",
         version="1.0.0",
         tools=all_tools,
     )

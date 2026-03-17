@@ -118,7 +118,7 @@ async def lifespan(app: FastAPI):
     app.state.modules = modules
     logger.info(f"Loaded {len(modules)} modules: {list(modules.keys())}")
 
-    # Initialize scheduler after modules so Caller nodes are migrated first
+    # Initialize scheduler after modules so Agent nodes are migrated first
     from parachute.core.interfaces import get_registry
     graph = get_registry().get("BrainDB")
     scheduler = await init_scheduler(settings.parachute_dir, graph=graph)

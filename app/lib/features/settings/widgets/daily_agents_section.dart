@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
-import 'package:parachute/features/daily/journal/screens/caller_management_screen.dart';
+import 'package:parachute/features/daily/journal/screens/agent_management_screen.dart';
 
-/// Daily agents settings section — links to the full CallerManagementScreen.
+/// Daily agents settings section — links to the full AgentManagementScreen.
 class DailyAgentsSection extends ConsumerWidget {
   const DailyAgentsSection({super.key});
 
@@ -35,7 +35,7 @@ class DailyAgentsSection extends ConsumerWidget {
         ),
         SizedBox(height: Spacing.sm),
         Text(
-          'Manage your daily agents — schedule, run, and configure Callers.',
+          'Manage your daily agents — schedule, run, and configure Agents.',
           style: TextStyle(
             fontSize: TypographyTokens.bodySmall,
             color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
@@ -48,7 +48,7 @@ class DailyAgentsSection extends ConsumerWidget {
             onTap: () => Navigator.push(
               context,
               MaterialPageRoute(
-                builder: (_) => const CallerManagementScreen(),
+                builder: (_) => const AgentManagementScreen(),
               ),
             ),
             borderRadius: Radii.button,

@@ -130,7 +130,7 @@ TOOLS = [
     Tool(
         name="write_output",
         description=(
-            "Write agent output as a card. Used by callers to save their "
+            "Write agent output as a card. Used by agents to save their "
             "reflection or analysis results."
         ),
         inputSchema={
@@ -355,13 +355,13 @@ async def _handle_write_output(arguments: dict[str, Any]) -> str:
     if graph is None:
         return json.dumps({"error": "BrainDB not available"})
 
-    # Verify caller exists
-    caller_rows = await graph.execute_cypher(
-        "MATCH (c:Caller {name: $name}) RETURN c.name",
+    # Verify agent exists
+    agent_rows = await graph.execute_cypher(
+        "MATCH (a:Agent {name: $name}) RETURN a.name",
         {"name": agent_name},
     )
-    if not caller_rows:
-        return json.dumps({"error": f"Unknown caller: {agent_name}"})
+    if not agent_rows:
+        return json.dumps({"error": f"Unknown agent: {agent_name}"})
 
     card_id = f"{agent_name}:{date_str}"
     display_name = agent_name.replace("-", " ").title()

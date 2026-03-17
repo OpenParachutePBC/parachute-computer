@@ -1,88 +1,88 @@
-"""Tests for CallerDispatcher filter matching and discovery."""
+"""Tests for AgentDispatcher filter matching and discovery."""
 
 import json
 import pytest
 
-from parachute.core.caller_dispatch import CallerDispatcher
+from parachute.core.agent_dispatch import AgentDispatcher
 
 
 class TestFilterMatching:
-    """Test CallerDispatcher._matches_filter() static method."""
+    """Test AgentDispatcher._matches_filter() static method."""
 
     def test_empty_filter_matches_everything(self):
-        assert CallerDispatcher._matches_filter({}, {"entry_type": "voice"}) is True
-        assert CallerDispatcher._matches_filter({}, {}) is True
+        assert AgentDispatcher._matches_filter({}, {"entry_type": "voice"}) is True
+        assert AgentDispatcher._matches_filter({}, {}) is True
 
     def test_entry_type_match(self):
-        assert CallerDispatcher._matches_filter(
+        assert AgentDispatcher._matches_filter(
             {"entry_type": "voice"},
             {"entry_type": "voice"},
         ) is True
 
     def test_entry_type_mismatch(self):
-        assert CallerDispatcher._matches_filter(
+        assert AgentDispatcher._matches_filter(
             {"entry_type": "voice"},
             {"entry_type": "text"},
         ) is False
 
     def test_entry_type_missing_from_meta(self):
-        assert CallerDispatcher._matches_filter(
+        assert AgentDispatcher._matches_filter(
             {"entry_type": "voice"},
             {},
         ) is False
 
     def test_tags_filter_match(self):
-        assert CallerDispatcher._matches_filter(
+        assert AgentDispatcher._matches_filter(
             {"tags": ["meeting"]},
             {"tags": ["meeting", "work"]},
         ) is True
 
     def test_tags_filter_no_match(self):
-        assert CallerDispatcher._matches_filter(
+        assert AgentDispatcher._matches_filter(
             {"tags": ["meeting"]},
             {"tags": ["personal"]},
         ) is False
 
     def test_tags_filter_empty_entry_tags(self):
-        assert CallerDispatcher._matches_filter(
+        assert AgentDispatcher._matches_filter(
             {"tags": ["meeting"]},
             {"tags": []},
         ) is False
 
     def test_tags_filter_missing_tags(self):
-        assert CallerDispatcher._matches_filter(
+        assert AgentDispatcher._matches_filter(
             {"tags": ["meeting"]},
             {},
         ) is False
 
     def test_tags_filter_partial_match(self):
         """At least one tag matching is sufficient."""
-        assert CallerDispatcher._matches_filter(
+        assert AgentDispatcher._matches_filter(
             {"tags": ["meeting", "important"]},
             {"tags": ["meeting"]},
         ) is True
 
     def test_multiple_filter_keys_all_must_match(self):
         """Multiple filter keys require AND matching."""
-        assert CallerDispatcher._matches_filter(
+        assert AgentDispatcher._matches_filter(
             {"entry_type": "voice", "tags": ["meeting"]},
             {"entry_type": "voice", "tags": ["meeting", "work"]},
         ) is True
 
     def test_multiple_filter_keys_partial_fail(self):
-        assert CallerDispatcher._matches_filter(
+        assert AgentDispatcher._matches_filter(
             {"entry_type": "voice", "tags": ["meeting"]},
             {"entry_type": "text", "tags": ["meeting"]},
         ) is False
 
     def test_generic_key_equality(self):
-        assert CallerDispatcher._matches_filter(
+        assert AgentDispatcher._matches_filter(
             {"date": "2026-03-16"},
             {"date": "2026-03-16"},
         ) is True
 
     def test_generic_key_mismatch(self):
-        assert CallerDispatcher._matches_filter(
+        assert AgentDispatcher._matches_filter(
             {"date": "2026-03-16"},
             {"date": "2026-03-17"},
         ) is False
@@ -95,9 +95,9 @@ class TestDailyAgentConfigTriggerFields:
         from parachute.core.daily_agent import DailyAgentConfig
 
         row = {
-            "name": "test-caller",
-            "display_name": "Test Caller",
-            "description": "A test caller",
+            "name": "test-agent",
+            "display_name": "Test Agent",
+            "description": "A test agent",
             "system_prompt": "You are a test",
             "tools": '["read_entry", "update_entry_content"]',
             "schedule_enabled": "false",
@@ -119,7 +119,7 @@ class TestDailyAgentConfigTriggerFields:
         from parachute.core.daily_agent import DailyAgentConfig
 
         row = {
-            "name": "legacy-caller",
+            "name": "legacy-agent",
             "display_name": "Legacy",
             "description": "",
             "system_prompt": "",

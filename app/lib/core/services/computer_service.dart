@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
@@ -157,7 +156,7 @@ class ComputerService {
   }) async {
     try {
       final url =
-          '${await getServerUrl()}/api/modules/daily/agents/$agentName/transcript?limit=$limit';
+          '${await getServerUrl()}/api/daily/agents/$agentName/transcript?limit=$limit';
       debugPrint('[ComputerService] Fetching agent transcript from: $url');
 
       final response = await http
@@ -182,99 +181,6 @@ class ComputerService {
     } catch (e) {
       debugPrint('[ComputerService] Error getting agent transcript: $e');
       return null;
-    }
-  }
-
-  /// Trigger a daily agent to run
-  ///
-  /// Parameters:
-  /// - [agentName]: Name of the agent (e.g., "reflections", "content-scout")
-  /// - [date]: Optional date in YYYY-MM-DD format (defaults to yesterday)
-  /// - [force]: Force run even if already processed
-  Future<AgentRunResult> triggerDailyAgent(
-    String agentName, {
-    String? date,
-    bool force = false,
-  }) async {
-    try {
-      final body = <String, dynamic>{};
-      if (date != null) body['date'] = date;
-      if (force) body['force'] = true;
-
-      final response = await http
-          .post(
-            Uri.parse(
-              '${await getServerUrl()}/api/modules/daily/agents/$agentName/run',
-            ),
-            headers: await _getHeaders(json: true),
-            body: json.encode(body),
-          )
-          .timeout(const Duration(seconds: 180)); // Agents can take a while
-
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body) as Map<String, dynamic>;
-        return AgentRunResult.fromJson(data);
-      } else {
-        final error = _parseError(response);
-        return AgentRunResult(success: false, status: 'error', error: error);
-      }
-    } on SocketException catch (e) {
-      return AgentRunResult(
-        success: false,
-        status: 'error',
-        error: 'Server not reachable: $e',
-      );
-    } on http.ClientException catch (e) {
-      return AgentRunResult(
-        success: false,
-        status: 'error',
-        error: 'Connection error: $e',
-      );
-    } catch (e) {
-      return AgentRunResult(
-        success: false,
-        status: 'error',
-        error: 'Error triggering agent: $e',
-      );
-    }
-  }
-
-  /// Get status of all daily agents for a specific date
-  ///
-  /// Returns which agents have outputs available on the server for the date.
-  /// This enables the "morning flow" UX where the app can quickly check
-  /// what agent outputs are available and pull any that are missing locally.
-  Future<DailyAgentsStatusResult?> getDailyAgentsStatus({String? date}) async {
-    try {
-      final queryParams = <String, String>{};
-      if (date != null) queryParams['date'] = date;
-
-      final uri = Uri.parse(
-        '${await getServerUrl()}/api/modules/daily/agents/status',
-      ).replace(queryParameters: queryParams.isNotEmpty ? queryParams : null);
-
-      final response = await http
-          .get(uri, headers: await _getHeaders())
-          .timeout(const Duration(seconds: 10));
-
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body) as Map<String, dynamic>;
-        return DailyAgentsStatusResult.fromJson(data);
-      }
-      return null;
-    } catch (e) {
-      debugPrint('[ComputerService] Error getting agent status: $e');
-      return null;
-    }
-  }
-
-  String _parseError(http.Response response) {
-    try {
-      final data = json.decode(response.body) as Map<String, dynamic>;
-      return data['detail'] as String? ??
-          'Unknown error (${response.statusCode})';
-    } catch (_) {
-      return 'Error ${response.statusCode}: ${response.body}';
     }
   }
 }
@@ -381,7 +287,22 @@ class TranscriptBlock {
 // Daily Agent Models
 // ============================================================
 
-/// Configuration for a daily agent (Caller node from the graph database).
+/// How an Agent handles conversation state across runs.
+enum MemoryMode {
+  /// Resume prior SDK session — agent remembers previous runs.
+  persistent,
+  /// New session each run — no memory of prior runs.
+  fresh;
+
+  static MemoryMode fromString(String? value) => switch (value) {
+        'fresh' => MemoryMode.fresh,
+        _ => MemoryMode.persistent,
+      };
+
+  String toJson() => name;
+}
+
+/// Configuration for a daily agent (Agent node from the graph database).
 class DailyAgentInfo {
   final String name;
   final String displayName;
@@ -395,12 +316,15 @@ class DailyAgentInfo {
   final String? lastProcessedDate;
   final int runCount;
 
-  /// Event that triggers this Caller (e.g. "note.transcription_complete").
-  /// Empty string means this is a scheduled (day-scoped) Caller.
+  /// Event that triggers this Agent (e.g. "note.transcription_complete").
+  /// Empty string means this is a scheduled (day-scoped) Agent.
   final String triggerEvent;
 
   /// JSON filter for matching entries on the trigger event.
   final Map<String, dynamic>? triggerFilter;
+
+  /// How this Agent handles conversation state across runs.
+  final MemoryMode memoryMode;
 
   DailyAgentInfo({
     required this.name,
@@ -416,14 +340,15 @@ class DailyAgentInfo {
     this.runCount = 0,
     this.triggerEvent = '',
     this.triggerFilter,
+    this.memoryMode = MemoryMode.persistent,
   });
 
-  /// Whether this Caller is event-driven (triggered) rather than scheduled.
+  /// Whether this Agent is event-driven (triggered) rather than scheduled.
   bool get isTriggered => triggerEvent.isNotEmpty;
 }
 
-/// Starter caller template returned by the templates endpoint.
-class CallerTemplate {
+/// Starter agent template returned by the templates endpoint.
+class AgentTemplate {
   final String name;
   final String displayName;
   final String description;
@@ -432,14 +357,17 @@ class CallerTemplate {
   final String scheduleTime;
   final String trustLevel;
 
-  /// Event that triggers this Caller (e.g. "note.transcription_complete").
+  /// Event that triggers this Agent (e.g. "note.transcription_complete").
   /// Empty string means this is a scheduled (day-scoped) template.
   final String triggerEvent;
 
   /// JSON filter for matching entries on the trigger event.
   final Map<String, dynamic>? triggerFilter;
 
-  const CallerTemplate({
+  /// How this template's Agent handles conversation state across runs.
+  final MemoryMode memoryMode;
+
+  const AgentTemplate({
     required this.name,
     required this.displayName,
     required this.description,
@@ -449,18 +377,19 @@ class CallerTemplate {
     this.trustLevel = 'sandboxed',
     this.triggerEvent = '',
     this.triggerFilter,
+    this.memoryMode = MemoryMode.persistent,
   });
 
-  /// Whether this template is for an event-driven (triggered) Caller.
+  /// Whether this template is for an event-driven (triggered) Agent.
   bool get isTriggered => triggerEvent.isNotEmpty;
 
-  factory CallerTemplate.fromJson(Map<String, dynamic> json) {
+  factory AgentTemplate.fromJson(Map<String, dynamic> json) {
     final rawTools = json['tools'];
     List<String> tools = [];
     if (rawTools is List) {
       tools = rawTools.cast<String>();
     }
-    return CallerTemplate(
+    return AgentTemplate(
       name: json['name'] as String? ?? '',
       displayName:
           json['display_name'] as String? ?? json['name'] as String? ?? '',
@@ -471,13 +400,14 @@ class CallerTemplate {
       trustLevel: json['trust_level'] as String? ?? 'sandboxed',
       triggerEvent: json['trigger_event'] as String? ?? '',
       triggerFilter: parseTriggerFilter(json['trigger_filter']),
+      memoryMode: MemoryMode.fromString(json['memory_mode'] as String?),
     );
   }
 }
 
 /// Parse a trigger_filter value from JSON string or map.
 ///
-/// Shared by [CallerTemplate.fromJson] and [DailyApiService.fetchCallers].
+/// Shared by [AgentTemplate.fromJson] and [DailyApiService.fetchAgents].
 Map<String, dynamic>? parseTriggerFilter(dynamic raw) {
   if (raw is Map) return Map<String, dynamic>.from(raw);
   if (raw is String && raw.isNotEmpty) {
@@ -491,24 +421,25 @@ Map<String, dynamic>? parseTriggerFilter(dynamic raw) {
   return null;
 }
 
-/// Record of a triggered Caller having run on a specific entry.
-class CallerActivity {
-  final String callerName;
+/// Record of a triggered Agent having run on a specific entry.
+class AgentActivity {
+  final String agentName;
   final String displayName;
   final String status;
   final String ranAt;
   final String sessionId;
 
-  const CallerActivity({
-    required this.callerName,
+  const AgentActivity({
+    required this.agentName,
     required this.displayName,
     required this.status,
     required this.ranAt,
     this.sessionId = '',
   });
 
-  factory CallerActivity.fromJson(Map<String, dynamic> json) => CallerActivity(
-        callerName: json['caller_name'] as String? ?? '',
+  factory AgentActivity.fromJson(Map<String, dynamic> json) => AgentActivity(
+        // TODO(cleanup): remove caller_name fallback after v1.0 deploy
+        agentName: json['agent_name'] as String? ?? json['caller_name'] as String? ?? '',
         displayName: json['display_name'] as String? ?? '',
         status: json['status'] as String? ?? '',
         ranAt: json['ran_at'] as String? ?? '',
@@ -550,63 +481,3 @@ class AgentRunResult {
   }
 }
 
-/// Result of checking daily agents status for a date
-class DailyAgentsStatusResult {
-  final String date;
-  final List<AgentStatusInfo> agents;
-
-  DailyAgentsStatusResult({required this.date, required this.agents});
-
-  factory DailyAgentsStatusResult.fromJson(Map<String, dynamic> json) {
-    final agentsList = json['agents'] as List<dynamic>? ?? [];
-    return DailyAgentsStatusResult(
-      date: json['date'] as String? ?? '',
-      agents: agentsList
-          .map((a) => AgentStatusInfo.fromJson(a as Map<String, dynamic>))
-          .toList(),
-    );
-  }
-
-  /// Get agents that have outputs available
-  List<AgentStatusInfo> get availableAgents =>
-      agents.where((a) => a.hasOutput).toList();
-
-  /// Check if a specific agent has output for this date
-  bool hasOutputFor(String agentName) =>
-      agents.any((a) => a.name == agentName && a.hasOutput);
-
-  /// Get output path for a specific agent
-  String? getOutputPath(String agentName) =>
-      agents.where((a) => a.name == agentName).firstOrNull?.outputPath;
-}
-
-/// Status info for a single agent
-class AgentStatusInfo {
-  final String name;
-  final String displayName;
-  final bool hasOutput;
-  final String? outputPath;
-  final String? lastRunAt;
-  final String? lastProcessedDate;
-
-  AgentStatusInfo({
-    required this.name,
-    required this.displayName,
-    required this.hasOutput,
-    this.outputPath,
-    this.lastRunAt,
-    this.lastProcessedDate,
-  });
-
-  factory AgentStatusInfo.fromJson(Map<String, dynamic> json) {
-    return AgentStatusInfo(
-      name: json['name'] as String? ?? '',
-      displayName:
-          json['displayName'] as String? ?? json['name'] as String? ?? '',
-      hasOutput: json['hasOutput'] as bool? ?? false,
-      outputPath: json['outputPath'] as String?,
-      lastRunAt: json['lastRunAt'] as String?,
-      lastProcessedDate: json['lastProcessedDate'] as String?,
-    );
-  }
-}

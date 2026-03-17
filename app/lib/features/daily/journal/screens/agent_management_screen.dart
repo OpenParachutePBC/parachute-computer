@@ -3,21 +3,21 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
 import '../providers/journal_providers.dart';
 import '../utils/agent_theme.dart';
-import '../widgets/caller_detail_sheet.dart';
+import '../widgets/agent_detail_sheet.dart';
 import 'agent_log_screen.dart';
-import 'caller_edit_screen.dart';
+import 'agent_edit_screen.dart';
 import 'package:parachute/core/services/computer_service.dart'
-    show CallerTemplate, DailyAgentInfo;
+    show AgentTemplate, DailyAgentInfo;
 
-/// Full-screen Caller management — browse, enable/disable, and configure agents.
-class CallerManagementScreen extends ConsumerWidget {
-  const CallerManagementScreen({super.key});
+/// Full-screen Agent management — browse, enable/disable, and configure agents.
+class AgentManagementScreen extends ConsumerWidget {
+  const AgentManagementScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
-    final callersAsync = ref.watch(callersProvider);
+    final agentsAsync = ref.watch(agentsProvider);
 
     return Scaffold(
       backgroundColor: isDark ? BrandColors.nightSurface : BrandColors.cream,
@@ -30,12 +30,12 @@ class CallerManagementScreen extends ConsumerWidget {
         elevation: 0,
         scrolledUnderElevation: 1,
       ),
-      floatingActionButton: callersAsync.whenOrNull(
-        data: (callers) => callers.isNotEmpty
+      floatingActionButton: agentsAsync.whenOrNull(
+        data: (agents) => agents.isNotEmpty
             ? FloatingActionButton(
                 onPressed: () => Navigator.push(
                   context,
-                  MaterialPageRoute(builder: (_) => const CallerEditScreen()),
+                  MaterialPageRoute(builder: (_) => const AgentEditScreen()),
                 ),
                 backgroundColor: isDark
                     ? BrandColors.nightForest
@@ -45,7 +45,7 @@ class CallerManagementScreen extends ConsumerWidget {
               )
             : null,
       ),
-      body: callersAsync.when(
+      body: agentsAsync.when(
         loading: () => Center(
           child: CircularProgressIndicator(
             color: isDark ? BrandColors.nightForest : BrandColors.forest,
@@ -53,23 +53,23 @@ class CallerManagementScreen extends ConsumerWidget {
         ),
         error: (error, _) => _ErrorView(
           message: error.toString(),
-          onRetry: () => ref.invalidate(callersProvider),
+          onRetry: () => ref.invalidate(agentsProvider),
         ),
-        data: (callers) {
-          if (callers.isEmpty) {
-            return _EmptyCallersView(isDark: isDark);
+        data: (agents) {
+          if (agents.isEmpty) {
+            return _EmptyAgentsView(isDark: isDark);
           }
           return RefreshIndicator(
-            onRefresh: () async => ref.invalidate(callersProvider),
+            onRefresh: () async => ref.invalidate(agentsProvider),
             color: BrandColors.forest,
             child: ListView.builder(
               padding: EdgeInsets.symmetric(
                 horizontal: Spacing.lg,
                 vertical: Spacing.md,
               ),
-              itemCount: callers.length,
+              itemCount: agents.length,
               itemBuilder: (context, index) =>
-                  _CallerCard(caller: callers[index], isDark: isDark),
+                  _AgentCard(agent: agents[index], isDark: isDark),
             ),
           );
         },
@@ -79,19 +79,19 @@ class CallerManagementScreen extends ConsumerWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Caller Card — list item with toggle and tap-to-detail
+// Agent Card — list item with toggle and tap-to-detail
 // ─────────────────────────────────────────────────────────────────────────────
 
-class _CallerCard extends ConsumerWidget {
-  final DailyAgentInfo caller;
+class _AgentCard extends ConsumerWidget {
+  final DailyAgentInfo agent;
   final bool isDark;
 
-  const _CallerCard({required this.caller, required this.isDark});
+  const _AgentCard({required this.agent, required this.isDark});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
-    final agentTheme = AgentTheme.forAgent(caller.name);
+    final agentTheme = AgentTheme.forAgent(agent.name);
 
     return Padding(
       padding: EdgeInsets.only(bottom: Spacing.md),
@@ -136,7 +136,7 @@ class _CallerCard extends ConsumerWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        caller.displayName,
+                        agent.displayName,
                         style: theme.textTheme.titleSmall?.copyWith(
                           fontWeight: FontWeight.w600,
                           color: isDark
@@ -144,10 +144,10 @@ class _CallerCard extends ConsumerWidget {
                               : BrandColors.ink,
                         ),
                       ),
-                      if (caller.description.isNotEmpty) ...[
+                      if (agent.description.isNotEmpty) ...[
                         const SizedBox(height: 2),
                         Text(
-                          caller.description,
+                          agent.description,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: theme.textTheme.bodySmall?.copyWith(
@@ -156,46 +156,65 @@ class _CallerCard extends ConsumerWidget {
                         ),
                       ],
                       SizedBox(height: Spacing.xs),
-                      // Schedule badge
+                      // Status badge — trigger info or schedule
                       Row(
                         children: [
-                          Icon(
-                            caller.scheduleEnabled
-                                ? Icons.schedule
-                                : Icons.schedule_outlined,
-                            size: 12,
-                            color: caller.scheduleEnabled
-                                ? agentTheme.color
-                                : BrandColors.driftwood,
-                          ),
-                          SizedBox(width: Spacing.xs),
-                          Text(
-                            caller.scheduleEnabled
-                                ? 'Runs at ${caller.scheduleTime}'
-                                : 'Schedule off',
-                            style: theme.textTheme.labelSmall?.copyWith(
-                              color: caller.scheduleEnabled
+                          if (agent.isTriggered) ...[
+                            Icon(
+                              Icons.bolt,
+                              size: 12,
+                              color: agentTheme.color,
+                            ),
+                            SizedBox(width: Spacing.xs),
+                            Text(
+                              'Triggers on ${agent.triggerEvent.replaceAll(".", " ")}',
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                color: agentTheme.color,
+                              ),
+                            ),
+                          ] else ...[
+                            Icon(
+                              agent.scheduleEnabled
+                                  ? Icons.schedule
+                                  : Icons.schedule_outlined,
+                              size: 12,
+                              color: agent.scheduleEnabled
                                   ? agentTheme.color
                                   : BrandColors.driftwood,
                             ),
-                          ),
+                            SizedBox(width: Spacing.xs),
+                            Text(
+                              agent.scheduleEnabled
+                                  ? 'Runs at ${agent.scheduleTime}'
+                                  : 'Schedule off',
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                color: agent.scheduleEnabled
+                                    ? agentTheme.color
+                                    : BrandColors.driftwood,
+                              ),
+                            ),
+                          ],
                         ],
                       ),
                     ],
                   ),
                 ),
-                // Schedule toggle
-                Semantics(
-                  label: 'Schedule ${caller.displayName}',
-                  child: Switch.adaptive(
-                    value: caller.scheduleEnabled,
-                    onChanged: (enabled) =>
-                        _toggleSchedule(context, ref, enabled),
-                    activeColor: isDark
-                        ? BrandColors.nightForest
-                        : BrandColors.forest,
-                  ),
-                ),
+                // Schedule toggle (only for scheduled agents)
+                if (!agent.isTriggered)
+                  Semantics(
+                    label: 'Schedule ${agent.displayName}',
+                    child: Switch.adaptive(
+                      value: agent.scheduleEnabled,
+                      onChanged: (enabled) =>
+                          _toggleSchedule(context, ref, enabled),
+                      activeColor: isDark
+                          ? BrandColors.nightForest
+                          : BrandColors.forest,
+                    ),
+                  )
+                else
+                  // Chevron for triggered agents — tap to see detail
+                  Icon(Icons.chevron_right, color: BrandColors.driftwood),
               ],
             ),
           ),
@@ -210,22 +229,23 @@ class _CallerCard extends ConsumerWidget {
     bool enabled,
   ) async {
     final api = ref.read(dailyApiServiceProvider);
-    final success = await api.updateCaller(caller.name, {
+    final success = await api.updateAgent(agent.name, {
       'schedule_enabled': enabled,
     });
     if (!context.mounted) return;
     if (success) {
       await api.reloadScheduler();
+      if (!context.mounted) return;
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Failed to update ${caller.displayName}'),
+          content: Text('Failed to update ${agent.displayName}'),
           backgroundColor: BrandColors.error,
         ),
       );
     }
     // Always refresh to sync UI with server state
-    ref.invalidate(callersProvider);
+    ref.invalidate(agentsProvider);
   }
 
   void _openDetail(BuildContext context, WidgetRef ref) {
@@ -233,15 +253,15 @@ class _CallerCard extends ConsumerWidget {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => CallerDetailSheet(
-        caller: caller,
+      builder: (_) => AgentDetailSheet(
+        agent: agent,
         onViewHistory: () {
           Navigator.push(
             context, // parent screen's context — safe after sheet pops
             MaterialPageRoute(
               builder: (_) => AgentLogScreen(
-                agentName: caller.name,
-                displayName: caller.displayName,
+                agentName: agent.name,
+                displayName: agent.displayName,
               ),
             ),
           );
@@ -249,7 +269,7 @@ class _CallerCard extends ConsumerWidget {
         onEdit: () {
           Navigator.push(
             context,
-            MaterialPageRoute(builder: (_) => CallerEditScreen(caller: caller)),
+            MaterialPageRoute(builder: (_) => AgentEditScreen(agent: agent)),
           );
         },
       ),
@@ -261,15 +281,15 @@ class _CallerCard extends ConsumerWidget {
 // Empty state — shows available templates
 // ─────────────────────────────────────────────────────────────────────────────
 
-class _EmptyCallersView extends ConsumerWidget {
+class _EmptyAgentsView extends ConsumerWidget {
   final bool isDark;
 
-  const _EmptyCallersView({required this.isDark});
+  const _EmptyAgentsView({required this.isDark});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
-    final templatesAsync = ref.watch(callerTemplatesProvider);
+    final templatesAsync = ref.watch(agentTemplatesProvider);
 
     return Center(
       child: SingleChildScrollView(
@@ -284,14 +304,14 @@ class _EmptyCallersView extends ConsumerWidget {
             ),
             SizedBox(height: Spacing.lg),
             Text(
-              'Get started with a Caller',
+              'Get started with an Agent',
               style: theme.textTheme.titleMedium?.copyWith(
                 color: isDark ? BrandColors.softWhite : BrandColors.ink,
               ),
             ),
             SizedBox(height: Spacing.sm),
             Text(
-              'Callers are AI agents that read your journal and '
+              'Agents are AI helpers that read your journal and '
               'create reflections, insights, and more.',
               textAlign: TextAlign.center,
               style: theme.textTheme.bodyMedium?.copyWith(
@@ -308,10 +328,10 @@ class _EmptyCallersView extends ConsumerWidget {
                   color: isDark ? BrandColors.nightForest : BrandColors.forest,
                 ),
               ),
-              error: (_, __) => _createBlankButton(context, isDark),
+              error: (_, __) => _CreateBlankButton(isDark: isDark),
               data: (templates) {
                 if (templates.isEmpty) {
-                  return _createBlankButton(context, isDark);
+                  return _CreateBlankButton(isDark: isDark);
                 }
                 return Column(
                   children: [
@@ -323,7 +343,7 @@ class _EmptyCallersView extends ConsumerWidget {
                       onPressed: () => Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: (_) => const CallerEditScreen(),
+                          builder: (_) => const AgentEditScreen(),
                         ),
                       ),
                       icon: const Icon(Icons.add, size: 18),
@@ -339,14 +359,21 @@ class _EmptyCallersView extends ConsumerWidget {
     );
   }
 
-  Widget _createBlankButton(BuildContext context, bool isDark) {
+}
+
+class _CreateBlankButton extends StatelessWidget {
+  final bool isDark;
+  const _CreateBlankButton({required this.isDark});
+
+  @override
+  Widget build(BuildContext context) {
     return FilledButton.icon(
       onPressed: () => Navigator.push(
         context,
-        MaterialPageRoute(builder: (_) => const CallerEditScreen()),
+        MaterialPageRoute(builder: (_) => const AgentEditScreen()),
       ),
       icon: const Icon(Icons.add),
-      label: const Text('Create a Caller'),
+      label: const Text('Create an Agent'),
       style: FilledButton.styleFrom(
         backgroundColor: isDark ? BrandColors.nightForest : BrandColors.forest,
       ),
@@ -359,7 +386,7 @@ class _EmptyCallersView extends ConsumerWidget {
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _TemplateCard extends StatelessWidget {
-  final CallerTemplate template;
+  final AgentTemplate template;
   final bool isDark;
 
   const _TemplateCard({required this.template, required this.isDark});
@@ -377,7 +404,7 @@ class _TemplateCard extends StatelessWidget {
           onTap: () => Navigator.push(
             context,
             MaterialPageRoute(
-              builder: (_) => CallerEditScreen(template: template),
+              builder: (_) => AgentEditScreen(template: template),
             ),
           ),
           borderRadius: Radii.card,

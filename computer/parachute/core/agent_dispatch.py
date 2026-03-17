@@ -1,7 +1,7 @@
 """
-Event-driven Caller dispatcher.
+Event-driven Agent dispatcher.
 
-Discovers triggered Callers matching a Note lifecycle event (e.g.,
+Discovers triggered Agents matching a Note lifecycle event (e.g.,
 "note.transcription_complete") and invokes them sequentially on the
 triggering entry.
 
@@ -19,8 +19,8 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-class CallerDispatcher:
-    """Discovers triggered Callers and invokes them when events fire."""
+class AgentDispatcher:
+    """Discovers triggered Agents and invokes them when events fire."""
 
     def __init__(self, graph: Any, vault_path: Path):
         self.graph = graph
@@ -33,10 +33,10 @@ class CallerDispatcher:
         entry_meta: dict[str, Any],
     ) -> list[dict[str, Any]]:
         """
-        Find Callers matching this event + filter, invoke them sequentially.
+        Find Agents matching this event + filter, invoke them sequentially.
 
-        Sequential execution ensures earlier Callers' mutations (e.g., cleanup)
-        are visible to later Callers (e.g., tagging) on the same Note.
+        Sequential execution ensures earlier Agents' mutations (e.g., cleanup)
+        are visible to later Agents (e.g., tagging) on the same Note.
 
         Args:
             event: The lifecycle event (e.g., "note.transcription_complete")
@@ -44,50 +44,50 @@ class CallerDispatcher:
             entry_meta: Note metadata for filter matching (entry_type, tags, date)
 
         Returns:
-            List of result dicts from each invoked Caller
+            List of result dicts from each invoked Agent
         """
         if self.graph is None:
-            logger.warning("CallerDispatcher: graph unavailable, skipping dispatch")
+            logger.warning("AgentDispatcher: graph unavailable, skipping dispatch")
             return []
 
-        # Discover matching Callers
-        callers = await self._find_matching_callers(event, entry_meta)
-        if not callers:
-            logger.debug(f"CallerDispatcher: no callers match event={event} for entry {entry_id}")
+        # Discover matching Agents
+        agents = await self._find_matching_agents(event, entry_meta)
+        if not agents:
+            logger.debug(f"AgentDispatcher: no agents match event={event} for entry {entry_id}")
             return []
 
         logger.info(
-            f"CallerDispatcher: {len(callers)} caller(s) match event={event} "
-            f"for entry {entry_id}: {[c['name'] for c in callers]}"
+            f"AgentDispatcher: {len(agents)} agent(s) match event={event} "
+            f"for entry {entry_id}: {[a['name'] for a in agents]}"
         )
 
         results = []
-        for caller_row in callers:
-            caller_name = caller_row["name"]
-            display_name = caller_row.get("display_name") or caller_name.replace("-", " ").title()
-            result = await self._invoke_caller(
-                caller_name, entry_id, event, entry_meta,
+        for agent_row in agents:
+            agent_name = agent_row["name"]
+            display_name = agent_row.get("display_name") or agent_name.replace("-", " ").title()
+            result = await self._invoke_agent(
+                agent_name, entry_id, event, entry_meta,
                 display_name=display_name,
             )
             results.append(result)
 
         return results
 
-    async def _find_matching_callers(
+    async def _find_matching_agents(
         self,
         event: str,
         entry_meta: dict[str, Any],
     ) -> list[dict[str, Any]]:
-        """Query enabled Callers with matching trigger_event, then apply filter."""
+        """Query enabled Agents with matching trigger_event, then apply filter."""
         try:
             rows = await self.graph.execute_cypher(
-                "MATCH (c:Caller) "
-                "WHERE c.enabled = 'true' AND c.trigger_event = $event "
-                "RETURN c ORDER BY c.name",
+                "MATCH (a:Agent) "
+                "WHERE a.enabled = 'true' AND a.trigger_event = $event "
+                "RETURN a ORDER BY a.name",
                 {"event": event},
             )
         except Exception as e:
-            logger.error(f"CallerDispatcher: query failed: {e}")
+            logger.error(f"AgentDispatcher: query failed: {e}")
             return []
 
         matching = []
@@ -103,7 +103,7 @@ class CallerDispatcher:
                 matching.append(row)
             else:
                 logger.debug(
-                    f"CallerDispatcher: caller '{row.get('name')}' "
+                    f"AgentDispatcher: agent '{row.get('name')}' "
                     f"filter {trigger_filter} doesn't match entry meta"
                 )
 
@@ -115,7 +115,7 @@ class CallerDispatcher:
         entry_meta: dict[str, Any],
     ) -> bool:
         """
-        Check if an entry's metadata matches a Caller's trigger_filter.
+        Check if an entry's metadata matches an Agent's trigger_filter.
 
         Filter semantics:
         - {} → always matches (no filter)
@@ -150,23 +150,23 @@ class CallerDispatcher:
 
         return True
 
-    async def _invoke_caller(
+    async def _invoke_agent(
         self,
-        caller_name: str,
+        agent_name: str,
         entry_id: str,
         event: str,
         entry_meta: dict[str, Any],
         display_name: str = "",
     ) -> dict[str, Any]:
-        """Invoke a single triggered Caller. Event-agnostic — just invoke + record."""
-        from parachute.core.daily_agent import run_triggered_caller
+        """Invoke a single triggered Agent. Event-agnostic — just invoke + record."""
+        from parachute.core.daily_agent import run_triggered_agent
 
         ran_at = datetime.now(timezone.utc).isoformat()
 
         try:
-            result = await run_triggered_caller(
+            result = await run_triggered_agent(
                 vault_path=self.vault_path,
-                agent_name=caller_name,
+                agent_name=agent_name,
                 entry_id=entry_id,
                 event=event,
             )
@@ -175,7 +175,7 @@ class CallerDispatcher:
             session_id = result.get("sdk_session_id")
 
             await self._record_activity(
-                caller_name=caller_name,
+                agent_name=agent_name,
                 display_name=display_name,
                 entry_id=entry_id,
                 status=status,
@@ -184,19 +184,19 @@ class CallerDispatcher:
             )
 
             logger.info(
-                f"CallerDispatcher: caller '{caller_name}' on entry {entry_id} "
+                f"AgentDispatcher: agent '{agent_name}' on entry {entry_id} "
                 f"→ {status}"
             )
             return result
 
         except Exception as e:
             logger.error(
-                f"CallerDispatcher: caller '{caller_name}' failed on entry {entry_id}: {e}",
+                f"AgentDispatcher: agent '{agent_name}' failed on entry {entry_id}: {e}",
                 exc_info=True,
             )
 
             await self._record_activity(
-                caller_name=caller_name,
+                agent_name=agent_name,
                 display_name=display_name,
                 entry_id=entry_id,
                 status="error",
@@ -206,28 +206,28 @@ class CallerDispatcher:
 
             return {
                 "status": "error",
-                "agent": caller_name,
+                "agent": agent_name,
                 "entry_id": entry_id,
                 "error": str(e),
             }
 
     async def _record_activity(
         self,
-        caller_name: str,
+        agent_name: str,
         display_name: str,
         entry_id: str,
         status: str,
         ran_at: str,
         session_id: str,
     ) -> None:
-        """Record that a Caller ran on a Note (for UI display)."""
+        """Record that an Agent ran on a Note (for UI display)."""
         try:
             async with self.graph.write_lock:
                 # Use full ISO timestamp (microsecond precision) to avoid collisions
-                run_id = f"{caller_name}:{entry_id}:{ran_at}"
+                run_id = f"{agent_name}:{entry_id}:{ran_at}"
                 await self.graph.execute_cypher(
-                    "MERGE (r:CallerRun {run_id: $run_id}) "
-                    "SET r.caller_name = $caller_name, "
+                    "MERGE (r:AgentRun {run_id: $run_id}) "
+                    "SET r.agent_name = $agent_name, "
                     "    r.display_name = $display_name, "
                     "    r.entry_id = $entry_id, "
                     "    r.status = $status, "
@@ -235,7 +235,7 @@ class CallerDispatcher:
                     "    r.session_id = $session_id",
                     {
                         "run_id": run_id,
-                        "caller_name": caller_name,
+                        "agent_name": agent_name,
                         "display_name": display_name,
                         "entry_id": entry_id,
                         "status": status,
@@ -244,4 +244,4 @@ class CallerDispatcher:
                     },
                 )
         except Exception as e:
-            logger.warning(f"CallerDispatcher: failed to record activity: {e}")
+            logger.warning(f"AgentDispatcher: failed to record activity: {e}")
