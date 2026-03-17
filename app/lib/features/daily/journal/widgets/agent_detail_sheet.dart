@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/core/services/computer_service.dart'
-    show DailyAgentInfo;
+    show DailyAgentInfo, MemoryMode;
 import '../providers/journal_providers.dart';
 import '../utils/agent_theme.dart';
 import '../utils/time_helpers.dart';
@@ -196,7 +196,7 @@ class _AgentDetailSheetState extends ConsumerState<AgentDetailSheet> {
                       child: Row(
                         children: [
                           Icon(
-                            widget.agent.memoryMode == 'persistent'
+                            widget.agent.memoryMode == MemoryMode.persistent
                                 ? Icons.psychology
                                 : Icons.restart_alt,
                             size: 20,
@@ -208,7 +208,7 @@ class _AgentDetailSheetState extends ConsumerState<AgentDetailSheet> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  widget.agent.memoryMode == 'persistent'
+                                  widget.agent.memoryMode == MemoryMode.persistent
                                       ? 'Persistent memory'
                                       : 'Fresh each run',
                                   style: theme.textTheme.bodyMedium?.copyWith(
@@ -219,7 +219,7 @@ class _AgentDetailSheetState extends ConsumerState<AgentDetailSheet> {
                                 ),
                                 const SizedBox(height: 2),
                                 Text(
-                                  widget.agent.memoryMode == 'persistent'
+                                  widget.agent.memoryMode == MemoryMode.persistent
                                       ? 'Remembers previous runs'
                                       : 'Starts clean every time',
                                   style: theme.textTheme.bodySmall?.copyWith(

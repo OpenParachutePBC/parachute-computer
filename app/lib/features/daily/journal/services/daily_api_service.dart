@@ -6,7 +6,7 @@ import '../models/entry_metadata.dart' show TranscriptionStatus;
 import '../models/journal_entry.dart';
 import '../models/agent_card.dart';
 import 'package:parachute/core/services/computer_service.dart'
-    show DailyAgentInfo, AgentRunResult, AgentTemplate, AgentActivity, parseTriggerFilter;
+    show DailyAgentInfo, AgentRunResult, AgentTemplate, AgentActivity, MemoryMode, parseTriggerFilter;
 
 /// Raw search result from the server API.
 ///
@@ -526,7 +526,7 @@ class DailyApiService {
           scheduleTime: j['schedule_time'] as String? ?? '03:00',
           triggerEvent: j['trigger_event'] as String? ?? '',
           triggerFilter: parseTriggerFilter(j['trigger_filter']),
-          memoryMode: j['memory_mode'] as String? ?? 'persistent',
+          memoryMode: MemoryMode.fromString(j['memory_mode'] as String?),
         );
       }).toList();
     } catch (e) {

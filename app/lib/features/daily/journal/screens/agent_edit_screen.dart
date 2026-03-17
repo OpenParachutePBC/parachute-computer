@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/core/services/computer_service.dart'
-    show AgentTemplate, DailyAgentInfo;
+    show AgentTemplate, DailyAgentInfo, MemoryMode;
 import '../providers/journal_providers.dart';
 import '../utils/time_helpers.dart';
 
@@ -100,7 +100,7 @@ class _AgentEditScreenState extends ConsumerState<AgentEditScreen> {
   late Set<String> _enabledTools;
   late bool _scheduleEnabled;
   late String _scheduleTime;
-  late String _memoryMode; // "persistent" or "fresh"
+  late MemoryMode _memoryMode;
   bool _isSaving = false;
 
   /// Whether this Agent is event-driven (triggered) rather than scheduled.
@@ -146,7 +146,7 @@ class _AgentEditScreenState extends ConsumerState<AgentEditScreen> {
       _enabledTools = {'read_journal', 'read_recent_journals'};
       _scheduleEnabled = false;
       _scheduleTime = '21:00';
-      _memoryMode = 'persistent';
+      _memoryMode = MemoryMode.persistent;
     }
   }
 
@@ -332,7 +332,7 @@ class _AgentEditScreenState extends ConsumerState<AgentEditScreen> {
             ),
             SizedBox(height: Spacing.xs),
             Text(
-              _memoryMode == 'persistent'
+              _memoryMode == MemoryMode.persistent
                   ? 'Agent remembers previous runs and builds on them.'
                   : 'Agent starts fresh each run with no memory of prior runs.',
               style: theme.textTheme.bodySmall?.copyWith(
@@ -354,7 +354,7 @@ class _AgentEditScreenState extends ConsumerState<AgentEditScreen> {
               child: Row(
                 children: [
                   Icon(
-                    _memoryMode == 'persistent'
+                    _memoryMode == MemoryMode.persistent
                         ? Icons.psychology
                         : Icons.restart_alt,
                     size: 20,
@@ -363,7 +363,7 @@ class _AgentEditScreenState extends ConsumerState<AgentEditScreen> {
                   SizedBox(width: Spacing.md),
                   Expanded(
                     child: Text(
-                      _memoryMode == 'persistent'
+                      _memoryMode == MemoryMode.persistent
                           ? 'Persistent memory'
                           : 'Fresh each run',
                       style: theme.textTheme.bodyMedium?.copyWith(
@@ -372,10 +372,10 @@ class _AgentEditScreenState extends ConsumerState<AgentEditScreen> {
                     ),
                   ),
                   Switch.adaptive(
-                    value: _memoryMode == 'persistent',
+                    value: _memoryMode == MemoryMode.persistent,
                     onChanged: (persistent) {
                       setState(() {
-                        _memoryMode = persistent ? 'persistent' : 'fresh';
+                        _memoryMode = persistent ? MemoryMode.persistent : MemoryMode.fresh;
                       });
                     },
                     activeColor: isDark
@@ -445,7 +445,7 @@ class _AgentEditScreenState extends ConsumerState<AgentEditScreen> {
         'description': description,
         'system_prompt': prompt,
         'tools': tools,
-        'memory_mode': _memoryMode,
+        'memory_mode': _memoryMode.toJson(),
       };
       if (_isTriggered) {
         // Preserve trigger fields; schedule is irrelevant
@@ -480,7 +480,7 @@ class _AgentEditScreenState extends ConsumerState<AgentEditScreen> {
         'description': description,
         'system_prompt': prompt,
         'tools': tools,
-        'memory_mode': _memoryMode,
+        'memory_mode': _memoryMode.toJson(),
       };
       if (_isTriggered) {
         // Copy trigger fields from template
@@ -521,6 +521,7 @@ class _AgentEditScreenState extends ConsumerState<AgentEditScreen> {
         Navigator.pop(context);
       }
     } else {
+      if (!mounted) return;
       setState(() => _isSaving = false);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(

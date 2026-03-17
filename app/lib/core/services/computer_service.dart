@@ -287,6 +287,21 @@ class TranscriptBlock {
 // Daily Agent Models
 // ============================================================
 
+/// How an Agent handles conversation state across runs.
+enum MemoryMode {
+  /// Resume prior SDK session — agent remembers previous runs.
+  persistent,
+  /// New session each run — no memory of prior runs.
+  fresh;
+
+  static MemoryMode fromString(String? value) => switch (value) {
+        'fresh' => MemoryMode.fresh,
+        _ => MemoryMode.persistent,
+      };
+
+  String toJson() => name;
+}
+
 /// Configuration for a daily agent (Agent node from the graph database).
 class DailyAgentInfo {
   final String name;
@@ -308,8 +323,8 @@ class DailyAgentInfo {
   /// JSON filter for matching entries on the trigger event.
   final Map<String, dynamic>? triggerFilter;
 
-  /// Memory mode: "persistent" (resume prior session) or "fresh" (new session each run).
-  final String memoryMode;
+  /// How this Agent handles conversation state across runs.
+  final MemoryMode memoryMode;
 
   DailyAgentInfo({
     required this.name,
@@ -325,7 +340,7 @@ class DailyAgentInfo {
     this.runCount = 0,
     this.triggerEvent = '',
     this.triggerFilter,
-    this.memoryMode = 'persistent',
+    this.memoryMode = MemoryMode.persistent,
   });
 
   /// Whether this Agent is event-driven (triggered) rather than scheduled.
@@ -349,8 +364,8 @@ class AgentTemplate {
   /// JSON filter for matching entries on the trigger event.
   final Map<String, dynamic>? triggerFilter;
 
-  /// Memory mode: "persistent" (resume prior session) or "fresh" (new session each run).
-  final String memoryMode;
+  /// How this template's Agent handles conversation state across runs.
+  final MemoryMode memoryMode;
 
   const AgentTemplate({
     required this.name,
@@ -362,7 +377,7 @@ class AgentTemplate {
     this.trustLevel = 'sandboxed',
     this.triggerEvent = '',
     this.triggerFilter,
-    this.memoryMode = 'persistent',
+    this.memoryMode = MemoryMode.persistent,
   });
 
   /// Whether this template is for an event-driven (triggered) Agent.
@@ -385,7 +400,7 @@ class AgentTemplate {
       trustLevel: json['trust_level'] as String? ?? 'sandboxed',
       triggerEvent: json['trigger_event'] as String? ?? '',
       triggerFilter: parseTriggerFilter(json['trigger_filter']),
-      memoryMode: json['memory_mode'] as String? ?? 'persistent',
+      memoryMode: MemoryMode.fromString(json['memory_mode'] as String?),
     );
   }
 }
@@ -423,6 +438,7 @@ class AgentActivity {
   });
 
   factory AgentActivity.fromJson(Map<String, dynamic> json) => AgentActivity(
+        // TODO(cleanup): remove caller_name fallback after v1.0 deploy
         agentName: json['agent_name'] as String? ?? json['caller_name'] as String? ?? '',
         displayName: json['display_name'] as String? ?? '',
         status: json['status'] as String? ?? '',

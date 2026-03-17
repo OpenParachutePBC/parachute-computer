@@ -109,6 +109,114 @@ AGENT_TEMPLATES: list[AgentTemplateDict] = [
 ]
 
 
+def _read_transcript_file(sid: str, limit: int) -> dict:
+    """Read and parse a Claude SDK JSONL transcript file (sync, for to_thread).
+
+    Returns a dict matching the Flutter AgentTranscript shape.
+    """
+    session_file = None
+    for projects_dir in [
+        Path.home() / ".claude" / "projects",
+        Path.home() / "Parachute" / ".claude" / "projects",
+    ]:
+        if not projects_dir.exists():
+            continue
+        for project_dir in projects_dir.iterdir():
+            if project_dir.is_dir():
+                candidate = project_dir / f"{sid}.jsonl"
+                if candidate.exists():
+                    session_file = candidate
+                    break
+        if session_file:
+            break
+
+    if not session_file:
+        return {"hasTranscript": False, "message": "Transcript file not found."}
+
+    messages: list[dict] = []
+    try:
+        with open(session_file, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                etype = event.get("type")
+                if etype not in ("user", "assistant"):
+                    continue
+                msg = event.get("message", {})
+                content_raw = msg.get("content", "")
+
+                if etype == "user":
+                    if isinstance(content_raw, list):
+                        content_raw = " ".join(
+                            b.get("text", "") for b in content_raw if b.get("type") == "text"
+                        )
+                    messages.append({
+                        "type": "user",
+                        "timestamp": event.get("timestamp"),
+                        "content": content_raw,
+                    })
+                elif etype == "assistant":
+                    if isinstance(content_raw, str):
+                        messages.append({
+                            "type": "assistant",
+                            "timestamp": event.get("timestamp"),
+                            "content": content_raw,
+                            "model": event.get("model"),
+                        })
+                    else:
+                        text_parts = []
+                        blocks = []
+                        for block in content_raw:
+                            bt = block.get("type", "")
+                            if bt == "text":
+                                text_parts.append(block.get("text", ""))
+                                blocks.append({"type": "text", "text": block.get("text", "")})
+                            elif bt == "tool_use":
+                                blocks.append({
+                                    "type": "tool_use",
+                                    "name": block.get("name", ""),
+                                    "input": json.dumps(block.get("input", {}), indent=2),
+                                    "tool_use_id": block.get("id"),
+                                })
+                            elif bt == "tool_result":
+                                rc = block.get("content", "")
+                                if isinstance(rc, list):
+                                    rc = " ".join(
+                                        r.get("text", "") for r in rc if r.get("type") == "text"
+                                    )
+                                blocks.append({
+                                    "type": "tool_result",
+                                    "text": str(rc)[:500],
+                                    "tool_use_id": block.get("tool_use_id"),
+                                })
+                        messages.append({
+                            "type": "assistant",
+                            "timestamp": event.get("timestamp"),
+                            "content": "\n".join(text_parts),
+                            "blocks": blocks or None,
+                            "model": event.get("model"),
+                        })
+    except Exception:
+        logger.warning("Failed to read agent transcript for session %s", sid, exc_info=True)
+        return {"hasTranscript": False, "message": "Failed to read transcript."}
+
+    # Return most recent messages
+    if len(messages) > limit:
+        messages = messages[-limit:]
+
+    return {
+        "hasTranscript": True,
+        "sessionId": sid,
+        "totalMessages": len(messages),
+        "messages": messages,
+    }
+
+
 def _append_redo_log(
     redo_log_path: Path,
     entry_id: str,
@@ -567,33 +675,46 @@ class DailyModule:
                     )
                     logger.info(f"Daily: added column Note.{col}")
 
-        # Agent table migrations
+        # Agent table migrations — skip gracefully if Agent table doesn't exist
+        # yet (first run before _seed_builtin_agents creates it).
         try:
             agent_cols = await graph.get_table_columns("Agent")
-            agent_new = {
-                "trust_level": ("STRING", "'sandboxed'"),
-                "sdk_session_id": ("STRING", "''"),
-                "last_run_at": ("STRING", "''"),
-                "last_processed_date": ("STRING", "''"),
-                "run_count": ("INT64", "0"),
-                "trigger_event": ("STRING", "''"),
-                "trigger_filter": ("STRING", "'{}'"),
-                "memory_mode": ("STRING", "'persistent'"),
-            }
-            missing = {col: v for col, v in agent_new.items() if col not in agent_cols}
-            if missing:
-                async with graph.write_lock:
-                    for col, (typ, default) in missing.items():
-                        await graph.execute_cypher(
-                            f"ALTER TABLE Agent ADD {col} {typ} DEFAULT {default}"
-                        )
-                        logger.info(f"Daily: added column Agent.{col}")
         except Exception:
-            pass  # Agent table may not exist yet on first run
+            return  # Agent table doesn't exist yet — nothing to migrate
+
+        agent_new = {
+            "trust_level": ("STRING", "'sandboxed'"),
+            "sdk_session_id": ("STRING", "''"),
+            "last_run_at": ("STRING", "''"),
+            "last_processed_date": ("STRING", "''"),
+            "run_count": ("INT64", "0"),
+            "trigger_event": ("STRING", "''"),
+            "trigger_filter": ("STRING", "'{}'"),
+            "memory_mode": ("STRING", "'persistent'"),
+        }
+        missing = {col: v for col, v in agent_new.items() if col not in agent_cols}
+        if missing:
+            async with graph.write_lock:
+                for col, (typ, default) in missing.items():
+                    await graph.execute_cypher(
+                        f"ALTER TABLE Agent ADD {col} {typ} DEFAULT {default}"
+                    )
+                    logger.info(f"Daily: added column Agent.{col}")
 
     async def _seed_builtin_agents(self, graph) -> None:
         """Seed built-in Agents that ship with Parachute. Idempotent — skips existing."""
         now = datetime.now(timezone.utc).isoformat()
+
+        # Look up the daily-reflection template by name (not index) so seed
+        # data stays correct even if the AGENT_TEMPLATES list is reordered.
+        _reflection_tpl = next(
+            (t for t in AGENT_TEMPLATES if t["name"] == "daily-reflection"),
+            None,
+        )
+        if _reflection_tpl is None:
+            logger.error("Daily: daily-reflection template missing from AGENT_TEMPLATES")
+            _reflection_tpl = AGENT_TEMPLATES[0]  # fallback to first
+
         builtin_agents = [
             {
                 "name": "post-process",
@@ -617,16 +738,16 @@ class DailyModule:
             {
                 "name": "daily-reflection",
                 "display_name": "Daily Reflection",
-                "description": AGENT_TEMPLATES[0]["description"],
-                "system_prompt": AGENT_TEMPLATES[0]["system_prompt"],
-                "tools": json.dumps(AGENT_TEMPLATES[0]["tools"]),
+                "description": _reflection_tpl["description"],
+                "system_prompt": _reflection_tpl["system_prompt"],
+                "tools": json.dumps(_reflection_tpl["tools"]),
                 "schedule_enabled": "true",
-                "schedule_time": AGENT_TEMPLATES[0].get("schedule_time", "21:00"),
+                "schedule_time": _reflection_tpl.get("schedule_time", "4:00"),
                 "enabled": "true",
-                "trust_level": AGENT_TEMPLATES[0].get("trust_level", "sandboxed"),
+                "trust_level": _reflection_tpl.get("trust_level", "sandboxed"),
                 "trigger_event": "",
                 "trigger_filter": "{}",
-                "memory_mode": AGENT_TEMPLATES[0].get("memory_mode", "persistent"),
+                "memory_mode": _reflection_tpl.get("memory_mode", "persistent"),
                 "created_at": now,
                 "updated_at": now,
             },
@@ -665,7 +786,7 @@ class DailyModule:
             except Exception as e:
                 logger.warning(f"Daily: failed to seed Agent '{agent['name']}': {e}")
 
-        # Clean up renamed/retired Agent nodes
+        # Clean up renamed/retired Agent nodes and their orphaned AgentRun rows
         for old_name in ["transcription-cleanup"]:
             try:
                 rows = await graph.execute_cypher(
@@ -679,6 +800,23 @@ class DailyModule:
                             {"name": old_name},
                         )
                     logger.info(f"Daily: removed retired Agent '{old_name}'")
+                # Also clean up orphaned AgentRun rows for this agent
+                try:
+                    run_rows = await graph.execute_cypher(
+                        "MATCH (r:AgentRun {agent_name: $name}) RETURN r.run_id",
+                        {"name": old_name},
+                    )
+                    if run_rows:
+                        async with graph.write_lock:
+                            await graph.execute_cypher(
+                                "MATCH (r:AgentRun {agent_name: $name}) DELETE r",
+                                {"name": old_name},
+                            )
+                        logger.info(
+                            f"Daily: removed {len(run_rows)} orphaned AgentRun(s) for '{old_name}'"
+                        )
+                except Exception:
+                    pass  # AgentRun table may not exist yet
             except Exception:
                 pass
 
@@ -2102,9 +2240,11 @@ class DailyModule:
         ):
             """Trigger an agent run for a date (async — returns 202 immediately)."""
             from parachute.core.daily_agent import run_daily_agent
-            asyncio.create_task(
+            task = asyncio.create_task(
                 run_daily_agent(self.vault_path, agent_name, date=date, force=force)
             )
+            _background_tasks.add(task)
+            task.add_done_callback(_log_task_exception)
             return {"status": "started", "agent": agent_name, "date": date}
 
         @router.post("/cards/write", status_code=201)
@@ -2227,108 +2367,11 @@ class DailyModule:
             if not sid:
                 return {"hasTranscript": False, "message": "This agent hasn't run yet."}
 
-            # Search for the JSONL transcript file
-            session_file = None
-            for projects_dir in [
-                Path.home() / ".claude" / "projects",
-                Path.home() / "Parachute" / ".claude" / "projects",
-            ]:
-                if not projects_dir.exists():
-                    continue
-                for project_dir in projects_dir.iterdir():
-                    if project_dir.is_dir():
-                        candidate = project_dir / f"{sid}.jsonl"
-                        if candidate.exists():
-                            session_file = candidate
-                            break
-                if session_file:
-                    break
-
-            if not session_file:
-                return {"hasTranscript": False, "message": "Transcript file not found."}
-
-            messages: list[dict] = []
-            try:
-                with open(session_file, "r", encoding="utf-8") as f:
-                    for line in f:
-                        line = line.strip()
-                        if not line:
-                            continue
-                        try:
-                            event = json.loads(line)
-                        except json.JSONDecodeError:
-                            continue
-                        etype = event.get("type")
-                        if etype not in ("user", "assistant"):
-                            continue
-                        msg = event.get("message", {})
-                        content_raw = msg.get("content", "")
-
-                        if etype == "user":
-                            if isinstance(content_raw, list):
-                                content_raw = " ".join(
-                                    b.get("text", "") for b in content_raw if b.get("type") == "text"
-                                )
-                            messages.append({
-                                "type": "user",
-                                "timestamp": event.get("timestamp"),
-                                "content": content_raw,
-                            })
-                        elif etype == "assistant":
-                            if isinstance(content_raw, str):
-                                messages.append({
-                                    "type": "assistant",
-                                    "timestamp": event.get("timestamp"),
-                                    "content": content_raw,
-                                    "model": event.get("model"),
-                                })
-                            else:
-                                text_parts = []
-                                blocks = []
-                                for block in content_raw:
-                                    bt = block.get("type", "")
-                                    if bt == "text":
-                                        text_parts.append(block.get("text", ""))
-                                        blocks.append({"type": "text", "text": block.get("text", "")})
-                                    elif bt == "tool_use":
-                                        blocks.append({
-                                            "type": "tool_use",
-                                            "name": block.get("name", ""),
-                                            "input": json.dumps(block.get("input", {}), indent=2),
-                                            "tool_use_id": block.get("id"),
-                                        })
-                                    elif bt == "tool_result":
-                                        rc = block.get("content", "")
-                                        if isinstance(rc, list):
-                                            rc = " ".join(
-                                                r.get("text", "") for r in rc if r.get("type") == "text"
-                                            )
-                                        blocks.append({
-                                            "type": "tool_result",
-                                            "text": str(rc)[:500],
-                                            "tool_use_id": block.get("tool_use_id"),
-                                        })
-                                messages.append({
-                                    "type": "assistant",
-                                    "timestamp": event.get("timestamp"),
-                                    "content": "\n".join(text_parts),
-                                    "blocks": blocks or None,
-                                    "model": event.get("model"),
-                                })
-            except Exception as e:
-                logger.warning(f"Failed to read agent transcript: {e}")
-                return {"hasTranscript": False, "message": "Failed to read transcript."}
-
-            # Return most recent messages
-            if len(messages) > limit:
-                messages = messages[-limit:]
-
-            return {
-                "hasTranscript": True,
-                "sessionId": sid,
-                "totalMessages": len(messages),
-                "messages": messages,
-            }
+            # Search for the JSONL transcript file and parse it off the
+            # event loop (file I/O is blocking).
+            return await asyncio.to_thread(
+                _read_transcript_file, sid, limit,
+            )
 
         @router.post("/agents", status_code=201)
         async def create_agent(body: dict):

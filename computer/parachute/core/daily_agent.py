@@ -751,9 +751,8 @@ def _default_prompt(config: DailyAgentConfig, journal_date: str, output_date: st
     references from a previous run. The triple-emphasis ensures the model
     uses the correct date.
     """
-    from datetime import datetime as _dt
     try:
-        jd = _dt.strptime(journal_date, "%Y-%m-%d")
+        jd = datetime.strptime(journal_date, "%Y-%m-%d")
         day_name = jd.strftime("%A")  # e.g. "Monday"
         date_label = f"{day_name}, {journal_date}"
     except ValueError:

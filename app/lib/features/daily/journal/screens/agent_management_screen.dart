@@ -235,6 +235,7 @@ class _AgentCard extends ConsumerWidget {
     if (!context.mounted) return;
     if (success) {
       await api.reloadScheduler();
+      if (!context.mounted) return;
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -327,10 +328,10 @@ class _EmptyAgentsView extends ConsumerWidget {
                   color: isDark ? BrandColors.nightForest : BrandColors.forest,
                 ),
               ),
-              error: (_, __) => _createBlankButton(context, isDark),
+              error: (_, __) => _CreateBlankButton(isDark: isDark),
               data: (templates) {
                 if (templates.isEmpty) {
-                  return _createBlankButton(context, isDark);
+                  return _CreateBlankButton(isDark: isDark);
                 }
                 return Column(
                   children: [
@@ -358,7 +359,14 @@ class _EmptyAgentsView extends ConsumerWidget {
     );
   }
 
-  Widget _createBlankButton(BuildContext context, bool isDark) {
+}
+
+class _CreateBlankButton extends StatelessWidget {
+  final bool isDark;
+  const _CreateBlankButton({required this.isDark});
+
+  @override
+  Widget build(BuildContext context) {
     return FilledButton.icon(
       onPressed: () => Navigator.push(
         context,
