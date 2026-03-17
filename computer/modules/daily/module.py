@@ -186,7 +186,7 @@ VALID_TRANSCRIPTION_TRANSITIONS = {
 
 
 # ── Cleanup Agent system prompt ───────────────────────────────────────────────
-CLEANUP_SYSTEM_PROMPT = (
+POST_PROCESS_SYSTEM_PROMPT = (
     "You are a transcription cleanup assistant. You receive raw speech-to-text "
     "output and produce clean, readable text.\n\n"
     "## Rules\n\n"
@@ -212,7 +212,7 @@ async def _transcribe_and_cleanup(
     """Background task: transcribe audio → dispatch event for cleanup.
 
     If dispatch_event_fn is provided, fires 'note.transcription_complete'
-    event which triggers Agents (e.g., transcription-cleanup).
+    event which triggers Agents (e.g., post-process).
     Falls back to direct _cleanup_transcription() if no dispatcher.
     """
     from parachute.core.interfaces import get_registry
@@ -315,7 +315,7 @@ async def _cleanup_transcription(
         cleaned_text = ""
         async for event in query_streaming(
             prompt=f"Clean up this voice transcription:\n\n{raw_text}",
-            system_prompt=CLEANUP_SYSTEM_PROMPT,
+            system_prompt=POST_PROCESS_SYSTEM_PROMPT,
             use_claude_code_preset=False,
             tools=[],  # No tools — pure text transform
             permission_mode="default",
@@ -748,14 +748,14 @@ class DailyModule:
         now = datetime.now(timezone.utc).isoformat()
         builtin_agents = [
             {
-                "name": "transcription-cleanup",
-                "display_name": "Transcription Cleanup",
+                "name": "post-process",
+                "display_name": "Post-Process",
                 "description": (
                     "Cleans up voice transcriptions: removes filler words, "
                     "fixes grammar, adds punctuation and paragraph breaks. "
                     "Preserves the speaker's voice."
                 ),
-                "system_prompt": CLEANUP_SYSTEM_PROMPT,
+                "system_prompt": POST_PROCESS_SYSTEM_PROMPT,
                 "tools": json.dumps(["read_entry", "update_entry_content"]),
                 "schedule_enabled": "false",
                 "schedule_time": "",

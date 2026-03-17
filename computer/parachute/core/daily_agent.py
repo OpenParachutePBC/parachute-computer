@@ -774,7 +774,7 @@ async def run_triggered_agent(
 
     Args:
         vault_path: Path to the vault
-        agent_name: Name of the Agent (e.g., "transcription-cleanup")
+        agent_name: Name of the Agent (e.g., "post-process")
         entry_id: The Note entry_id to process
         event: The event that triggered this (e.g., "note.transcription_complete")
 

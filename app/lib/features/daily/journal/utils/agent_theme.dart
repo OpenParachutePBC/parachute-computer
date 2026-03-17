@@ -22,23 +22,17 @@ class AgentTheme {
   /// be driven by server-provided metadata on the Agent node.
   static AgentTheme forAgent(String agentName) {
     switch (agentName) {
-      case 'reflection':
+      case 'daily-reflection':
         return const AgentTheme(
           icon: Icons.wb_twilight,
           color: BrandColors.forest,
           runningMessage: 'Your reflection is being written\u2026',
         );
-      case 'content-scout':
+      case 'post-process':
         return const AgentTheme(
-          icon: Icons.lightbulb_outline,
+          icon: Icons.auto_fix_high,
           color: BrandColors.turquoise,
-          runningMessage: 'Scouting interesting content for you\u2026',
-        );
-      case 'weekly-review':
-        return const AgentTheme(
-          icon: Icons.calendar_view_week,
-          color: BrandColors.forestLight,
-          runningMessage: 'Reviewing your week\u2026',
+          runningMessage: 'Cleaning up your transcription\u2026',
         );
       default:
         return const AgentTheme(
