@@ -19,15 +19,11 @@ class AgentDetailSheet extends ConsumerStatefulWidget {
   /// then invokes this callback so navigation uses the parent's context.
   final VoidCallback? onEdit;
 
-  /// Called after the agent is deleted. The sheet pops itself first.
-  final VoidCallback? onDelete;
-
   const AgentDetailSheet({
     super.key,
     required this.agent,
     this.onViewHistory,
     this.onEdit,
-    this.onDelete,
   });
 
   @override
@@ -551,8 +547,9 @@ class _AgentDetailSheetState extends ConsumerState<AgentDetailSheet> {
     final api = ref.read(dailyApiServiceProvider);
     final success = await api.deleteAgent(widget.agent.name);
     if (mounted) {
+      final messenger = ScaffoldMessenger.of(context);
       Navigator.pop(context); // Close sheet
-      ScaffoldMessenger.of(context).showSnackBar(
+      messenger.showSnackBar(
         SnackBar(
           content: Text(
             success
@@ -564,7 +561,6 @@ class _AgentDetailSheetState extends ConsumerState<AgentDetailSheet> {
       );
       if (success) {
         ref.invalidate(agentsProvider);
-        widget.onDelete?.call();
       }
     }
   }

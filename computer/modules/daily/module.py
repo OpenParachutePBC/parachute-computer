@@ -70,7 +70,28 @@ class AgentTemplateDict(TypedDict, total=False):
     trigger_event: str
     trigger_filter: str
     memory_mode: str  # "persistent" (default) | "fresh"
-    template_version: str  # ISO date, e.g. "2026-03-17"
+    template_version: str  # ISO date (YYYY-MM-DD) — string comparison works for this format
+
+
+# ── Post-process system prompt (defined before AGENT_TEMPLATES so it can be inlined) ──
+POST_PROCESS_SYSTEM_PROMPT = (
+    "You are a post-processing assistant for journal entries.\n\n"
+    "## Your Job\n\n"
+    "Read the entry with `read_entry`. If it came from a voice recording, "
+    "clean up the transcript and save it with `update_entry_content`. "
+    "If the entry was typed (not voice), do nothing — just return.\n\n"
+    "## Transcription Cleanup Rules\n\n"
+    "- Remove filler words: \"um\", \"uh\", \"like\", \"you know\", \"I mean\", \"so\", \"right\"\n"
+    "- Fix grammar and sentence structure\n"
+    "- Add proper punctuation (periods, commas, question marks)\n"
+    "- Create paragraph breaks at natural topic transitions\n"
+    "- Very light restructuring for readability — combine fragments, smooth transitions\n"
+    "- Preserve the speaker's voice, tone, and meaning exactly\n"
+    "- Do NOT summarize, add commentary, or change the substance\n"
+    "- Do NOT add headers, bullet points, or other structural formatting "
+    "unless the speaker clearly intended a list\n"
+    "- Output ONLY the cleaned text — no preamble, no explanation"
+)
 
 
 AGENT_TEMPLATES: list[AgentTemplateDict] = [
@@ -98,7 +119,7 @@ AGENT_TEMPLATES: list[AgentTemplateDict] = [
             "## Process\n\n"
             "1. Read yesterday's journal entries with `read_journal`\n"
             "2. Read recent journals with `read_recent_journals` for broader context\n"
-            "3. Optionally read chat logs with `read_chat_log` for additional context\n"
+            "3. Optionally read chat logs with`read_chat_log` for additional context\n"
             "4. Write your reflection using `write_output`\n\n"
             "## User Context\n\n"
             "{user_context}"
@@ -116,7 +137,7 @@ AGENT_TEMPLATES: list[AgentTemplateDict] = [
             "Runs after voice transcription completes. Cleans up filler "
             "words, fixes grammar, adds punctuation."
         ),
-        "system_prompt": "",  # Filled from POST_PROCESS_SYSTEM_PROMPT after definition
+        "system_prompt": POST_PROCESS_SYSTEM_PROMPT,
         "tools": ["read_entry", "update_entry_content"],
         "trigger_event": "note.transcription_complete",
         "trust_level": "direct",
@@ -308,30 +329,6 @@ VALID_TRANSCRIPTION_TRANSITIONS = {
     "complete": {"processing"},     # re-transcribe from finished state
 }
 
-
-# ── Cleanup Agent system prompt ───────────────────────────────────────────────
-POST_PROCESS_SYSTEM_PROMPT = (
-    "You are a post-processing assistant for journal entries.\n\n"
-    "## Your Job\n\n"
-    "Read the entry with `read_entry`. If it came from a voice recording, "
-    "clean up the transcript and save it with `update_entry_content`. "
-    "If the entry was typed (not voice), do nothing — just return.\n\n"
-    "## Transcription Cleanup Rules\n\n"
-    "- Remove filler words: \"um\", \"uh\", \"like\", \"you know\", \"I mean\", \"so\", \"right\"\n"
-    "- Fix grammar and sentence structure\n"
-    "- Add proper punctuation (periods, commas, question marks)\n"
-    "- Create paragraph breaks at natural topic transitions\n"
-    "- Very light restructuring for readability — combine fragments, smooth transitions\n"
-    "- Preserve the speaker's voice, tone, and meaning exactly\n"
-    "- Do NOT summarize, add commentary, or change the substance\n"
-    "- Do NOT add headers, bullet points, or other structural formatting "
-    "unless the speaker clearly intended a list\n"
-    "- Output ONLY the cleaned text — no preamble, no explanation"
-)
-
-# Backfill post-process template with the prompt defined above
-_pp_tpl = next(t for t in AGENT_TEMPLATES if t["name"] == "post-process")
-_pp_tpl["system_prompt"] = POST_PROCESS_SYSTEM_PROMPT
 
 
 async def _transcribe_and_cleanup(
@@ -815,6 +812,7 @@ class DailyModule:
                     logger.warning(f"Daily: failed to stamp Agent '{name}': {e}")
             elif existing_um == "true":
                 # ── User customized: don't overwrite ──
+                # NOTE: version comparison requires YYYY-MM-DD format for lexicographic ordering
                 if existing_tv < tpl_version:
                     logger.info(
                         f"Daily: update available for '{name}' "
@@ -2399,10 +2397,12 @@ class DailyModule:
                 if tpl:
                     tpl_v = tpl.get("template_version", "")
                     agent_v = (agent.get("template_version") or "").strip()
-                    agent["latest_template_version"] = tpl_v
+                    # NOTE: version comparison requires YYYY-MM-DD format for lexicographic ordering
                     agent["update_available"] = bool(
                         tpl_v and agent_v and agent_v < tpl_v
                     )
+                    # Surface user_modified as bool for the client
+                    agent["user_modified"] = (agent.get("user_modified") or "").strip() == "true"
                 else:
                     agent["update_available"] = False
             return {"agents": rows, "count": len(rows)}
@@ -2620,49 +2620,6 @@ class DailyModule:
                 )
             return {"status": "reset", "agent": name}
 
-        @router.get("/agents/{name}/template")
-        async def get_agent_template(name: str):
-            """Return the latest builtin template for comparison with the user's agent."""
-            tpl = next((t for t in AGENT_TEMPLATES if t["name"] == name), None)
-            if tpl is None:
-                return {"is_builtin": False, "name": name}
-
-            graph = self._get_graph()
-            current_version = ""
-            user_modified = False
-            if graph:
-                rows = await graph.execute_cypher(
-                    "MATCH (a:Agent {name: $name}) "
-                    "RETURN a.template_version AS tv, a.user_modified AS um",
-                    {"name": name},
-                )
-                if rows:
-                    current_version = (rows[0].get("tv") or "").strip()
-                    user_modified = (rows[0].get("um") or "").strip() == "true"
-
-            tpl_version = tpl.get("template_version", "")
-            return {
-                "name": name,
-                "is_builtin": True,
-                "template_version": tpl_version,
-                "current_version": current_version,
-                "update_available": bool(
-                    tpl_version and current_version and current_version < tpl_version
-                ),
-                "user_modified": user_modified,
-                "template": {
-                    "display_name": tpl.get("display_name", ""),
-                    "description": tpl.get("description", ""),
-                    "system_prompt": tpl.get("system_prompt", ""),
-                    "tools": tpl.get("tools", []),
-                    "schedule_time": tpl.get("schedule_time", ""),
-                    "trust_level": tpl.get("trust_level", "sandboxed"),
-                    "trigger_event": tpl.get("trigger_event", ""),
-                    "trigger_filter": tpl.get("trigger_filter", "{}"),
-                    "memory_mode": tpl.get("memory_mode", "persistent"),
-                },
-            }
-
         @router.post("/agents/{name}/reset-to-template")
         async def reset_to_template(name: str):
             """Reset a builtin agent to the latest template defaults.
@@ -2681,16 +2638,17 @@ class DailyModule:
             if graph is None:
                 return JSONResponse(status_code=503, content={"error": "BrainDB not available"})
 
-            rows = await graph.execute_cypher(
-                "MATCH (a:Agent {name: $name}) RETURN a", {"name": name}
-            )
-            if not rows:
-                return JSONResponse(status_code=404, content={"error": "not found"})
-
             now = datetime.now(timezone.utc).isoformat()
             is_triggered = bool(tpl.get("trigger_event", ""))
 
+            # Check existence and write atomically under the lock to avoid TOCTOU
             async with graph.write_lock:
+                rows = await graph.execute_cypher(
+                    "MATCH (a:Agent {name: $name}) RETURN a", {"name": name}
+                )
+                if not rows:
+                    return JSONResponse(status_code=404, content={"error": "not found"})
+
                 await graph.execute_cypher(
                     "MATCH (a:Agent {name: $name}) "
                     "SET a.display_name = $display_name,"
@@ -2739,7 +2697,7 @@ class DailyModule:
                 )
             # Reload scheduler so deleted scheduled agents are removed
             try:
-                from parachute.core.scheduler import reload_scheduler, _graph
+                from parachute.core.scheduler import reload_scheduler
                 vault_path = Path(self.vault_path)
                 await reload_scheduler(vault_path, graph=graph)
             except Exception as e:

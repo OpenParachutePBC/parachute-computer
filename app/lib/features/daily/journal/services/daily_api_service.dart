@@ -528,7 +528,7 @@ class DailyApiService {
           triggerFilter: parseTriggerFilter(j['trigger_filter']),
           memoryMode: MemoryMode.fromString(j['memory_mode'] as String?),
           templateVersion: j['template_version'] as String?,
-          userModified:
+          userModified: j['user_modified'] == true ||
               j['user_modified']?.toString().toLowerCase() == 'true',
           updateAvailable: j['update_available'] == true,
           isBuiltin: j['is_builtin'] == true,
@@ -676,26 +676,6 @@ class DailyApiService {
     } catch (e) {
       debugPrint('[DailyApiService] resetAgent error: $e');
       return false;
-    }
-  }
-
-  /// Fetch the latest builtin template for comparison.
-  ///
-  /// Returns null on error or if the agent is not a builtin.
-  Future<Map<String, dynamic>?> fetchAgentTemplate(String name) async {
-    final uri = Uri.parse('$baseUrl/api/daily/agents/$name/template');
-    debugPrint('[DailyApiService] GET $uri');
-    try {
-      final response = await _client
-          .get(uri, headers: _headers)
-          .timeout(_timeout);
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        return null;
-      }
-      return jsonDecode(response.body) as Map<String, dynamic>;
-    } catch (e) {
-      debugPrint('[DailyApiService] fetchAgentTemplate error: $e');
-      return null;
     }
   }
 
