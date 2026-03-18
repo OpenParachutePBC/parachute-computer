@@ -135,14 +135,31 @@ class _AgentCard extends ConsumerWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        agent.displayName,
-                        style: theme.textTheme.titleSmall?.copyWith(
-                          fontWeight: FontWeight.w600,
-                          color: isDark
-                              ? BrandColors.softWhite
-                              : BrandColors.ink,
-                        ),
+                      Row(
+                        children: [
+                          Flexible(
+                            child: Text(
+                              agent.displayName,
+                              style: theme.textTheme.titleSmall?.copyWith(
+                                fontWeight: FontWeight.w600,
+                                color: isDark
+                                    ? BrandColors.softWhite
+                                    : BrandColors.ink,
+                              ),
+                            ),
+                          ),
+                          if (agent.updateAvailable) ...[
+                            SizedBox(width: Spacing.sm),
+                            Container(
+                              width: 8,
+                              height: 8,
+                              decoration: BoxDecoration(
+                                color: BrandColors.info,
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                          ],
+                        ],
                       ),
                       if (agent.description.isNotEmpty) ...[
                         const SizedBox(height: 2),

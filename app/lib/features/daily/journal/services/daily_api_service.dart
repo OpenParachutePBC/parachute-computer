@@ -527,6 +527,11 @@ class DailyApiService {
           triggerEvent: j['trigger_event'] as String? ?? '',
           triggerFilter: parseTriggerFilter(j['trigger_filter']),
           memoryMode: MemoryMode.fromString(j['memory_mode'] as String?),
+          templateVersion: j['template_version'] as String?,
+          userModified: j['user_modified'] == true ||
+              j['user_modified']?.toString().toLowerCase() == 'true',
+          updateAvailable: j['update_available'] == true,
+          isBuiltin: j['is_builtin'] == true,
         );
       }).toList();
     } catch (e) {
@@ -670,6 +675,23 @@ class DailyApiService {
       return response.statusCode >= 200 && response.statusCode < 300;
     } catch (e) {
       debugPrint('[DailyApiService] resetAgent error: $e');
+      return false;
+    }
+  }
+
+  /// Reset a builtin agent to its latest template defaults.
+  ///
+  /// Returns true on success.
+  Future<bool> resetAgentToTemplate(String name) async {
+    final uri = Uri.parse('$baseUrl/api/daily/agents/$name/reset-to-template');
+    debugPrint('[DailyApiService] POST $uri');
+    try {
+      final response = await _client
+          .post(uri, headers: _headers)
+          .timeout(_timeout);
+      return response.statusCode >= 200 && response.statusCode < 300;
+    } catch (e) {
+      debugPrint('[DailyApiService] resetAgentToTemplate error: $e');
       return false;
     }
   }

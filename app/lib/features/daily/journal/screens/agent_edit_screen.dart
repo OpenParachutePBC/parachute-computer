@@ -204,6 +204,38 @@ class _AgentEditScreenState extends ConsumerState<AgentEditScreen> {
             vertical: Spacing.md,
           ),
           children: [
+            // ── Builtin notice ────────────────────────────────────────
+            if (widget.isEditing && widget.agent!.isBuiltin) ...[
+              Container(
+                padding: EdgeInsets.all(Spacing.md),
+                decoration: BoxDecoration(
+                  color: isDark
+                      ? BrandColors.info.withValues(alpha: 0.1)
+                      : BrandColors.info.withValues(alpha: 0.08),
+                  borderRadius: Radii.card,
+                  border: Border.all(
+                    color: BrandColors.info.withValues(alpha: 0.25),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.info_outline, size: 18, color: BrandColors.info),
+                    SizedBox(width: Spacing.sm),
+                    Expanded(
+                      child: Text(
+                        'Saving changes will mark this as customized. '
+                        'You can reset to the default later.',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: BrandColors.info,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              SizedBox(height: Spacing.lg),
+            ],
+
             // ── Name & Description ────────────────────────────────────
             Text(
               'Identity',

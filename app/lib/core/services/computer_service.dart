@@ -326,6 +326,19 @@ class DailyAgentInfo {
   /// How this Agent handles conversation state across runs.
   final MemoryMode memoryMode;
 
+  /// Template version this agent was seeded/updated from (ISO date string).
+  /// Null for user-created agents.
+  final String? templateVersion;
+
+  /// Whether the user has edited this builtin agent's config.
+  final bool userModified;
+
+  /// Whether a newer template version is available on the server.
+  final bool updateAvailable;
+
+  /// Whether this agent is a builtin that ships with Parachute.
+  final bool isBuiltin;
+
   DailyAgentInfo({
     required this.name,
     required this.displayName,
@@ -341,6 +354,10 @@ class DailyAgentInfo {
     this.triggerEvent = '',
     this.triggerFilter,
     this.memoryMode = MemoryMode.persistent,
+    this.templateVersion,
+    this.userModified = false,
+    this.updateAvailable = false,
+    this.isBuiltin = false,
   });
 
   /// Whether this Agent is event-driven (triggered) rather than scheduled.

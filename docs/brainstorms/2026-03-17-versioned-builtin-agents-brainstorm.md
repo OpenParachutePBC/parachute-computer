@@ -75,6 +75,17 @@ The boolean flag treats all edits equally — toggling schedule_enabled counts t
 - **Non-builtin (user-created) agents**: Completely unaffected. No `template_version` field.
 - **Re-adopting after customizing**: That's what reset-to-template does. After reset, `user_modified` goes back to `"false"` and future template updates apply automatically.
 - **Template removes a tool**: The agent's tools list gets updated on reset. Existing runs with the old tool are unaffected (AgentRun history is preserved).
+- **Deleting a builtin agent**: Re-seeded on next startup. User should be informed of this.
+- **Deleting an agent mid-run**: Current run completes (holds its own references), but no new runs will be scheduled/triggered.
+
+## Agent Deletion (UI Gap)
+
+Currently there's no way to delete agents from the Flutter UI. The `DELETE /agents/{name}` endpoint exists on the backend, but nothing in the app exposes it.
+
+- **Delete action** in agent detail sheet or edit screen (button or menu item)
+- **Confirmation dialog** — explain what happens, note that run history is preserved
+- **Builtin vs user-created distinction**: Deleting a builtin should warn it'll be re-created on next restart (or offer "disable" as alternative). Deleting a user-created agent is permanent.
+- **Backend**: Existing DELETE removes the Agent node. AgentRun nodes are orphaned by design (historical records). Should also clean up scheduled jobs.
 
 ## Open Questions
 
