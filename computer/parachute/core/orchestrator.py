@@ -1349,15 +1349,6 @@ class Orchestrator:
                         f"Failed to finalize sandbox session {ctx.sandbox_sid[:8]}: {e}"
                     )
 
-            # Write synthetic transcript (fallback for host-side session search/list)
-            if ctx.sbx["had_content"]:
-                self.session_manager.write_sandbox_transcript(
-                    ctx.sandbox_sid,
-                    ctx.sbx["message"],
-                    ctx.sbx["content_blocks"],
-                    working_directory=ctx.effective_working_dir,
-                )
-
         if event_type == "done":
             # Build a proper DoneEvent instead of passing through the bare dict
             result_parts = [
@@ -2085,7 +2076,8 @@ The user is now continuing this conversation with you. Respond naturally as if y
         """
         Get the SDK transcript for a session with optional segmentation.
 
-        Reads the JSONL file from ~/.claude/projects/ to get rich event history.
+        For sandboxed sessions, reads from the container's bind-mounted JSONL
+        first (the authoritative source).  Falls back to ~/.claude/projects/.
 
         Args:
             session_id: The session ID
@@ -2097,37 +2089,23 @@ The user is now continuing this conversation with you. Respond naturally as if y
             Dictionary with events and optional segment metadata
         """
         import json
-        from pathlib import Path
 
-        # Look for SDK session file in two locations:
-        # 1. ~/.claude/projects/ - primary location (real home)
-        # 2. {vault}/.claude/projects/ - legacy from HOME override era
-
+        # Resolve transcript path via the shared helper (container → host → fallback)
         session_file = None
+        try:
+            session = await self.session_manager.db.get_session(session_id)
+            if session:
+                session_file = self.session_manager.find_transcript_path(
+                    session_id,
+                    working_directory=session.working_directory,
+                    container_id=session.container_id,
+                )
+        except Exception:
+            pass
 
-        # Search in ~/.claude (primary location)
-        home_projects_dir = Path.home() / ".claude" / "projects"
-        if home_projects_dir.exists():
-            for project_dir in home_projects_dir.iterdir():
-                if project_dir.is_dir():
-                    candidate = project_dir / f"{session_id}.jsonl"
-                    if candidate.exists():
-                        session_file = candidate
-                        break
-
-        # Fallback: search in ~/Parachute/.claude (legacy vault HOME override era)
+        # Fallback: try without session metadata (e.g. orphaned transcripts)
         if not session_file:
-            legacy_projects_dir = Path.home() / "Parachute" / ".claude" / "projects"
-            if legacy_projects_dir.exists():
-                for project_dir in legacy_projects_dir.iterdir():
-                    if project_dir.is_dir():
-                        candidate = project_dir / f"{session_id}.jsonl"
-                        if candidate.exists():
-                            session_file = candidate
-                            logger.debug(
-                                f"Found transcript in legacy vault location: {candidate}"
-                            )
-                            break
+            session_file = self.session_manager.find_transcript_path(session_id)
 
         if not session_file:
             return None

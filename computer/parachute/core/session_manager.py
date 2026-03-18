@@ -481,6 +481,41 @@ class SessionManager:
 
         return claude_dir / f"{session_id}.jsonl"
 
+    def get_container_transcript_path(
+        self, container_id: str, session_id: str
+    ) -> Optional[Path]:
+        """Find the SDK JSONL transcript inside a sandbox container's bind-mounted home.
+
+        Container home dirs are at:
+            {parachute_dir}/sandbox/envs/{container_id}/home/
+
+        The SDK inside the container writes transcripts to:
+            /home/sandbox/.claude/projects/{encoded_cwd}/{session_id}.jsonl
+
+        The encoded CWD varies (e.g. ``-home-sandbox``, ``-workspace``), so we
+        search all project subdirectories for the session file.
+
+        Returns:
+            Path to the JSONL file, or None if not found.
+        """
+        container_home = (
+            self.parachute_dir / "sandbox" / "envs" / container_id / "home"
+        )
+        projects_dir = container_home / ".claude" / "projects"
+        if not projects_dir.exists():
+            return None
+
+        filename = f"{session_id}.jsonl"
+        try:
+            for project_dir in projects_dir.iterdir():
+                if project_dir.is_dir():
+                    candidate = project_dir / filename
+                    if candidate.exists():
+                        return candidate
+        except OSError as e:
+            logger.warning("Could not search container projects dir %s: %s", projects_dir, e)
+        return None
+
     def _find_sdk_transcript(self, session_id: str) -> Optional[Path]:
         """
         Search all SDK project directories for a transcript file.
@@ -526,10 +561,42 @@ class SessionManager:
 
         return None
 
+    def find_transcript_path(
+        self,
+        session_id: str,
+        working_directory: Optional[str] = None,
+        container_id: Optional[str] = None,
+    ) -> Optional[Path]:
+        """Resolve the JSONL transcript path for a session.
+
+        Three-step search:
+        1. Container bind-mount (if ``container_id`` given) — authoritative for
+           sandboxed sessions, written incrementally by the SDK.
+        2. Host-side ``~/.claude/projects/`` — direct/vault sessions.
+        3. Broad search across all SDK project directories — fallback.
+
+        Returns:
+            Path to an existing JSONL file, or None.
+        """
+        # 1. Container bind-mounted JSONL (sandboxed sessions)
+        if container_id:
+            path = self.get_container_transcript_path(container_id, session_id)
+            if path and path.exists():
+                return path
+
+        # 2. Host-side transcript (direct/vault sessions)
+        path = self.get_sdk_transcript_path(session_id, working_directory)
+        if path and path.exists():
+            return path
+
+        # 3. Broad search across all SDK project directories
+        return self._find_sdk_transcript(session_id)
+
     async def load_sdk_messages_by_id(
         self,
         session_id: str,
         working_directory: Optional[str] = None,
+        container_id: Optional[str] = None,
     ) -> list[dict[str, Any]]:
         """
         Load messages from SDK JSONL file by session ID.
@@ -545,16 +612,15 @@ class SessionManager:
         Args:
             session_id: The SDK session UUID
             working_directory: Optional working directory for path resolution
+            container_id: Optional container slug — if provided, the container's
+                bind-mounted JSONL is checked first (sandboxed sessions).
 
         Returns:
             List of message dicts with role, content (str or list[dict]), timestamp
         """
-        transcript_path = self.get_sdk_transcript_path(session_id, working_directory)
-
-        # If not found at the expected path, search all SDK project directories
-        if not transcript_path or not transcript_path.exists():
-            transcript_path = self._find_sdk_transcript(session_id)
-
+        transcript_path = self.find_transcript_path(
+            session_id, working_directory, container_id
+        )
         if not transcript_path or not transcript_path.exists():
             return []
 
@@ -609,56 +675,6 @@ class SessionManager:
             logger.error(f"Error loading SDK transcript: {e}")
 
         return messages
-
-    def write_sandbox_transcript(
-        self,
-        session_id: str,
-        user_message: str,
-        content_blocks: list[dict[str, Any]],
-        working_directory: Optional[str] = None,
-    ) -> None:
-        """Write a synthetic JSONL transcript for a sandbox session.
-
-        Docker container transcripts are lost when the container exits.
-        This writes a structured transcript to the host filesystem so messages
-        persist across app restarts and session reloads — including thinking
-        blocks, tool calls, and tool results.
-
-        Args:
-            session_id: The SDK session ID
-            user_message: The user's message text
-            content_blocks: Structured content blocks (thinking, tool_use, tool_result, text)
-            working_directory: Optional working directory for path resolution
-        """
-        transcript_path = self.get_sdk_transcript_path(session_id, working_directory)
-        if not transcript_path:
-            logger.warning(f"Could not compute transcript path for sandbox session {session_id[:8]}")
-            return
-
-        try:
-            transcript_path.parent.mkdir(parents=True, exist_ok=True)
-
-            now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-
-            # Extract text-only content for the result event (SDK resume compat)
-            text_only = " ".join(
-                b.get("text", "") for b in content_blocks if b.get("type") == "text"
-            ).strip()
-
-            events = [
-                {"type": "user", "message": {"role": "user", "content": user_message}, "timestamp": now},
-                {"type": "assistant", "message": {"role": "assistant", "content": content_blocks}, "timestamp": now},
-                {"type": "result", "result": text_only, "session_id": session_id, "timestamp": now},
-            ]
-
-            # Append to existing transcript (supports multi-turn sandbox sessions)
-            with open(transcript_path, "a", encoding="utf-8") as f:
-                for event in events:
-                    f.write(json.dumps(event) + "\n")
-
-            logger.info(f"Wrote sandbox transcript for session {session_id[:8]} at {transcript_path}")
-        except Exception as e:
-            logger.error(f"Failed to write sandbox transcript: {e}")
 
     def write_sdk_transcript(
         self,
@@ -769,11 +785,15 @@ class SessionManager:
     async def _load_sdk_messages(self, session: Session) -> list[dict[str, Any]]:
         """Load messages from SDK JSONL file for a Session object.
 
+        For sandboxed sessions with a ``container_id``, the container's
+        bind-mounted JSONL is checked first (written incrementally by the SDK,
+        survives stream interruptions).  Falls back to host-side transcripts.
+
         Delegates to :meth:`load_sdk_messages_by_id` — see that method for
         full documentation on the returned format.
         """
         return await self.load_sdk_messages_by_id(
-            session.id, session.working_directory
+            session.id, session.working_directory, container_id=session.container_id
         )
 
     def _extract_message_blocks(self, message: dict[str, Any]) -> list[dict[str, Any]]:
