@@ -506,11 +506,14 @@ class SessionManager:
             return None
 
         filename = f"{session_id}.jsonl"
-        for project_dir in projects_dir.iterdir():
-            if project_dir.is_dir():
-                candidate = project_dir / filename
-                if candidate.exists():
-                    return candidate
+        try:
+            for project_dir in projects_dir.iterdir():
+                if project_dir.is_dir():
+                    candidate = project_dir / filename
+                    if candidate.exists():
+                        return candidate
+        except OSError as e:
+            logger.warning("Could not search container projects dir %s: %s", projects_dir, e)
         return None
 
     def _find_sdk_transcript(self, session_id: str) -> Optional[Path]:
@@ -558,6 +561,37 @@ class SessionManager:
 
         return None
 
+    def find_transcript_path(
+        self,
+        session_id: str,
+        working_directory: Optional[str] = None,
+        container_id: Optional[str] = None,
+    ) -> Optional[Path]:
+        """Resolve the JSONL transcript path for a session.
+
+        Three-step search:
+        1. Container bind-mount (if ``container_id`` given) — authoritative for
+           sandboxed sessions, written incrementally by the SDK.
+        2. Host-side ``~/.claude/projects/`` — direct/vault sessions.
+        3. Broad search across all SDK project directories — fallback.
+
+        Returns:
+            Path to an existing JSONL file, or None.
+        """
+        # 1. Container bind-mounted JSONL (sandboxed sessions)
+        if container_id:
+            path = self.get_container_transcript_path(container_id, session_id)
+            if path and path.exists():
+                return path
+
+        # 2. Host-side transcript (direct/vault sessions)
+        path = self.get_sdk_transcript_path(session_id, working_directory)
+        if path and path.exists():
+            return path
+
+        # 3. Broad search across all SDK project directories
+        return self._find_sdk_transcript(session_id)
+
     async def load_sdk_messages_by_id(
         self,
         session_id: str,
@@ -584,20 +618,9 @@ class SessionManager:
         Returns:
             List of message dicts with role, content (str or list[dict]), timestamp
         """
-        # For sandboxed sessions, prefer the container's own JSONL (written
-        # incrementally by the SDK, survives stream interruptions).  (#287)
-        transcript_path: Optional[Path] = None
-        if container_id:
-            transcript_path = self.get_container_transcript_path(container_id, session_id)
-
-        # Fall back to the host-side transcript path (direct/vault sessions)
-        if not transcript_path or not transcript_path.exists():
-            transcript_path = self.get_sdk_transcript_path(session_id, working_directory)
-
-        # Last resort: search all SDK project directories
-        if not transcript_path or not transcript_path.exists():
-            transcript_path = self._find_sdk_transcript(session_id)
-
+        transcript_path = self.find_transcript_path(
+            session_id, working_directory, container_id
+        )
         if not transcript_path or not transcript_path.exists():
             return []
 

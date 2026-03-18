@@ -2089,47 +2089,23 @@ The user is now continuing this conversation with you. Respond naturally as if y
             Dictionary with events and optional segment metadata
         """
         import json
-        from pathlib import Path
 
+        # Resolve transcript path via the shared helper (container → host → fallback)
         session_file = None
-
-        # 1. For sandboxed sessions, check the container's bind-mounted JSONL
-        #    first — it's the authoritative source, written incrementally.  (#287)
         try:
             session = await self.session_manager.db.get_session(session_id)
-            if session and session.container_id:
-                container_path = self.session_manager.get_container_transcript_path(
-                    session.container_id, session_id
+            if session:
+                session_file = self.session_manager.find_transcript_path(
+                    session_id,
+                    working_directory=session.working_directory,
+                    container_id=session.container_id,
                 )
-                if container_path and container_path.exists():
-                    session_file = container_path
         except Exception:
-            pass  # Fall through to host-side search
+            pass
 
-        # 2. Search in ~/.claude (primary location for direct sessions)
+        # Fallback: try without session metadata (e.g. orphaned transcripts)
         if not session_file:
-            home_projects_dir = Path.home() / ".claude" / "projects"
-            if home_projects_dir.exists():
-                for project_dir in home_projects_dir.iterdir():
-                    if project_dir.is_dir():
-                        candidate = project_dir / f"{session_id}.jsonl"
-                        if candidate.exists():
-                            session_file = candidate
-                            break
-
-        # 3. Fallback: search in ~/Parachute/.claude (legacy vault HOME override era)
-        if not session_file:
-            legacy_projects_dir = Path.home() / "Parachute" / ".claude" / "projects"
-            if legacy_projects_dir.exists():
-                for project_dir in legacy_projects_dir.iterdir():
-                    if project_dir.is_dir():
-                        candidate = project_dir / f"{session_id}.jsonl"
-                        if candidate.exists():
-                            session_file = candidate
-                            logger.debug(
-                                f"Found transcript in legacy vault location: {candidate}"
-                            )
-                            break
+            session_file = self.session_manager.find_transcript_path(session_id)
 
         if not session_file:
             return None
