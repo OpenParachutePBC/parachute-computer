@@ -1349,15 +1349,6 @@ class Orchestrator:
                         f"Failed to finalize sandbox session {ctx.sandbox_sid[:8]}: {e}"
                     )
 
-            # Write synthetic transcript (fallback for host-side session search/list)
-            if ctx.sbx["had_content"]:
-                self.session_manager.write_sandbox_transcript(
-                    ctx.sandbox_sid,
-                    ctx.sbx["message"],
-                    ctx.sbx["content_blocks"],
-                    working_directory=ctx.effective_working_dir,
-                )
-
         if event_type == "done":
             # Build a proper DoneEvent instead of passing through the bare dict
             result_parts = [
@@ -2085,7 +2076,8 @@ The user is now continuing this conversation with you. Respond naturally as if y
         """
         Get the SDK transcript for a session with optional segmentation.
 
-        Reads the JSONL file from ~/.claude/projects/ to get rich event history.
+        For sandboxed sessions, reads from the container's bind-mounted JSONL
+        first (the authoritative source).  Falls back to ~/.claude/projects/.
 
         Args:
             session_id: The session ID
@@ -2099,23 +2091,33 @@ The user is now continuing this conversation with you. Respond naturally as if y
         import json
         from pathlib import Path
 
-        # Look for SDK session file in two locations:
-        # 1. ~/.claude/projects/ - primary location (real home)
-        # 2. {vault}/.claude/projects/ - legacy from HOME override era
-
         session_file = None
 
-        # Search in ~/.claude (primary location)
-        home_projects_dir = Path.home() / ".claude" / "projects"
-        if home_projects_dir.exists():
-            for project_dir in home_projects_dir.iterdir():
-                if project_dir.is_dir():
-                    candidate = project_dir / f"{session_id}.jsonl"
-                    if candidate.exists():
-                        session_file = candidate
-                        break
+        # 1. For sandboxed sessions, check the container's bind-mounted JSONL
+        #    first — it's the authoritative source, written incrementally.  (#287)
+        try:
+            session = await self.session_manager.db.get_session(session_id)
+            if session and session.container_id:
+                container_path = self.session_manager.get_container_transcript_path(
+                    session.container_id, session_id
+                )
+                if container_path and container_path.exists():
+                    session_file = container_path
+        except Exception:
+            pass  # Fall through to host-side search
 
-        # Fallback: search in ~/Parachute/.claude (legacy vault HOME override era)
+        # 2. Search in ~/.claude (primary location for direct sessions)
+        if not session_file:
+            home_projects_dir = Path.home() / ".claude" / "projects"
+            if home_projects_dir.exists():
+                for project_dir in home_projects_dir.iterdir():
+                    if project_dir.is_dir():
+                        candidate = project_dir / f"{session_id}.jsonl"
+                        if candidate.exists():
+                            session_file = candidate
+                            break
+
+        # 3. Fallback: search in ~/Parachute/.claude (legacy vault HOME override era)
         if not session_file:
             legacy_projects_dir = Path.home() / "Parachute" / ".claude" / "projects"
             if legacy_projects_dir.exists():

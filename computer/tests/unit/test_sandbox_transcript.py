@@ -1,8 +1,10 @@
-"""Tests for sandbox transcript writing and loading (structured content blocks).
+"""Tests for sandbox transcript loading from container JSONL and structured content blocks.
 
-Covers the round-trip: write_sandbox_transcript → _load_sdk_messages,
-ensuring thinking, tool_use, tool_result, and text blocks survive persistence.
-Also tests backward compatibility with old plain-text transcripts.
+Covers:
+- Loading messages from container bind-mounted JSONL (get_container_transcript_path)
+- Fallback to host-side transcripts for legacy sessions
+- _extract_message_blocks and _extract_message_content
+- Backward compatibility with old plain-text transcripts
 """
 
 import json
@@ -34,15 +36,39 @@ def session_manager(tmp_session_dir: Path) -> SessionManager:
     return mgr
 
 
-def _make_session(session_id: str = "test-session-001", wd: str | None = None) -> Session:
+def _make_session(
+    session_id: str = "test-session-001",
+    wd: str | None = None,
+    container_id: str | None = None,
+) -> Session:
     return Session(
         id=session_id,
         module="chat",
         source=SessionSource.PARACHUTE,
         working_directory=wd,
+        container_id=container_id,
         created_at=datetime.now(timezone.utc),
         last_accessed=datetime.now(timezone.utc),
     )
+
+
+def _write_container_jsonl(
+    parachute_dir: Path,
+    container_id: str,
+    session_id: str,
+    events: list[dict],
+    encoded_cwd: str = "-home-sandbox",
+) -> Path:
+    """Write JSONL events into a fake container bind-mount directory."""
+    projects_dir = (
+        parachute_dir / "sandbox" / "envs" / container_id / "home" / ".claude" / "projects" / encoded_cwd
+    )
+    projects_dir.mkdir(parents=True, exist_ok=True)
+    jsonl_path = projects_dir / f"{session_id}.jsonl"
+    with open(jsonl_path, "w") as f:
+        for ev in events:
+            f.write(json.dumps(ev) + "\n")
+    return jsonl_path
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -163,109 +189,140 @@ class TestExtractMessageContentBackcompat:
 
 
 # ──────────────────────────────────────────────────────────────────────
-# Round-trip: write_sandbox_transcript → _load_sdk_messages
+# Container JSONL loading (replaces synthetic mirror round-trip tests)
 # ──────────────────────────────────────────────────────────────────────
 
-class TestSandboxTranscriptRoundTrip:
-    """Structured content survives write → load."""
+class TestContainerTranscriptPath:
+    """get_container_transcript_path finds JSONL in bind-mounted home dirs."""
 
-    async def _write_and_load(self, session_manager, session, user_msg, content_blocks):
-        """Helper: write transcript then load messages."""
-        session_manager.write_sandbox_transcript(
-            session.id,
-            user_msg,
-            content_blocks,
-            working_directory=session.working_directory,
+    def test_finds_transcript(self, session_manager, tmp_session_dir):
+        """Finds JSONL in the container's .claude/projects/ directory."""
+        _write_container_jsonl(
+            tmp_session_dir, "abc123", "sess-001",
+            [{"type": "user", "message": {"role": "user", "content": "hi"}}],
         )
-        return await session_manager._load_sdk_messages(session)
+        path = session_manager.get_container_transcript_path("abc123", "sess-001")
+        assert path is not None
+        assert path.exists()
+        assert "abc123" in str(path)
 
-    async def test_text_only(self, session_manager, tmp_session_dir):
-        session = _make_session(wd=str(tmp_session_dir))
-        blocks = [{"type": "text", "text": "Hello!"}]
-        messages = await self._write_and_load(session_manager, session, "hi", blocks)
+    def test_returns_none_for_missing(self, session_manager):
+        """Returns None when container env doesn't exist."""
+        path = session_manager.get_container_transcript_path("nonexistent", "sess-001")
+        assert path is None
+
+    def test_finds_different_encoded_cwd(self, session_manager, tmp_session_dir):
+        """Works regardless of encoded CWD name (e.g. -workspace vs -home-sandbox)."""
+        _write_container_jsonl(
+            tmp_session_dir, "abc123", "sess-002",
+            [{"type": "user", "message": {"role": "user", "content": "hi"}}],
+            encoded_cwd="-workspace",
+        )
+        path = session_manager.get_container_transcript_path("abc123", "sess-002")
+        assert path is not None
+        assert "-workspace" in str(path)
+
+
+class TestContainerMessageLoading:
+    """Messages load from container JSONL when container_id is set."""
+
+    async def test_loads_from_container(self, session_manager, tmp_session_dir):
+        """Sandboxed session loads messages from container bind-mount."""
+        now = "2026-03-18T00:00:00Z"
+        events = [
+            {"type": "user", "message": {"role": "user", "content": "hello"}, "timestamp": now},
+            {"type": "assistant", "message": {"role": "assistant", "content": [
+                {"type": "text", "text": "Hi there!"}
+            ]}, "timestamp": now},
+            {"type": "result", "result": "Hi there!", "session_id": "sess-001", "timestamp": now},
+        ]
+        _write_container_jsonl(tmp_session_dir, "container-abc", "sess-001", events)
+
+        session = _make_session(
+            session_id="sess-001",
+            wd=str(tmp_session_dir),
+            container_id="container-abc",
+        )
+        messages = await session_manager._load_sdk_messages(session)
 
         assert len(messages) == 2  # user + assistant (result deduped)
         assert messages[0]["role"] == "user"
-        assert messages[0]["content"] == "hi"
+        assert messages[0]["content"] == "hello"
         assert messages[1]["role"] == "assistant"
-        assert messages[1]["content"] == [{"type": "text", "text": "Hello!"}]
+        assert messages[1]["content"] == [{"type": "text", "text": "Hi there!"}]
 
-    async def test_thinking_and_text(self, session_manager, tmp_session_dir):
-        session = _make_session(wd=str(tmp_session_dir))
-        blocks = [
-            {"type": "thinking", "text": "Let me think..."},
-            {"type": "text", "text": "Here's my answer"},
+    async def test_structured_content_from_container(self, session_manager, tmp_session_dir):
+        """Thinking, tool_use, tool_result, and text blocks load correctly."""
+        now = "2026-03-18T00:00:00Z"
+        events = [
+            {"type": "user", "message": {"role": "user", "content": "list files"}, "timestamp": now},
+            {"type": "assistant", "message": {"role": "assistant", "content": [
+                {"type": "thinking", "text": "Analyzing request..."},
+                {"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "ls"}},
+                {"type": "tool_result", "toolUseId": "t1", "content": "file.txt", "isError": False},
+                {"type": "text", "text": "Found file.txt"},
+            ]}, "timestamp": now},
+            {"type": "result", "result": "Found file.txt", "session_id": "sess-002", "timestamp": now},
         ]
-        messages = await self._write_and_load(session_manager, session, "question?", blocks)
+        _write_container_jsonl(tmp_session_dir, "container-xyz", "sess-002", events)
 
-        assistant = messages[1]
-        assert assistant["role"] == "assistant"
-        content = assistant["content"]
-        assert len(content) == 2
-        assert content[0]["type"] == "thinking"
-        assert content[0]["text"] == "Let me think..."
-        assert content[1]["type"] == "text"
-
-    async def test_full_structured_content(self, session_manager, tmp_session_dir):
-        session = _make_session(wd=str(tmp_session_dir))
-        blocks = [
-            {"type": "thinking", "text": "Analyzing request..."},
-            {"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "ls"}},
-            {"type": "tool_result", "toolUseId": "t1", "content": "file.txt", "isError": False},
-            {"type": "text", "text": "Found file.txt"},
-        ]
-        messages = await self._write_and_load(session_manager, session, "list files", blocks)
+        session = _make_session(session_id="sess-002", container_id="container-xyz")
+        messages = await session_manager._load_sdk_messages(session)
 
         assistant = messages[1]
         content = assistant["content"]
-        # tool_result merged into tool_use → 3 blocks, not 4
-        assert len(content) == 3
+        assert len(content) == 3  # thinking, tool_use(+result merged), text
         types = [b["type"] for b in content]
         assert types == ["thinking", "tool_use", "text"]
-        assert content[1]["name"] == "Bash"
         assert content[1]["result"] == "file.txt"
-        assert content[1]["isError"] is False
 
-    async def test_multi_turn(self, session_manager, tmp_session_dir):
-        """Multiple write calls append correctly."""
+    async def test_falls_back_to_host_when_no_container(self, session_manager, tmp_session_dir):
+        """Sessions without container_id fall back to host-side transcript."""
         session = _make_session(wd=str(tmp_session_dir))
+        transcript_path = session_manager.get_sdk_transcript_path(session.id, session.working_directory)
+        transcript_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Turn 1
-        session_manager.write_sandbox_transcript(
-            session.id, "hello",
-            [{"type": "text", "text": "Hi there!"}],
-            working_directory=session.working_directory,
-        )
-        # Turn 2
-        session_manager.write_sandbox_transcript(
-            session.id, "how are you?",
-            [{"type": "thinking", "text": "reflecting..."}, {"type": "text", "text": "I'm good!"}],
-            working_directory=session.working_directory,
-        )
+        now = "2026-03-18T00:00:00Z"
+        events = [
+            {"type": "user", "message": {"role": "user", "content": "hello"}, "timestamp": now},
+            {"type": "assistant", "message": {"role": "assistant", "content": [
+                {"type": "text", "text": "Hi!"}
+            ]}, "timestamp": now},
+            {"type": "result", "result": "Hi!", "session_id": session.id, "timestamp": now},
+        ]
+        with open(transcript_path, "w") as f:
+            for ev in events:
+                f.write(json.dumps(ev) + "\n")
 
         messages = await session_manager._load_sdk_messages(session)
-        assert len(messages) == 4  # user1, asst1, user2, asst2
-        # Second assistant message has thinking block
-        assert messages[3]["content"][0]["type"] == "thinking"
+        assert len(messages) == 2
+        assert messages[1]["content"] == [{"type": "text", "text": "Hi!"}]
 
-    async def test_tool_result_list_content_round_trip(self, session_manager, tmp_session_dir):
-        """tool_result with list content survives write → load → merge."""
-        session = _make_session(wd=str(tmp_session_dir))
-        blocks = [
-            {"type": "tool_use", "id": "t1", "name": "Read", "input": {"path": "/tmp/f"}},
-            {"type": "tool_result", "toolUseId": "t1", "content": [
-                {"type": "text", "text": "first line"},
-                {"type": "text", "text": "second line"},
-            ], "isError": False},
-            {"type": "text", "text": "Done reading"},
-        ]
-        messages = await self._write_and_load(session_manager, session, "read it", blocks)
+    async def test_container_preferred_over_host(self, session_manager, tmp_session_dir):
+        """When both container and host transcripts exist, container wins."""
+        session_id = "sess-dual"
+        container_id = "container-dual"
 
-        assistant = messages[1]
-        content = assistant["content"]
-        assert len(content) == 2  # tool_use(+result), text
-        assert content[0]["type"] == "tool_use"
-        assert content[0]["result"] == "first line\nsecond line"
+        # Write container transcript (newer, correct)
+        now = "2026-03-18T00:00:00Z"
+        _write_container_jsonl(tmp_session_dir, container_id, session_id, [
+            {"type": "user", "message": {"role": "user", "content": "hello"}, "timestamp": now},
+            {"type": "assistant", "message": {"role": "assistant", "content": [
+                {"type": "text", "text": "Container response"}
+            ]}, "timestamp": now},
+        ])
+
+        # Write host transcript (stale/incomplete)
+        host_path = session_manager.get_sdk_transcript_path(session_id, str(tmp_session_dir))
+        host_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(host_path, "w") as f:
+            f.write(json.dumps({"type": "user", "message": {"role": "user", "content": "hello"}, "timestamp": now}) + "\n")
+            f.write(json.dumps({"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "Host response (stale)"}]}, "timestamp": now}) + "\n")
+
+        session = _make_session(session_id=session_id, wd=str(tmp_session_dir), container_id=container_id)
+        messages = await session_manager._load_sdk_messages(session)
+
+        assert messages[1]["content"] == [{"type": "text", "text": "Container response"}]
 
 
 # ──────────────────────────────────────────────────────────────────────
