@@ -6,6 +6,7 @@ The broker is the single entry point for all credential operations:
   2. Checks per-project grants before minting
   3. Dispatches mint requests to the right provider
   4. Collects scripts from all providers for tools volume deployment
+  5. Exposes helper manifests to the app UI
 """
 
 import logging
@@ -19,6 +20,9 @@ from parachute.lib.credentials.base import (
 )
 
 logger = logging.getLogger(__name__)
+
+# GitHub config types that route to GitHubHelper
+_GITHUB_TYPES = {"github-app", "personal-token"}
 
 
 class CredentialBroker:
@@ -50,6 +54,10 @@ class CredentialBroker:
     def provider_names(self) -> list[str]:
         """List all registered provider names."""
         return list(self._providers.keys())
+
+    def providers(self) -> list[CredentialProvider]:
+        """Iterate over all registered providers."""
+        return list(self._providers.values())
 
     async def mint_token(
         self,
@@ -101,15 +109,47 @@ class CredentialBroker:
             scripts.update(provider.get_scripts())
         return scripts
 
+    def get_all_env_vars(self) -> list[str]:
+        """Collect env var lines from all providers for sandbox injection.
+
+        Returns list of KEY=VALUE strings. Replaces the old isinstance-based
+        _build_credential_env_vars() approach in sandbox.py.
+        """
+        env_lines: list[str] = []
+        for provider in self._providers.values():
+            if hasattr(provider, "get_env_vars"):
+                env_lines.extend(provider.get_env_vars())
+        return env_lines
+
     def get_status(self) -> dict:
         """Return status of all registered providers."""
+        status: dict[str, dict] = {}
+        for name, p in self._providers.items():
+            info: dict[str, Any] = {"type": p.provider_type}
+            # Include active method if the provider has one
+            if hasattr(p, "active_method"):
+                info["method"] = p.active_method
+            status[name] = info
+
         return {
-            "providers": {
-                name: {"type": p.provider_type}
-                for name, p in self._providers.items()
-            },
+            "providers": status,
             "configured": bool(self._providers),
         }
+
+    def get_manifests(self) -> dict[str, dict]:
+        """Return manifest JSON for all registered providers.
+
+        Used by GET /api/credentials/helpers for the app UI.
+        """
+        manifests: dict[str, dict] = {}
+        for name, p in self._providers.items():
+            if hasattr(p, "manifest"):
+                manifest_dict = p.manifest.to_dict()
+                manifest_dict["configured"] = True
+                if hasattr(p, "active_method"):
+                    manifest_dict["active_method"] = p.active_method
+                manifests[name] = manifest_dict
+        return manifests
 
     @classmethod
     def from_config(
@@ -122,7 +162,7 @@ class CredentialBroker:
         Config format:
             credential_providers:
               github:
-                type: github-app
+                type: github-app           # or personal-token
                 app_id: 3051015
                 installations:
                   unforced: 115215642
@@ -135,12 +175,13 @@ class CredentialBroker:
         for name, config in credential_providers.items():
             provider_type = config.get("type", "")
 
-            if provider_type == "github-app":
-                from parachute.lib.credentials.github_provider import (
-                    GitHubProvider,
+            if provider_type in _GITHUB_TYPES:
+                # New unified GitHubHelper handles both PAT and App
+                from parachute.lib.credentials.helpers.github import (
+                    GitHubHelper,
                 )
 
-                provider = GitHubProvider.from_config(config, parachute_dir)
+                provider = GitHubHelper.from_config(config, parachute_dir)
                 if provider:
                     broker.register(provider)
                 else:

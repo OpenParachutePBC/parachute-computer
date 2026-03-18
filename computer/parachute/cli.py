@@ -1033,12 +1033,17 @@ def cmd_setup(args: argparse.Namespace) -> None:
     else:
         print("Usage: parachute setup <provider>")
         print("\nAvailable providers:")
-        print("  github      — GitHub App for git push, gh CLI, PRs")
+        print("  github      — GitHub access for git push, gh CLI, PRs")
         print("  cloudflare  — Cloudflare API tokens for wrangler, Workers")
 
 
 def _setup_github() -> None:
-    """Interactive setup for GitHub App credential provider."""
+    """Interactive setup for GitHub credential provider.
+
+    Offers two methods:
+    - Personal Access Token (recommended, simple, works across all orgs)
+    - GitHub App (advanced, per-org scoped tokens)
+    """
     import secrets
 
     parachute_dir = _get_parachute_dir()
@@ -1047,23 +1052,137 @@ def _setup_github() -> None:
     pem_path = parachute_dir / "github-app.pem"
 
     print("=" * 60)
-    print("  GitHub App Credential Provider Setup")
+    print("  GitHub Credential Setup")
     print("=" * 60)
     print()
 
     # Check existing configuration
     existing = providers.get("github", {})
-    existing_app_id = existing.get("app_id") or config.get("github_app_id")
-    if existing_app_id and pem_path.exists():
-        existing_installations = existing.get("installations", config.get("github_installations", {}))
-        print(f"GitHub App already configured (App ID: {existing_app_id})")
-        print(f"Installations: {existing_installations}")
+    existing_type = existing.get("type", "")
+    if existing_type == "personal-token":
+        print("GitHub already configured (Personal Access Token)")
+        response = input("\nReconfigure? [y/N]: ").strip().lower()
+        if response not in ("y", "yes"):
+            print("Keeping existing configuration.")
+            return
+    elif existing_type == "github-app" or (existing.get("app_id") or config.get("github_app_id")):
+        existing_app_id = existing.get("app_id") or config.get("github_app_id")
+        print(f"GitHub already configured (GitHub App, ID: {existing_app_id})")
         response = input("\nReconfigure? [y/N]: ").strip().lower()
         if response not in ("y", "yes"):
             print("Keeping existing configuration.")
             return
 
+    # Choose method
+    print("Choose a method:")
+    print()
+    print("  1. Personal Access Token (recommended)")
+    print("     Simple setup. Works across all your orgs and repos.")
+    print("     Create at: https://github.com/settings/tokens?type=beta")
+    print()
+    print("  2. GitHub App (advanced)")
+    print("     Per-org scoped tokens. Requires App registration.")
+    print()
+
+    choice = input("Enter 1 or 2 [1]: ").strip()
+    if choice == "2":
+        _setup_github_app(parachute_dir, config, providers, pem_path)
+    else:
+        _setup_github_pat(parachute_dir, config, providers)
+
+
+def _setup_github_pat(
+    parachute_dir: Path, config: dict, providers: dict
+) -> None:
+    """Setup GitHub via Personal Access Token."""
+    import secrets
+
+    print()
+    print("Step 1: Create a Personal Access Token")
+    print("-" * 40)
+    print()
+    print("Go to: https://github.com/settings/tokens?type=beta")
+    print()
+    print("Create a fine-grained token with:")
+    print("  - Repository access: All repositories (or select specific ones)")
+    print("  - Permissions:")
+    print("    Contents:      Read & write  (push commits, clone)")
+    print("    Pull requests: Read & write  (create PRs)")
+    print("    Issues:        Read & write  (create/manage issues)")
+    print("    Metadata:      Read-only     (always required)")
+    print()
+
+    token = input("Paste your token: ").strip()
+    if not token:
+        print("Cancelled.")
+        return
+
+    if not (token.startswith("ghp_") or token.startswith("github_pat_")):
+        print("Warning: This doesn't look like a GitHub PAT (expected ghp_ or github_pat_ prefix).")
+        response = input("Continue anyway? [y/N]: ").strip().lower()
+        if response not in ("y", "yes"):
+            return
+
+    # Verify the token
+    print()
+    print("Verifying token...")
+    import httpx
+
+    try:
+        resp = httpx.get(
+            "https://api.github.com/user",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/vnd.github+json",
+            },
+            timeout=10.0,
+        )
+        resp.raise_for_status()
+        user = resp.json()
+        print(f"  ✓ Authenticated as: {user.get('login')} ({user.get('name', '')})")
+    except Exception as e:
+        print(f"  ✗ Token verification failed: {e}")
+        print("  Check your token and try again.")
+        return
+
+    # Generate broker secret (or reuse existing)
+    broker_secret = config.get("credential_broker_secret") or config.get("github_broker_secret") or secrets.token_hex(32)
+
+    # Save to config
+    providers["github"] = {
+        "type": "personal-token",
+        "token": token,
+    }
+    config["credential_providers"] = providers
+    config["credential_broker_secret"] = broker_secret
+
+    # Clean up legacy keys
+    config.pop("github_app_id", None)
+    config.pop("github_installations", None)
+    config.pop("github_broker_secret", None)
+
+    save_yaml_config(parachute_dir, config)
+
+    print()
+    print("=" * 60)
+    print("  Setup complete!")
+    print("=" * 60)
+    print()
+    print("Configuration saved to ~/.parachute/config.yaml")
+    print()
+    print("Next steps:")
+    print("  1. Restart the server: parachute server restart")
+    print("  2. git push and gh CLI will work in sandboxed sessions.")
+
+
+def _setup_github_app(
+    parachute_dir: Path, config: dict, providers: dict, pem_path: Path
+) -> None:
+    """Setup GitHub via GitHub App (advanced)."""
+    import secrets
+
     # Step 1: Create the GitHub App
+    print()
     print("Step 1: Create a GitHub App")
     print("-" * 40)
     print()
@@ -1137,9 +1256,10 @@ def _setup_github() -> None:
     print("-" * 40)
 
     import asyncio
-    from parachute.lib.credentials.github_provider import GitHubProvider
+    from parachute.lib.credentials.helpers.github import GitHubHelper
 
-    provider = GitHubProvider(
+    provider = GitHubHelper(
+        method="github-app",
         app_id=app_id,
         private_key_pem=pem_contents,
         installations={},
@@ -1216,7 +1336,8 @@ def _setup_github() -> None:
     if installations:
         print("Minting a test token...")
         try:
-            provider = GitHubProvider(
+            provider = GitHubHelper(
+                method="github-app",
                 app_id=app_id,
                 private_key_pem=pem_contents,
                 installations=installations,

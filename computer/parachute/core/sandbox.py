@@ -974,6 +974,9 @@ class DockerSandbox:
         Used by both ephemeral (--env-file) and persistent (docker exec -e) paths.
         Returns lines in KEY=VALUE format.
 
+        Iterates over all registered credential helpers generically via
+        get_all_env_vars() — no isinstance checks needed.
+
         Args:
             include_secret: Whether to include BROKER_SECRET. Set False for
                             docker exec -e where secrets should go via stdin.
@@ -991,32 +994,9 @@ class DockerSandbox:
         if include_secret:
             env_lines.append(f"BROKER_SECRET={broker_secret}")
 
-        # Git config via env vars (replaces git config --system in Dockerfile)
-        from parachute.lib.credentials.cloudflare_provider import CloudflareProvider
-        from parachute.lib.credentials.github_provider import GitHubProvider
-
+        # Collect env vars from all credential helpers generically
         cred_broker = get_credential_broker()
-        github = cred_broker.get_provider("github")
-        if isinstance(github, GitHubProvider):
-            env_lines.extend([
-                "GIT_CONFIG_COUNT=2",
-                "GIT_CONFIG_KEY_0=credential.helper",
-                "GIT_CONFIG_VALUE_0=!/opt/parachute-tools/bin/github-token-helper.sh",
-                "GIT_CONFIG_KEY_1=credential.useHttpPath",
-                "GIT_CONFIG_VALUE_1=true",
-            ])
-            default_org = github.get_default_org()
-            if default_org:
-                env_lines.append(f"GH_DEFAULT_ORG={default_org}")
-
-        # Cloudflare: inject parent token as CLOUDFLARE_API_TOKEN.
-        # Tools like wrangler read this env var for authentication.
-        # Future: mint scoped child tokens via per-project grants (issue #225).
-        cf = cred_broker.get_provider("cloudflare")
-        if isinstance(cf, CloudflareProvider):
-            env_lines.append(f"CLOUDFLARE_API_TOKEN={cf.parent_token}")
-            if cf.account_id:
-                env_lines.append(f"CLOUDFLARE_ACCOUNT_ID={cf.account_id}")
+        env_lines.extend(cred_broker.get_all_env_vars())
 
         return env_lines
 

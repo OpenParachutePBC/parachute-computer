@@ -39,7 +39,15 @@ class BrokerStatusResponse(BaseModel):
     """Response containing broker configuration status."""
 
     configured: bool
-    providers: dict[str, dict[str, str]] = Field(default_factory=dict)
+    providers: dict[str, dict] = Field(default_factory=dict)
+
+
+class SetupRequest(BaseModel):
+    """Request to configure a credential helper."""
+
+    name: str = Field(..., description="Helper name (e.g., 'github')")
+    method: str = Field(..., description="Setup method (e.g., 'personal-token')")
+    fields: dict[str, str] = Field(default_factory=dict, description="Field values")
 
 
 def _validate_broker_secret(request: Request) -> None:
@@ -182,3 +190,97 @@ async def get_broker_status(request: Request):
         configured=status["configured"],
         providers=status["providers"],
     )
+
+
+# ── Helper manifests (for app UI) ────────────────────────────────────────────
+
+
+@router.get("/helpers")
+async def get_helpers():
+    """
+    List all credential helper manifests.
+
+    Returns manifest JSON for each registered helper, describing setup
+    fields, capabilities, and health check info. The app renders setup
+    forms generically from these manifests.
+
+    No authentication required — manifests contain no sensitive data.
+    """
+    broker = get_broker()
+    return broker.get_manifests()
+
+
+# ── Setup endpoint ────────────────────────────────────────────────────────────
+
+
+@router.post("/setup")
+async def setup_helper(body: SetupRequest):
+    """
+    Configure a credential helper.
+
+    Validates the provided fields, saves to config, and reloads the broker.
+    Used by both the CLI wizard and the app UI.
+    """
+    from parachute.config import get_settings, save_yaml_config_atomic
+    from parachute.lib.credentials.broker import reset_broker
+
+    settings = get_settings()
+    name = body.name
+    method = body.method
+    fields = body.fields
+
+    # Build the config entry based on method
+    if method == "personal-token":
+        token = fields.get("token", "").strip()
+        if not token:
+            raise HTTPException(status_code=400, detail="Token is required")
+        config_entry = {
+            "type": "personal-token",
+            "token": token,
+        }
+    elif method == "github-app":
+        app_id = fields.get("app_id", "").strip()
+        if not app_id:
+            raise HTTPException(status_code=400, detail="App ID is required")
+        config_entry = {
+            "type": "github-app",
+            "app_id": int(app_id),
+            "installations": {},  # User adds installations later
+        }
+    elif method == "cloudflare-parent":
+        token = fields.get("parent_token", "").strip()
+        if not token:
+            raise HTTPException(status_code=400, detail="Parent token is required")
+        config_entry = {
+            "type": "cloudflare-parent",
+            "parent_token": token,
+        }
+        account_id = fields.get("account_id", "").strip()
+        if account_id:
+            config_entry["account_id"] = account_id
+    else:
+        raise HTTPException(status_code=400, detail=f"Unknown method: {method}")
+
+    # Update config
+    current_providers = dict(settings.credential_providers)
+    current_providers[name] = config_entry
+
+    # Ensure broker secret exists
+    import secrets
+
+    broker_secret = settings.credential_broker_secret
+    if not broker_secret:
+        broker_secret = secrets.token_hex(32)
+
+    config_data = {
+        "credential_providers": current_providers,
+        "credential_broker_secret": broker_secret,
+    }
+
+    save_yaml_config_atomic(settings.parachute_dir, config_data)
+
+    # Reset broker to pick up new config
+    reset_broker()
+
+    logger.info(f"Configured credential helper '{name}' with method '{method}'")
+    return {"status": "ok", "name": name, "method": method}
