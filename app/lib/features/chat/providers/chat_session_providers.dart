@@ -17,17 +17,38 @@ import 'package:parachute/core/services/file_system_service.dart';
 
 /// Provider for ChatService
 ///
-/// Creates a new ChatService instance with the configured server URL and API key.
-/// The service handles all communication with the parachute-agent backend.
+/// Creates a single ChatService instance and keeps it alive across async
+/// provider transitions.  Uses ref.read() for initial values and ref.listen()
+/// for real value changes — this prevents the provider from rebuilding (and
+/// calling _client.close()) whenever aiServerUrlProvider or apiKeyProvider
+/// re-emit during AsyncLoading → AsyncData transitions.
+///
+/// Why this matters: ref.watch() on async providers caused the ChatService to
+/// be recreated on every state change, which closed the shared http.Client and
+/// severed all active SSE streams simultaneously.  See issue #283.
 final chatServiceProvider = Provider<ChatService>((ref) {
-  // Import these from app_state_provider
-  final urlAsync = ref.watch(aiServerUrlProvider);
-  final baseUrl = urlAsync.valueOrNull ?? AppConfig.defaultServerUrl;
-
-  final apiKeyAsync = ref.watch(apiKeyProvider);
-  final apiKey = apiKeyAsync.valueOrNull;
+  // Read resolved values once — don't watch async transitions
+  final baseUrl = ref.read(aiServerUrlProvider).valueOrNull ??
+      AppConfig.defaultServerUrl;
+  final apiKey = ref.read(apiKeyProvider).valueOrNull;
 
   final service = ChatService(baseUrl: baseUrl, apiKey: apiKey);
+
+  // Listen for ACTUAL value changes (settings screen, etc.) and update
+  // the service's config without rebuilding the provider or closing the
+  // http.Client.
+  ref.listen(aiServerUrlProvider, (prev, next) {
+    final newUrl = next.valueOrNull;
+    if (newUrl != null && newUrl != service.baseUrl) {
+      service.updateBaseUrl(newUrl);
+    }
+  });
+  ref.listen(apiKeyProvider, (prev, next) {
+    final newKey = next.valueOrNull;
+    if (newKey != service.apiKey) {
+      service.updateApiKey(newKey);
+    }
+  });
 
   ref.onDispose(() {
     service.dispose();

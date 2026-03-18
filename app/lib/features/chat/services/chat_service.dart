@@ -45,8 +45,10 @@ part 'chat_settings_service.dart';
 ///   GET  /api/modules/:mod/search   - Search module
 ///   POST /api/modules/:mod/index    - Rebuild index
 class ChatService {
-  final String baseUrl;
-  final String? apiKey;
+  // Mutable so the provider can update config without rebuilding (closing the
+  // http.Client and killing active SSE streams).  See issue #283.
+  String baseUrl;
+  String? apiKey;
   final http.Client _client;
 
   /// HTTP client accessor for extensions
@@ -76,6 +78,21 @@ class ChatService {
   }
 
   ChatService({required this.baseUrl, this.apiKey}) : _client = http.Client();
+
+  /// Update the base URL without recreating the HTTP client.
+  ///
+  /// Active SSE streams use the already-established TCP connection, so
+  /// changing this only affects future requests.
+  void updateBaseUrl(String newUrl) {
+    baseUrl = newUrl;
+    _cachedHeaders = null;
+  }
+
+  /// Update the API key without recreating the HTTP client.
+  void updateApiKey(String? newKey) {
+    apiKey = newKey;
+    _cachedHeaders = null;
+  }
 
   // ============================================================
   // Streaming Chat (Core functionality stays in main file)
@@ -240,12 +257,13 @@ class ChatService {
         }
       }
 
-      debugPrint('[ChatService] Stream completed');
       // If we get here without a done event, the stream ended unexpectedly
-      // Yield a done event so the UI knows streaming has stopped
+      // (e.g., HTTP client closed, network drop).  Mark as interrupted so the
+      // UI can show "Response interrupted" instead of silently freezing.  (#283)
+      debugPrint('[ChatService] Stream ended without done event — possible disconnect');
       yield StreamEvent(
         type: StreamEventType.done,
-        data: {'note': 'Stream ended without explicit done event'},
+        data: {'note': 'Stream ended without explicit done event', 'interrupted': true},
       );
     } on SocketException catch (e) {
       debugPrint('[ChatService] Socket error: $e');
