@@ -12,12 +12,15 @@ import 'package:parachute/core/providers/backend_health_provider.dart' show serv
 import 'package:parachute/core/providers/app_state_provider.dart' show apiKeyProvider;
 import 'package:parachute/core/providers/feature_flags_provider.dart' show aiServerUrlProvider;
 import 'package:parachute/core/providers/sync_provider.dart';
+import 'package:parachute/core/providers/connectivity_provider.dart' show isServerAvailableProvider;
 import '../../recorder/providers/service_providers.dart';
 import '../models/entry_metadata.dart' show TranscriptionStatus;
 import '../models/journal_day.dart';
 import '../models/journal_entry.dart';
 import '../providers/journal_providers.dart';
 import '../providers/journal_screen_state_provider.dart';
+import '../services/daily_api_service.dart';
+import '../services/journal_local_cache.dart';
 import '../widgets/journal_header.dart';
 import '../widgets/journal_content_view.dart';
 import '../widgets/journal_empty_state.dart';
@@ -25,6 +28,7 @@ import '../widgets/journal_input_bar.dart';
 import '../widgets/mini_audio_player.dart';
 import '../widgets/entry_edit_modal.dart';
 import '../widgets/send_to_chat_sheet.dart';
+import '../widgets/pending_sync_banner.dart';
 import 'compose_screen.dart';
 import '../widgets/journal_entry_row.dart';
 import '../../recorder/widgets/playback_controls.dart';
@@ -161,6 +165,11 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
               isToday: isToday,
               journalAsync: journalAsync,
               onRefresh: _refreshJournal,
+            ),
+
+            // Pending sync banner
+            PendingSyncBanner(
+              onRetry: _retryPendingSync,
             ),
 
             // Journal entries - use cached data during loading to avoid flash
@@ -308,6 +317,92 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
     ref.invalidate(selectedJournalProvider);
     ref.read(journalRefreshTriggerProvider.notifier).state++;
     debugPrint('[JournalScreen] Refreshing - providers invalidated, will re-fetch from API');
+  }
+
+  /// Retry pending sync manually — user tapped the "Retry" button in the banner
+  Future<void> _retryPendingSync() async {
+    // Gate on connectivity — don't attempt sync if offline
+    final isAvailable = ref.read(isServerAvailableProvider);
+    if (!isAvailable) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Server unavailable — entries will sync when online'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+      return;
+    }
+
+    debugPrint('[JournalScreen] User triggered pending sync retry');
+    try {
+      final api = ref.read(dailyApiServiceProvider);
+      final queue = await ref.read(pendingQueueProvider.future);
+      final cache = await ref.read(journalLocalCacheProvider.future);
+
+      // Flush pending queue (text entries)
+      await queue.flush(api);
+
+      // Flush pending deletes/edits
+      await _flushPendingOpsForSync(api, cache);
+
+      // Refresh journal display and pending count
+      _refreshJournal();
+      ref.invalidate(pendingSyncCountProvider);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Sync completed'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('[JournalScreen] Error retrying sync: $e');
+      ref.invalidate(pendingSyncCountProvider);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Sync failed: $e'),
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    }
+  }
+
+  /// Helper to flush pending ops (similar to _flushPendingOps in journal_providers)
+  Future<void> _flushPendingOpsForSync(
+    DailyApiService api,
+    JournalLocalCache cache,
+  ) async {
+    // Flush pending deletes
+    final deleteIds = cache.getPendingDeletes();
+    for (final id in deleteIds) {
+      final ok = await api.deleteEntry(id);
+      if (ok) {
+        cache.removeEntry(id);
+      }
+    }
+
+    // Flush pending edits
+    final editEntries = cache.getPendingEdits();
+    for (final entry in editEntries) {
+      final updated = await api.updateEntry(
+        entry.id,
+        content: entry.content,
+        metadata: entry.title.isNotEmpty ? {'title': entry.title} : null,
+      );
+      if (updated != null) {
+        cache.markSynced(
+          entry.id,
+          content: updated.content,
+          title: updated.title,
+        );
+      }
+    }
   }
 
   String _formatDateStr(DateTime date) {
@@ -477,24 +572,38 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
   }
 
   Future<void> _addTextEntry(String text) async {
+    // Gate on connectivity — skip API call entirely when offline
+    final isAvailable = ref.read(isServerAvailableProvider);
+    if (!isAvailable) {
+      debugPrint('[JournalScreen] Offline — queueing text entry directly');
+      await _appendEntryToCache(null, content: text);
+      return;
+    }
     debugPrint('[JournalScreen] Adding text entry via API...');
     final api = ref.read(dailyApiServiceProvider);
     final entry = await api.createEntry(content: text);
     await _appendEntryToCache(entry, content: text);
     if (entry == null) {
-      debugPrint('[JournalScreen] Offline — text entry queued');
+      debugPrint('[JournalScreen] API failed — text entry queued');
     }
   }
 
   Future<void> _addComposeEntry(String title, String content) async {
-    debugPrint('[JournalScreen] Adding composed entry via API...');
     // Prepend title as markdown heading if present
     final fullContent = title.isNotEmpty ? '# $title\n\n$content' : content;
+    // Gate on connectivity — skip API call entirely when offline
+    final isAvailable = ref.read(isServerAvailableProvider);
+    if (!isAvailable) {
+      debugPrint('[JournalScreen] Offline — queueing composed entry directly');
+      await _appendEntryToCache(null, content: fullContent);
+      return;
+    }
+    debugPrint('[JournalScreen] Adding composed entry via API...');
     final api = ref.read(dailyApiServiceProvider);
     final entry = await api.createEntry(content: fullContent);
     await _appendEntryToCache(entry, content: fullContent);
     if (entry == null) {
-      debugPrint('[JournalScreen] Offline — composed entry queued');
+      debugPrint('[JournalScreen] API failed — composed entry queued');
     }
   }
 
@@ -537,6 +646,32 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
 
   /// Upload audio to server for transcription + cleanup. Returns true on success.
   Future<bool> _addVoiceEntryViaServer(String localAudioPath, int duration) async {
+    // Check connectivity — if offline, queue the voice entry instead
+    final isAvailable = ref.read(isServerAvailableProvider);
+    if (!isAvailable) {
+      debugPrint('[JournalScreen] Offline: queueing voice entry...');
+      final queue = await ref.read(pendingQueueProvider.future);
+      final entry = await queue.enqueue(
+        localId: _generateLocalId(),
+        content: '', // Voice entries have no text content initially
+        type: 'voice',
+        audioPath: localAudioPath,
+        durationSeconds: duration,
+      );
+
+      // Add to cache for immediate display
+      await _appendEntryToCache(
+        entry,
+        content: '',
+        type: JournalEntryType.voice,
+        audioPath: localAudioPath,
+        durationSeconds: duration,
+      );
+
+      // Don't delete the audio file yet — it's needed when the entry syncs
+      return true;
+    }
+
     debugPrint('[JournalScreen] Uploading voice entry to server for transcription...');
     final api = ref.read(dailyApiServiceProvider);
 
@@ -571,6 +706,11 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
     _startPollingEntry(entry.id);
 
     return true;
+  }
+
+  /// Generate a unique local ID for pending entries
+  String _generateLocalId() {
+    return 'local_${DateTime.now().millisecondsSinceEpoch}_${DateTime.now().microsecond}';
   }
 
   /// Original local flow: upload audio asset, create entry, let on-device transcription handle it.

@@ -165,6 +165,13 @@ class PendingEntryQueue extends ChangeNotifier {
   Future<void> _save() async {
     await _prefs.setString(_prefsKey, jsonEncode(_items.map((i) => i.toJson()).toList()));
   }
+
+  /// Clean up resources
+  void dispose() {
+    // PendingEntryQueue doesn't hold any long-lived resources
+    // but extends ChangeNotifier which should be disposed
+    super.dispose();
+  }
 }
 
 class _PendingItem {
