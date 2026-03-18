@@ -1124,7 +1124,9 @@ class Orchestrator:
                     yield TypedErrorEvent.from_typed_error(
                         typed, session_id=captured_session_id or session.id
                     ).model_dump(by_alias=True)
-                    return
+                    # Break instead of return so finalization + DoneEvent
+                    # still run — the client needs a terminal event.  (#283)
+                    break
 
                 elif event_type == "error":
                     error_msg = event.get("error", "Unknown SDK error")
@@ -1151,9 +1153,14 @@ class Orchestrator:
                             typed, session_id=captured_session_id or session.id
                         ).model_dump(by_alias=True)
 
-                    return
+                    end_reason = f"sdk_error: {error_msg}"
+                    # Break instead of return so finalization + DoneEvent
+                    # still run — the client needs a terminal event.  (#283)
+                    break
 
-            end_reason = "interrupted" if interrupt.is_interrupted else "normal"
+            # Set end_reason only if not already set by error/timeout handlers
+            if end_reason == "unknown":
+                end_reason = "interrupted" if interrupt.is_interrupted else "normal"
 
             # Finalize session (if not already done early)
             if is_new and captured_session_id and not session_finalized:
