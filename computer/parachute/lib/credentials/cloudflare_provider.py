@@ -231,3 +231,14 @@ class CloudflareProvider(CredentialProvider):
                 for p in permissions
             ],
         }]
+
+    def get_env_vars(self) -> list[str]:
+        """Return env var lines for sandbox injection.
+
+        Injects parent token directly as CLOUDFLARE_API_TOKEN.
+        Future: mint scoped child tokens via wrangler wrapper (issue #291).
+        """
+        env_lines = [f"CLOUDFLARE_API_TOKEN={self.parent_token}"]
+        if self.account_id:
+            env_lines.append(f"CLOUDFLARE_ACCOUNT_ID={self.account_id}")
+        return env_lines

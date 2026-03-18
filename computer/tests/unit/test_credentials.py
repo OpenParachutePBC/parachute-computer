@@ -525,3 +525,298 @@ class TestBrokerFromConfig:
             tmp_path,
         )
         assert broker.has_provider("cloudflare")
+
+
+# ── HelperManifest ──────────────────────────────────────────────────────────
+
+
+class TestHelperManifest:
+    def test_manifest_to_dict(self):
+        from parachute.lib.credentials.manifest import (
+            HealthCheck,
+            HelperManifest,
+            ProviderCapabilities,
+            SetupField,
+            SetupMethod,
+        )
+
+        manifest = HelperManifest(
+            display_name="Test Provider",
+            description="A test provider",
+            setup_methods=[
+                SetupMethod(
+                    id="simple",
+                    label="Simple Method",
+                    recommended=True,
+                    fields=[
+                        SetupField(id="token", label="Token", type="secret", help="Paste it"),
+                    ],
+                ),
+            ],
+            provides=ProviderCapabilities(
+                env_vars=["TEST_TOKEN"],
+                scripts=["test-helper.sh"],
+            ),
+            health_check=HealthCheck(method="api", endpoint="https://example.com/verify"),
+        )
+
+        d = manifest.to_dict()
+        assert d["display_name"] == "Test Provider"
+        assert len(d["setup_methods"]) == 1
+        assert d["setup_methods"][0]["id"] == "simple"
+        assert d["setup_methods"][0]["recommended"] is True
+        assert d["setup_methods"][0]["fields"][0]["id"] == "token"
+        assert d["setup_methods"][0]["fields"][0]["type"] == "secret"
+        assert d["provides"]["env_vars"] == ["TEST_TOKEN"]
+        assert d["health_check"]["method"] == "api"
+
+    def test_setup_field_defaults(self):
+        from parachute.lib.credentials.manifest import SetupField
+
+        f = SetupField(id="key", label="Key")
+        assert f.type == "string"
+        assert f.required is True
+        assert f.options is None
+
+
+# ── GitHubHelper ────────────────────────────────────────────────────────────
+
+
+class TestGitHubHelper:
+    """Tests for the new unified GitHubHelper."""
+
+    def test_from_config_pat(self):
+        from parachute.lib.credentials.helpers.github import GitHubHelper
+
+        helper = GitHubHelper.from_config(
+            {"type": "personal-token", "token": "ghp_test123"},
+        )
+        assert helper is not None
+        assert helper.method == "personal-token"
+        assert helper.name == "github"
+        assert helper.provider_type == "github"
+        assert helper.active_method == "personal-token"
+
+    def test_from_config_pat_no_token(self):
+        from parachute.lib.credentials.helpers.github import GitHubHelper
+
+        helper = GitHubHelper.from_config({"type": "personal-token"})
+        assert helper is None
+
+    def test_from_config_app(self, tmp_path):
+        from parachute.lib.credentials.helpers.github import GitHubHelper
+
+        pem = tmp_path / "github-app.pem"
+        pem.write_text("-----BEGIN RSA PRIVATE KEY-----\nfake\n-----END RSA PRIVATE KEY-----\n")
+        helper = GitHubHelper.from_config(
+            {"type": "github-app", "app_id": 123, "installations": {"org": 456}},
+            tmp_path,
+        )
+        assert helper is not None
+        assert helper.method == "github-app"
+        assert helper.app_id == 123
+        assert helper.installations == {"org": 456}
+
+    def test_from_config_app_missing_pem(self, tmp_path):
+        from parachute.lib.credentials.helpers.github import GitHubHelper
+
+        helper = GitHubHelper.from_config(
+            {"type": "github-app", "app_id": 123, "installations": {"org": 456}},
+            tmp_path,
+        )
+        assert helper is None
+
+    def test_from_config_unknown_type(self):
+        from parachute.lib.credentials.helpers.github import GitHubHelper
+
+        helper = GitHubHelper.from_config({"type": "unknown-method"})
+        assert helper is None
+
+    @pytest.mark.asyncio
+    async def test_mint_token_pat(self):
+        from parachute.lib.credentials.helpers.github import GitHubHelper
+
+        helper = GitHubHelper(method="personal-token", token="ghp_test123")
+        result = await helper.mint_token({"org": "unforced-dev"})
+        assert result.token == "ghp_test123"
+        assert result.expires_at == "2099-01-01T00:00:00Z"
+
+    @pytest.mark.asyncio
+    async def test_mint_token_pat_no_org(self):
+        """PAT works without org — org is optional."""
+        from parachute.lib.credentials.helpers.github import GitHubHelper
+
+        helper = GitHubHelper(method="personal-token", token="ghp_test123")
+        result = await helper.mint_token({})
+        assert result.token == "ghp_test123"
+
+    @pytest.mark.asyncio
+    async def test_mint_token_pat_no_token(self):
+        from parachute.lib.credentials.helpers.github import GitHubHelper
+
+        helper = GitHubHelper(method="personal-token")
+        with pytest.raises(CredentialProviderError, match="No GitHub PAT configured"):
+            await helper.mint_token({})
+
+    @pytest.mark.asyncio
+    async def test_mint_token_app_missing_org(self):
+        from parachute.lib.credentials.helpers.github import GitHubHelper
+
+        helper = GitHubHelper(
+            method="github-app", app_id=123,
+            private_key_pem="fake", installations={"org": 1},
+        )
+        with pytest.raises(CredentialProviderError, match="scope must include 'org'"):
+            await helper.mint_token({})
+
+    @pytest.mark.asyncio
+    async def test_mint_token_app_unknown_org(self):
+        from parachute.lib.credentials.helpers.github import GitHubHelper
+
+        helper = GitHubHelper(
+            method="github-app", app_id=123,
+            private_key_pem="fake", installations={"org": 1},
+        )
+        with pytest.raises(CredentialProviderError, match="No GitHub App installation"):
+            await helper.mint_token({"org": "unknown"})
+
+    @pytest.mark.asyncio
+    async def test_app_token_caching(self):
+        """Cached tokens are returned without re-minting."""
+        from parachute.lib.credentials.helpers.github import GitHubHelper
+
+        helper = GitHubHelper(
+            method="github-app", app_id=123,
+            private_key_pem="fake", installations={"org": 42},
+        )
+        helper._app_token_cache[42] = {
+            "token": "cached_token",
+            "expires_at": time.time() + 600,
+            "expires_at_iso": "2099-01-01T00:00:00Z",
+        }
+        result = await helper.mint_token({"org": "org"})
+        assert result.token == "cached_token"
+
+    def test_get_default_org_app(self):
+        from parachute.lib.credentials.helpers.github import GitHubHelper
+
+        helper = GitHubHelper(
+            method="github-app", app_id=123,
+            private_key_pem="fake", installations={"first": 1, "second": 2},
+        )
+        assert helper.get_default_org() == "first"
+
+    def test_get_default_org_pat(self):
+        from parachute.lib.credentials.helpers.github import GitHubHelper
+
+        helper = GitHubHelper(method="personal-token", token="ghp_test")
+        assert helper.get_default_org() is None
+
+    def test_get_env_vars(self):
+        from parachute.lib.credentials.helpers.github import GitHubHelper
+
+        helper = GitHubHelper(
+            method="github-app", app_id=123,
+            private_key_pem="fake", installations={"myorg": 1},
+        )
+        env_vars = helper.get_env_vars()
+        assert "GIT_CONFIG_COUNT=2" in env_vars
+        assert "GH_DEFAULT_ORG=myorg" in env_vars
+
+    def test_get_env_vars_pat(self):
+        from parachute.lib.credentials.helpers.github import GitHubHelper
+
+        helper = GitHubHelper(method="personal-token", token="ghp_test")
+        env_vars = helper.get_env_vars()
+        assert "GIT_CONFIG_COUNT=2" in env_vars
+        # No default org for PAT
+        assert not any("GH_DEFAULT_ORG" in v for v in env_vars)
+
+    def test_has_manifest(self):
+        from parachute.lib.credentials.helpers.github import GitHubHelper
+
+        assert hasattr(GitHubHelper, "manifest")
+        d = GitHubHelper.manifest.to_dict()
+        assert d["display_name"] == "GitHub"
+        assert len(d["setup_methods"]) == 2
+        # PAT should be recommended
+        pat_method = next(m for m in d["setup_methods"] if m["id"] == "personal-token")
+        assert pat_method["recommended"] is True
+
+
+# ── Broker with GitHubHelper ────────────────────────────────────────────────
+
+
+class TestBrokerWithGitHubHelper:
+    def test_loads_pat_from_config(self, tmp_path):
+        broker = CredentialBroker.from_config(
+            {"github": {"type": "personal-token", "token": "ghp_test123"}},
+            tmp_path,
+        )
+        assert broker.has_provider("github")
+        provider = broker.get_provider("github")
+        assert hasattr(provider, "active_method")
+        assert provider.active_method == "personal-token"
+
+    def test_loads_app_from_config(self, tmp_path):
+        pem = tmp_path / "github-app.pem"
+        pem.write_text("-----BEGIN RSA PRIVATE KEY-----\nfake\n-----END RSA PRIVATE KEY-----\n")
+        broker = CredentialBroker.from_config(
+            {"github": {
+                "type": "github-app",
+                "app_id": 123,
+                "installations": {"org": 456},
+            }},
+            tmp_path,
+        )
+        assert broker.has_provider("github")
+        provider = broker.get_provider("github")
+        assert provider.active_method == "github-app"
+
+    @pytest.mark.asyncio
+    async def test_mint_pat_via_broker(self, tmp_path):
+        broker = CredentialBroker.from_config(
+            {"github": {"type": "personal-token", "token": "ghp_broker_test"}},
+            tmp_path,
+        )
+        result = await broker.mint_token("github", {"org": "any-org"})
+        assert result.token == "ghp_broker_test"
+
+    def test_get_status_shows_method(self, tmp_path):
+        broker = CredentialBroker.from_config(
+            {"github": {"type": "personal-token", "token": "ghp_test"}},
+            tmp_path,
+        )
+        status = broker.get_status()
+        assert status["providers"]["github"]["method"] == "personal-token"
+
+    def test_get_manifests(self, tmp_path):
+        broker = CredentialBroker.from_config(
+            {"github": {"type": "personal-token", "token": "ghp_test"}},
+            tmp_path,
+        )
+        manifests = broker.get_manifests()
+        assert "github" in manifests
+        assert manifests["github"]["display_name"] == "GitHub"
+        assert manifests["github"]["configured"] is True
+        assert manifests["github"]["active_method"] == "personal-token"
+
+    def test_get_all_env_vars(self, tmp_path):
+        broker = CredentialBroker.from_config(
+            {"github": {"type": "personal-token", "token": "ghp_test"}},
+            tmp_path,
+        )
+        env_vars = broker.get_all_env_vars()
+        assert "GIT_CONFIG_COUNT=2" in env_vars
+
+    def test_backward_compat_cloudflare_still_works(self, tmp_path):
+        broker = CredentialBroker.from_config(
+            {"cloudflare": {
+                "type": "cloudflare-parent",
+                "parent_token": "cf_test",
+            }},
+            tmp_path,
+        )
+        assert broker.has_provider("cloudflare")
+        env_vars = broker.get_all_env_vars()
+        assert "CLOUDFLARE_API_TOKEN=cf_test" in env_vars
