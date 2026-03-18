@@ -8,6 +8,8 @@ import 'package:parachute/core/providers/app_state_provider.dart'
     show apiKeyProvider;
 import 'package:parachute/core/providers/backend_health_provider.dart'
     show periodicServerHealthProvider;
+import 'package:parachute/core/providers/connectivity_provider.dart'
+    show isServerAvailableProvider, serverReachableOverrideProvider;
 import 'package:parachute/core/services/computer_service.dart'
     show AgentTemplate, DailyAgentInfo;
 import '../models/chat_log.dart';
@@ -30,7 +32,15 @@ final dailyApiServiceProvider = Provider<DailyApiService>((ref) {
   final apiKeyAsync = ref.watch(apiKeyProvider);
   final apiKey = apiKeyAsync.valueOrNull;
 
-  final service = DailyApiService(baseUrl: baseUrl, apiKey: apiKey);
+  final service = DailyApiService(
+    baseUrl: baseUrl,
+    apiKey: apiKey,
+    onReachabilityChanged: (reachable) {
+      // Fast-fail / fast-recover: immediately update connectivity state
+      // without waiting for the next 30s periodic health check.
+      ref.read(serverReachableOverrideProvider.notifier).state = reachable;
+    },
+  );
   ref.onDispose(service.dispose);
   return service;
 });
@@ -168,7 +178,16 @@ Future<JournalDay> _loadJournal(
     onCacheHit(JournalDay.fromEntries(date, [...cached, ...pendingForDate]));
   }
 
-  // Phase 2 — flush all pending ops, then fetch from server.
+  // Phase 2 — flush pending ops and fetch from server (only when online).
+  final isAvailable = ref.watch(isServerAvailableProvider);
+  if (!isAvailable) {
+    // Offline: skip flush + server fetch, return cached entries only.
+    // Flushing when offline would wait 15s per pending entry for timeout.
+    final freshCached = cache.getEntries(dateStr);
+    final pendingForDate = _pendingForDate(pendingQueue, dateStr);
+    return JournalDay.fromEntries(date, [...freshCached, ...pendingForDate]);
+  }
+
   await pendingQueue.flush(api);
   await _flushPendingOps(api, cache);
 
@@ -290,6 +309,13 @@ final selectedChatLogProvider = FutureProvider.autoDispose<ChatLog?>((
 final cardsProvider = FutureProvider.autoDispose
     .family<List<AgentCard>, String>((ref, dateStr) async {
       ref.watch(journalRefreshTriggerProvider);
+
+      // Check connectivity before API call — avoid timeout if offline
+      final isAvailable = ref.watch(isServerAvailableProvider);
+      if (!isAvailable) {
+        return [];
+      }
+
       final api = ref.watch(dailyApiServiceProvider);
       return api.fetchCards(dateStr);
     });
@@ -301,6 +327,13 @@ final agentsProvider = FutureProvider.autoDispose<List<DailyAgentInfo>>((
   ref,
 ) async {
   ref.watch(journalRefreshTriggerProvider);
+
+  // Check connectivity before API call — avoid timeout if offline
+  final isAvailable = ref.watch(isServerAvailableProvider);
+  if (!isAvailable) {
+    return [];
+  }
+
   final api = ref.watch(dailyApiServiceProvider);
   return api.fetchAgents();
 });
@@ -310,6 +343,34 @@ final agentsProvider = FutureProvider.autoDispose<List<DailyAgentInfo>>((
 /// Used by the empty state in [AgentManagementScreen] to offer one-tap creation.
 final agentTemplatesProvider =
     FutureProvider.autoDispose<List<AgentTemplate>>((ref) async {
+      // Check connectivity before API call — avoid timeout if offline
+      final isAvailable = ref.watch(isServerAvailableProvider);
+      if (!isAvailable) {
+        return [];
+      }
+
       final api = ref.watch(dailyApiServiceProvider);
       return api.fetchTemplates();
     });
+
+// ============================================================================
+// Sync Status Providers
+// ============================================================================
+
+/// Count of entries pending sync (queue + pending deletes + pending edits).
+///
+/// Returns 0 if unable to read the queue or cache.
+final pendingSyncCountProvider = FutureProvider<int>((ref) async {
+  try {
+    final cache = await ref.watch(journalLocalCacheProvider.future);
+    final queue = await ref.watch(pendingQueueProvider.future);
+
+    final queueCount = queue.length;
+    final pendingDeletes = cache.getPendingDeletes().length;
+    final pendingEdits = cache.getPendingEdits().length;
+
+    return queueCount + pendingDeletes + pendingEdits;
+  } catch (e) {
+    return 0;
+  }
+});

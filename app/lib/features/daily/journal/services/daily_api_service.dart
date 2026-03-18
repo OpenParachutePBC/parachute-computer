@@ -54,9 +54,16 @@ class DailyApiService {
   final String? apiKey;
   final http.Client _client;
 
+  /// Optional callback for fast-fail / fast-recover health updates.
+  ///
+  /// Called with `true` on successful API response, `false` on network error.
+  /// Used by the connectivity provider to immediately update reachability
+  /// without waiting for the next periodic health check.
+  void Function(bool reachable)? onReachabilityChanged;
+
   static const _timeout = Duration(seconds: 15);
 
-  DailyApiService({required this.baseUrl, this.apiKey})
+  DailyApiService({required this.baseUrl, this.apiKey, this.onReachabilityChanged})
     : _client = http.Client();
 
   Map<String, String> get _headers => {
@@ -86,6 +93,7 @@ class DailyApiService {
         return null;
       }
 
+      onReachabilityChanged?.call(true);
       final decoded = jsonDecode(response.body) as Map<String, dynamic>;
       final List<dynamic> data = decoded['entries'] as List<dynamic>? ?? [];
       return data
@@ -95,6 +103,7 @@ class DailyApiService {
           .toList();
     } catch (e) {
       debugPrint('[DailyApiService] getEntries error (offline?): $e');
+      onReachabilityChanged?.call(false);
       return null;
     }
   }
@@ -134,6 +143,7 @@ class DailyApiService {
         return null;
       }
 
+      onReachabilityChanged?.call(true);
       final decoded = jsonDecode(response.body) as Map<String, dynamic>;
       // Server returns {id, path, created_at, brain_suggestions}.
       // Build the entry directly rather than routing through fromServerJson
@@ -150,6 +160,7 @@ class DailyApiService {
       );
     } catch (e) {
       debugPrint('[DailyApiService] createEntry error: $e');
+      onReachabilityChanged?.call(false);
       return null;
     }
   }
@@ -180,10 +191,12 @@ class DailyApiService {
         return null;
       }
 
+      onReachabilityChanged?.call(true);
       final decoded = jsonDecode(response.body) as Map<String, dynamic>;
       return JournalEntry.fromServerJson(decoded);
     } catch (e) {
       debugPrint('[DailyApiService] updateEntry error: $e');
+      onReachabilityChanged?.call(false);
       return null;
     }
   }
@@ -200,6 +213,7 @@ class DailyApiService {
       if (response.statusCode == 404 ||
           response.statusCode == 204 ||
           (response.statusCode >= 200 && response.statusCode < 300)) {
+        onReachabilityChanged?.call(true);
         return true;
       }
       debugPrint(
@@ -208,6 +222,7 @@ class DailyApiService {
       return false;
     } catch (e) {
       debugPrint('[DailyApiService] deleteEntry error: $e');
+      onReachabilityChanged?.call(false);
       return false;
     }
   }
