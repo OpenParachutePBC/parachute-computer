@@ -19,11 +19,15 @@ class AgentDetailSheet extends ConsumerStatefulWidget {
   /// then invokes this callback so navigation uses the parent's context.
   final VoidCallback? onEdit;
 
+  /// Called after the agent is deleted. The sheet pops itself first.
+  final VoidCallback? onDelete;
+
   const AgentDetailSheet({
     super.key,
     required this.agent,
     this.onViewHistory,
     this.onEdit,
+    this.onDelete,
   });
 
   @override
@@ -102,14 +106,46 @@ class _AgentDetailSheetState extends ConsumerState<AgentDetailSheet> {
                         ),
                         SizedBox(width: Spacing.lg),
                         Expanded(
-                          child: Text(
-                            widget.agent.displayName,
-                            style: theme.textTheme.titleLarge?.copyWith(
-                              fontWeight: FontWeight.w600,
-                              color: isDark
-                                  ? BrandColors.softWhite
-                                  : BrandColors.ink,
-                            ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                widget.agent.displayName,
+                                style: theme.textTheme.titleLarge?.copyWith(
+                                  fontWeight: FontWeight.w600,
+                                  color: isDark
+                                      ? BrandColors.softWhite
+                                      : BrandColors.ink,
+                                ),
+                              ),
+                              if (widget.agent.isBuiltin &&
+                                  widget.agent.updateAvailable) ...[
+                                const SizedBox(height: 4),
+                                GestureDetector(
+                                  onTap: _resetToTemplate,
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 3,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: BrandColors.info
+                                          .withValues(alpha: 0.15),
+                                      borderRadius:
+                                          BorderRadius.circular(Radii.sm),
+                                    ),
+                                    child: Text(
+                                      'Update available',
+                                      style:
+                                          theme.textTheme.labelSmall?.copyWith(
+                                        color: BrandColors.info,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ],
                           ),
                         ),
                       ],
@@ -288,6 +324,28 @@ class _AgentDetailSheetState extends ConsumerState<AgentDetailSheet> {
                       isDark: isDark,
                       onTap: () => _resetAgent(context),
                     ),
+                    // Reset to default — only for builtin agents
+                    if (widget.agent.isBuiltin) ...[
+                      SizedBox(height: Spacing.sm),
+                      _ActionButton(
+                        icon: Icons.settings_backup_restore,
+                        label: 'Reset to default',
+                        color: isDark
+                            ? BrandColors.nightTurquoise
+                            : BrandColors.turquoise,
+                        isDark: isDark,
+                        onTap: _resetToTemplate,
+                      ),
+                    ],
+                    // Delete agent
+                    SizedBox(height: Spacing.sm),
+                    _ActionButton(
+                      icon: Icons.delete_outline,
+                      label: 'Delete agent',
+                      color: BrandColors.error,
+                      isDark: isDark,
+                      onTap: () => _deleteAgent(context),
+                    ),
                   ],
                 ),
               ),
@@ -414,6 +472,100 @@ class _AgentDetailSheetState extends ConsumerState<AgentDetailSheet> {
           backgroundColor: success ? BrandColors.success : BrandColors.error,
         ),
       );
+    }
+  }
+
+  Future<void> _resetToTemplate() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Reset ${widget.agent.displayName} to default?'),
+        content: Text(
+          widget.agent.userModified
+              ? 'Your customizations will be replaced with the latest '
+                'default template. Schedule and run history are preserved.'
+              : 'This will restore the latest default template. '
+                'Schedule and run history are preserved.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Reset to default'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    final api = ref.read(dailyApiServiceProvider);
+    final success = await api.resetAgentToTemplate(widget.agent.name);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            success
+                ? '${widget.agent.displayName} restored to default'
+                : 'Failed to reset to default',
+          ),
+          backgroundColor: success ? BrandColors.success : BrandColors.error,
+        ),
+      );
+      if (success) ref.invalidate(agentsProvider);
+    }
+  }
+
+  Future<void> _deleteAgent(BuildContext context) async {
+    final isBuiltin = widget.agent.isBuiltin;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Delete ${widget.agent.displayName}?'),
+        content: Text(
+          isBuiltin
+              ? 'This is a built-in agent and will be recreated on '
+                'next server restart. Run history is preserved.'
+              : 'This will permanently remove the agent. '
+                'Run history is preserved.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: BrandColors.error,
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    final api = ref.read(dailyApiServiceProvider);
+    final success = await api.deleteAgent(widget.agent.name);
+    if (mounted) {
+      Navigator.pop(context); // Close sheet
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            success
+                ? '${widget.agent.displayName} deleted'
+                : 'Failed to delete',
+          ),
+          backgroundColor: success ? BrandColors.success : BrandColors.error,
+        ),
+      );
+      if (success) {
+        ref.invalidate(agentsProvider);
+        widget.onDelete?.call();
+      }
     }
   }
 }

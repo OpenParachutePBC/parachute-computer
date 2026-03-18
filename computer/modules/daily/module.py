@@ -70,11 +70,13 @@ class AgentTemplateDict(TypedDict, total=False):
     trigger_event: str
     trigger_filter: str
     memory_mode: str  # "persistent" (default) | "fresh"
+    template_version: str  # ISO date, e.g. "2026-03-17"
 
 
 AGENT_TEMPLATES: list[AgentTemplateDict] = [
     {
         "name": "daily-reflection",
+        "template_version": "2026-03-17",
         "display_name": "Daily Reflection",
         "description": "Reviews your journal entries and offers a thoughtful daily reflection",
         "system_prompt": (
@@ -105,6 +107,20 @@ AGENT_TEMPLATES: list[AgentTemplateDict] = [
         "schedule_time": "4:00",
         "trust_level": "sandboxed",
         "memory_mode": "persistent",
+    },
+    {
+        "name": "post-process",
+        "template_version": "2026-03-17",
+        "display_name": "Post-Process",
+        "description": (
+            "Runs after voice transcription completes. Cleans up filler "
+            "words, fixes grammar, adds punctuation."
+        ),
+        "system_prompt": "",  # Filled from POST_PROCESS_SYSTEM_PROMPT after definition
+        "tools": ["read_entry", "update_entry_content"],
+        "trigger_event": "note.transcription_complete",
+        "trust_level": "direct",
+        "memory_mode": "fresh",
     },
 ]
 
@@ -312,6 +328,10 @@ POST_PROCESS_SYSTEM_PROMPT = (
     "unless the speaker clearly intended a list\n"
     "- Output ONLY the cleaned text — no preamble, no explanation"
 )
+
+# Backfill post-process template with the prompt defined above
+_pp_tpl = next(t for t in AGENT_TEMPLATES if t["name"] == "post-process")
+_pp_tpl["system_prompt"] = POST_PROCESS_SYSTEM_PROMPT
 
 
 async def _transcribe_and_cleanup(
@@ -691,6 +711,8 @@ class DailyModule:
             "trigger_event": ("STRING", "''"),
             "trigger_filter": ("STRING", "'{}'"),
             "memory_mode": ("STRING", "'persistent'"),
+            "template_version": ("STRING", "''"),
+            "user_modified": ("STRING", "''"),
         }
         missing = {col: v for col, v in agent_new.items() if col not in agent_cols}
         if missing:
@@ -702,89 +724,128 @@ class DailyModule:
                     logger.info(f"Daily: added column Agent.{col}")
 
     async def _seed_builtin_agents(self, graph) -> None:
-        """Seed built-in Agents that ship with Parachute. Idempotent — skips existing."""
+        """Seed or update built-in Agents from AGENT_TEMPLATES.
+
+        Version-aware logic:
+        - New agent → CREATE with template_version, user_modified="false"
+        - Pre-versioned (template_version == "") → stamp version, mark modified (safe)
+        - Modified by user → skip, log "update available"
+        - Unmodified + older version → auto-update config fields in place
+        - Already current → skip
+        """
         now = datetime.now(timezone.utc).isoformat()
 
-        # Look up the daily-reflection template by name (not index) so seed
-        # data stays correct even if the AGENT_TEMPLATES list is reordered.
-        _reflection_tpl = next(
-            (t for t in AGENT_TEMPLATES if t["name"] == "daily-reflection"),
-            None,
-        )
-        if _reflection_tpl is None:
-            logger.error("Daily: daily-reflection template missing from AGENT_TEMPLATES")
-            _reflection_tpl = AGENT_TEMPLATES[0]  # fallback to first
+        for tpl in AGENT_TEMPLATES:
+            name = tpl["name"]
+            tpl_version = tpl.get("template_version", "")
 
-        builtin_agents = [
-            {
-                "name": "post-process",
-                "display_name": "Post-Process",
-                "description": (
-                    "Runs after voice transcription completes. Cleans up filler "
-                    "words, fixes grammar, adds punctuation."
-                ),
-                "system_prompt": POST_PROCESS_SYSTEM_PROMPT,
-                "tools": json.dumps(["read_entry", "update_entry_content"]),
-                "schedule_enabled": "false",
-                "schedule_time": "",
+            # Build the graph-ready dict from the template
+            is_triggered = bool(tpl.get("trigger_event", ""))
+            seed_data = {
+                "name": name,
+                "display_name": tpl.get("display_name", name.replace("-", " ").title()),
+                "description": tpl.get("description", ""),
+                "system_prompt": tpl.get("system_prompt", ""),
+                "tools": json.dumps(tpl.get("tools", [])),
+                "schedule_enabled": "false" if is_triggered else "true",
+                "schedule_time": tpl.get("schedule_time", ""),
                 "enabled": "true",
-                "trust_level": "direct",
-                "trigger_event": "note.transcription_complete",
-                "trigger_filter": "{}",
-                "memory_mode": "fresh",
-                "created_at": now,
-                "updated_at": now,
-            },
-            {
-                "name": "daily-reflection",
-                "display_name": "Daily Reflection",
-                "description": _reflection_tpl["description"],
-                "system_prompt": _reflection_tpl["system_prompt"],
-                "tools": json.dumps(_reflection_tpl["tools"]),
-                "schedule_enabled": "true",
-                "schedule_time": _reflection_tpl.get("schedule_time", "4:00"),
-                "enabled": "true",
-                "trust_level": _reflection_tpl.get("trust_level", "sandboxed"),
-                "trigger_event": "",
-                "trigger_filter": "{}",
-                "memory_mode": _reflection_tpl.get("memory_mode", "persistent"),
-                "created_at": now,
-                "updated_at": now,
-            },
-        ]
+                "trust_level": tpl.get("trust_level", "sandboxed"),
+                "trigger_event": tpl.get("trigger_event", ""),
+                "trigger_filter": tpl.get("trigger_filter", "{}"),
+                "memory_mode": tpl.get("memory_mode", "persistent"),
+                "template_version": tpl_version,
+                "user_modified": "false",
+            }
 
-        for agent in builtin_agents:
+            # Check if the agent already exists
             rows = await graph.execute_cypher(
-                "MATCH (a:Agent {name: $name}) RETURN a.name AS name",
-                {"name": agent["name"]},
+                "MATCH (a:Agent {name: $name}) "
+                "RETURN a.template_version AS tv, a.user_modified AS um",
+                {"name": name},
             )
-            if rows:
-                continue  # Already exists — don't overwrite user customizations
 
-            try:
-                async with graph.write_lock:
-                    await graph.execute_cypher(
-                        "CREATE (a:Agent {"
-                        "  name: $name,"
-                        "  display_name: $display_name,"
-                        "  description: $description,"
-                        "  system_prompt: $system_prompt,"
-                        "  tools: $tools,"
-                        "  schedule_enabled: $schedule_enabled,"
-                        "  schedule_time: $schedule_time,"
-                        "  enabled: $enabled,"
-                        "  trust_level: $trust_level,"
-                        "  trigger_event: $trigger_event,"
-                        "  trigger_filter: $trigger_filter,"
-                        "  memory_mode: $memory_mode,"
-                        "  created_at: $created_at,"
-                        "  updated_at: $updated_at"
-                        "})",
-                        agent,
+            if not rows:
+                # ── New agent: create from template ──
+                try:
+                    async with graph.write_lock:
+                        await graph.execute_cypher(
+                            "CREATE (a:Agent {"
+                            "  name: $name,"
+                            "  display_name: $display_name,"
+                            "  description: $description,"
+                            "  system_prompt: $system_prompt,"
+                            "  tools: $tools,"
+                            "  schedule_enabled: $schedule_enabled,"
+                            "  schedule_time: $schedule_time,"
+                            "  enabled: $enabled,"
+                            "  trust_level: $trust_level,"
+                            "  trigger_event: $trigger_event,"
+                            "  trigger_filter: $trigger_filter,"
+                            "  memory_mode: $memory_mode,"
+                            "  template_version: $template_version,"
+                            "  user_modified: $user_modified,"
+                            "  created_at: $now,"
+                            "  updated_at: $now"
+                            "})",
+                            {**seed_data, "now": now},
+                        )
+                    logger.info(f"Daily: seeded built-in Agent '{name}' (v{tpl_version})")
+                except Exception as e:
+                    logger.warning(f"Daily: failed to seed Agent '{name}': {e}")
+                continue
+
+            existing_tv = (rows[0].get("tv") or "").strip()
+            existing_um = (rows[0].get("um") or "").strip()
+
+            if not existing_tv:
+                # ── Pre-versioned agent: stamp version, mark as modified (conservative) ──
+                try:
+                    async with graph.write_lock:
+                        await graph.execute_cypher(
+                            "MATCH (a:Agent {name: $name}) "
+                            "SET a.template_version = $tv, a.user_modified = 'true'",
+                            {"name": name, "tv": tpl_version},
+                        )
+                    logger.info(
+                        f"Daily: stamped pre-versioned Agent '{name}' "
+                        f"with v{tpl_version}, marked user_modified=true"
                     )
-                logger.info(f"Daily: seeded built-in Agent '{agent['name']}'")
-            except Exception as e:
-                logger.warning(f"Daily: failed to seed Agent '{agent['name']}': {e}")
+                except Exception as e:
+                    logger.warning(f"Daily: failed to stamp Agent '{name}': {e}")
+            elif existing_um == "true":
+                # ── User customized: don't overwrite ──
+                if existing_tv < tpl_version:
+                    logger.info(
+                        f"Daily: update available for '{name}' "
+                        f"(v{existing_tv} → v{tpl_version}) but user customized, skipping"
+                    )
+            elif existing_tv < tpl_version:
+                # ── Unmodified + outdated: auto-update config fields ──
+                try:
+                    async with graph.write_lock:
+                        await graph.execute_cypher(
+                            "MATCH (a:Agent {name: $name}) "
+                            "SET a.display_name = $display_name,"
+                            "    a.description = $description,"
+                            "    a.system_prompt = $system_prompt,"
+                            "    a.tools = $tools,"
+                            "    a.schedule_time = $schedule_time,"
+                            "    a.trust_level = $trust_level,"
+                            "    a.trigger_event = $trigger_event,"
+                            "    a.trigger_filter = $trigger_filter,"
+                            "    a.memory_mode = $memory_mode,"
+                            "    a.template_version = $template_version,"
+                            "    a.updated_at = $now",
+                            {**seed_data, "now": now},
+                        )
+                    logger.info(
+                        f"Daily: updated builtin Agent '{name}' "
+                        f"from v{existing_tv} to v{tpl_version}"
+                    )
+                except Exception as e:
+                    logger.warning(f"Daily: failed to update Agent '{name}': {e}")
+            # else: already current — nothing to do
 
         # Clean up renamed/retired Agent nodes and their orphaned AgentRun rows
         for old_name in ["transcription-cleanup"]:
@@ -2322,13 +2383,28 @@ class DailyModule:
 
         @router.get("/agents")
         async def list_agents():
-            """List all Agent nodes from the graph."""
+            """List all Agent nodes from the graph, enriched with builtin status."""
             graph = self._get_graph()
             if graph is None:
                 return JSONResponse(status_code=503, content={"error": "BrainDB not available"})
             rows = await graph.execute_cypher(
                 "MATCH (a:Agent) RETURN a ORDER BY a.name"
             )
+            # Enrich each agent with builtin/update metadata
+            builtin_names = {t["name"]: t for t in AGENT_TEMPLATES}
+            for agent in rows:
+                name = agent.get("name", "")
+                tpl = builtin_names.get(name)
+                agent["is_builtin"] = tpl is not None
+                if tpl:
+                    tpl_v = tpl.get("template_version", "")
+                    agent_v = (agent.get("template_version") or "").strip()
+                    agent["latest_template_version"] = tpl_v
+                    agent["update_available"] = bool(
+                        tpl_v and agent_v and agent_v < tpl_v
+                    )
+                else:
+                    agent["update_available"] = False
             return {"agents": rows, "count": len(rows)}
 
         @router.get("/agents/{name}")
@@ -2464,6 +2540,7 @@ class DailyModule:
                 "    a.trigger_event = $trigger_event, "
                 "    a.trigger_filter = $trigger_filter, "
                 "    a.memory_mode = $memory_mode, "
+                "    a.user_modified = 'true', "
                 "    a.updated_at = $now",
                 {
                     "name": name,
@@ -2543,15 +2620,130 @@ class DailyModule:
                 )
             return {"status": "reset", "agent": name}
 
-        @router.delete("/agents/{name}", status_code=204)
-        async def delete_agent(name: str):
-            """Delete an Agent node."""
+        @router.get("/agents/{name}/template")
+        async def get_agent_template(name: str):
+            """Return the latest builtin template for comparison with the user's agent."""
+            tpl = next((t for t in AGENT_TEMPLATES if t["name"] == name), None)
+            if tpl is None:
+                return {"is_builtin": False, "name": name}
+
+            graph = self._get_graph()
+            current_version = ""
+            user_modified = False
+            if graph:
+                rows = await graph.execute_cypher(
+                    "MATCH (a:Agent {name: $name}) "
+                    "RETURN a.template_version AS tv, a.user_modified AS um",
+                    {"name": name},
+                )
+                if rows:
+                    current_version = (rows[0].get("tv") or "").strip()
+                    user_modified = (rows[0].get("um") or "").strip() == "true"
+
+            tpl_version = tpl.get("template_version", "")
+            return {
+                "name": name,
+                "is_builtin": True,
+                "template_version": tpl_version,
+                "current_version": current_version,
+                "update_available": bool(
+                    tpl_version and current_version and current_version < tpl_version
+                ),
+                "user_modified": user_modified,
+                "template": {
+                    "display_name": tpl.get("display_name", ""),
+                    "description": tpl.get("description", ""),
+                    "system_prompt": tpl.get("system_prompt", ""),
+                    "tools": tpl.get("tools", []),
+                    "schedule_time": tpl.get("schedule_time", ""),
+                    "trust_level": tpl.get("trust_level", "sandboxed"),
+                    "trigger_event": tpl.get("trigger_event", ""),
+                    "trigger_filter": tpl.get("trigger_filter", "{}"),
+                    "memory_mode": tpl.get("memory_mode", "persistent"),
+                },
+            }
+
+        @router.post("/agents/{name}/reset-to-template")
+        async def reset_to_template(name: str):
+            """Reset a builtin agent to the latest template defaults.
+
+            Preserves runtime state (schedule_enabled, enabled, sdk_session_id,
+            last_run_at, run_count, last_processed_date).
+            """
+            tpl = next((t for t in AGENT_TEMPLATES if t["name"] == name), None)
+            if tpl is None:
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": f"'{name}' is not a builtin agent"},
+                )
+
             graph = self._get_graph()
             if graph is None:
                 return JSONResponse(status_code=503, content={"error": "BrainDB not available"})
-            await graph.execute_cypher(
-                "MATCH (a:Agent {name: $name}) DELETE a", {"name": name}
+
+            rows = await graph.execute_cypher(
+                "MATCH (a:Agent {name: $name}) RETURN a", {"name": name}
             )
+            if not rows:
+                return JSONResponse(status_code=404, content={"error": "not found"})
+
+            now = datetime.now(timezone.utc).isoformat()
+            is_triggered = bool(tpl.get("trigger_event", ""))
+
+            async with graph.write_lock:
+                await graph.execute_cypher(
+                    "MATCH (a:Agent {name: $name}) "
+                    "SET a.display_name = $display_name,"
+                    "    a.description = $description,"
+                    "    a.system_prompt = $system_prompt,"
+                    "    a.tools = $tools,"
+                    "    a.schedule_time = $schedule_time,"
+                    "    a.trust_level = $trust_level,"
+                    "    a.trigger_event = $trigger_event,"
+                    "    a.trigger_filter = $trigger_filter,"
+                    "    a.memory_mode = $memory_mode,"
+                    "    a.template_version = $template_version,"
+                    "    a.user_modified = 'false',"
+                    "    a.updated_at = $now",
+                    {
+                        "name": name,
+                        "display_name": tpl.get("display_name", name.replace("-", " ").title()),
+                        "description": tpl.get("description", ""),
+                        "system_prompt": tpl.get("system_prompt", ""),
+                        "tools": json.dumps(tpl.get("tools", [])),
+                        "schedule_time": tpl.get("schedule_time", "") if not is_triggered else "",
+                        "trust_level": tpl.get("trust_level", "sandboxed"),
+                        "trigger_event": tpl.get("trigger_event", ""),
+                        "trigger_filter": tpl.get("trigger_filter", "{}"),
+                        "memory_mode": tpl.get("memory_mode", "persistent"),
+                        "template_version": tpl.get("template_version", ""),
+                        "now": now,
+                    },
+                )
+
+            # Re-fetch and return
+            rows = await graph.execute_cypher(
+                "MATCH (a:Agent {name: $name}) RETURN a", {"name": name}
+            )
+            return rows[0] if rows else {"name": name, "status": "reset"}
+
+        @router.delete("/agents/{name}", status_code=204)
+        async def delete_agent(name: str):
+            """Delete an Agent node and reload the scheduler."""
+            graph = self._get_graph()
+            if graph is None:
+                return JSONResponse(status_code=503, content={"error": "BrainDB not available"})
+            async with graph.write_lock:
+                await graph.execute_cypher(
+                    "MATCH (a:Agent {name: $name}) DELETE a", {"name": name}
+                )
+            # Reload scheduler so deleted scheduled agents are removed
+            try:
+                from parachute.core.scheduler import reload_scheduler, _graph
+                vault_path = Path(self.vault_path)
+                await reload_scheduler(vault_path, graph=graph)
+            except Exception as e:
+                logger.warning(f"Daily: scheduler reload after delete failed: {e}")
             return Response(status_code=204)
 
         return router
