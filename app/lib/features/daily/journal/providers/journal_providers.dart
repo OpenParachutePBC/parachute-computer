@@ -179,7 +179,7 @@ Future<JournalDay> _loadJournal(
   }
 
   // Phase 2 — flush pending ops and fetch from server (only when online).
-  final isAvailable = ref.read(isServerAvailableProvider);
+  final isAvailable = ref.watch(isServerAvailableProvider);
   if (!isAvailable) {
     // Offline: skip flush + server fetch, return cached entries only.
     // Flushing when offline would wait 15s per pending entry for timeout.
@@ -352,3 +352,25 @@ final agentTemplatesProvider =
       final api = ref.watch(dailyApiServiceProvider);
       return api.fetchTemplates();
     });
+
+// ============================================================================
+// Sync Status Providers
+// ============================================================================
+
+/// Count of entries pending sync (queue + pending deletes + pending edits).
+///
+/// Returns 0 if unable to read the queue or cache.
+final pendingSyncCountProvider = FutureProvider<int>((ref) async {
+  try {
+    final cache = await ref.watch(journalLocalCacheProvider.future);
+    final queue = await ref.watch(pendingQueueProvider.future);
+
+    final queueCount = queue.length;
+    final pendingDeletes = cache.getPendingDeletes().length;
+    final pendingEdits = cache.getPendingEdits().length;
+
+    return queueCount + pendingDeletes + pendingEdits;
+  } catch (e) {
+    return 0;
+  }
+});

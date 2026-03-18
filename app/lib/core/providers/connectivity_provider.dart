@@ -2,12 +2,6 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import './backend_health_provider.dart';
 
-/// Simplified connectivity state for API gating
-enum ConnectivityState {
-  connected,    // Server is reachable and healthy
-  offline,      // Server is unreachable (network error, timeout, server offline)
-}
-
 /// Fast-fail / fast-recover override for server reachability.
 ///
 /// Set by API callers:
@@ -53,9 +47,4 @@ final isServerAvailableProvider = Provider<bool>((ref) {
       return false; // Assume offline on error
     },
   );
-});
-
-/// Inverse of isServerAvailableProvider - is offline?
-final isOfflineProvider = Provider<bool>((ref) {
-  return !ref.watch(isServerAvailableProvider);
 });

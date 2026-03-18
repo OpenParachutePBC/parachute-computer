@@ -1,32 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
-import '../providers/journal_providers.dart';
+import '../providers/journal_providers.dart' show pendingSyncCountProvider;
 
-/// Provider for counting pending sync entries
-///
-/// Returns the total number of entries that are either:
-/// - In the pending queue (isPending)
-/// - Have pending edits (hasPendingEdit)
-final pendingSyncCountProvider = FutureProvider<int>((ref) async {
-  try {
-    final cache = await ref.watch(journalLocalCacheProvider.future);
-    final queue = await ref.watch(pendingQueueProvider.future);
-
-    // Count pending entries from queue
-    final queueCount = queue.length;
-
-    // Count pending deletes and edits in cache
-    final pendingDeletes = cache.getPendingDeletes().length;
-    final pendingEdits = cache.getPendingEdits().length;
-
-    return queueCount + pendingDeletes + pendingEdits;
-  } catch (e) {
-    return 0;
-  }
-});
-
-/// Banner showing number of entries pending sync
+/// Banner showing number of entries pending sync.
 ///
 /// Only displays when there are pending entries.
 /// Provides a "Retry" button to manually trigger sync.

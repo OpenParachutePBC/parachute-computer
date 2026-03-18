@@ -19,8 +19,6 @@ import '../models/journal_day.dart';
 import '../models/journal_entry.dart';
 import '../providers/journal_providers.dart';
 import '../providers/journal_screen_state_provider.dart';
-import '../services/daily_api_service.dart';
-import '../services/journal_local_cache.dart';
 import '../widgets/journal_header.dart';
 import '../widgets/journal_content_view.dart';
 import '../widgets/journal_empty_state.dart';
@@ -319,7 +317,10 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
     debugPrint('[JournalScreen] Refreshing - providers invalidated, will re-fetch from API');
   }
 
-  /// Retry pending sync manually — user tapped the "Retry" button in the banner
+  /// Retry pending sync manually — user tapped the "Retry" button in the banner.
+  ///
+  /// Delegates to _refreshJournal which triggers _loadJournal in the notifier,
+  /// which already handles flushing pending queue + pending ops when online.
   Future<void> _retryPendingSync() async {
     // Gate on connectivity — don't attempt sync if offline
     final isAvailable = ref.read(isServerAvailableProvider);
@@ -337,18 +338,10 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
 
     debugPrint('[JournalScreen] User triggered pending sync retry');
     try {
-      final api = ref.read(dailyApiServiceProvider);
-      final queue = await ref.read(pendingQueueProvider.future);
-      final cache = await ref.read(journalLocalCacheProvider.future);
+      // Refresh triggers _loadJournal which flushes pending ops + fetches from server
+      await _refreshJournal();
 
-      // Flush pending queue (text entries)
-      await queue.flush(api);
-
-      // Flush pending deletes/edits
-      await _flushPendingOpsForSync(api, cache);
-
-      // Refresh journal display and pending count
-      _refreshJournal();
+      // Update pending count after flush
       ref.invalidate(pendingSyncCountProvider);
 
       if (mounted) {
@@ -368,38 +361,6 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
             content: Text('Sync failed: $e'),
             duration: const Duration(seconds: 3),
           ),
-        );
-      }
-    }
-  }
-
-  /// Helper to flush pending ops (similar to _flushPendingOps in journal_providers)
-  Future<void> _flushPendingOpsForSync(
-    DailyApiService api,
-    JournalLocalCache cache,
-  ) async {
-    // Flush pending deletes
-    final deleteIds = cache.getPendingDeletes();
-    for (final id in deleteIds) {
-      final ok = await api.deleteEntry(id);
-      if (ok) {
-        cache.removeEntry(id);
-      }
-    }
-
-    // Flush pending edits
-    final editEntries = cache.getPendingEdits();
-    for (final entry in editEntries) {
-      final updated = await api.updateEntry(
-        entry.id,
-        content: entry.content,
-        metadata: entry.title.isNotEmpty ? {'title': entry.title} : null,
-      );
-      if (updated != null) {
-        cache.markSynced(
-          entry.id,
-          content: updated.content,
-          title: updated.title,
         );
       }
     }

@@ -191,10 +191,12 @@ class DailyApiService {
         return null;
       }
 
+      onReachabilityChanged?.call(true);
       final decoded = jsonDecode(response.body) as Map<String, dynamic>;
       return JournalEntry.fromServerJson(decoded);
     } catch (e) {
       debugPrint('[DailyApiService] updateEntry error: $e');
+      onReachabilityChanged?.call(false);
       return null;
     }
   }
@@ -211,6 +213,7 @@ class DailyApiService {
       if (response.statusCode == 404 ||
           response.statusCode == 204 ||
           (response.statusCode >= 200 && response.statusCode < 300)) {
+        onReachabilityChanged?.call(true);
         return true;
       }
       debugPrint(
@@ -219,6 +222,7 @@ class DailyApiService {
       return false;
     } catch (e) {
       debugPrint('[DailyApiService] deleteEntry error: $e');
+      onReachabilityChanged?.call(false);
       return false;
     }
   }
