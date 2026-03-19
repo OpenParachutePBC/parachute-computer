@@ -1,29 +1,30 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../core/models/supervisor_models.dart';
 import '../../../core/providers/supervisor_providers.dart';
 import '../../../core/theme/design_tokens.dart';
 
-/// Dynamic model picker that fetches models from supervisor API.
+/// Model picker with 3-option selector (Opus/Sonnet/Haiku) and 1M context toggle.
 ///
-/// Shows latest model per family by default, with option to show all.
-/// Reads current model from server config and saves changes via PUT /supervisor/config.
-class ModelPickerDropdown extends ConsumerStatefulWidget {
+/// Stores short names with optional [1m] suffix (e.g., "opus[1m]", "sonnet").
+/// The Claude Code CLI resolves short names to the latest version at runtime.
+class ModelPickerDropdown extends ConsumerWidget {
   const ModelPickerDropdown({super.key});
 
-  @override
-  ConsumerState<ModelPickerDropdown> createState() => _ModelPickerDropdownState();
-}
-
-class _ModelPickerDropdownState extends ConsumerState<ModelPickerDropdown> {
-  bool _showAll = false;
+  static const _validBases = {'opus', 'sonnet', 'haiku'};
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final modelsAsync = ref.watch(availableModelsProvider(showAll: _showAll));
-    final currentModelId = ref.watch(supervisorConfigProvider).valueOrNull?['default_model'] as String?;
+    final currentModelId =
+        ref.watch(supervisorConfigProvider).valueOrNull?['default_model'] as String? ?? 'opus[1m]';
+
+    // Parse current config: "opus[1m]" → base="opus", extendedContext=true
+    // Clamp to known base to prevent SegmentedButton assertion errors
+    final bracketIndex = currentModelId.indexOf('[');
+    final rawBase = bracketIndex != -1 ? currentModelId.substring(0, bracketIndex) : currentModelId;
+    final base = _validBases.contains(rawBase) ? rawBase : 'opus';
+    final extendedContext = bracketIndex != -1;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -45,13 +46,6 @@ class _ModelPickerDropdownState extends ConsumerState<ModelPickerDropdown> {
                 color: isDark ? BrandColors.nightText : BrandColors.charcoal,
               ),
             ),
-            const Spacer(),
-            // Refresh button
-            IconButton(
-              icon: const Icon(Icons.refresh, size: 18),
-              onPressed: () => ref.refresh(availableModelsProvider(showAll: _showAll)),
-              tooltip: 'Refresh model list',
-            ),
           ],
         ),
         SizedBox(height: Spacing.xs),
@@ -64,141 +58,90 @@ class _ModelPickerDropdownState extends ConsumerState<ModelPickerDropdown> {
         ),
         SizedBox(height: Spacing.md),
 
-        // Model dropdown
-        modelsAsync.when(
-          data: (models) {
-            if (models.isEmpty) {
-              return _buildErrorState(context, isDark, 'No models available');
-            }
-            return _buildDropdown(context, models, currentModelId, isDark);
-          },
-          loading: () => const SizedBox(
-            height: 48,
-            child: Center(child: CircularProgressIndicator()),
-          ),
-          error: (_, __) => _buildErrorState(
-            context,
-            isDark,
-            'Could not load models — check your API key in server config.',
+        // Model selector — 3 segments
+        SizedBox(
+          width: double.infinity,
+          child: SegmentedButton<String>(
+            segments: const [
+              ButtonSegment(
+                value: 'opus',
+                label: Text('Opus'),
+                tooltip: 'Most capable',
+              ),
+              ButtonSegment(
+                value: 'sonnet',
+                label: Text('Sonnet'),
+                tooltip: 'Balanced',
+              ),
+              ButtonSegment(
+                value: 'haiku',
+                label: Text('Haiku'),
+                tooltip: 'Fastest',
+              ),
+            ],
+            selected: {base},
+            onSelectionChanged: (selected) {
+              _updateModel(ref, context, selected.first, extendedContext);
+            },
+            style: const ButtonStyle(
+              visualDensity: VisualDensity.compact,
+            ),
           ),
         ),
+        SizedBox(height: Spacing.xs),
 
-        // Show all toggle
-        SizedBox(height: Spacing.sm),
-        Row(
-          children: [
-            Checkbox(
-              value: _showAll,
-              onChanged: (value) {
-                setState(() => _showAll = value ?? false);
-              },
+        // Family description
+        Padding(
+          padding: EdgeInsets.symmetric(horizontal: Spacing.xs),
+          child: Text(
+            _familyDescription(base),
+            style: TextStyle(
+              fontSize: TypographyTokens.labelSmall,
+              color: isDark ? BrandColors.nightTextSecondary : BrandColors.stone,
             ),
-            Text(
-              'Show all model versions',
-              style: TextStyle(
-                fontSize: TypographyTokens.bodySmall,
-                color: isDark ? BrandColors.nightTextSecondary : BrandColors.stone,
-              ),
+          ),
+        ),
+        SizedBox(height: Spacing.md),
+
+        // Extended context toggle
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: Text(
+            'Extended context (1M tokens)',
+            style: TextStyle(
+              fontSize: TypographyTokens.bodyMedium,
+              color: isDark ? BrandColors.nightText : BrandColors.ink,
             ),
-          ],
+          ),
+          subtitle: Text(
+            'Reduces compaction for longer sessions',
+            style: TextStyle(
+              fontSize: TypographyTokens.labelSmall,
+              color: isDark ? BrandColors.nightTextSecondary : BrandColors.stone,
+            ),
+          ),
+          value: extendedContext,
+          onChanged: (enabled) {
+            _updateModel(ref, context, base, enabled);
+          },
         ),
       ],
     );
   }
 
-  Widget _buildDropdown(
+  Future<void> _updateModel(
+    WidgetRef ref,
     BuildContext context,
-    List<ModelInfo> models,
-    String? currentModelId,
-    bool isDark,
-  ) {
-    // Find current model or default to first
-    final selectedModel = currentModelId != null
-        ? models.firstWhere(
-            (m) => m.id == currentModelId,
-            orElse: () => models.first,
-          )
-        : models.first;
-
-    return Container(
-      padding: EdgeInsets.symmetric(horizontal: Spacing.md),
-      decoration: BoxDecoration(
-        border: Border.all(
-          color: isDark
-              ? BrandColors.nightTextSecondary.withValues(alpha: 0.3)
-              : BrandColors.stone.withValues(alpha: 0.3),
-        ),
-        borderRadius: Radii.card,
-      ),
-      child: DropdownButtonHideUnderline(
-        child: DropdownButton<ModelInfo>(
-          value: selectedModel,
-          isExpanded: true,
-          dropdownColor: isDark ? BrandColors.nightSurfaceElevated : BrandColors.softWhite,
-          style: TextStyle(
-            fontSize: TypographyTokens.bodyMedium,
-            color: isDark ? BrandColors.nightText : BrandColors.ink,
-          ),
-          items: models.map((model) {
-            return DropdownMenuItem<ModelInfo>(
-              value: model,
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      model.displayName,
-                      style: TextStyle(
-                        fontSize: TypographyTokens.bodyMedium,
-                        color: isDark ? BrandColors.nightText : BrandColors.ink,
-                        fontWeight: model.isLatest ? FontWeight.w600 : FontWeight.normal,
-                      ),
-                    ),
-                  ),
-                  if (model.isLatest)
-                    Container(
-                      padding: EdgeInsets.symmetric(
-                        horizontal: Spacing.xs,
-                        vertical: 2,
-                      ),
-                      decoration: BoxDecoration(
-                        color: isDark ? BrandColors.nightForest : BrandColors.forest,
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: Text(
-                        'Latest',
-                        style: TextStyle(
-                          fontSize: TypographyTokens.labelSmall,
-                          color: isDark ? BrandColors.nightText : BrandColors.softWhite,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                  SizedBox(width: Spacing.sm),
-                  Text(
-                    _modelFamilyLabel(model.family),
-                    style: TextStyle(
-                      fontSize: TypographyTokens.labelSmall,
-                      color: isDark ? BrandColors.nightTextSecondary : BrandColors.stone,
-                    ),
-                  ),
-                ],
-              ),
-            );
-          }).toList(),
-          onChanged: (model) => _onModelSelected(context, model),
-        ),
-      ),
-    );
-  }
-
-  Future<void> _onModelSelected(BuildContext context, ModelInfo? model) async {
-    if (model == null) return;
+    String base,
+    bool extendedContext,
+  ) async {
+    final modelId = extendedContext ? '$base[1m]' : base;
     try {
-      await ref.read(supervisorConfigProvider.notifier).setModel(model.id);
+      await ref.read(supervisorConfigProvider.notifier).setModel(modelId);
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Model set to ${model.displayName}'),
+            content: Text('Model set to $modelId'),
             duration: const Duration(seconds: 2),
           ),
         );
@@ -215,45 +158,12 @@ class _ModelPickerDropdownState extends ConsumerState<ModelPickerDropdown> {
     }
   }
 
-  Widget _buildErrorState(BuildContext context, bool isDark, String message) {
-    return Container(
-      padding: EdgeInsets.all(Spacing.md),
-      decoration: BoxDecoration(
-        border: Border.all(
-          color: isDark
-              ? BrandColors.nightTextSecondary.withValues(alpha: 0.3)
-              : BrandColors.stone.withValues(alpha: 0.3),
-        ),
-        borderRadius: Radii.card,
-      ),
-      child: Row(
-        children: [
-          Icon(
-            Icons.warning_outlined,
-            color: isDark ? BrandColors.nightTextSecondary : BrandColors.stone,
-            size: 20,
-          ),
-          SizedBox(width: Spacing.sm),
-          Expanded(
-            child: Text(
-              message,
-              style: TextStyle(
-                fontSize: TypographyTokens.bodySmall,
-                color: isDark ? BrandColors.nightTextSecondary : BrandColors.stone,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  String _modelFamilyLabel(String family) {
+  String _familyDescription(String family) {
     return switch (family) {
-      'opus' => 'Most capable',
-      'sonnet' => 'Balanced',
-      'haiku' => 'Fastest',
-      _ => family,
+      'opus' => 'Most capable — best for complex reasoning and nuanced tasks',
+      'sonnet' => 'Balanced — great performance at lower cost',
+      'haiku' => 'Fastest — quick responses for simple tasks',
+      _ => '',
     };
   }
 }

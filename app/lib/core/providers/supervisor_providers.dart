@@ -5,7 +5,6 @@ import 'package:riverpod_annotation/riverpod_annotation.dart';
 import '../config/app_config.dart';
 import '../models/supervisor_models.dart';
 import '../services/supervisor_service.dart';
-import '../services/models_service.dart';
 import 'app_state_provider.dart';
 
 part 'supervisor_providers.g.dart';
@@ -19,18 +18,6 @@ SupervisorService supervisorService(SupervisorServiceRef ref) {
   final supervisorUrl = serverUrl.replaceAll(':3333', ':3334');
 
   final service = SupervisorService(baseUrl: supervisorUrl);
-  ref.onDispose(() => service.dispose());
-  return service;
-}
-
-/// Models service singleton (for model selection - talks to supervisor)
-@riverpod
-ModelsService modelsService(ModelsServiceRef ref) {
-  final serverUrlAsync = ref.watch(serverUrlProvider);
-  final serverUrl = serverUrlAsync.valueOrNull ?? AppConfig.defaultServerUrl;
-  final supervisorUrl = serverUrl.replaceAll(':3333', ':3334');
-
-  final service = ModelsService(baseUrl: supervisorUrl);
   ref.onDispose(() => service.dispose());
   return service;
 }
@@ -54,25 +41,6 @@ class SupervisorStatusNotifier extends _$SupervisorStatusNotifier {
     state = await AsyncValue.guard(() async {
       final service = ref.read(supervisorServiceProvider);
       return service.getStatus();
-    });
-  }
-}
-
-/// Available models provider (cached, manual refresh)
-@riverpod
-class AvailableModels extends _$AvailableModels {
-  @override
-  Future<List<ModelInfo>> build({bool showAll = false}) async {
-    final service = ref.watch(modelsServiceProvider);
-    return service.getModels(showAll: showAll);
-  }
-
-  /// Refresh model list from Anthropic API
-  Future<void> refresh() async {
-    state = const AsyncValue.loading();
-    state = await AsyncValue.guard(() async {
-      final service = ref.read(modelsServiceProvider);
-      return service.getModels(showAll: false);
     });
   }
 }

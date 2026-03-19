@@ -133,8 +133,8 @@ class ChatRequest(BaseModel):
     )
     model: Optional[str] = Field(
         default=None,
-        description="Model to use (e.g., 'claude-sonnet-4-5-20250929'). "
-                    "Overrides server DEFAULT_MODEL env var.",
+        description="Model to use (e.g., 'opus', 'sonnet[1m]'). "
+                    "Overrides server default_model config.",
     )
     container_id: Optional[str] = Field(
         alias="containerId",

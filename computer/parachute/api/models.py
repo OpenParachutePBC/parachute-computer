@@ -1,64 +1,44 @@
 """
-API endpoints for Claude model selection and management.
+API endpoints for Claude model selection.
+
+Returns a static list of model families (opus, sonnet, haiku).
+The Claude Code CLI resolves short names to the latest version.
 """
 
-import logging
-import os
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from fastapi import APIRouter
+from pydantic import BaseModel
 
 from parachute.config import get_settings
 
-logger = logging.getLogger(__name__)
-
 router = APIRouter(prefix="/models")
+
+# Static model list — CLI resolves short names to latest versions
+AVAILABLE_MODELS = [
+    {"id": "opus", "display_name": "Opus", "family": "opus"},
+    {"id": "sonnet", "display_name": "Sonnet", "family": "sonnet"},
+    {"id": "haiku", "display_name": "Haiku", "family": "haiku"},
+]
 
 
 class ModelsListResponse(BaseModel):
     """Response from GET /api/models."""
-    models: list
+    models: list[dict[str, str]]
     current_model: Optional[str]
-    cached_at: Optional[str]
-    is_stale: bool = Field(default=False, description="Whether cache is stale")
 
 
 @router.get("", response_model=ModelsListResponse, status_code=200)
-async def list_models(show_all: bool = False) -> ModelsListResponse:
+async def list_models() -> ModelsListResponse:
     """
-    Return available Claude models from Anthropic API.
+    Return available Claude model families.
 
-    Args:
-        show_all: If false (default), return latest per family only.
-                  If true, return all Claude models with dated versions.
-
-    Caching: 1-hour TTL, gracefully degrades if Anthropic API unreachable.
+    Returns a static list — the Claude Code CLI resolves short names
+    (opus, sonnet, haiku) to the latest version at runtime.
     """
     settings = get_settings()
 
-    # Get API key from config
-    api_key = settings.claude_code_oauth_token or os.getenv("CLAUDE_CODE_OAUTH_TOKEN")
-    if not api_key:
-        raise HTTPException(status_code=503, detail="Anthropic API key not configured")
-
-    try:
-        from parachute.models_api import get_cached_models
-
-        result = await get_cached_models(api_key, show_all=show_all)
-
-        # Include current active model from config
-        current_model = settings.default_model
-
-        # Convert models to dict for JSON serialization
-        models_list = [m.model_dump() for m in result["models"]]
-
-        return ModelsListResponse(
-            models=models_list,
-            current_model=current_model,
-            cached_at=result["cached_at"].isoformat() if result["cached_at"] else None,
-            is_stale=result["is_stale"],
-        )
-    except Exception as e:
-        logger.error(f"Failed to fetch models: {e}")
-        raise HTTPException(status_code=503, detail=f"Model fetch failed: {e}")
+    return ModelsListResponse(
+        models=AVAILABLE_MODELS,
+        current_model=settings.default_model,
+    )
