@@ -297,10 +297,14 @@ async def run():
             emit({"type": "warning", "message": f"Invalid resume_session_id format, ignoring"})
             resume_id = None
 
-        # Tell SDK to use our session ID so transcript filenames match our DB.
-        # Skip when resuming — CLI rejects --session-id + --resume without --fork-session,
-        # and --resume already implies the session ID from the transcript filename.
-        if session_id and not resume_id:
+        # Pass --session-id only if it's a valid UUID (CLI requires UUID format).
+        # Non-UUID session IDs (e.g. slug-format "agent-daily-reflection") are used
+        # only for container identification, not transcript naming.
+        # Skip when resuming — CLI rejects --session-id + --resume.
+        if session_id and not resume_id and re.match(
+            r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+            session_id, re.IGNORECASE,
+        ):
             options_kwargs.setdefault("extra_args", {})["session-id"] = session_id
 
         options = ClaudeAgentOptions(**options_kwargs)
@@ -322,13 +326,16 @@ async def run():
         emit({"type": "error", "error": "claude-agent-sdk not installed in sandbox"})
         sys.exit(1)
     except Exception as e:
-        # Extract stderr from ProcessError if available
-        stderr_info = ""
+        # Extract the actual CLI error from the SDK's ProcessError wrapper.
+        # The ProcessError.stderr field contains the real error message
+        # (e.g. "Invalid session ID") — surface it instead of the generic wrapper.
         if hasattr(e, "stderr") and e.stderr:
-            stderr_info = f" | stderr: {e.stderr}"
+            error_detail = e.stderr.strip()
         elif hasattr(e, "__cause__") and e.__cause__:
-            stderr_info = f" | cause: {e.__cause__}"
-        emit({"type": "error", "error": f"Sandbox SDK error: {e}{stderr_info}"})
+            error_detail = f"{e} (cause: {e.__cause__})"
+        else:
+            error_detail = str(e)
+        emit({"type": "error", "error": error_detail})
         sys.exit(1)
 
 

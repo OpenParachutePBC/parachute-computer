@@ -4,6 +4,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/core/services/computer_service.dart'
     show AgentTemplate, DailyAgentInfo, MemoryMode;
+import 'package:parachute/features/chat/models/container_env.dart';
+import 'package:parachute/features/chat/providers/container_providers.dart';
 import '../providers/journal_providers.dart';
 import '../utils/time_helpers.dart';
 
@@ -95,6 +97,7 @@ class _AgentEditScreenState extends ConsumerState<AgentEditScreen> {
   late bool _scheduleEnabled;
   late String _scheduleTime;
   late MemoryMode _memoryMode;
+  late String _containerSlug;
   bool _isSaving = false;
 
   /// Whether this Agent is event-driven (triggered) rather than scheduled.
@@ -122,6 +125,7 @@ class _AgentEditScreenState extends ConsumerState<AgentEditScreen> {
       _scheduleEnabled = c.scheduleEnabled;
       _scheduleTime = c.scheduleTime;
       _memoryMode = c.memoryMode;
+      _containerSlug = c.containerSlug;
     } else if (widget.template != null) {
       // Template mode — populate from template
       final t = widget.template!;
@@ -132,6 +136,7 @@ class _AgentEditScreenState extends ConsumerState<AgentEditScreen> {
       _scheduleEnabled = false; // Templates start unscheduled
       _scheduleTime = t.scheduleTime;
       _memoryMode = t.memoryMode;
+      _containerSlug = '';
     } else {
       // Blank creation
       _nameController = TextEditingController();
@@ -141,6 +146,7 @@ class _AgentEditScreenState extends ConsumerState<AgentEditScreen> {
       _scheduleEnabled = false;
       _scheduleTime = '21:00';
       _memoryMode = MemoryMode.persistent;
+      _containerSlug = '';
     }
   }
 
@@ -412,6 +418,31 @@ class _AgentEditScreenState extends ConsumerState<AgentEditScreen> {
               ),
             ),
 
+            // ── Container ────────────────────────────────────────────
+            SizedBox(height: Spacing.xl),
+            Text(
+              'Container',
+              style: theme.textTheme.titleSmall?.copyWith(
+                fontWeight: FontWeight.w600,
+                color: isDark ? BrandColors.softWhite : BrandColors.ink,
+              ),
+            ),
+            SizedBox(height: Spacing.xs),
+            Text(
+              _containerSlug.isEmpty
+                  ? 'Agent runs in its own dedicated container.'
+                  : 'Agent runs in the "$_containerSlug" workspace.',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: BrandColors.driftwood,
+              ),
+            ),
+            SizedBox(height: Spacing.sm),
+            _ContainerPicker(
+              selectedSlug: _containerSlug,
+              isDark: isDark,
+              onChanged: (slug) => setState(() => _containerSlug = slug),
+            ),
+
             // ── Schedule (only for scheduled Agents) ──────────────────
             if (!_isTriggered) ...[
               SizedBox(height: Spacing.xl),
@@ -472,6 +503,7 @@ class _AgentEditScreenState extends ConsumerState<AgentEditScreen> {
         'system_prompt': prompt,
         'tools': tools,
         'memory_mode': _memoryMode.toJson(),
+        'container_slug': _containerSlug,
       };
       if (_isTriggered) {
         // Preserve trigger fields; schedule is irrelevant
@@ -507,6 +539,7 @@ class _AgentEditScreenState extends ConsumerState<AgentEditScreen> {
         'system_prompt': prompt,
         'tools': tools,
         'memory_mode': _memoryMode.toJson(),
+        'container_slug': _containerSlug,
       };
       if (_isTriggered) {
         // Copy trigger fields from template
@@ -635,6 +668,134 @@ class _ToolToggle extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Container picker — dropdown for dedicated vs named workspace
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _ContainerPicker extends ConsumerWidget {
+  final String selectedSlug;
+  final bool isDark;
+  final ValueChanged<String> onChanged;
+
+  const _ContainerPicker({
+    required this.selectedSlug,
+    required this.isDark,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final containersAsync = ref.watch(containersProvider);
+    final color = isDark ? BrandColors.nightForest : BrandColors.forest;
+
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: Spacing.lg,
+        vertical: Spacing.sm,
+      ),
+      decoration: BoxDecoration(
+        color: isDark
+            ? BrandColors.nightSurfaceElevated
+            : BrandColors.softWhite,
+        borderRadius: Radii.button,
+      ),
+      child: Row(
+        children: [
+          Icon(
+            selectedSlug.isEmpty ? Icons.memory : Icons.workspaces_outlined,
+            size: 20,
+            color: color,
+          ),
+          SizedBox(width: Spacing.md),
+          Expanded(
+            child: containersAsync.when(
+              data: (containers) => _buildDropdown(
+                context, theme, containers, color,
+              ),
+              loading: () => Text(
+                'Loading containers…',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: BrandColors.driftwood,
+                ),
+              ),
+              error: (_, __) => _buildDropdown(
+                context, theme, <ContainerEnv>[], color,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDropdown(
+    BuildContext context,
+    ThemeData theme,
+    List<ContainerEnv> containers,
+    Color color,
+  ) {
+    // Build dropdown items: "Dedicated" (default) + all workspace containers
+    final items = <DropdownMenuItem<String>>[
+      DropdownMenuItem(
+        value: '',
+        child: Text(
+          'Dedicated (default)',
+          style: theme.textTheme.bodyMedium?.copyWith(
+            color: theme.brightness == Brightness.dark
+                ? BrandColors.softWhite
+                : BrandColors.ink,
+          ),
+        ),
+      ),
+      ...containers.map(
+        (c) => DropdownMenuItem(
+          value: c.slug,
+          child: Text(
+            c.displayName,
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: theme.brightness == Brightness.dark
+                  ? BrandColors.softWhite
+                  : BrandColors.ink,
+            ),
+          ),
+        ),
+      ),
+    ];
+
+    // If the current slug isn't in the list (e.g. non-workspace container),
+    // add it so the dropdown doesn't error
+    final allValues = items.map((i) => i.value).toSet();
+    if (selectedSlug.isNotEmpty && !allValues.contains(selectedSlug)) {
+      items.add(DropdownMenuItem(
+        value: selectedSlug,
+        child: Text(
+          selectedSlug,
+          style: theme.textTheme.bodyMedium?.copyWith(
+            color: theme.brightness == Brightness.dark
+                ? BrandColors.softWhite
+                : BrandColors.ink,
+          ),
+        ),
+      ));
+    }
+
+    return DropdownButtonHideUnderline(
+      child: DropdownButton<String>(
+        value: selectedSlug,
+        isExpanded: true,
+        dropdownColor: theme.brightness == Brightness.dark
+            ? BrandColors.nightSurfaceElevated
+            : BrandColors.softWhite,
+        items: items,
+        onChanged: (value) {
+          if (value != null) onChanged(value);
+        },
       ),
     );
   }

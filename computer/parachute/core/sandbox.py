@@ -486,8 +486,9 @@ class DockerSandbox:
             stderr_data = b""
             if proc.stderr:
                 stderr_data = await proc.stderr.read()
-            logger.error(f"{label.capitalize()} exited {proc.returncode}: {stderr_data.decode()}")
-            yield {"type": "exit_error", "returncode": proc.returncode}
+            stderr_text = stderr_data.decode().strip()
+            logger.error(f"{label.capitalize()} exited {proc.returncode}: {stderr_text}")
+            yield {"type": "exit_error", "returncode": proc.returncode, "stderr": stderr_text}
 
     async def _validate_docker_ready(self) -> None:
         """Validate Docker and sandbox image are available.
@@ -529,7 +530,11 @@ class DockerSandbox:
                 proc, {"message": message}, config, label="sandbox"
             ):
                 if event.get("type") == "exit_error":
-                    yield {"type": "error", "error": f"Sandbox error (exit {event['returncode']})"}
+                    stderr_detail = event.get("stderr", "")
+                    error_msg = f"Sandbox error (exit {event['returncode']})"
+                    if stderr_detail:
+                        error_msg = f"{error_msg}: {stderr_detail}"
+                    yield {"type": "error", "error": error_msg}
                 else:
                     yield event
 
@@ -893,9 +898,13 @@ class DockerSandbox:
                                      "It will be recreated on next use.",
                         }
                     else:
+                        stderr_detail = event.get("stderr", "")
+                        error_msg = f"Sandbox error (exit {returncode})"
+                        if stderr_detail:
+                            error_msg = f"{error_msg}: {stderr_detail}"
                         yield {
                             "type": "error",
-                            "error": f"Sandbox error (exit {returncode})",
+                            "error": error_msg,
                         }
                 else:
                     yield event
