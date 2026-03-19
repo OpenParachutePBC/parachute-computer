@@ -4,7 +4,6 @@ import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/core/providers/computer_provider.dart';
 import 'package:parachute/core/services/computer_service.dart';
 import '../providers/journal_providers.dart';
-import '../services/daily_api_service.dart';
 import '../utils/agent_theme.dart';
 
 /// Provider for agent trigger state (per agent)
@@ -50,6 +49,14 @@ class _AgentTriggerCardState extends ConsumerState<AgentTriggerCard> {
     _latestRunFuture = ref
         .read(dailyApiServiceProvider)
         .fetchLatestAgentRun(widget.agent.name);
+  }
+
+  @override
+  void didUpdateWidget(AgentTriggerCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.agent.name != widget.agent.name) {
+      _loadLatestRun();
+    }
   }
 
   @override
@@ -470,6 +477,7 @@ class _AgentTriggerCardState extends ConsumerState<AgentTriggerCard> {
       final dateStr = _formatDate(widget.date);
       final result = await api.triggerAgentRun(widget.agent.name, date: dateStr);
 
+      if (!mounted) return;
       ref.read(agentTriggerStateProvider(widget.agent.name).notifier).state =
           AsyncValue.data(result);
 
@@ -478,6 +486,7 @@ class _AgentTriggerCardState extends ConsumerState<AgentTriggerCard> {
         ref.read(journalRefreshTriggerProvider.notifier).state++;
       }
     } catch (e) {
+      if (!mounted) return;
       ref.read(agentTriggerStateProvider(widget.agent.name).notifier).state =
           AsyncValue.error(e, StackTrace.current);
     } finally {

@@ -13,7 +13,10 @@ import sys
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Optional, Callable, Awaitable
+from typing import TYPE_CHECKING, Any, Optional, Callable, Awaitable
+
+if TYPE_CHECKING:
+    from parachute.db.brain import BrainService
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +99,7 @@ async def _clear_agent_session(graph, agent_name: str) -> None:
 # ---------------------------------------------------------------------------
 
 async def _create_agent_run(
-    graph,
+    graph: "BrainService | None",
     run_id: str,
     agent_name: str,
     display_name: str,
@@ -104,11 +107,12 @@ async def _create_agent_run(
     trigger: str,
     container_slug: str,
     entry_id: str = "",
+    started_at: str = "",
 ) -> None:
     """Create an AgentRun node at the start of an agent invocation."""
     if graph is None:
         return
-    now = datetime.now(timezone.utc).isoformat()
+    now = started_at or datetime.now(timezone.utc).isoformat()
     try:
         async with graph.write_lock:
             await graph.execute_cypher(
@@ -120,8 +124,7 @@ async def _create_agent_run(
                 "    r.trigger = $trigger, "
                 "    r.status = 'running', "
                 "    r.container_slug = $container_slug, "
-                "    r.started_at = $now, "
-                "    r.ran_at = $now",
+                "    r.started_at = $now",
                 {
                     "run_id": run_id,
                     "agent_name": agent_name,
@@ -138,7 +141,7 @@ async def _create_agent_run(
 
 
 async def _complete_agent_run(
-    graph,
+    graph: "BrainService | None",
     run_id: str,
     status: str,
     session_id: str = "",
@@ -557,7 +560,6 @@ async def _run_sandboxed(
         result["output_written"] = output_written
         result["card_id"] = card_id if output_written else None
         result["journal_date"] = date
-        result["container_slug"] = container_slug
 
         logger.info(
             f"Agent '{agent_name}' completed (sandboxed) for {date}: "
@@ -821,6 +823,7 @@ async def run_daily_agent(
         graph, run_id=run_id, agent_name=agent_name,
         display_name=config.display_name, date=date,
         trigger=trigger, container_slug=container_slug,
+        started_at=started_at,
     )
 
     # Route: sandboxed vs direct execution
@@ -828,12 +831,33 @@ async def run_daily_agent(
     sandbox = _get_sandbox() if use_sandbox else None
     result: dict[str, Any] | None = None
 
-    if use_sandbox and sandbox is not None:
-        # Check Docker availability
-        if await sandbox.is_available() and await sandbox.image_exists():
-            logger.info(f"Agent '{agent_name}' routing to sandbox (trust_level=sandboxed)")
-            result = await _run_sandboxed(
-                sandbox=sandbox,
+    try:
+        if use_sandbox and sandbox is not None:
+            # Check Docker availability
+            if await sandbox.is_available() and await sandbox.image_exists():
+                logger.info(f"Agent '{agent_name}' routing to sandbox (trust_level=sandboxed)")
+                result = await _run_sandboxed(
+                    sandbox=sandbox,
+                    config=config,
+                    system_prompt=system_prompt,
+                    prompt_text=prompt_text,
+                    agent_state=agent_state,
+                    card_id=card_id,
+                    date=date,
+                    output_date=output_date,
+                    vault_path=vault_path,
+                    graph=graph,
+                )
+            else:
+                logger.warning(
+                    f"Agent '{agent_name}' trust_level=sandboxed but Docker unavailable, "
+                    f"falling back to direct execution"
+                )
+
+        if result is None:
+            # Direct execution (trust_level=direct, Docker unavailable, or no sandbox instance)
+            logger.info(f"Agent '{agent_name}' running directly (trust_level={config.trust_level})")
+            result = await _run_direct(
                 config=config,
                 system_prompt=system_prompt,
                 prompt_text=prompt_text,
@@ -843,28 +867,17 @@ async def run_daily_agent(
                 output_date=output_date,
                 vault_path=vault_path,
                 graph=graph,
+                create_tools_fn=create_tools_fn,
             )
-        else:
-            logger.warning(
-                f"Agent '{agent_name}' trust_level=sandboxed but Docker unavailable, "
-                f"falling back to direct execution"
-            )
-
-    if result is None:
-        # Direct execution (trust_level=direct, Docker unavailable, or no sandbox instance)
-        logger.info(f"Agent '{agent_name}' running directly (trust_level={config.trust_level})")
-        result = await _run_direct(
-            config=config,
-            system_prompt=system_prompt,
-            prompt_text=prompt_text,
-            agent_state=agent_state,
-            card_id=card_id,
-            date=date,
-            output_date=output_date,
-            vault_path=vault_path,
-            graph=graph,
-            create_tools_fn=create_tools_fn,
+    except Exception as exc:
+        logger.error(f"Agent '{agent_name}' execution failed: {exc}", exc_info=True)
+        await _complete_agent_run(
+            graph, run_id=run_id,
+            status="failed",
+            error=str(exc),
+            started_at=started_at,
         )
+        raise
 
     # Complete the AgentRun record with final status
     await _complete_agent_run(

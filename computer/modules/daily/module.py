@@ -2340,45 +2340,6 @@ class DailyModule:
             task.add_done_callback(_log_task_exception)
             return {"status": "started", "agent": agent_name, "date": date}
 
-        @router.get("/agents/{agent_name}/runs")
-        async def get_agent_runs(
-            agent_name: str,
-            limit: int = Query(20, ge=1, le=100),
-        ):
-            """Get run history for an agent, most recent first."""
-            graph = self._get_graph()
-            if graph is None:
-                return JSONResponse(status_code=503, content={"error": "BrainDB not available"})
-            try:
-                rows = await graph.execute_cypher(
-                    "MATCH (r:AgentRun) "
-                    "WHERE r.agent_name = $name "
-                    "RETURN r ORDER BY r.started_at DESC",
-                    {"name": agent_name},
-                )
-                # Limit manually (Kuzu LIMIT in Cypher can be quirky with params)
-                runs = []
-                for row in rows[:limit]:
-                    runs.append({
-                        "run_id": row.get("run_id", ""),
-                        "agent_name": row.get("agent_name", ""),
-                        "display_name": row.get("display_name", ""),
-                        "date": row.get("date", ""),
-                        "trigger": row.get("trigger", ""),
-                        "status": row.get("status", ""),
-                        "error": row.get("error", ""),
-                        "container_slug": row.get("container_slug", ""),
-                        "card_id": row.get("card_id", ""),
-                        "session_id": row.get("session_id", ""),
-                        "started_at": row.get("started_at", row.get("ran_at", "")),
-                        "completed_at": row.get("completed_at", ""),
-                        "duration_seconds": row.get("duration_seconds", 0),
-                    })
-                return {"runs": runs, "count": len(runs)}
-            except Exception as e:
-                logger.warning(f"Failed to get agent runs for {agent_name}: {e}")
-                return {"runs": [], "count": 0}
-
         @router.get("/agents/{agent_name}/runs/latest")
         async def get_agent_latest_run(agent_name: str):
             """Get the most recent run for an agent (used by Flutter to show failure state)."""
@@ -2396,15 +2357,9 @@ class DailyModule:
                     return JSONResponse(status_code=404, content={"error": "No runs found"})
                 row = rows[0]
                 return {
-                    "run_id": row.get("run_id", ""),
-                    "agent_name": row.get("agent_name", ""),
                     "status": row.get("status", ""),
                     "error": row.get("error", ""),
                     "trigger": row.get("trigger", ""),
-                    "started_at": row.get("started_at", row.get("ran_at", "")),
-                    "completed_at": row.get("completed_at", ""),
-                    "duration_seconds": row.get("duration_seconds", 0),
-                    "container_slug": row.get("container_slug", ""),
                 }
             except Exception as e:
                 logger.warning(f"Failed to get latest run for {agent_name}: {e}")

@@ -42,7 +42,7 @@ def _parse_time(time_str: str) -> tuple[int, int]:
 # Generic Daily Agent Scheduling
 # =============================================================================
 
-async def _run_daily_agent_job(agent_name: str):
+async def _run_daily_agent_job(agent_name: str, trigger: str = "scheduled"):
     """Job function that runs a daily agent."""
     global _vault_path
     if not _vault_path:
@@ -51,7 +51,7 @@ async def _run_daily_agent_job(agent_name: str):
 
     from parachute.core.daily_agent import run_daily_agent
     try:
-        result = await run_daily_agent(_vault_path, agent_name, trigger="scheduled")
+        result = await run_daily_agent(_vault_path, agent_name, trigger=trigger)
         logger.info(f"Agent '{agent_name}' result: {result.get('status')}")
     except Exception as e:
         logger.error(f"Agent '{agent_name}' failed: {e}", exc_info=True)
@@ -238,7 +238,7 @@ async def trigger_job_now(job_id: str, vault_path: Path) -> dict[str, Any]:
         agent_name = job_id
 
     try:
-        await _run_daily_agent_job(agent_name)
+        await _run_daily_agent_job(agent_name, trigger="event")
         return {"success": True, "job_id": job_id, "agent": agent_name, "message": "Job executed"}
     except Exception as e:
         return {"success": False, "job_id": job_id, "agent": agent_name, "error": str(e)}
