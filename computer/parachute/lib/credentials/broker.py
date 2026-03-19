@@ -190,16 +190,29 @@ class CredentialBroker:
                     )
 
             elif provider_type == "cloudflare-parent":
-                from parachute.lib.credentials.cloudflare_provider import (
-                    CloudflareProvider,
+                from parachute.lib.credentials.helpers.cloudflare import (
+                    CloudflareHelper,
                 )
 
-                provider = CloudflareProvider.from_config(config)
+                provider = CloudflareHelper.from_config(config)
                 if provider:
                     broker.register(provider)
                 else:
                     logger.warning(
                         f"Cloudflare provider '{name}' configured but failed to initialize"
+                    )
+
+            elif provider_type == "env-passthrough":
+                from parachute.lib.credentials.helpers.generic_env import (
+                    GenericEnvHelper,
+                )
+
+                provider = GenericEnvHelper.from_config(name, config)
+                if provider:
+                    broker.register(provider)
+                else:
+                    logger.warning(
+                        f"Generic env provider '{name}' configured but failed to initialize"
                     )
 
             else:
@@ -208,7 +221,54 @@ class CredentialBroker:
                     f"for provider '{name}'"
                 )
 
+        # Migrate credentials.yaml entries as env-passthrough helpers
+        cls._migrate_credentials_yaml(broker, parachute_dir)
+
         return broker
+
+    @classmethod
+    def _migrate_credentials_yaml(
+        cls, broker: "CredentialBroker", parachute_dir: Path
+    ) -> None:
+        """Load credentials.yaml entries as GenericEnvHelper instances.
+
+        Only loads entries whose env var names aren't already covered by
+        a registered helper. This provides backward compatibility during
+        migration from the flat file format.
+        """
+        from parachute.lib.credentials.credential_loader import load_credentials
+
+        creds = load_credentials(parachute_dir)
+        if not creds:
+            return
+
+        # Collect env vars already provided by registered helpers
+        covered_vars: set[str] = set()
+        for p in broker.providers():
+            if hasattr(p, "get_env_vars"):
+                for line in p.get_env_vars():
+                    if "=" in line:
+                        covered_vars.add(line.split("=", 1)[0])
+
+        from parachute.lib.credentials.helpers.generic_env import GenericEnvHelper
+
+        migrated = 0
+        for key, value in creds.items():
+            if key in covered_vars:
+                logger.debug(
+                    f"Skipping credentials.yaml entry '{key}' -- "
+                    f"already covered by registered helper"
+                )
+                continue
+
+            helper = GenericEnvHelper.from_credentials_yaml(key, value)
+            broker.register(helper)
+            migrated += 1
+
+        if migrated:
+            logger.info(
+                f"Migrated {migrated} credentials.yaml entries as env-passthrough helpers"
+            )
 
 
 # Module-level singleton, initialized lazily

@@ -258,6 +258,24 @@ async def setup_helper(body: SetupRequest):
         account_id = fields.get("account_id", "").strip()
         if account_id:
             config_entry["account_id"] = account_id
+    elif method == "env-passthrough":
+        env_var = fields.get("env_var", "").strip()
+        token = fields.get("token", "").strip()
+        if not env_var or not token:
+            raise HTTPException(
+                status_code=400, detail="Both env_var and token are required"
+            )
+        config_entry = {
+            "type": "env-passthrough",
+            "env_var": env_var,
+            "token": token,
+        }
+        display_name = fields.get("display_name", "").strip()
+        if display_name:
+            config_entry["display_name"] = display_name
+        health_url = fields.get("health_url", "").strip()
+        if health_url:
+            config_entry["health_url"] = health_url
     else:
         raise HTTPException(status_code=400, detail=f"Unknown method: {method}")
 
@@ -284,3 +302,35 @@ async def setup_helper(body: SetupRequest):
 
     logger.info(f"Configured credential helper '{name}' with method '{method}'")
     return {"status": "ok", "name": name, "method": method}
+
+
+# ── Remove endpoint ──────────────────────────────────────────────────────────
+
+
+@router.delete("/{provider}")
+async def remove_helper(provider: str):
+    """
+    Remove a configured credential helper.
+
+    Deletes the provider from config and reloads the broker.
+    """
+    _validate_provider(provider)
+
+    from parachute.config import get_settings, save_yaml_config_atomic
+    from parachute.lib.credentials.broker import reset_broker
+
+    settings = get_settings()
+    current_providers = dict(settings.credential_providers)
+
+    if provider not in current_providers:
+        raise HTTPException(status_code=404, detail=f"Provider '{provider}' not configured")
+
+    del current_providers[provider]
+
+    config_data = {"credential_providers": current_providers}
+    save_yaml_config_atomic(settings.parachute_dir, config_data)
+
+    reset_broker()
+
+    logger.info(f"Removed credential helper '{provider}'")
+    return {"status": "ok", "removed": provider}

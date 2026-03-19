@@ -820,3 +820,424 @@ class TestBrokerWithGitHubHelper:
         assert broker.has_provider("cloudflare")
         env_vars = broker.get_all_env_vars()
         assert "CLOUDFLARE_API_TOKEN=cf_test" in env_vars
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Phase 2: CloudflareHelper, GenericEnvHelper, Migration, Delete
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestCloudflareHelper:
+    """Tests for CloudflareHelper (helpers/cloudflare.py)."""
+
+    def test_from_config_basic(self):
+        from parachute.lib.credentials.helpers.cloudflare import CloudflareHelper
+
+        config = {"type": "cloudflare-parent", "parent_token": "cf_test123"}
+        helper = CloudflareHelper.from_config(config)
+        assert helper is not None
+        assert helper.name == "cloudflare"
+        assert helper.parent_token == "cf_test123"
+        assert helper.account_id is None
+
+    def test_from_config_with_account_id(self):
+        from parachute.lib.credentials.helpers.cloudflare import CloudflareHelper
+
+        config = {
+            "type": "cloudflare-parent",
+            "parent_token": "cf_test",
+            "account_id": "abc123",
+        }
+        helper = CloudflareHelper.from_config(config)
+        assert helper is not None
+        assert helper.account_id == "abc123"
+
+    def test_from_config_missing_token(self):
+        from parachute.lib.credentials.helpers.cloudflare import CloudflareHelper
+
+        config = {"type": "cloudflare-parent"}
+        assert CloudflareHelper.from_config(config) is None
+
+    def test_manifest_exists(self):
+        from parachute.lib.credentials.helpers.cloudflare import CloudflareHelper
+
+        manifest = CloudflareHelper.manifest
+        assert manifest.display_name == "Cloudflare"
+        assert len(manifest.setup_methods) == 1
+        assert manifest.setup_methods[0].id == "cloudflare-parent"
+        assert "CLOUDFLARE_API_TOKEN" in manifest.provides.env_vars
+
+    def test_get_env_vars(self):
+        from parachute.lib.credentials.helpers.cloudflare import CloudflareHelper
+
+        helper = CloudflareHelper(
+            parent_token="cf_test", account_id="acc123"
+        )
+        env_vars = helper.get_env_vars()
+        assert "CLOUDFLARE_API_TOKEN=cf_test" in env_vars
+        assert "CLOUDFLARE_ACCOUNT_ID=acc123" in env_vars
+
+    def test_get_env_vars_no_account_id(self):
+        from parachute.lib.credentials.helpers.cloudflare import CloudflareHelper
+
+        helper = CloudflareHelper(parent_token="cf_test")
+        env_vars = helper.get_env_vars()
+        assert "CLOUDFLARE_API_TOKEN=cf_test" in env_vars
+        assert len(env_vars) == 1
+
+    def test_active_method(self):
+        from parachute.lib.credentials.helpers.cloudflare import CloudflareHelper
+
+        helper = CloudflareHelper(parent_token="cf_test")
+        assert helper.active_method == "cloudflare-parent"
+
+    @pytest.mark.asyncio
+    async def test_mint_token_passthrough(self):
+        """Without default_permissions, mint returns parent token directly."""
+        from parachute.lib.credentials.helpers.cloudflare import CloudflareHelper
+
+        helper = CloudflareHelper(parent_token="cf_parent_token")
+        result = await helper.mint_token({})
+        assert result.token == "cf_parent_token"
+        assert result.expires_at == ""
+
+    def test_get_scripts(self):
+        from parachute.lib.credentials.helpers.cloudflare import CloudflareHelper
+
+        helper = CloudflareHelper(parent_token="cf_test")
+        scripts = helper.get_scripts()
+        assert "wrangler" in scripts
+        assert "broker" in scripts["wrangler"].lower() or "BROKER" in scripts["wrangler"]
+
+    def test_manifest_serialization(self):
+        from parachute.lib.credentials.helpers.cloudflare import CloudflareHelper
+
+        d = CloudflareHelper.manifest.to_dict()
+        assert d["display_name"] == "Cloudflare"
+        assert d["setup_methods"][0]["fields"][0]["id"] == "parent_token"
+        assert d["health_check"]["method"] == "api"
+
+
+class TestGenericEnvHelper:
+    """Tests for GenericEnvHelper (helpers/generic_env.py)."""
+
+    def test_from_config(self):
+        from parachute.lib.credentials.helpers.generic_env import GenericEnvHelper
+
+        config = {
+            "type": "env-passthrough",
+            "env_var": "VERCEL_TOKEN",
+            "token": "ver_xxx",
+        }
+        helper = GenericEnvHelper.from_config("vercel", config)
+        assert helper is not None
+        assert helper.name == "vercel"
+        assert helper.env_var == "VERCEL_TOKEN"
+
+    def test_from_config_with_display_name(self):
+        from parachute.lib.credentials.helpers.generic_env import GenericEnvHelper
+
+        config = {
+            "type": "env-passthrough",
+            "env_var": "FLY_API_TOKEN",
+            "token": "fo1_xxx",
+            "display_name": "Fly.io",
+        }
+        helper = GenericEnvHelper.from_config("fly", config)
+        assert helper is not None
+        assert helper._display_name == "Fly.io"
+
+    def test_from_config_missing_fields(self):
+        from parachute.lib.credentials.helpers.generic_env import GenericEnvHelper
+
+        assert GenericEnvHelper.from_config("x", {"type": "env-passthrough"}) is None
+        assert GenericEnvHelper.from_config("x", {"env_var": "X"}) is None
+
+    def test_from_credentials_yaml(self):
+        from parachute.lib.credentials.helpers.generic_env import GenericEnvHelper
+
+        helper = GenericEnvHelper.from_credentials_yaml("VERCEL_TOKEN", "ver_xxx")
+        assert helper.name == "vercel"
+        assert helper.env_var == "VERCEL_TOKEN"
+
+    def test_from_credentials_yaml_api_key_suffix(self):
+        from parachute.lib.credentials.helpers.generic_env import GenericEnvHelper
+
+        helper = GenericEnvHelper.from_credentials_yaml("OPENAI_API_KEY", "sk_xxx")
+        assert helper.name == "openai"
+
+    def test_get_env_vars(self):
+        from parachute.lib.credentials.helpers.generic_env import GenericEnvHelper
+
+        helper = GenericEnvHelper(
+            name="vercel", env_var="VERCEL_TOKEN", token="ver_xxx"
+        )
+        assert helper.get_env_vars() == ["VERCEL_TOKEN=ver_xxx"]
+
+    def test_get_scripts_empty(self):
+        from parachute.lib.credentials.helpers.generic_env import GenericEnvHelper
+
+        helper = GenericEnvHelper(
+            name="vercel", env_var="VERCEL_TOKEN", token="ver_xxx"
+        )
+        assert helper.get_scripts() == {}
+
+    @pytest.mark.asyncio
+    async def test_mint_token(self):
+        from parachute.lib.credentials.helpers.generic_env import GenericEnvHelper
+
+        helper = GenericEnvHelper(
+            name="vercel", env_var="VERCEL_TOKEN", token="ver_xxx"
+        )
+        result = await helper.mint_token({})
+        assert result.token == "ver_xxx"
+
+    def test_manifest_dynamic(self):
+        from parachute.lib.credentials.helpers.generic_env import GenericEnvHelper
+
+        helper = GenericEnvHelper(
+            name="vercel", env_var="VERCEL_TOKEN", token="ver_xxx"
+        )
+        assert helper.manifest.display_name == "Vercel"
+        assert "VERCEL_TOKEN" in helper.manifest.provides.env_vars
+
+    def test_active_method(self):
+        from parachute.lib.credentials.helpers.generic_env import GenericEnvHelper
+
+        helper = GenericEnvHelper(
+            name="vercel", env_var="VERCEL_TOKEN", token="ver_xxx"
+        )
+        assert helper.active_method == "env-passthrough"
+
+
+class TestBrokerCloudflareRouting:
+    """Tests that broker routes cloudflare-parent to CloudflareHelper."""
+
+    def test_broker_loads_cloudflare_helper(self, tmp_path):
+        from parachute.lib.credentials.broker import CredentialBroker
+
+        broker = CredentialBroker.from_config(
+            {
+                "cloudflare": {
+                    "type": "cloudflare-parent",
+                    "parent_token": "cf_test",
+                    "account_id": "acc123",
+                }
+            },
+            tmp_path,
+        )
+        assert broker.has_provider("cloudflare")
+        p = broker.get_provider("cloudflare")
+        assert p.provider_type == "cloudflare"
+
+    def test_broker_cloudflare_env_vars(self, tmp_path):
+        from parachute.lib.credentials.broker import CredentialBroker
+
+        broker = CredentialBroker.from_config(
+            {
+                "cloudflare": {
+                    "type": "cloudflare-parent",
+                    "parent_token": "cf_test",
+                    "account_id": "acc123",
+                }
+            },
+            tmp_path,
+        )
+        env_vars = broker.get_all_env_vars()
+        assert "CLOUDFLARE_API_TOKEN=cf_test" in env_vars
+        assert "CLOUDFLARE_ACCOUNT_ID=acc123" in env_vars
+
+    def test_broker_cloudflare_manifest(self, tmp_path):
+        from parachute.lib.credentials.broker import CredentialBroker
+
+        broker = CredentialBroker.from_config(
+            {
+                "cloudflare": {
+                    "type": "cloudflare-parent",
+                    "parent_token": "cf_test",
+                }
+            },
+            tmp_path,
+        )
+        manifests = broker.get_manifests()
+        assert "cloudflare" in manifests
+        assert manifests["cloudflare"]["display_name"] == "Cloudflare"
+
+
+class TestBrokerEnvPassthrough:
+    """Tests for env-passthrough helper routing through broker."""
+
+    def test_broker_loads_env_passthrough(self, tmp_path):
+        from parachute.lib.credentials.broker import CredentialBroker
+
+        broker = CredentialBroker.from_config(
+            {
+                "vercel": {
+                    "type": "env-passthrough",
+                    "env_var": "VERCEL_TOKEN",
+                    "token": "ver_xxx",
+                }
+            },
+            tmp_path,
+        )
+        assert broker.has_provider("vercel")
+
+    def test_broker_env_passthrough_env_vars(self, tmp_path):
+        from parachute.lib.credentials.broker import CredentialBroker
+
+        broker = CredentialBroker.from_config(
+            {
+                "vercel": {
+                    "type": "env-passthrough",
+                    "env_var": "VERCEL_TOKEN",
+                    "token": "ver_xxx",
+                }
+            },
+            tmp_path,
+        )
+        env_vars = broker.get_all_env_vars()
+        assert "VERCEL_TOKEN=ver_xxx" in env_vars
+
+    def test_broker_multiple_passthrough(self, tmp_path):
+        from parachute.lib.credentials.broker import CredentialBroker
+
+        broker = CredentialBroker.from_config(
+            {
+                "vercel": {
+                    "type": "env-passthrough",
+                    "env_var": "VERCEL_TOKEN",
+                    "token": "ver_xxx",
+                },
+                "fly": {
+                    "type": "env-passthrough",
+                    "env_var": "FLY_API_TOKEN",
+                    "token": "fo1_xxx",
+                },
+            },
+            tmp_path,
+        )
+        assert broker.has_provider("vercel")
+        assert broker.has_provider("fly")
+        env_vars = broker.get_all_env_vars()
+        assert "VERCEL_TOKEN=ver_xxx" in env_vars
+        assert "FLY_API_TOKEN=fo1_xxx" in env_vars
+
+
+class TestCredentialsYamlMigration:
+    """Tests for credentials.yaml -> env-passthrough migration."""
+
+    def test_migration_loads_entries(self, tmp_path):
+        from parachute.lib.credentials.broker import CredentialBroker
+
+        # Create a credentials.yaml file
+        creds_dir = tmp_path / ".parachute"
+        creds_dir.mkdir(parents=True)
+        creds_file = creds_dir / "credentials.yaml"
+        creds_file.write_text("VERCEL_TOKEN: ver_xxx\nFLY_API_TOKEN: fo1_xxx\n")
+
+        broker = CredentialBroker.from_config({}, tmp_path)
+        assert broker.has_provider("vercel")
+        assert broker.has_provider("fly_api")  # FLY_API_TOKEN -> fly_api
+        env_vars = broker.get_all_env_vars()
+        assert "VERCEL_TOKEN=ver_xxx" in env_vars
+        assert "FLY_API_TOKEN=fo1_xxx" in env_vars
+
+    def test_migration_skips_covered_vars(self, tmp_path):
+        """credentials.yaml entries covered by a helper are skipped."""
+        from parachute.lib.credentials.broker import CredentialBroker
+
+        creds_dir = tmp_path / ".parachute"
+        creds_dir.mkdir(parents=True)
+        creds_file = creds_dir / "credentials.yaml"
+        creds_file.write_text("CLOUDFLARE_API_TOKEN: should_skip\nVERCEL_TOKEN: ver_xxx\n")
+
+        broker = CredentialBroker.from_config(
+            {
+                "cloudflare": {
+                    "type": "cloudflare-parent",
+                    "parent_token": "cf_real",
+                }
+            },
+            tmp_path,
+        )
+        # Cloudflare is from config, vercel from migration
+        assert broker.has_provider("cloudflare")
+        assert broker.has_provider("vercel")
+        # CLOUDFLARE_API_TOKEN should be from the helper, not migration
+        env_vars = broker.get_all_env_vars()
+        assert "CLOUDFLARE_API_TOKEN=cf_real" in env_vars
+        assert "CLOUDFLARE_API_TOKEN=should_skip" not in env_vars
+
+    def test_migration_empty_yaml(self, tmp_path):
+        from parachute.lib.credentials.broker import CredentialBroker
+
+        # No credentials.yaml file
+        broker = CredentialBroker.from_config({}, tmp_path)
+        assert len(broker.provider_names) == 0
+
+
+class TestBrokerMixedProviders:
+    """Tests for broker with all helper types loaded together."""
+
+    def test_all_helper_types_together(self, tmp_path):
+        from parachute.lib.credentials.broker import CredentialBroker
+
+        # Create a PEM for GitHub App
+        pem_path = tmp_path / "test.pem"
+        pem_path.write_text("-----BEGIN RSA PRIVATE KEY-----\nfake\n-----END RSA PRIVATE KEY-----")
+
+        broker = CredentialBroker.from_config(
+            {
+                "github": {
+                    "type": "personal-token",
+                    "token": "ghp_test",
+                },
+                "cloudflare": {
+                    "type": "cloudflare-parent",
+                    "parent_token": "cf_test",
+                    "account_id": "acc123",
+                },
+"vercel": {
+                    "type": "env-passthrough",
+                    "env_var": "VERCEL_TOKEN",
+                    "token": "ver_xxx",
+                },
+            },
+            tmp_path,
+        )
+        assert len(broker.provider_names) == 3
+        assert broker.has_provider("github")
+        assert broker.has_provider("cloudflare")
+        assert broker.has_provider("vercel")
+
+        # All env vars collected
+        env_vars = broker.get_all_env_vars()
+        assert any("GIT_CONFIG" in v for v in env_vars)
+        assert "CLOUDFLARE_API_TOKEN=cf_test" in env_vars
+        assert "VERCEL_TOKEN=ver_xxx" in env_vars
+
+        # All manifests available
+        manifests = broker.get_manifests()
+        assert "github" in manifests
+        assert "cloudflare" in manifests
+        assert "vercel" in manifests
+
+    def test_status_shows_all_methods(self, tmp_path):
+        from parachute.lib.credentials.broker import CredentialBroker
+
+        broker = CredentialBroker.from_config(
+            {
+                "github": {
+                    "type": "personal-token",
+                    "token": "ghp_test",
+                },
+                "cloudflare": {
+                    "type": "cloudflare-parent",
+                    "parent_token": "cf_test",
+                },
+            },
+            tmp_path,
+        )
+        status = broker.get_status()
+        assert status["providers"]["github"]["method"] == "personal-token"
+        assert status["providers"]["cloudflare"]["method"] == "cloudflare-parent"
