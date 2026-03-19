@@ -10,6 +10,7 @@ import asyncio
 import json
 import logging
 import sys
+import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional, Callable, Awaitable
@@ -340,6 +341,12 @@ async def _run_sandboxed(
             f"in sandbox without MCP tools"
         )
 
+    # Container slug is persistent and human-readable; session ID is per-run UUID.
+    # The container slug identifies the Docker environment; the session ID identifies
+    # the SDK transcript for this specific run.
+    container_slug = getattr(config, "container_slug", None) or f"agent-{agent_name}"
+    run_session_id = str(uuid.uuid4())
+
     token_ctx = SandboxTokenContext(
         session_id=f"agent-{agent_name}",
         trust_level="sandboxed",
@@ -352,28 +359,25 @@ async def _run_sandboxed(
     mcp_config = _build_http_mcp_config(sandbox_token)
     all_mcp_servers = {"parachute": mcp_config}
 
-    # Slug used as both session ID (for resume) and project slug (for container)
-    slug = f"agent-{agent_name}"
-
     # Ensure container record exists in session store
     try:
         from parachute.core.interfaces import get_registry
         session_store = get_registry().get("ChatStore")
         if session_store is not None:
             # Check if container already exists before creating
-            existing = await session_store.get_container(slug)
+            existing = await session_store.get_container(container_slug)
             if not existing:
                 await session_store.create_container(
-                    slug=slug,
+                    slug=container_slug,
                     display_name=f"Agent: {config.display_name}",
                 )
                 logger.info(f"Created container record for agent '{agent_name}'")
     except Exception as e:
         logger.warning(f"Could not ensure container record for agent '{agent_name}': {e}")
 
-    # Build sandbox config
+    # Build sandbox config — session_id is the per-run UUID (CLI requires UUID format)
     sandbox_config = AgentSandboxConfig(
-        session_id=slug,
+        session_id=run_session_id,
         agent_type="agent",
         allowed_paths=[],  # Agents get read-only vault access (default)
         network_enabled=True,  # Needs to reach host API for daily tools
@@ -385,7 +389,7 @@ async def _run_sandboxed(
     )
 
     logger.info(
-        f"Running agent '{agent_name}' in sandbox (container=parachute-env-{slug}, "
+        f"Running agent '{agent_name}' in sandbox (container=parachute-env-{container_slug}, "
         f"mcps={list(all_mcp_servers.keys())})"
     )
 
@@ -404,11 +408,11 @@ async def _run_sandboxed(
         captured_model = None
 
         async for event in sandbox.run_session(
-            session_id=slug,
+            session_id=run_session_id,
             config=sandbox_config,
             message=prompt_text,
             resume_session_id=agent_state["sdk_session_id"] if agent_state["sdk_session_id"] else None,
-            container_slug=slug,
+            container_slug=container_slug,
         ):
             event_type = event.get("type", "")
 
@@ -448,6 +452,7 @@ async def _run_sandboxed(
         result["output_written"] = output_written
         result["card_id"] = card_id if output_written else None
         result["journal_date"] = date
+        result["container_slug"] = container_slug
 
         logger.info(
             f"Agent '{agent_name}' completed (sandboxed) for {date}: "
