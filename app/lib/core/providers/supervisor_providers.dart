@@ -58,22 +58,13 @@ class SupervisorStatusNotifier extends _$SupervisorStatusNotifier {
   }
 }
 
-/// Available models provider (cached, manual refresh)
+/// Available models provider (static list from server)
 @riverpod
 class AvailableModels extends _$AvailableModels {
   @override
-  Future<List<ModelInfo>> build({bool showAll = false}) async {
+  Future<List<ModelInfo>> build() async {
     final service = ref.watch(modelsServiceProvider);
-    return service.getModels(showAll: showAll);
-  }
-
-  /// Refresh model list from Anthropic API
-  Future<void> refresh() async {
-    state = const AsyncValue.loading();
-    state = await AsyncValue.guard(() async {
-      final service = ref.read(modelsServiceProvider);
-      return service.getModels(showAll: false);
-    });
+    return service.getModels();
   }
 }
 

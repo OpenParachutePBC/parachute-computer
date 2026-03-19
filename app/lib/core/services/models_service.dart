@@ -11,9 +11,8 @@ class ModelsService {
   final String baseUrl;
   late final Dio _dio;
 
-  Future<List<ModelInfo>> getModels({bool showAll = false}) async {
-    final response =
-        await _dio.get('/supervisor/models', queryParameters: {'show_all': showAll});
+  Future<List<ModelInfo>> getModels() async {
+    final response = await _dio.get('/supervisor/models');
     final data = response.data;
     return (data['models'] as List).map((m) => ModelInfo.fromJson(m)).toList();
   }

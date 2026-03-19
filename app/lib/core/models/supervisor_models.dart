@@ -54,34 +54,28 @@ class ModelInfo {
   const ModelInfo({
     required this.id,
     required this.displayName,
-    required this.createdAt,
     required this.family,
-    required this.isLatest,
   });
 
-  final String id;
-  final String displayName;
-  final DateTime createdAt;
-  final String family;
-  final bool isLatest;
+  final String id; // "opus", "sonnet", "haiku"
+  final String displayName; // "Opus", "Sonnet", "Haiku"
+  final String family; // "opus", "sonnet", "haiku"
 
   factory ModelInfo.fromJson(Map<String, dynamic> json) {
     return ModelInfo(
       id: json['id'] as String,
       displayName: json['display_name'] as String,
-      createdAt: DateTime.parse(json['created_at'] as String),
       family: json['family'] as String,
-      isLatest: json['is_latest'] as bool? ?? false,
     );
   }
 
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
-      other is ModelInfo && id == other.id && displayName == other.displayName;
+      other is ModelInfo && id == other.id;
 
   @override
-  int get hashCode => Object.hash(id, displayName);
+  int get hashCode => id.hashCode;
 }
 
 @immutable

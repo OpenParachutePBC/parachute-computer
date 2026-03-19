@@ -105,7 +105,7 @@ async def _run_haiku(
     async for event in query_streaming(
         prompt=prompt,
         system_prompt=system_prompt,
-        model="claude-haiku-4-5-20251001",
+        model="haiku",
         use_claude_code_preset=False,
         setting_sources=[],
         tools=[],
@@ -459,7 +459,7 @@ async def observe(
         async for event in query_streaming(
             prompt=prompt,
             system_prompt=BRIDGE_OBSERVE_PROMPT,
-            model="claude-haiku-4-5-20251001",
+            model="haiku",
             use_claude_code_preset=False,
             resume=bridge_session_id,
             setting_sources=[],
