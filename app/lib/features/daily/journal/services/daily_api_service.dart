@@ -6,7 +6,7 @@ import '../models/entry_metadata.dart' show TranscriptionStatus;
 import '../models/journal_entry.dart';
 import '../models/agent_card.dart';
 import 'package:parachute/core/services/computer_service.dart'
-    show DailyAgentInfo, AgentRunResult, AgentTemplate, AgentActivity, MemoryMode, parseTriggerFilter;
+    show DailyAgentInfo, AgentRunResult, AgentRunInfo, AgentTemplate, AgentActivity, MemoryMode, parseTriggerFilter;
 
 /// Raw search result from the server API.
 ///
@@ -547,11 +547,33 @@ class DailyApiService {
               j['user_modified']?.toString().toLowerCase() == 'true',
           updateAvailable: j['update_available'] == true,
           isBuiltin: j['is_builtin'] == true,
+          containerSlug: j['container_slug'] as String? ?? '',
         );
       }).toList();
     } catch (e) {
       debugPrint('[DailyApiService] fetchAgents error: $e');
       return [];
+    }
+  }
+
+  /// Fetch the latest run for an agent (used to detect recent failures).
+  Future<AgentRunInfo?> fetchLatestAgentRun(String agentName) async {
+    final uri = Uri.parse('$baseUrl/api/daily/agents/$agentName/runs/latest');
+    debugPrint('[DailyApiService] GET $uri');
+    try {
+      final response = await _client
+          .get(uri, headers: _headers)
+          .timeout(_timeout);
+      if (response.statusCode == 404) return null;
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        debugPrint('[DailyApiService] fetchLatestAgentRun ${response.statusCode}');
+        return null;
+      }
+      final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+      return AgentRunInfo.fromJson(decoded);
+    } catch (e) {
+      debugPrint('[DailyApiService] fetchLatestAgentRun error: $e');
+      return null;
     }
   }
 

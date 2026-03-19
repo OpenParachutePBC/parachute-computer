@@ -339,6 +339,9 @@ class DailyAgentInfo {
   /// Whether this agent is a builtin that ships with Parachute.
   final bool isBuiltin;
 
+  /// Container slug this agent runs in (empty = dedicated agent-{name} container).
+  final String containerSlug;
+
   DailyAgentInfo({
     required this.name,
     required this.displayName,
@@ -358,6 +361,7 @@ class DailyAgentInfo {
     this.userModified = false,
     this.updateAvailable = false,
     this.isBuiltin = false,
+    this.containerSlug = '',
   });
 
   /// Whether this Agent is event-driven (triggered) rather than scheduled.
@@ -496,5 +500,47 @@ class AgentRunResult {
       outputDate: json['output_date'] as String?,
     );
   }
+}
+
+/// A single agent run record from the run history API.
+class AgentRunInfo {
+  final String runId;
+  final String agentName;
+  final String status;
+  final String? error;
+  final String trigger;
+  final String startedAt;
+  final String? completedAt;
+  final double durationSeconds;
+  final String containerSlug;
+
+  AgentRunInfo({
+    required this.runId,
+    required this.agentName,
+    required this.status,
+    this.error,
+    this.trigger = '',
+    this.startedAt = '',
+    this.completedAt,
+    this.durationSeconds = 0,
+    this.containerSlug = '',
+  });
+
+  factory AgentRunInfo.fromJson(Map<String, dynamic> json) {
+    return AgentRunInfo(
+      runId: json['run_id'] as String? ?? '',
+      agentName: json['agent_name'] as String? ?? '',
+      status: json['status'] as String? ?? 'unknown',
+      error: json['error'] as String?,
+      trigger: json['trigger'] as String? ?? '',
+      startedAt: json['started_at'] as String? ?? '',
+      completedAt: json['completed_at'] as String?,
+      durationSeconds: (json['duration_seconds'] as num?)?.toDouble() ?? 0,
+      containerSlug: json['container_slug'] as String? ?? '',
+    );
+  }
+
+  bool get isFailed =>
+      status == 'failed' || status == 'error' || status == 'timeout';
 }
 

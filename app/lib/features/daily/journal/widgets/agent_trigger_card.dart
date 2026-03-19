@@ -4,6 +4,7 @@ import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/core/providers/computer_provider.dart';
 import 'package:parachute/core/services/computer_service.dart';
 import '../providers/journal_providers.dart';
+import '../services/daily_api_service.dart';
 import '../utils/agent_theme.dart';
 
 /// Provider for agent trigger state (per agent)
@@ -36,6 +37,20 @@ class AgentTriggerCard extends ConsumerStatefulWidget {
 
 class _AgentTriggerCardState extends ConsumerState<AgentTriggerCard> {
   bool _isTriggering = false;
+  Future<AgentRunInfo?>? _latestRunFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    // Pre-fetch the latest run to detect scheduled failures
+    _loadLatestRun();
+  }
+
+  void _loadLatestRun() {
+    _latestRunFuture = ref
+        .read(dailyApiServiceProvider)
+        .fetchLatestAgentRun(widget.agent.name);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -76,7 +91,21 @@ class _AgentTriggerCardState extends ConsumerState<AgentTriggerCard> {
           return triggerState.when(
             data: (result) {
               if (result == null) {
-                return _buildReadyState(context, isDark, icon, color);
+                // No interactive trigger result — check for recent scheduled failures
+                return FutureBuilder<AgentRunInfo?>(
+                  future: _latestRunFuture,
+                  builder: (context, snapshot) {
+                    if (snapshot.hasData && snapshot.data != null) {
+                      final latestRun = snapshot.data!;
+                      if (latestRun.isFailed) {
+                        return _buildScheduledFailureState(
+                          context, latestRun, isDark, icon, color,
+                        );
+                      }
+                    }
+                    return _buildReadyState(context, isDark, icon, color);
+                  },
+                );
               }
               if (result.success) {
                 return _buildSuccessState(context, result, isDark, icon, color);
@@ -201,6 +230,76 @@ class _AgentTriggerCardState extends ConsumerState<AgentTriggerCard> {
               ),
             ),
           ),
+        ),
+      ],
+    );
+  }
+
+  /// Shows when a scheduled/background run failed — the user didn't trigger it
+  /// interactively but needs to know it failed and see the error.
+  Widget _buildScheduledFailureState(
+    BuildContext context,
+    AgentRunInfo runInfo,
+    bool isDark,
+    IconData icon,
+    Color color,
+  ) {
+    final errorText = (runInfo.error?.isNotEmpty == true)
+        ? runInfo.error!
+        : 'Agent run failed (${runInfo.status})';
+    final triggerLabel = runInfo.trigger == 'scheduled'
+        ? 'Scheduled run failed'
+        : 'Last run failed';
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(
+              Icons.warning_amber_rounded,
+              size: 20,
+              color: BrandColors.warning,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                triggerLabel,
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: isDark ? BrandColors.softWhite : BrandColors.ink,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Text(
+          errorText,
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+            color: BrandColors.driftwood,
+          ),
+          maxLines: 3,
+          overflow: TextOverflow.ellipsis,
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            TextButton(
+              onPressed: _reset,
+              child: const Text('Dismiss'),
+            ),
+            const SizedBox(width: 8),
+            FilledButton.icon(
+              onPressed: _triggerAgent,
+              icon: const Icon(Icons.refresh, size: 18),
+              label: const Text('Retry'),
+              style: FilledButton.styleFrom(
+                backgroundColor: color,
+                foregroundColor: Colors.white,
+              ),
+            ),
+          ],
         ),
       ],
     );
