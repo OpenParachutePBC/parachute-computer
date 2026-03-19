@@ -91,6 +91,98 @@ async def _clear_agent_session(graph, agent_name: str) -> None:
         )
 
 
+# ---------------------------------------------------------------------------
+# AgentRun recording — observability for every agent invocation
+# ---------------------------------------------------------------------------
+
+async def _create_agent_run(
+    graph,
+    run_id: str,
+    agent_name: str,
+    display_name: str,
+    date: str,
+    trigger: str,
+    container_slug: str,
+    entry_id: str = "",
+) -> None:
+    """Create an AgentRun node at the start of an agent invocation."""
+    if graph is None:
+        return
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        async with graph.write_lock:
+            await graph.execute_cypher(
+                "MERGE (r:AgentRun {run_id: $run_id}) "
+                "SET r.agent_name = $agent_name, "
+                "    r.display_name = $display_name, "
+                "    r.date = $date, "
+                "    r.entry_id = $entry_id, "
+                "    r.trigger = $trigger, "
+                "    r.status = 'running', "
+                "    r.container_slug = $container_slug, "
+                "    r.started_at = $now, "
+                "    r.ran_at = $now",
+                {
+                    "run_id": run_id,
+                    "agent_name": agent_name,
+                    "display_name": display_name,
+                    "date": date,
+                    "entry_id": entry_id,
+                    "trigger": trigger,
+                    "container_slug": container_slug,
+                    "now": now,
+                },
+            )
+    except Exception as e:
+        logger.warning(f"Failed to create AgentRun for '{agent_name}': {e}")
+
+
+async def _complete_agent_run(
+    graph,
+    run_id: str,
+    status: str,
+    session_id: str = "",
+    card_id: str = "",
+    error: str = "",
+    started_at: str = "",
+) -> None:
+    """Update an AgentRun node when the agent finishes (success or failure)."""
+    if graph is None:
+        return
+    now = datetime.now(timezone.utc).isoformat()
+    # Calculate duration if we have a start time
+    duration = 0.0
+    if started_at:
+        try:
+            start = datetime.fromisoformat(started_at)
+            end = datetime.fromisoformat(now)
+            duration = (end - start).total_seconds()
+        except (ValueError, TypeError):
+            pass
+    try:
+        async with graph.write_lock:
+            await graph.execute_cypher(
+                "MATCH (r:AgentRun {run_id: $run_id}) "
+                "SET r.status = $status, "
+                "    r.session_id = $session_id, "
+                "    r.card_id = $card_id, "
+                "    r.error = $error, "
+                "    r.completed_at = $now, "
+                "    r.duration_seconds = $duration",
+                {
+                    "run_id": run_id,
+                    "status": status,
+                    "session_id": session_id,
+                    "card_id": card_id,
+                    "error": error,
+                    "now": now,
+                    "duration": duration,
+                },
+            )
+    except Exception as e:
+        logger.warning(f"Failed to complete AgentRun {run_id}: {e}")
+
+
 class DailyAgentConfig:
     """Configuration for a daily agent loaded from its markdown file."""
 
@@ -107,6 +199,7 @@ class DailyAgentConfig:
         trust_level: str = "sandboxed",
         trigger_event: str = "",
         trigger_filter: dict[str, Any] | None = None,
+        container_slug: str = "",
     ):
         self.name = name
         self.display_name = display_name
@@ -119,6 +212,7 @@ class DailyAgentConfig:
         self.trust_level = trust_level if trust_level in ("sandboxed", "direct") else "sandboxed"
         self.trigger_event = trigger_event
         self.trigger_filter = trigger_filter or {}
+        self.container_slug = container_slug  # empty = use default agent-{name}
 
     @classmethod
     def from_row(cls, row: dict) -> "DailyAgentConfig":
@@ -150,6 +244,7 @@ class DailyAgentConfig:
             trust_level=row.get("trust_level") or "sandboxed",
             trigger_event=row.get("trigger_event") or "",
             trigger_filter=trigger_filter,
+            container_slug=row.get("container_slug") or "",
         )
 
     def get_schedule_hour_minute(self) -> tuple[int, int]:
@@ -344,7 +439,7 @@ async def _run_sandboxed(
     # Container slug is persistent and human-readable; session ID is per-run UUID.
     # The container slug identifies the Docker environment; the session ID identifies
     # the SDK transcript for this specific run.
-    container_slug = getattr(config, "container_slug", None) or f"agent-{agent_name}"
+    container_slug = config.container_slug or f"agent-{agent_name}"
     run_session_id = str(uuid.uuid4())
 
     token_ctx = SandboxTokenContext(
@@ -359,19 +454,29 @@ async def _run_sandboxed(
     mcp_config = _build_http_mcp_config(sandbox_token)
     all_mcp_servers = {"parachute": mcp_config}
 
-    # Ensure container record exists in session store
+    # Ensure container record exists in session store.
+    # If the agent targets a user-configured container, validate it exists.
+    is_custom_container = bool(config.container_slug)
     try:
         from parachute.core.interfaces import get_registry
         session_store = get_registry().get("ChatStore")
         if session_store is not None:
-            # Check if container already exists before creating
             existing = await session_store.get_container(container_slug)
             if not existing:
+                if is_custom_container:
+                    # User configured a specific container that doesn't exist
+                    raise RuntimeError(
+                        f"Container '{container_slug}' not found — "
+                        f"create it or clear the agent's container setting"
+                    )
+                # Auto-create dedicated container for this agent
                 await session_store.create_container(
                     slug=container_slug,
                     display_name=f"Agent: {config.display_name}",
                 )
                 logger.info(f"Created container record for agent '{agent_name}'")
+    except RuntimeError:
+        raise  # Re-raise validation errors
     except Exception as e:
         logger.warning(f"Could not ensure container record for agent '{agent_name}': {e}")
 
@@ -620,6 +725,7 @@ async def run_daily_agent(
     force: bool = False,
     create_tools_fn: Optional[Callable[[Path, DailyAgentConfig], Awaitable[tuple[list, dict[str, Any]]]]] = None,
     build_prompt_fn: Optional[Callable[[DailyAgentConfig, str, str], str]] = None,
+    trigger: str = "manual",
 ) -> dict[str, Any]:
     """
     Run a daily agent for a specific date.
@@ -634,6 +740,7 @@ async def run_daily_agent(
         force: Run even if already processed
         create_tools_fn: Optional function to create custom tools for this agent
         build_prompt_fn: Optional function to build the user prompt
+        trigger: How the run was initiated ("scheduled", "event", "manual")
 
     Returns:
         Result dict with status, output path, etc.
@@ -706,15 +813,26 @@ async def run_daily_agent(
     else:
         prompt_text = _default_prompt(config, date, output_date)
 
+    # Create AgentRun record for observability
+    container_slug = config.container_slug or f"agent-{agent_name}"
+    run_id = str(uuid.uuid4())
+    started_at = datetime.now(timezone.utc).isoformat()
+    await _create_agent_run(
+        graph, run_id=run_id, agent_name=agent_name,
+        display_name=config.display_name, date=date,
+        trigger=trigger, container_slug=container_slug,
+    )
+
     # Route: sandboxed vs direct execution
     use_sandbox = config.trust_level == "sandboxed"
     sandbox = _get_sandbox() if use_sandbox else None
+    result: dict[str, Any] | None = None
 
     if use_sandbox and sandbox is not None:
         # Check Docker availability
         if await sandbox.is_available() and await sandbox.image_exists():
             logger.info(f"Agent '{agent_name}' routing to sandbox (trust_level=sandboxed)")
-            return await _run_sandboxed(
+            result = await _run_sandboxed(
                 sandbox=sandbox,
                 config=config,
                 system_prompt=system_prompt,
@@ -732,20 +850,34 @@ async def run_daily_agent(
                 f"falling back to direct execution"
             )
 
-    # Direct execution (trust_level=direct, Docker unavailable, or no sandbox instance)
-    logger.info(f"Agent '{agent_name}' running directly (trust_level={config.trust_level})")
-    return await _run_direct(
-        config=config,
-        system_prompt=system_prompt,
-        prompt_text=prompt_text,
-        agent_state=agent_state,
-        card_id=card_id,
-        date=date,
-        output_date=output_date,
-        vault_path=vault_path,
-        graph=graph,
-        create_tools_fn=create_tools_fn,
+    if result is None:
+        # Direct execution (trust_level=direct, Docker unavailable, or no sandbox instance)
+        logger.info(f"Agent '{agent_name}' running directly (trust_level={config.trust_level})")
+        result = await _run_direct(
+            config=config,
+            system_prompt=system_prompt,
+            prompt_text=prompt_text,
+            agent_state=agent_state,
+            card_id=card_id,
+            date=date,
+            output_date=output_date,
+            vault_path=vault_path,
+            graph=graph,
+            create_tools_fn=create_tools_fn,
+        )
+
+    # Complete the AgentRun record with final status
+    await _complete_agent_run(
+        graph, run_id=run_id,
+        status=result.get("status", "unknown"),
+        session_id=result.get("sdk_session_id", ""),
+        card_id=result.get("card_id", "") or "",
+        error=result.get("error", ""),
+        started_at=started_at,
     )
+    result["run_id"] = run_id
+
+    return result
 
 
 def _default_prompt(config: DailyAgentConfig, journal_date: str, output_date: str) -> str:

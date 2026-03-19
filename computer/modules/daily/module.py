@@ -643,12 +643,20 @@ class DailyModule:
         await graph.ensure_node_table(
             "AgentRun",
             {
-                "run_id": "STRING",         # PK: "{agent_name}:{entry_id}:{timestamp}"
+                "run_id": "STRING",         # PK: UUID or "{agent_name}:{entry_id}:{timestamp}"
                 "agent_name": "STRING",
                 "display_name": "STRING",   # Human-readable name (avoids N+1 lookup)
-                "entry_id": "STRING",
-                "status": "STRING",         # "completed" | "error" | etc.
-                "ran_at": "STRING",         # ISO timestamp
+                "entry_id": "STRING",       # Note entry ID (triggered runs only)
+                "date": "STRING",           # YYYY-MM-DD journal date
+                "trigger": "STRING",        # "scheduled" | "event" | "manual"
+                "status": "STRING",         # "running" | "completed" | "failed" | etc.
+                "error": "STRING",          # Error message if failed
+                "container_slug": "STRING", # Container the agent ran in
+                "card_id": "STRING",        # Card ID if output was written
+                "started_at": "STRING",     # ISO timestamp — when run began
+                "completed_at": "STRING",   # ISO timestamp — when run finished
+                "duration_seconds": "DOUBLE",  # Wall-clock duration
+                "ran_at": "STRING",         # ISO timestamp (legacy compat)
                 "session_id": "STRING",     # Claude SDK session ID
             },
             primary_key="run_id",
@@ -710,6 +718,7 @@ class DailyModule:
             "memory_mode": ("STRING", "'persistent'"),
             "template_version": ("STRING", "''"),
             "user_modified": ("STRING", "''"),
+            "container_slug": ("STRING", "''"),
         }
         missing = {col: v for col, v in agent_new.items() if col not in agent_cols}
         if missing:
@@ -719,6 +728,31 @@ class DailyModule:
                         f"ALTER TABLE Agent ADD {col} {typ} DEFAULT {default}"
                     )
                     logger.info(f"Daily: added column Agent.{col}")
+
+        # AgentRun table migrations — add new columns for observability
+        try:
+            run_cols = await graph.get_table_columns("AgentRun")
+        except Exception:
+            return  # AgentRun table doesn't exist yet
+
+        run_new = {
+            "date": ("STRING", "''"),
+            "trigger": ("STRING", "''"),
+            "error": ("STRING", "''"),
+            "container_slug": ("STRING", "''"),
+            "card_id": ("STRING", "''"),
+            "started_at": ("STRING", "''"),
+            "completed_at": ("STRING", "''"),
+            "duration_seconds": ("DOUBLE", "0.0"),
+        }
+        run_missing = {col: v for col, v in run_new.items() if col not in run_cols}
+        if run_missing:
+            async with graph.write_lock:
+                for col, (typ, default) in run_missing.items():
+                    await graph.execute_cypher(
+                        f"ALTER TABLE AgentRun ADD {col} {typ} DEFAULT {default}"
+                    )
+                    logger.info(f"Daily: added column AgentRun.{col}")
 
     async def _seed_builtin_agents(self, graph) -> None:
         """Seed or update built-in Agents from AGENT_TEMPLATES.
@@ -2300,11 +2334,81 @@ class DailyModule:
             """Trigger an agent run for a date (async — returns 202 immediately)."""
             from parachute.core.daily_agent import run_daily_agent
             task = asyncio.create_task(
-                run_daily_agent(self.vault_path, agent_name, date=date, force=force)
+                run_daily_agent(self.vault_path, agent_name, date=date, force=force, trigger="manual")
             )
             _background_tasks.add(task)
             task.add_done_callback(_log_task_exception)
             return {"status": "started", "agent": agent_name, "date": date}
+
+        @router.get("/agents/{agent_name}/runs")
+        async def get_agent_runs(
+            agent_name: str,
+            limit: int = Query(20, ge=1, le=100),
+        ):
+            """Get run history for an agent, most recent first."""
+            graph = self._get_graph()
+            if graph is None:
+                return JSONResponse(status_code=503, content={"error": "BrainDB not available"})
+            try:
+                rows = await graph.execute_cypher(
+                    "MATCH (r:AgentRun) "
+                    "WHERE r.agent_name = $name "
+                    "RETURN r ORDER BY r.started_at DESC",
+                    {"name": agent_name},
+                )
+                # Limit manually (Kuzu LIMIT in Cypher can be quirky with params)
+                runs = []
+                for row in rows[:limit]:
+                    runs.append({
+                        "run_id": row.get("run_id", ""),
+                        "agent_name": row.get("agent_name", ""),
+                        "display_name": row.get("display_name", ""),
+                        "date": row.get("date", ""),
+                        "trigger": row.get("trigger", ""),
+                        "status": row.get("status", ""),
+                        "error": row.get("error", ""),
+                        "container_slug": row.get("container_slug", ""),
+                        "card_id": row.get("card_id", ""),
+                        "session_id": row.get("session_id", ""),
+                        "started_at": row.get("started_at", row.get("ran_at", "")),
+                        "completed_at": row.get("completed_at", ""),
+                        "duration_seconds": row.get("duration_seconds", 0),
+                    })
+                return {"runs": runs, "count": len(runs)}
+            except Exception as e:
+                logger.warning(f"Failed to get agent runs for {agent_name}: {e}")
+                return {"runs": [], "count": 0}
+
+        @router.get("/agents/{agent_name}/runs/latest")
+        async def get_agent_latest_run(agent_name: str):
+            """Get the most recent run for an agent (used by Flutter to show failure state)."""
+            graph = self._get_graph()
+            if graph is None:
+                return JSONResponse(status_code=503, content={"error": "BrainDB not available"})
+            try:
+                rows = await graph.execute_cypher(
+                    "MATCH (r:AgentRun) "
+                    "WHERE r.agent_name = $name "
+                    "RETURN r ORDER BY r.started_at DESC",
+                    {"name": agent_name},
+                )
+                if not rows:
+                    return JSONResponse(status_code=404, content={"error": "No runs found"})
+                row = rows[0]
+                return {
+                    "run_id": row.get("run_id", ""),
+                    "agent_name": row.get("agent_name", ""),
+                    "status": row.get("status", ""),
+                    "error": row.get("error", ""),
+                    "trigger": row.get("trigger", ""),
+                    "started_at": row.get("started_at", row.get("ran_at", "")),
+                    "completed_at": row.get("completed_at", ""),
+                    "duration_seconds": row.get("duration_seconds", 0),
+                    "container_slug": row.get("container_slug", ""),
+                }
+            except Exception as e:
+                logger.warning(f"Failed to get latest run for {agent_name}: {e}")
+                return JSONResponse(status_code=500, content={"error": str(e)})
 
         @router.post("/cards/write", status_code=201)
         async def write_card(body: dict):
@@ -2481,6 +2585,7 @@ class DailyModule:
                 "    a.trigger_event = $trigger_event, "
                 "    a.trigger_filter = $trigger_filter, "
                 "    a.memory_mode = $memory_mode, "
+                "    a.container_slug = $container_slug, "
                 "    a.updated_at = $now",
                 {
                     "name": name,
@@ -2496,6 +2601,7 @@ class DailyModule:
                     "trigger_event": body.get("trigger_event") or "",
                     "trigger_filter": trigger_filter,
                     "memory_mode": memory_mode,
+                    "container_slug": body.get("container_slug") or "",
                     "now": now,
                 },
             )

@@ -51,7 +51,7 @@ async def _run_daily_agent_job(agent_name: str):
 
     from parachute.core.daily_agent import run_daily_agent
     try:
-        result = await run_daily_agent(_vault_path, agent_name)
+        result = await run_daily_agent(_vault_path, agent_name, trigger="scheduled")
         logger.info(f"Agent '{agent_name}' result: {result.get('status')}")
     except Exception as e:
         logger.error(f"Agent '{agent_name}' failed: {e}", exc_info=True)
@@ -260,7 +260,7 @@ async def trigger_agent_now(agent_name: str, vault_path: Path, date: Optional[st
     from parachute.core.daily_agent import run_daily_agent
 
     try:
-        result = await run_daily_agent(vault_path, agent_name, date=date, force=force)
+        result = await run_daily_agent(vault_path, agent_name, date=date, force=force, trigger="manual")
         return result
     except Exception as e:
         logger.error(f"trigger_agent_now failed for '{agent_name}': {e}", exc_info=True)
