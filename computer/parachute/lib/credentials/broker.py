@@ -117,8 +117,7 @@ class CredentialBroker:
         """
         env_lines: list[str] = []
         for provider in self._providers.values():
-            if hasattr(provider, "get_env_vars"):
-                env_lines.extend(provider.get_env_vars())
+            env_lines.extend(provider.get_env_vars())
         return env_lines
 
     def get_status(self) -> dict:
@@ -245,10 +244,9 @@ class CredentialBroker:
         # Collect env vars already provided by registered helpers
         covered_vars: set[str] = set()
         for p in broker.providers():
-            if hasattr(p, "get_env_vars"):
-                for line in p.get_env_vars():
-                    if "=" in line:
-                        covered_vars.add(line.split("=", 1)[0])
+            for line in p.get_env_vars():
+                if "=" in line:
+                    covered_vars.add(line.split("=", 1)[0])
 
         from parachute.lib.credentials.helpers.generic_env import GenericEnvHelper
 

@@ -93,8 +93,10 @@ class _CredentialSetupDialogState
     if (mounted) {
       setState(() => _isSaving = false);
       if (success) {
+        // Capture messenger before pop — context is invalid after Navigator.pop
+        final messenger = ScaffoldMessenger.of(context);
         Navigator.pop(context, true);
-        ScaffoldMessenger.of(context).showSnackBar(
+        messenger.showSnackBar(
           SnackBar(
             content: Text('${widget.manifest.displayName} configured'),
             backgroundColor: BrandColors.success,

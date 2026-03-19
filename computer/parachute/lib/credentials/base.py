@@ -88,3 +88,11 @@ class CredentialProvider(ABC):
             /opt/parachute-tools/bin/ and made executable.
         """
         return {}
+
+    def get_env_vars(self) -> list[str]:
+        """Return env var lines (KEY=VALUE) for sandbox injection.
+
+        Returns:
+            List of KEY=VALUE strings to inject into container environments.
+        """
+        return []

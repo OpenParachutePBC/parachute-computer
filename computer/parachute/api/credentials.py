@@ -26,6 +26,8 @@ router = APIRouter(prefix="/credentials", tags=["credentials"])
 _ORG_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,38}$")
 # Provider names: lowercase alphanumeric with hyphens/underscores, max 32 chars
 _PROVIDER_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
+# Env var names: uppercase letters/digits/underscores, 1-64 chars
+_ENV_VAR_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
 
 
 class TokenResponse(BaseModel):
@@ -83,6 +85,31 @@ def _validate_provider(provider: str) -> None:
     """Validate provider name format to prevent log injection and enumeration."""
     if not _PROVIDER_RE.match(provider):
         raise HTTPException(status_code=400, detail="Invalid provider name")
+
+
+def _validate_setup_auth(request: Request) -> None:
+    """Validate that setup/delete requests come from localhost or carry a valid secret.
+
+    Config-mutating endpoints require either:
+    - Request from localhost (127.0.0.1 / ::1) — the server owner
+    - Valid broker secret in Authorization header — programmatic access
+    """
+    client_host = request.client.host if request.client else None
+    if client_host in ("127.0.0.1", "::1", "localhost"):
+        return  # Localhost is trusted
+
+    # Not localhost — require broker secret
+    _validate_broker_secret(request)
+
+
+def _validate_no_newlines(value: str, field_name: str) -> str:
+    """Reject values containing newlines to prevent env var injection."""
+    if "\n" in value or "\r" in value:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid {field_name}: must not contain newlines",
+        )
+    return value
 
 
 def _handle_provider_error(e: CredentialProviderError, provider: str) -> HTTPException:
@@ -214,13 +241,17 @@ async def get_helpers():
 
 
 @router.post("/setup")
-async def setup_helper(body: SetupRequest):
+async def setup_helper(request: Request, body: SetupRequest):
     """
     Configure a credential helper.
 
     Validates the provided fields, saves to config, and reloads the broker.
     Used by both the CLI wizard and the app UI.
+
+    Requires localhost or valid broker secret — config mutation must be authenticated.
     """
+    _validate_setup_auth(request)
+
     from parachute.config import get_settings, save_yaml_config_atomic
     from parachute.lib.credentials.broker import reset_broker
 
@@ -231,7 +262,7 @@ async def setup_helper(body: SetupRequest):
 
     # Build the config entry based on method
     if method == "personal-token":
-        token = fields.get("token", "").strip()
+        token = _validate_no_newlines(fields.get("token", "").strip(), "token")
         if not token:
             raise HTTPException(status_code=400, detail="Token is required")
         config_entry = {
@@ -242,13 +273,19 @@ async def setup_helper(body: SetupRequest):
         app_id = fields.get("app_id", "").strip()
         if not app_id:
             raise HTTPException(status_code=400, detail="App ID is required")
+        try:
+            app_id_int = int(app_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="App ID must be a number")
         config_entry = {
             "type": "github-app",
-            "app_id": int(app_id),
+            "app_id": app_id_int,
             "installations": {},  # User adds installations later
         }
     elif method == "cloudflare-parent":
-        token = fields.get("parent_token", "").strip()
+        token = _validate_no_newlines(
+            fields.get("parent_token", "").strip(), "parent_token"
+        )
         if not token:
             raise HTTPException(status_code=400, detail="Parent token is required")
         config_entry = {
@@ -260,10 +297,15 @@ async def setup_helper(body: SetupRequest):
             config_entry["account_id"] = account_id
     elif method == "env-passthrough":
         env_var = fields.get("env_var", "").strip()
-        token = fields.get("token", "").strip()
+        token = _validate_no_newlines(fields.get("token", "").strip(), "token")
         if not env_var or not token:
             raise HTTPException(
                 status_code=400, detail="Both env_var and token are required"
+            )
+        if not _ENV_VAR_RE.match(env_var):
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid env var name (must be UPPERCASE_WITH_UNDERSCORES)",
             )
         config_entry = {
             "type": "env-passthrough",
@@ -308,12 +350,14 @@ async def setup_helper(body: SetupRequest):
 
 
 @router.delete("/{provider}")
-async def remove_helper(provider: str):
+async def remove_helper(request: Request, provider: str):
     """
     Remove a configured credential helper.
 
     Deletes the provider from config and reloads the broker.
+    Requires localhost or valid broker secret.
     """
+    _validate_setup_auth(request)
     _validate_provider(provider)
 
     from parachute.config import get_settings, save_yaml_config_atomic
