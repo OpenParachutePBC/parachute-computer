@@ -123,29 +123,29 @@ Each helper declares which mechanism(s) it uses. The injection layer builds the 
 ## Acceptance Criteria
 
 ### Phase 1: Protocol + PAT Support
-- [ ] `HelperManifest` dataclass defined with setup methods, capabilities, health check
-- [ ] `GitHubHelper` supports both `personal-token` (new) and `github-app` (existing) methods
-- [ ] PAT method: stores token in config, returns it from`mint_token()`, git credential helper and gh wrapper work unchanged
-- [ ] `GET /api/credentials/helpers` returns manifest JSON for all registered helpers
-- [ ] `POST /api/credentials/setup` accepts helper name + method + fields, validates, saves to config
-- [ ] `GET /api/credentials/status` returns per-helper health check results
-- [ ] Existing GitHub App flow continues to work (backward compatible)
-- [ ] `parachute setup github` CLI wizard offers PAT as default, App as advanced option
+- [x] `HelperManifest` dataclass defined with setup methods, capabilities, health check
+- [x] `GitHubHelper` supports both `personal-token` (new) and `github-app` (existing) methods
+- [x] PAT method: stores token in config, returns it from`mint_token()`, git credential helper and gh wrapper work unchanged
+- [x] `GET /api/credentials/helpers` returns manifest JSON for all registered helpers
+- [x] `POST /api/credentials/setup` accepts helper name + method + fields, validates, saves to config
+- [x] `GET /api/credentials/status` returns per-helper health check results
+- [x] Existing GitHub App flow continues to work (backward compatible)
+- [x] `parachute setup github` CLI wizard offers PAT as default, App as advanced option
 
 ### Phase 2: Cloudflare + Generic Helpers
-- [ ] `CloudflareHelper` mints scoped child tokens (existing `mint_token()` logic) instead of injecting parent token
-- [ ] `CloudflareHelper` injects `CLOUDFLARE_ACCOUNT_ID` alongside the token
-- [ ] `CloudflareHelper` has a PATH wrapper for `wrangler` that calls broker API (instead of reading env var directly)
-- [ ] `GenericEnvHelper` for arbitrary `KEY=VALUE` credentials (replaces `credentials.yaml` flat file)
-- [ ] Each `GenericEnvHelper` entry declares its env var name and optional health check URL
-- [ ] Sandbox `_build_credential_env_vars()` refactored to iterate helpers generically (no `isinstance` checks)
+- [x] `CloudflareHelper` mints scoped child tokens (existing `mint_token()` logic) instead of injecting parent token
+- [x] `CloudflareHelper` injects `CLOUDFLARE_ACCOUNT_ID` alongside the token
+- [x] `CloudflareHelper` has a PATH wrapper for `wrangler` that calls broker API (instead of reading env var directly)
+- [x] `GenericEnvHelper` for arbitrary `KEY=VALUE` credentials (replaces `credentials.yaml` flat file)
+- [x] Each `GenericEnvHelper` entry declares its env var name and optional health check URL
+- [x] Sandbox `_build_credential_env_vars()` refactored to iterate helpers generically (no `isinstance` checks)
 
 ### Phase 3: App UI
-- [ ] Settings screen: "Credentials" section showing all configured helpers with status indicators
-- [ ] Setup flow: renders fields from helper manifest (generic, not hardcoded per service)
-- [ ] Health indicators: green/red/yellow per helper based on `verify()` results
-- [ ] Add/remove credential helpers from the UI
-- [ ] Token visibility: show what env vars / scripts each helper injects (for transparency)
+- [x] Settings screen: "Credentials" section showing all configured helpers with status indicators
+- [x] Setup flow: renders fields from helper manifest (generic, not hardcoded per service)
+- [x] Health indicators: green/red/yellow per helper based on `verify()` results
+- [x] Add/remove credential helpers from the UI
+- [x] Token visibility: show what env vars / scripts each helper injects (for transparency)
 
 ### Phase 4: Runtime Consent (Future)
 - [ ] MCP tool `request_access()` for credential escalation requests
