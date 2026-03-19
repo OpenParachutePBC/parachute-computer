@@ -26,25 +26,6 @@ final supervisorServiceProvider =
 @Deprecated('Will be removed in 3.0. Use Ref instead')
 // ignore: unused_element
 typedef SupervisorServiceRef = AutoDisposeProviderRef<SupervisorService>;
-String _$modelsServiceHash() => r'60871cb790d05fc473cb5d6e7e20d114059c87d1';
-
-/// Models service singleton (for model selection - talks to supervisor)
-///
-/// Copied from [modelsService].
-@ProviderFor(modelsService)
-final modelsServiceProvider = AutoDisposeProvider<ModelsService>.internal(
-  modelsService,
-  name: r'modelsServiceProvider',
-  debugGetCreateSourceHash: const bool.fromEnvironment('dart.vm.product')
-      ? null
-      : _$modelsServiceHash,
-  dependencies: null,
-  allTransitiveDependencies: null,
-);
-
-@Deprecated('Will be removed in 3.0. Use Ref instead')
-// ignore: unused_element
-typedef ModelsServiceRef = AutoDisposeProviderRef<ModelsService>;
 String _$supervisorStatusNotifierHash() =>
     r'afb99dbb62b19829786f04f77cd2243902539acc';
 
@@ -67,24 +48,6 @@ final supervisorStatusNotifierProvider =
     );
 
 typedef _$SupervisorStatusNotifier = AutoDisposeAsyncNotifier<SupervisorStatus>;
-String _$availableModelsHash() => r'864f64665feec41e850cc343e4199f223224e46c';
-
-/// Available models provider (static list from server)
-///
-/// Copied from [AvailableModels].
-@ProviderFor(AvailableModels)
-final availableModelsProvider =
-    AutoDisposeAsyncNotifierProvider<AvailableModels, List<ModelInfo>>.internal(
-      AvailableModels.new,
-      name: r'availableModelsProvider',
-      debugGetCreateSourceHash: const bool.fromEnvironment('dart.vm.product')
-          ? null
-          : _$availableModelsHash,
-      dependencies: null,
-      allTransitiveDependencies: null,
-    );
-
-typedef _$AvailableModels = AutoDisposeAsyncNotifier<List<ModelInfo>>;
 String _$supervisorConfigHash() => r'be7c81b1eaf54aa792510407dafcf677d986f8f2';
 
 /// Cached supervisor server config (reads default_model etc).

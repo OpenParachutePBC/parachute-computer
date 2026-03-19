@@ -50,35 +50,6 @@ class SupervisorStatus {
 }
 
 @immutable
-class ModelInfo {
-  const ModelInfo({
-    required this.id,
-    required this.displayName,
-    required this.family,
-  });
-
-  final String id; // "opus", "sonnet", "haiku"
-  final String displayName; // "Opus", "Sonnet", "Haiku"
-  final String family; // "opus", "sonnet", "haiku"
-
-  factory ModelInfo.fromJson(Map<String, dynamic> json) {
-    return ModelInfo(
-      id: json['id'] as String,
-      displayName: json['display_name'] as String,
-      family: json['family'] as String,
-    );
-  }
-
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is ModelInfo && id == other.id;
-
-  @override
-  int get hashCode => id.hashCode;
-}
-
-@immutable
 class DockerStatus {
   const DockerStatus({
     required this.daemonRunning,
