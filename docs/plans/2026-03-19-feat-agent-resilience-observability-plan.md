@@ -17,14 +17,14 @@ Beyond the immediate bug, the system lacks agent run history and proper containe
 
 ## Acceptance Criteria
 
-- [ ] Daily reflection agent runs successfully (UUID session IDs, not slugs)
-- [ ] Every agent run (scheduled, triggered, manual) creates an `AgentRun` graph node with status, error, duration, container, session ID
-- [ ] Failed agent runs are visible in the Flutter app with the actual error message
+- [x] Daily reflection agent runs successfully (UUID session IDs, not slugs)
+- [x] Every agent run (scheduled, triggered, manual) creates an `AgentRun` graph node with status, error, duration, container, session ID
+- [x] Failed agent runs are visible in the Flutter app with the actual error message
 - [ ] "View Log" on a failed (or successful) run opens the agent's SDK transcript / event log
-- [ ] Agent config includes a `container_slug` field — defaults to dedicated container, selectable from named containers
-- [ ] Agent edit screen exposes container selection
-- [ ] Session ID and container slug are cleanly separated throughout the stack
-- [ ] Daemon logs at `~/Library/Logs/Parachute/stdout.log` are confirmed working and accessible via `parachute logs`
+- [x] Agent config includes a `container_slug` field — defaults to dedicated container, selectable from named containers
+- [x] Agent edit screen exposes container selection
+- [x] Session ID and container slug are cleanly separated throughout the stack
+- [x] Daemon logs at `~/Library/Logs/Parachute/stdout.log` are confirmed working and accessible via `parachute logs`
 
 ## Proposed Solution
 
