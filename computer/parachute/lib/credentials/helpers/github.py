@@ -89,7 +89,7 @@ class GitHubHelper(CredentialProvider):
             ),
         ],
         provides=ProviderCapabilities(
-            env_vars=["GH_TOKEN", "GH_DEFAULT_ORG"],
+            env_vars=["GH_TOKEN (via credential helper)", "GH_DEFAULT_ORG"],
             scripts=["github-token-helper.sh", "gh-wrapper.sh"],
             git_config={
                 "credential.helper": "!/opt/parachute-tools/bin/github-token-helper.sh",

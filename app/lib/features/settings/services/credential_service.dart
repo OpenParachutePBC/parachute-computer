@@ -105,27 +105,6 @@ class ProviderCapabilities {
   }
 }
 
-/// Model for credential provider status
-class CredentialStatus {
-  final String name;
-  final String type;
-  final String? method;
-
-  CredentialStatus({
-    required this.name,
-    required this.type,
-    this.method,
-  });
-
-  factory CredentialStatus.fromJson(String name, Map<String, dynamic> json) {
-    return CredentialStatus(
-      name: name,
-      type: json['type'] ?? '',
-      method: json['method'],
-    );
-  }
-}
-
 /// Service for communicating with the credential broker API.
 class CredentialService {
   final String baseUrl;
