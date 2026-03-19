@@ -340,6 +340,26 @@ class Settings(BaseSettings):
         if data.get("github_broker_secret") and not data.get("credential_broker_secret"):
             data["credential_broker_secret"] = data["github_broker_secret"]
 
+        # Migrate legacy full model IDs to short names
+        # e.g., "claude-opus-4-6" → "opus", "claude-sonnet-4-6[1m]" → "sonnet[1m]"
+        default_model = data.get("default_model")
+        if default_model and default_model.startswith("claude-"):
+            import re
+            match = re.match(r'^claude-([a-z]+)-.*?(\[\d+[km]\])?$', default_model)
+            if match:
+                family = match.group(1)
+                suffix = match.group(2) or ""
+                if family in ("opus", "sonnet", "haiku"):
+                    data["default_model"] = f"{family}{suffix}"
+                    # Persist migration to config.yaml
+                    try:
+                        save_yaml_config_atomic(
+                            PARACHUTE_DIR,
+                            {"default_model": data["default_model"]},
+                        )
+                    except Exception:
+                        pass  # Non-fatal: will retry next startup
+
         return data
 
     @property

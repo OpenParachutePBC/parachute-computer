@@ -497,9 +497,11 @@ async def update_config(body: ConfigUpdateRequest) -> ConfigUpdateResponse:
         raise HTTPException(status_code=503, detail="Config not loaded")
 
     # SECURITY: Validate model name format
+    # Accept short names (opus, sonnet, haiku), optional [1m] suffix,
+    # and legacy full IDs (claude-opus-4-6) for migration compatibility.
     if "default_model" in body.values:
         model_id = body.values["default_model"]
-        if not re.match(r'^claude-[a-z0-9\-]+$', model_id):
+        if not re.match(r'^(opus|sonnet|haiku|claude-[a-z0-9\-]+)(\[\d+[km]\])?$', model_id):
             raise HTTPException(status_code=400, detail="Invalid model ID format")
 
     try:
@@ -523,43 +525,20 @@ async def update_config(body: ConfigUpdateRequest) -> ConfigUpdateResponse:
 
 
 @app.get("/supervisor/models")
-async def get_available_models(show_all: bool = False):
+async def get_available_models():
     """
-    GET /supervisor/models?show_all=false
+    GET /supervisor/models
 
-    Query Anthropic Models API and return filtered list.
-    - show_all=false (default): Latest version per family only
-    - show_all=true: All versions, grouped by family
-
-    Requires: settings.claude_code_oauth_token
+    Return static list of available model families.
+    The Claude Code CLI resolves short names (opus, sonnet, haiku)
+    to the latest version at runtime.
     """
-    if not settings:
-        raise HTTPException(status_code=503, detail="Config not loaded")
+    from parachute.api.models import AVAILABLE_MODELS
 
-    api_key = settings.claude_code_oauth_token
-    if not api_key:
-        raise HTTPException(
-            status_code=503,
-            detail="CLAUDE_CODE_OAUTH_TOKEN not configured"
-        )
-
-    try:
-        from parachute.models_api import fetch_available_models
-
-        models = await fetch_available_models(api_key)
-
-        if not show_all:
-            # Filter to latest version per family
-            models = [m for m in models if m.is_latest]
-
-        return {
-            "models": [m.model_dump() for m in models],
-            "count": len(models),
-            "show_all": show_all,
-        }
-    except Exception as e:
-        logger.error(f"Failed to fetch models: {e}")
-        raise HTTPException(status_code=500, detail=f"Models API error: {e}")
+    return {
+        "models": AVAILABLE_MODELS,
+        "count": len(AVAILABLE_MODELS),
+    }
 
 
 # === Docker Management Endpoints ===
