@@ -13,6 +13,7 @@ System directory: ~/.parachute/
 
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Any, Optional
 
@@ -344,8 +345,7 @@ class Settings(BaseSettings):
         # e.g., "claude-opus-4-6" → "opus", "claude-sonnet-4-6[1m]" → "sonnet[1m]"
         default_model = data.get("default_model")
         if default_model and default_model.startswith("claude-"):
-            import re
-            match = re.match(r'^claude-([a-z]+)-.*?(\[\d+[km]\])?$', default_model)
+            match = re.match(r'^claude-([a-z]+)-[a-z0-9\-]+(\[\d+[km]\])?$', default_model)
             if match:
                 family = match.group(1)
                 suffix = match.group(2) or ""

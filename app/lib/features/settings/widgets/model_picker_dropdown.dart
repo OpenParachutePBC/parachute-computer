@@ -11,14 +11,20 @@ import '../../../core/theme/design_tokens.dart';
 class ModelPickerDropdown extends ConsumerWidget {
   const ModelPickerDropdown({super.key});
 
+  static const _validBases = {'opus', 'sonnet', 'haiku'};
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final currentModelId =
         ref.watch(supervisorConfigProvider).valueOrNull?['default_model'] as String? ?? 'opus[1m]';
 
-    // Parse current config: "opus[1m]" → base="opus", extended=true
-    final parsed = _parseModelConfig(currentModelId);
+    // Parse current config: "opus[1m]" → base="opus", extendedContext=true
+    // Clamp to known base to prevent SegmentedButton assertion errors
+    final bracketIndex = currentModelId.indexOf('[');
+    final rawBase = bracketIndex != -1 ? currentModelId.substring(0, bracketIndex) : currentModelId;
+    final base = _validBases.contains(rawBase) ? rawBase : 'opus';
+    final extendedContext = bracketIndex != -1;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -73,11 +79,11 @@ class ModelPickerDropdown extends ConsumerWidget {
                 tooltip: 'Fastest',
               ),
             ],
-            selected: {parsed.base},
+            selected: {base},
             onSelectionChanged: (selected) {
-              _updateModel(ref, context, selected.first, parsed.extendedContext);
+              _updateModel(ref, context, selected.first, extendedContext);
             },
-            style: ButtonStyle(
+            style: const ButtonStyle(
               visualDensity: VisualDensity.compact,
             ),
           ),
@@ -88,7 +94,7 @@ class ModelPickerDropdown extends ConsumerWidget {
         Padding(
           padding: EdgeInsets.symmetric(horizontal: Spacing.xs),
           child: Text(
-            _familyDescription(parsed.base),
+            _familyDescription(base),
             style: TextStyle(
               fontSize: TypographyTokens.labelSmall,
               color: isDark ? BrandColors.nightTextSecondary : BrandColors.stone,
@@ -114,9 +120,9 @@ class ModelPickerDropdown extends ConsumerWidget {
               color: isDark ? BrandColors.nightTextSecondary : BrandColors.stone,
             ),
           ),
-          value: parsed.extendedContext,
+          value: extendedContext,
           onChanged: (enabled) {
-            _updateModel(ref, context, parsed.base, enabled);
+            _updateModel(ref, context, base, enabled);
           },
         ),
       ],
@@ -160,24 +166,4 @@ class ModelPickerDropdown extends ConsumerWidget {
       _ => '',
     };
   }
-}
-
-/// Parsed model config value.
-class _ModelConfig {
-  const _ModelConfig({required this.base, required this.extendedContext});
-  final String base; // "opus", "sonnet", "haiku"
-  final bool extendedContext; // whether [1m] suffix is present
-}
-
-/// Parse "opus[1m]" → base="opus", extendedContext=true
-/// Parse "sonnet" → base="sonnet", extendedContext=false
-_ModelConfig _parseModelConfig(String modelId) {
-  final bracketIndex = modelId.indexOf('[');
-  if (bracketIndex != -1) {
-    return _ModelConfig(
-      base: modelId.substring(0, bracketIndex),
-      extendedContext: true,
-    );
-  }
-  return _ModelConfig(base: modelId, extendedContext: false);
 }

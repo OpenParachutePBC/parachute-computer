@@ -8,7 +8,7 @@ The Claude Code CLI resolves short names to the latest version.
 from typing import Optional
 
 from fastapi import APIRouter
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from parachute.config import get_settings
 
@@ -24,7 +24,7 @@ AVAILABLE_MODELS = [
 
 class ModelsListResponse(BaseModel):
     """Response from GET /api/models."""
-    models: list
+    models: list[dict[str, str]]
     current_model: Optional[str]
 
 
