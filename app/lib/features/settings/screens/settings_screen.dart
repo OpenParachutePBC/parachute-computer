@@ -16,6 +16,7 @@ import '../widgets/daily_agents_section.dart';
 import '../widgets/trust_levels_section.dart';
 import '../widgets/bot_connectors_section.dart';
 import '../widgets/hooks_section.dart';
+import '../widgets/credentials_section.dart';
 import '../widgets/migration_section.dart';
 import '../widgets/transcription_settings_section.dart';
 import '../widgets/model_picker_dropdown.dart';
@@ -197,6 +198,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             SettingsCard(
               isDark: isDark,
               child: const ApiKeySection(),
+            ),
+          ],
+
+          // Credentials Section (sandbox credential helpers)
+          if (showFullModeSettings) ...[
+            SizedBox(height: Spacing.xl),
+            SettingsCard(
+              isDark: isDark,
+              child: const CredentialsSection(),
             ),
           ],
 
