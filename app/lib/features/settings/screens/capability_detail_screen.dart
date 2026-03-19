@@ -284,7 +284,7 @@ class AgentDetailScreen extends ConsumerWidget {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     // Fetch full detail
-    final AsyncValue<AgentInfo> detailAsync;
+    final AsyncValue<AgentInfo?> detailAsync;
     if (pluginSlug != null) {
       detailAsync = ref.watch(pluginAgentDetailProvider('$pluginSlug:${agent.name}'));
     } else {
@@ -469,7 +469,7 @@ class SkillDetailScreen extends ConsumerWidget {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     // Fetch full detail
-    final AsyncValue<SkillInfo> detailAsync;
+    final AsyncValue<SkillInfo?> detailAsync;
     if (pluginSlug != null) {
       detailAsync = ref.watch(pluginSkillDetailProvider('$pluginSlug:${skill.name}'));
     } else {
