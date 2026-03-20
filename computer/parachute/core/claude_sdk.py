@@ -142,12 +142,11 @@ async def _string_to_async_iterable(
 async def query_streaming(
     prompt: str,
     system_prompt: Optional[str] = None,
-    system_prompt_append: Optional[str] = None,
-    use_claude_code_preset: bool = True,
     setting_sources: Optional[list[str]] = None,
     cwd: Optional[Path] = None,
     resume: Optional[str] = None,
     tools: Optional[list[str]] = None,
+    disallowed_tools: Optional[list[str]] = None,
     mcp_servers: Optional[dict[str, Any]] = None,
     permission_mode: str = "default",
     can_use_tool: CanUseToolCallback = None,
@@ -164,14 +163,13 @@ async def query_streaming(
 
     Args:
         prompt: User message
-        system_prompt: Full custom system prompt (overrides preset if provided)
-        system_prompt_append: Text to append to Claude Code preset (ignored if system_prompt is set)
-        use_claude_code_preset: If True (default), use Claude Code's system prompt as base
+        system_prompt: Full system prompt (always a complete replacement, no preset)
         setting_sources: List of setting sources for SDK config loading.
                         Pass ["project"] to enable project-level .claude/ discovery.
         cwd: Working directory for the agent session
         resume: Session ID to resume
-        tools: List of allowed tools
+        tools: Explicit tool list (controls which tools exist in the session)
+        disallowed_tools: Tools to hard-block (safety net)
         mcp_servers: MCP server configurations
         permission_mode: Permission mode for tools
         can_use_tool: Optional callback for permission checking
@@ -187,7 +185,7 @@ async def query_streaming(
     Note:
         Parachute passes setting_sources=["project"] for project-level discovery
         (CLAUDE.md, .claude/ commands/skills/agents). Vault-level CLAUDE.md is
-        appended separately via system_prompt_append.
+        appended separately via the system_prompt assembled by the orchestrator.
     """
     # Import the SDK
     from claude_agent_sdk import query as sdk_query, ClaudeAgentOptions, ClaudeSDKError
@@ -195,24 +193,9 @@ async def query_streaming(
     # Build options
     options_kwargs: dict[str, Any] = {}
 
-    # Configure system prompt
-    # Priority: explicit system_prompt > preset with append > preset only
+    # Configure system prompt — always a full replacement, no Claude Code preset
     if system_prompt:
-        # Full custom system prompt overrides everything
         options_kwargs["system_prompt"] = system_prompt
-    elif use_claude_code_preset:
-        # Use Claude Code's system prompt as base
-        if system_prompt_append:
-            options_kwargs["system_prompt"] = {
-                "type": "preset",
-                "preset": "claude_code",
-                "append": system_prompt_append,
-            }
-        else:
-            options_kwargs["system_prompt"] = {
-                "type": "preset",
-                "preset": "claude_code",
-            }
 
     # Configure setting sources for CLAUDE.md loading
     if setting_sources:
@@ -227,7 +210,10 @@ async def query_streaming(
             options_kwargs["permission_mode"] = permission_mode  # type: ignore
 
     if tools is not None:
-        options_kwargs["allowed_tools"] = tools
+        options_kwargs["tools"] = tools
+
+    if disallowed_tools is not None:
+        options_kwargs["disallowed_tools"] = disallowed_tools
 
     if resume:
         options_kwargs["resume"] = resume
