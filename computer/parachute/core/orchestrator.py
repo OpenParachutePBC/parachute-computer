@@ -487,8 +487,10 @@ class Orchestrator:
             self.active_streams[stream_session_id] = interrupt
             self.active_stream_queues[stream_session_id] = message_queue
 
-        # permission_handler is None until Phase 2 completes; safe for finally block
+        # Sentinels — safe for finally block and downstream references.
+        # Only populated for sandboxed sessions (Phase 3).
         permission_handler = None
+        permission_denials: list[dict[str, Any]] = []
 
         try:
             # Phase 2: Capability discovery
@@ -542,7 +544,7 @@ class Orchestrator:
                 yield warning
 
             # Phase 3: Set up permission handler (sandboxed sessions only)
-            # DIRECT trust sessions use bypassPermissions — no permission
+            # Non-sandboxed sessions use bypassPermissions — no permission
             # pipe, no handler needed.  This eliminates "Stream closed"
             # errors from the fragile stdin/stdout permission round-trip.
             run_trusted = caps.effective_trust != "sandboxed"
@@ -552,16 +554,10 @@ class Orchestrator:
                 def on_permission_denial(denial: dict) -> None:
                     permission_denials.append(denial)
 
-                def on_user_question(request) -> None:
-                    logger.info(
-                        f"User question registered: {request.id} with {len(request.questions)} questions"
-                    )
-
                 permission_handler = PermissionHandler(
                     session=session,
                     vault_path=str(Path.home()),
                     on_denial=on_permission_denial,
-                    on_user_question=on_user_question,
                 )
                 self.pending_permissions[session.id] = permission_handler
 
@@ -929,11 +925,10 @@ class Orchestrator:
         Handles its own CancelledError and Exception cases by yielding the
         appropriate error events, so callers can treat the generator as safe.
 
-        Uses bypassPermissions mode — DIRECT trust sessions auto-approve all
+        Uses bypassPermissions mode — non-sandboxed sessions auto-approve all
         tool calls without the permission pipe. This eliminates intermittent
         "Stream closed" errors caused by the fragile stdin/stdout permission
-        round-trip that was adding latency and fragility for zero security
-        benefit.
+        round-trip that added latency and fragility for zero security benefit.
         """
         result_text = ""
         text_blocks: list[str] = []
