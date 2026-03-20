@@ -287,8 +287,6 @@ class TestRunTrusted:
             claude_token="tok",
             message_queue=asyncio.Queue(),
             interrupt=MagicMock(is_interrupted=False),
-            permission_handler=self._permission_handler,
-            permission_denials=[],
             is_new=False,
             message="test",
             working_directory=None,
