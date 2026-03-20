@@ -496,14 +496,6 @@ async def update_config(body: ConfigUpdateRequest) -> ConfigUpdateResponse:
     if not settings:
         raise HTTPException(status_code=503, detail="Config not loaded")
 
-    # SECURITY: Validate model name format
-    # Accept short names (opus, sonnet, haiku), optional [1m] suffix,
-    # and legacy full IDs (claude-opus-4-6) for migration compatibility.
-    if "default_model" in body.values:
-        model_id = body.values["default_model"]
-        if not re.match(r'^(opus|sonnet|haiku|claude-[a-z0-9\-]+)(\[\d+[km]\])?$', model_id):
-            raise HTTPException(status_code=400, detail="Invalid model ID format")
-
     try:
         from parachute.config import save_yaml_config_atomic
 
