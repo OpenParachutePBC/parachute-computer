@@ -51,7 +51,6 @@ from parachute.models.events import (
     ToolUseEvent,
     TypedErrorEvent,
     UserMessageEvent,
-    UserQuestionEvent,
     WarningEvent,
 )
 from parachute.models.session import (
@@ -488,8 +487,10 @@ class Orchestrator:
             self.active_streams[stream_session_id] = interrupt
             self.active_stream_queues[stream_session_id] = message_queue
 
-        # permission_handler is None until Phase 2 completes; safe for finally block
+        # Sentinels — safe for finally block and downstream references.
+        # Only populated for sandboxed sessions (Phase 3).
         permission_handler = None
+        permission_denials: list[dict[str, Any]] = []
 
         try:
             # Phase 2: Capability discovery
@@ -499,6 +500,20 @@ class Orchestrator:
             # (skipped for custom/agent prompts — those manage their own tool docs)
             if caps.tool_guidance and prompt_metadata.get("prompt_source") not in ("custom", "agent"):
                 effective_prompt = f"{effective_prompt}\n\n{caps.tool_guidance}"
+
+            # Suppress tools that don't fit Parachute's orchestrator model.
+            # AskUserQuestion assumes a human at a terminal; PlanMode is
+            # managed by Parachute's own workflow, not the CLI's built-in
+            # plan mode.  This is a bridge solution — the long-term fix is
+            # a custom system prompt (#297) that doesn't offer these tools.
+            if prompt_metadata.get("prompt_source") not in ("custom", "agent"):
+                effective_prompt += (
+                    "\n\n## Tool Restrictions\n"
+                    "Do not use the AskUserQuestion tool — communicate questions "
+                    "directly in your response text.\n"
+                    "Do not use EnterPlanMode or ExitPlanMode — respond directly "
+                    "without entering plan mode."
+                )
 
             # converse mode always uses a full replacement prompt (no Claude Code preset)
             is_full_prompt = prompt_metadata.get("prompt_source") in ("custom", "agent", "converse")
@@ -528,24 +543,23 @@ class Orchestrator:
             for warning in caps.warnings:
                 yield warning
 
-            # Phase 3: Set up permission handler
-            permission_denials: list[dict[str, Any]] = []
+            # Phase 3: Set up permission handler (sandboxed sessions only)
+            # Non-sandboxed sessions use bypassPermissions — no permission
+            # pipe, no handler needed.  This eliminates "Stream closed"
+            # errors from the fragile stdin/stdout permission round-trip.
+            run_trusted = caps.effective_trust != "sandboxed"
+            if not run_trusted:
+                permission_denials: list[dict[str, Any]] = []
 
-            def on_permission_denial(denial: dict) -> None:
-                permission_denials.append(denial)
+                def on_permission_denial(denial: dict) -> None:
+                    permission_denials.append(denial)
 
-            def on_user_question(request) -> None:
-                logger.info(
-                    f"User question registered: {request.id} with {len(request.questions)} questions"
+                permission_handler = PermissionHandler(
+                    session=session,
+                    vault_path=str(Path.home()),
+                    on_denial=on_permission_denial,
                 )
-
-            permission_handler = PermissionHandler(
-                session=session,
-                vault_path=str(Path.home()),
-                on_denial=on_permission_denial,
-                on_user_question=on_user_question,
-            )
-            self.pending_permissions[session.id] = permission_handler
+                self.pending_permissions[session.id] = permission_handler
 
             # Determine resume session ID
             # Only resume if: session exists in DB, not new, not forced fresh,
@@ -572,7 +586,6 @@ class Orchestrator:
             # Phase 4: Execute (sandboxed or trusted)
             # Pre-check Docker availability. Local sessions get a TypedErrorEvent
             # with recovery action; bot sessions hard-fail.
-            run_trusted = caps.effective_trust != "sandboxed"
             if caps.effective_trust == "sandboxed":
                 if await self._sandbox.is_available():
                     async for event in self._run_sandboxed(
@@ -631,8 +644,6 @@ class Orchestrator:
                     claude_token=claude_token,
                     message_queue=message_queue,
                     interrupt=interrupt,
-                    permission_handler=permission_handler,
-                    permission_denials=permission_denials,
                     is_new=is_new,
                     message=message,
                     working_directory=working_directory,
@@ -899,8 +910,6 @@ class Orchestrator:
         claude_token: Optional[str],
         message_queue: asyncio.Queue,
         interrupt: Any,
-        permission_handler: Any,
-        permission_denials: list[dict[str, Any]],
         is_new: bool,
         message: str,
         working_directory: Optional[str],
@@ -915,6 +924,11 @@ class Orchestrator:
         including session finalization, bridge observation, and the DoneEvent.
         Handles its own CancelledError and Exception cases by yielding the
         appropriate error events, so callers can treat the generator as safe.
+
+        Uses bypassPermissions mode — non-sandboxed sessions auto-approve all
+        tool calls without the permission pipe. This eliminates intermittent
+        "Stream closed" errors caused by the fragile stdin/stdout permission
+        round-trip that added latency and fragility for zero security benefit.
         """
         result_text = ""
         text_blocks: list[str] = []
@@ -926,8 +940,6 @@ class Orchestrator:
         inject_count = 0
         initial_user_echo_seen = False
         end_reason = "unknown"
-
-        sdk_can_use_tool = permission_handler.create_sdk_callback()
 
         logger.info(
             f"SDK launch: cwd={effective_cwd}, resume={resume_id}, "
@@ -947,8 +959,7 @@ class Orchestrator:
                 resume=resume_id,
                 tools=None,
                 mcp_servers=caps.resolved_mcps,
-                permission_mode="default",
-                can_use_tool=sdk_can_use_tool,
+                permission_mode="bypassPermissions",
                 plugin_dirs=caps.plugin_dirs if caps.plugin_dirs else None,
                 agents=caps.agents_dict,
                 claude_token=claude_token,
@@ -990,12 +1001,8 @@ class Orchestrator:
                             f"Early finalized session: {captured_session_id[:8]}..."
                         )
 
-                        # Update permission handler with finalized session
-                        permission_handler.session = session
-                        self.pending_permissions.pop("pending", None)
-                        self.pending_permissions[captured_session_id] = (
-                            permission_handler
-                        )
+                        # (Permission handler update removed — DIRECT trust
+                        # sessions bypass permissions entirely.)
 
                         # Second session event now that we have the real ID
                         yield SessionEvent(
@@ -1053,25 +1060,17 @@ class Orchestrator:
                             tool_calls.append(tool_call)
                             yield ToolUseEvent(tool=tool_call).model_dump(by_alias=True)
 
-                            # Emit user_question event for AskUserQuestion
+                            # AskUserQuestion: DIRECT trust sessions bypass
+                            # permissions, so this tool runs unmediated.
+                            # Log a warning — the system prompt instructs the
+                            # model not to use it, but handle gracefully if it
+                            # does anyway.
                             if block.get("name") == "AskUserQuestion":
-                                questions = block.get("input", {}).get("questions", [])
-                                if questions and captured_session_id:
-                                    tool_use_id = block.get("id", "")
-                                    request_id = (
-                                        f"{captured_session_id}-q-{tool_use_id}"
-                                    )
-                                    permission_handler.next_question_tool_use_id = (
-                                        tool_use_id
-                                    )
-                                    yield UserQuestionEvent(
-                                        request_id=request_id,
-                                        session_id=captured_session_id,
-                                        questions=questions,
-                                    ).model_dump(by_alias=True)
-                                    logger.info(
-                                        f"Emitted user_question event: {request_id}"
-                                    )
+                                logger.warning(
+                                    "Model used AskUserQuestion despite system "
+                                    "prompt suppression — tool will execute "
+                                    "with default/empty response"
+                                )
 
                             current_text = ""
 
@@ -1226,7 +1225,7 @@ class Orchestrator:
                 model=captured_model,
                 duration_ms=duration_ms,
                 tool_calls=tool_calls if tool_calls else None,
-                permission_denials=permission_denials if permission_denials else None,
+                permission_denials=None,  # DIRECT trust bypasses permissions
                 session_resume=resume_info.model_dump(),
             ).model_dump(by_alias=True)
 
