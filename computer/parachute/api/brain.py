@@ -1,14 +1,16 @@
 """
-Brain query API — read-only access to the shared Kuzu graph.
+Brain query API — access to the shared Kuzu graph.
 
 Endpoints:
   GET  /api/brain/schema            — all tables with column types
   GET  /api/brain/chats             — conversation chats, supports ?search=
-  GET  /api/brain/chats/{id}        — single chat + exchanges (brain_get_chat)
-  GET  /api/brain/exchanges         — single exchange by ?id= (brain_get_exchange)
-  GET  /api/brain/containers         — container environments
-  GET  /api/brain/daily/entries     — Daily journal notes (brain_list_notes), supports ?search=
+  GET  /api/brain/chats/{id}        — single chat + exchanges
+  GET  /api/brain/chats/search      — search chats with matched exchanges inline
+  GET  /api/brain/exchanges         — single exchange by ?id=
+  GET  /api/brain/containers        — container environments
+  GET  /api/brain/daily/entries     — notes and journal entries, supports ?search=
   GET  /api/brain/memory            — unified memory search across chats, notes, and exchanges
+  POST /api/brain/notes             — create or update a note
   POST /api/brain/query             — read-only Cypher passthrough
   POST /api/brain/execute           — write Cypher passthrough (auth required)
 """
@@ -140,6 +142,24 @@ async def list_chats(
 
     rows = await graph.execute_cypher(query, params if params else None)
     return {"chats": rows, "count": len(rows)}
+
+
+@router.get("/chats/search")
+async def search_chats(
+    query: str = Query(..., description="Keyword or phrase to search for"),
+    limit: int = Query(10, ge=1, le=50),
+    module: str | None = Query(None, description="Filter by module: chat, daily"),
+):
+    """Search chats by keyword with matched exchanges bundled inline.
+
+    Returns chats grouped with their matching exchanges underneath.
+    Each exchange includes snippets from the matching field.
+    """
+    from parachute.core.vault_tools import search_chats as _search_chats
+
+    graph = _get_graph()
+    result = await _search_chats(graph, query=query, limit=limit, module=module)
+    return result
 
 
 @router.get("/chats/{session_id}")
@@ -388,6 +408,38 @@ async def get_memory(
     # Merge and return top `limit` by timestamp descending
     items.sort(key=lambda x: x.get("ts") or "", reverse=True)
     return {"items": items[:limit]}
+
+
+# ── Notes ─────────────────────────────────────────────────────────────────────
+
+
+class WriteNoteRequest(BaseModel):
+    note_type: str
+    title: str
+    content: str
+    date: str | None = None
+
+
+@router.post("/notes")
+async def write_note(body: WriteNoteRequest):
+    """Create or update a note.
+
+    For context notes (note_type='context'), merges on title so there is
+    exactly one note per title. For other note types, creates a new note.
+    """
+    from parachute.core.vault_tools import write_note as _write_note
+
+    graph = _get_graph()
+    result = await _write_note(
+        graph,
+        note_type=body.note_type,
+        title=body.title,
+        content=body.content,
+        date=body.date,
+    )
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
 
 
 # ── Cypher passthrough ────────────────────────────────────────────────────────

@@ -43,16 +43,7 @@ from typing import Any, Self
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent
-from parachute.core.vault_tools import (
-    VAULT_TOOLS,
-    search_memory as _search_memory,
-    search_chats as _search_chats,
-    list_chats as _list_chats,
-    list_notes as _list_notes,
-    get_chat as _get_chat,
-    get_exchange as _get_exchange,
-    write_note as _write_note,
-)
+from parachute.core.vault_tools import VAULT_TOOLS
 
 # Configure logging to stderr (stdout is for MCP protocol)
 logging.basicConfig(
@@ -113,7 +104,13 @@ _session_context: SessionContext | None = None
 
 
 async def get_db():
-    """Get or create BrainChatStore connection."""
+    """Get or create BrainChatStore connection.
+
+    Note: This may fail with a lock error if the Parachute server is running,
+    since Kuzu only allows one process to hold the graph lock. Most vault tools
+    are routed through the server's HTTP API instead. This is only used for
+    session/tag operations that need BrainChatStore methods directly.
+    """
     global _db
     if _db is None:
         from parachute.db.brain import BrainService
@@ -487,6 +484,7 @@ async def _brain_call(
     path: str,
     method: str = "GET",
     body: dict[str, Any] | None = None,
+    params: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Make a GET or POST request to the local brain API."""
     if not _brain_base_url:
@@ -497,7 +495,7 @@ async def _brain_call(
             if method == "POST":
                 response = await client.post(url, json=body or {})
             else:
-                response = await client.get(url)
+                response = await client.get(url, params=params)
             if response.status_code >= 400:
                 try:
                     detail = response.json().get("detail", response.text)
@@ -516,15 +514,17 @@ async def handle_tool_call(name: str, arguments: dict[str, Any]) -> str:
     """Handle a tool call and return the result as JSON string."""
     try:
         if name == "search_memory":
-            db = await get_db()
-            result = await _search_memory(
-                db.graph,
-                query=arguments["query"],
-                source=arguments.get("source"),
-                date_from=arguments.get("date_from"),
-                date_to=arguments.get("date_to"),
-                limit=arguments.get("limit", 10),
-            )
+            p: dict[str, Any] = {"search": arguments["query"]}
+            if arguments.get("source") == "journal":
+                p["type"] = "notes"
+            elif arguments.get("source") == "chat":
+                p["type"] = "chats"
+            if arguments.get("date_from"):
+                p["date_from"] = arguments["date_from"]
+            if arguments.get("date_to"):
+                p["date_to"] = arguments["date_to"]
+            p["limit"] = arguments.get("limit", 10)
+            result = await _brain_call("/memory", params=p)
         elif name == "get_session":
             result = await get_session(
                 session_id=arguments["session_id"],
@@ -586,56 +586,52 @@ async def handle_tool_call(name: str, arguments: dict[str, Any]) -> str:
                     method="POST",
                     body={"query": arguments["query"], "params": arguments.get("params")},
                 )
-        # Vault Tools (shared handlers — imported from vault_tools)
+        # Vault Tools — routed through brain HTTP API (server owns the graph lock)
         elif name == "search_chats":
-            db = await get_db()
-            result = await _search_chats(
-                db.graph,
-                query=arguments["query"],
-                limit=arguments.get("limit", 10),
-                module=arguments.get("module"),
-            )
+            p = {"query": arguments["query"], "limit": arguments.get("limit", 10)}
+            if arguments.get("module"):
+                p["module"] = arguments["module"]
+            result = await _brain_call("/chats/search", params=p)
         elif name == "list_chats":
-            db = await get_db()
-            result = await _list_chats(
-                db.graph,
-                module=arguments.get("module"),
-                limit=arguments.get("limit", 20),
-                archived=arguments.get("archived", False),
-                search=arguments.get("search"),
-            )
+            p = {"limit": arguments.get("limit", 20)}
+            if arguments.get("module"):
+                p["module"] = arguments["module"]
+            if arguments.get("archived"):
+                p["archived"] = "true"
+            if arguments.get("search"):
+                p["search"] = arguments["search"]
+            result = await _brain_call("/chats", params=p)
         elif name == "list_notes":
-            db = await get_db()
-            result = await _list_notes(
-                db.graph,
-                date_from=arguments.get("date_from"),
-                date_to=arguments.get("date_to"),
-                limit=arguments.get("limit", 20),
-                note_type=arguments.get("note_type"),
-                search=arguments.get("search"),
-            )
+            p = {"limit": arguments.get("limit", 20)}
+            if arguments.get("date_from"):
+                p["date_from"] = arguments["date_from"]
+            if arguments.get("date_to"):
+                p["date_to"] = arguments["date_to"]
+            if arguments.get("note_type"):
+                p["note_type"] = arguments["note_type"]
+            if arguments.get("search"):
+                p["search"] = arguments["search"]
+            result = await _brain_call("/daily/entries", params=p)
         elif name == "get_chat":
-            db = await get_db()
-            result = await _get_chat(
-                db.graph,
-                session_id=arguments["session_id"],
-                exchange_limit=arguments.get("exchange_limit", 25),
-                max_chars=arguments.get("max_chars", 2000),
-            )
+            sid = arguments["session_id"]
+            p = {}
+            if "exchange_limit" in arguments:
+                p["exchange_limit"] = arguments["exchange_limit"]
+            if "max_chars" in arguments:
+                p["max_chars"] = arguments["max_chars"]
+            result = await _brain_call(f"/chats/{sid}", params=p if p else None)
         elif name == "get_exchange":
-            db = await get_db()
-            result = await _get_exchange(
-                db.graph,
-                exchange_id=arguments["exchange_id"],
-            )
+            result = await _brain_call("/exchanges", params={"id": arguments["exchange_id"]})
         elif name == "write_note":
-            db = await get_db()
-            result = await _write_note(
-                db.graph,
-                note_type=arguments["note_type"],
-                title=arguments["title"],
-                content=arguments["content"],
-                date=arguments.get("date"),
+            result = await _brain_call(
+                "/notes",
+                method="POST",
+                body={
+                    "note_type": arguments["note_type"],
+                    "title": arguments["title"],
+                    "content": arguments["content"],
+                    "date": arguments.get("date"),
+                },
             )
         else:
             return json.dumps({"error": f"Unknown tool: {name}"})
