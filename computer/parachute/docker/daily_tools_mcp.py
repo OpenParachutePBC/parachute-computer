@@ -3,7 +3,7 @@
 Container-side MCP server for daily agent tools.
 
 Runs inside the Docker sandbox as a stdio MCP process. Provides the same
-tools that daily agents use (read_journal, read_chat_log, write_output, etc.)
+tools that daily agents use (read_journal, read_chat_log, write_card, etc.)
 but backed by HTTP calls to the host Parachute server rather than direct
 graph access.
 
@@ -92,7 +92,7 @@ TOOLS = [
         },
     },
     {
-        "name": "write_output",
+        "name": "write_card",
         "description": "Write the agent's output. Saves as a Card in the graph.",
         "inputSchema": {
             "type": "object",
@@ -244,7 +244,7 @@ def handle_read_recent_sessions(args: dict) -> list[dict]:
     return [{"type": "text", "text": f"# Recent Chat Sessions ({len(logs_found)} days)\n\n" + "\n\n---\n\n".join(logs_found)}]
 
 
-def handle_write_output(args: dict) -> list[dict]:
+def handle_write_card(args: dict) -> list[dict]:
     """Write the agent's output as a Card via the host API."""
     date_str = args.get("date", "").strip()
     content = args.get("content", "").strip()
@@ -273,7 +273,7 @@ TOOL_HANDLERS = {
     "read_chat_log": handle_read_chat_log,
     "read_recent_journals": handle_read_recent_journals,
     "read_recent_sessions": handle_read_recent_sessions,
-    "write_output": handle_write_output,
+    "write_card": handle_write_card,
 }
 
 

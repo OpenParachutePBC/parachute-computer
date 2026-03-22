@@ -39,8 +39,8 @@ class TestToolGroups:
         assert "brain_query" in direct_tools
         assert "brain_execute" in direct_tools
 
-    def test_brain_read_tools_are_sandboxed(self):
-        """Brain read tools should be available in sandboxed sessions."""
+    def test_vault_read_tools_are_sandboxed(self):
+        """Vault read tools should be available in sandboxed sessions."""
         sandboxed_tools = set()
         for group in TOOL_GROUPS:
             if group["trust"] == "sandboxed":
@@ -49,15 +49,15 @@ class TestToolGroups:
 
         expected_read_tools = {
             "search_memory",
-            "brain_list_chats",
-            "brain_get_chat",
-            "brain_get_exchange",
-            "brain_list_notes",
-            "brain_list_containers",
+            "search_chats",
+            "list_chats",
+            "get_chat",
+            "get_exchange",
+            "list_notes",
             "brain_schema",
         }
         assert expected_read_tools.issubset(sandboxed_tools), (
-            f"Missing brain read tools in sandboxed groups: "
+            f"Missing vault read tools in sandboxed groups: "
             f"{expected_read_tools - sandboxed_tools}"
         )
 
@@ -70,8 +70,8 @@ class TestBuildToolGuidance:
         result = build_tool_guidance("direct")
         assert "## Vault Tools" in result
         assert "Memory Search" in result
-        assert "Brain: Browse" in result
-        assert "Brain: Raw Queries" in result
+        assert "Browse" in result
+        assert "Raw Queries" in result
         assert "Sessions & Tags" in result
         assert "Multi-Agent" in result
 
@@ -80,32 +80,32 @@ class TestBuildToolGuidance:
         result = build_tool_guidance("sandboxed")
         assert "## Vault Tools" in result
         assert "Memory Search" in result
-        assert "Brain: Browse" in result
-        assert "Brain: Raw Queries" not in result
+        assert "Browse" in result
+        assert "Raw Queries" not in result
         assert "brain_query" not in result
         assert "brain_execute" not in result
 
-    def test_sandboxed_includes_brain_read_tools(self):
-        """Sandboxed sessions should see brain read tools."""
+    def test_sandboxed_includes_vault_read_tools(self):
+        """Sandboxed sessions should see vault read tools."""
         result = build_tool_guidance("sandboxed")
         assert "search_memory" in result
-        assert "brain_list_chats" in result
-        assert "brain_get_chat" in result
-        assert "brain_get_exchange" in result
-        assert "brain_list_notes" in result
+        assert "list_chats" in result
+        assert "get_chat" in result
+        assert "get_exchange" in result
+        assert "list_notes" in result
 
     def test_tool_names_have_mcp_prefix(self):
         """Tool names should include the mcp__parachute__ prefix for discoverability."""
         result = build_tool_guidance("direct")
         assert "mcp__parachute__search_memory" in result
-        assert "mcp__parachute__brain_list_chats" in result
+        assert "mcp__parachute__list_chats" in result
 
     def test_includes_guidance_text(self):
         """Output should include the contextual guidance text, not just tool names."""
         result = build_tool_guidance("sandboxed")
         # Check for guidance from the Memory Search group
         assert "Search the vault" in result
-        # Check for guidance from the Brain: Browse group
+        # Check for guidance from the Browse group
         assert "Browse and read past conversations" in result
 
     def test_empty_string_when_no_groups_match(self, monkeypatch):

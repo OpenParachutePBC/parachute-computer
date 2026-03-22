@@ -397,7 +397,7 @@ class TestRunSandboxed:
                 caps=caps,
                 actual_message="hi",
                 effective_prompt="",
-                    effective_working_dir=None,
+                effective_working_dir=None,
                 is_new=True,
                 model=None,
                 message="hi",

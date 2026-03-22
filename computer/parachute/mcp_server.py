@@ -32,7 +32,6 @@ import logging
 import os
 import re
 import sys
-import urllib.parse
 import uuid
 
 import httpx
@@ -44,9 +43,12 @@ from typing import Any, Self
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent
-from parachute.core.chat_memory import (
-    CHAT_MEMORY_TOOLS,
+from parachute.core.vault_tools import (
+    VAULT_TOOLS,
+    search_memory as _search_memory,
     search_chats as _search_chats,
+    list_chats as _list_chats,
+    list_notes as _list_notes,
     get_chat as _get_chat,
     get_exchange as _get_exchange,
 )
@@ -250,63 +252,7 @@ TOOLS = [
             "required": ["title", "agent_type", "initial_message"],
         },
     ),
-    Tool(
-        name="send_message",
-        description="Send a message to another session. Enforces trust level restrictions (sandboxed can only message sandboxed).",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "session_id": {
-                    "type": "string",
-                    "description": "Recipient session ID",
-                },
-                "message": {
-                    "type": "string",
-                    "description": "Message to send (max 50k chars)",
-                },
-            },
-            "required": ["session_id", "message"],
-        },
-    ),
-    # Memory Search Tool
-    Tool(
-        name="search_memory",
-        description=(
-            "Search all memory — chat sessions, conversation exchanges, and journal entries — by keyword. "
-            "Returns ranked results with summaries and matched snippets. "
-            "Sessions matched via exchange content include matched_exchange_id for follow-up with brain_get_exchange. "
-            "By default searches everything; use 'source' to narrow to 'journal' or 'chat'. "
-            "Use date_from/date_to (YYYY-MM-DD) to scope journal results by date."
-        ),
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "Keyword or phrase to search across all memory",
-                },
-                "source": {
-                    "type": "string",
-                    "description": "Optional: 'journal' to search only journal entries, 'chat' for sessions only",
-                },
-                "date_from": {
-                    "type": "string",
-                    "description": "Optional: YYYY-MM-DD — scope journal results from this date",
-                },
-                "date_to": {
-                    "type": "string",
-                    "description": "Optional: YYYY-MM-DD — scope journal results to this date",
-                },
-                "limit": {
-                    "type": "number",
-                    "description": "Maximum number of results (default: 10)",
-                    "default": 10,
-                },
-            },
-            "required": ["query"],
-        },
-    ),
-    # Brain Tools
+    # Brain Tools (direct MCP only — not in vault_tools shared set)
     Tool(
         name="brain_schema",
         description=(
@@ -314,52 +260,6 @@ TOOLS = [
             "with their column names and types. Call this first to understand what memory is queryable."
         ),
         inputSchema={"type": "object", "properties": {}},
-    ),
-    Tool(
-        name="brain_list_chats",
-        description="List recent chat conversations from the brain graph. Use when browsing recent activity rather than searching for something specific.",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "module": {"type": "string", "description": "Filter by module: chat, daily"},
-                "limit": {"type": "integer", "description": "Max results (default 20)"},
-                "archived": {"type": "boolean", "description": "Include archived (default false)"},
-                "search": {"type": "string", "description": "Optional: filter by title or summary keyword"},
-            },
-        },
-    ),
-    Tool(
-        name="brain_get_chat",
-        description=(
-            "Get a specific chat session by ID with its exchanges. "
-            "Exchanges include description, user_message (truncated), and ai_response (truncated). "
-            "For full content of a specific exchange, use brain_get_exchange. "
-            "Use exchange_limit to control how many exchanges are returned (default 25, most recent)."
-        ),
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "session_id": {"type": "string", "description": "The session ID to retrieve"},
-                "exchange_limit": {"type": "integer", "description": "Max exchanges to return (default 25)"},
-                "max_chars": {"type": "integer", "description": "Max chars per message field before truncation (default 2000)"},
-            },
-            "required": ["session_id"],
-        },
-    ),
-    Tool(
-        name="brain_get_exchange",
-        description=(
-            "Get a single exchange by ID with full message content (user message + AI response, untruncated). "
-            "Use after search_memory or brain_get_chat identifies a specific exchange of interest. "
-            "The exchange ID is available as matched_exchange_id in search_memory results."
-        ),
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "exchange_id": {"type": "string", "description": "Exchange ID (e.g. session_id:ex:N)"},
-            },
-            "required": ["exchange_id"],
-        },
     ),
     Tool(
         name="brain_list_containers",
@@ -370,25 +270,11 @@ TOOLS = [
         },
     ),
     Tool(
-        name="brain_list_notes",
-        description="List notes and journal entries from the brain graph. Use date_from/date_to to scope by date. Use note_type='journal' for Daily journal entries.",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "date_from": {"type": "string", "description": "YYYY-MM-DD"},
-                "date_to": {"type": "string", "description": "YYYY-MM-DD"},
-                "limit": {"type": "integer", "description": "Max results (default 20)"},
-                "note_type": {"type": "string", "description": "Filter by note_type (e.g. 'journal')"},
-                "search": {"type": "string", "description": "Optional: filter by content keyword"},
-            },
-        },
-    ),
-    Tool(
         name="brain_query",
         description=(
             "Execute a read-only Cypher query against the Parachute brain (Kuzu graph). "
-            "For power users and debugging. Prefer search_memory, brain_list_chats, brain_list_notes, "
-            "and brain_get_chat for common use cases. "
+            "For power users and debugging. Prefer search_memory, list_chats, list_notes, "
+            "and get_chat for common use cases. "
             "Call brain_schema first to discover available tables and columns."
         ),
         inputSchema={
@@ -415,7 +301,7 @@ TOOLS = [
             "required": ["query"],
         },
     ),
-] + CHAT_MEMORY_TOOLS  # Chat memory tools (search_chats, get_chat, get_exchange)
+] + VAULT_TOOLS  # Shared vault tools (search_memory, search_chats, list_chats, list_notes, get_chat, get_exchange)
 
 
 async def get_session(
@@ -596,66 +482,6 @@ async def create_session(
     }
 
 
-async def send_message(
-    session_id: str,
-    message: str,
-) -> dict[str, Any]:
-    """
-    Send a message to another session.
-
-    Enforces trust level restrictions (sandboxed can only message sandboxed).
-    """
-    # Validate session context is available
-    if not _session_context or not _session_context.is_available:
-        return {
-            "error": "Session context not available. This tool can only be called from an active session."
-        }
-
-    # Validate inputs
-    if not session_id or not session_id.strip():
-        return {"error": "Session ID cannot be empty"}
-
-    if not message or not message.strip():
-        return {"error": "Message cannot be empty"}
-
-    # Content validation (max 50k chars, no control chars except newlines/tabs)
-    if error := _validate_message_content(message):
-        return {"error": error}
-
-    db = await get_db()
-    sender_session_id = _session_context.session_id
-    sender_trust_level = _session_context.trust_level
-
-    # Get recipient session
-    recipient_session = await db.get_session(session_id.strip())
-    if not recipient_session:
-        return {"error": f"Recipient session not found: {session_id}"}
-
-    # Enforce trust level restrictions (sandboxed can only message sandboxed)
-    recipient_trust_level = recipient_session.get_trust_level().value
-    if sender_trust_level == "sandboxed" and recipient_trust_level != "sandboxed":
-        return {
-            "error": f"Sandboxed sessions can only message other sandboxed sessions (recipient trust: {recipient_trust_level})"
-        }
-
-    # Message delivery: inject into recipient's SDK session
-    # For MVP, we'll just log the message - actual delivery requires SDK integration
-    logger.info(
-        f"Message delivery: {sender_session_id[:8]}→{session_id[:8]}"
-    )
-
-    # TODO: Implement actual message injection into SDK session
-    # This requires extending the SDK to support mid-stream message injection
-    # Return error until delivery is implemented to maintain honest contract
-    return {
-        "error": "Message delivery not yet implemented. Validation passed, but delivery requires SDK mid-stream message injection support.",
-        "validation_passed": True,
-        "sender_session_id": sender_session_id,
-        "recipient_session_id": session_id,
-    }
-
-
-
 async def _brain_call(
     path: str,
     method: str = "GET",
@@ -689,19 +515,15 @@ async def handle_tool_call(name: str, arguments: dict[str, Any]) -> str:
     """Handle a tool call and return the result as JSON string."""
     try:
         if name == "search_memory":
-            params: dict[str, Any] = {"search": arguments["query"]}
-            if arguments.get("source") == "journal":
-                params["type"] = "notes"
-                params["note_type"] = "journal"
-            elif arguments.get("source") == "chat":
-                params["type"] = "chats"
-            if arguments.get("date_from"):
-                params["date_from"] = arguments["date_from"]
-            if arguments.get("date_to"):
-                params["date_to"] = arguments["date_to"]
-            params["limit"] = arguments.get("limit", 10)
-            qs = "?" + urllib.parse.urlencode(params)
-            result = await _brain_call(f"/memory{qs}")
+            db = await get_db()
+            result = await _search_memory(
+                db.graph,
+                query=arguments["query"],
+                source=arguments.get("source"),
+                date_from=arguments.get("date_from"),
+                date_to=arguments.get("date_to"),
+                limit=arguments.get("limit", 10),
+            )
         elif name == "get_session":
             result = await get_session(
                 session_id=arguments["session_id"],
@@ -733,39 +555,12 @@ async def handle_tool_call(name: str, arguments: dict[str, Any]) -> str:
                 agent_type=arguments["agent_type"],
                 initial_message=arguments["initial_message"],
             )
-        elif name == "send_message":
-            result = await send_message(
-                session_id=arguments["session_id"],
-                message=arguments["message"],
-            )
         # Brain Tools
         elif name == "brain_schema":
             result = await _brain_call("/schema")
-        elif name == "brain_list_chats":
-            bp: dict[str, Any] = {k: arguments[k] for k in ("module", "limit", "search") if k in arguments}
-            if "archived" in arguments:
-                bp["archived"] = "true" if arguments["archived"] else "false"
-            qs = ("?" + urllib.parse.urlencode(bp)) if bp else ""
-            result = await _brain_call(f"/chats{qs}")
-        elif name == "brain_get_chat":
-            sid = urllib.parse.quote(arguments["session_id"], safe="")
-            gp: dict[str, Any] = {}
-            if "exchange_limit" in arguments:
-                gp["exchange_limit"] = arguments["exchange_limit"]
-            if "max_chars" in arguments:
-                gp["max_chars"] = arguments["max_chars"]
-            qs = ("?" + urllib.parse.urlencode(gp)) if gp else ""
-            result = await _brain_call(f"/chats/{sid}{qs}")
-        elif name == "brain_get_exchange":
-            eid = urllib.parse.quote(arguments["exchange_id"], safe="")
-            result = await _brain_call(f"/exchanges?id={eid}")
         elif name == "brain_list_containers":
             qs = f"?limit={arguments['limit']}" if "limit" in arguments else ""
             result = await _brain_call(f"/containers{qs}")
-        elif name == "brain_list_notes":
-            np: dict[str, Any] = {k: arguments[k] for k in ("date_from", "date_to", "limit", "note_type", "search") if k in arguments}
-            qs = ("?" + urllib.parse.urlencode(np)) if np else ""
-            result = await _brain_call(f"/daily/entries{qs}")
         elif name == "brain_query":
             # Require vault/direct trust — raw Cypher reads all journal data.
             # Fail-closed: deny if context is absent (standalone/legacy mode).
@@ -790,7 +585,7 @@ async def handle_tool_call(name: str, arguments: dict[str, Any]) -> str:
                     method="POST",
                     body={"query": arguments["query"], "params": arguments.get("params")},
                 )
-        # Chat Memory Tools (shared handlers — imported at module level)
+        # Vault Tools (shared handlers — imported from vault_tools)
         elif name == "search_chats":
             db = await get_db()
             result = await _search_chats(
@@ -798,6 +593,25 @@ async def handle_tool_call(name: str, arguments: dict[str, Any]) -> str:
                 query=arguments["query"],
                 limit=arguments.get("limit", 10),
                 module=arguments.get("module"),
+            )
+        elif name == "list_chats":
+            db = await get_db()
+            result = await _list_chats(
+                db.graph,
+                module=arguments.get("module"),
+                limit=arguments.get("limit", 20),
+                archived=arguments.get("archived", False),
+                search=arguments.get("search"),
+            )
+        elif name == "list_notes":
+            db = await get_db()
+            result = await _list_notes(
+                db.graph,
+                date_from=arguments.get("date_from"),
+                date_to=arguments.get("date_to"),
+                limit=arguments.get("limit", 20),
+                note_type=arguments.get("note_type"),
+                search=arguments.get("search"),
             )
         elif name == "get_chat":
             db = await get_db()

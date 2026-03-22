@@ -6,19 +6,30 @@ sandbox sessions. Write tools are gated by the token's allowed_writes list.
 
 Tools access host services via the service registry (BrainService,
 BrainChatStore) — no HTTP loopback needed since we're in the same process.
+
+Shared vault tools (search_memory, search_chats, list_chats, list_notes,
+get_chat, get_exchange) are imported from core/vault_tools.py — same
+implementations as the direct MCP server.
+
+Bridge-only tools:
+- read_brain_entity: Read a brain graph entity by name
+- write_card: Write agent output as a card (write-gated)
 """
 
 import json
 import logging
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any
 
 from mcp.server import Server
 from mcp.types import TextContent, Tool
-from parachute.core.chat_memory import (
-    CHAT_MEMORY_TOOLS,
+from parachute.core.vault_tools import (
+    VAULT_TOOLS,
+    search_memory as _search_memory,
     search_chats as _search_chats,
+    list_chats as _list_chats,
+    list_notes as _list_notes,
     get_chat as _get_chat,
     get_exchange as _get_exchange,
 )
@@ -36,83 +47,9 @@ def _get_graph():
         return None
 
 
-def _get_chat_store():
-    """Get BrainChatStore from the service registry."""
-    try:
-        from parachute.core.interfaces import get_registry
-        return get_registry().get("ChatStore")
-    except Exception as e:
-        logger.warning(f"Failed to get ChatStore from registry: {e}")
-        return None
-
-
 # ── Tool Definitions ──────────────────────────────────────────────────────────
 
 TOOLS = [
-    Tool(
-        name="read_journal",
-        description="Read journal entries for a specific date.",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "date": {
-                    "type": "string",
-                    "description": "Date in YYYY-MM-DD format",
-                },
-            },
-            "required": ["date"],
-        },
-    ),
-    Tool(
-        name="read_recent_journals",
-        description="Read recent journal entries from the last N days.",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "days": {
-                    "type": "integer",
-                    "description": "Number of days to look back (default: 7)",
-                    "default": 7,
-                },
-            },
-        },
-    ),
-    Tool(
-        name="search_memory",
-        description=(
-            "Search across all memory — journal entries, chat sessions, and exchanges. "
-            "Returns ranked results with snippets."
-        ),
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "Search query (keyword or phrase)",
-                },
-                "limit": {
-                    "type": "integer",
-                    "description": "Maximum results to return (default: 10)",
-                    "default": 10,
-                },
-            },
-            "required": ["query"],
-        },
-    ),
-    Tool(
-        name="list_recent_sessions",
-        description="List recent chat sessions.",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "limit": {
-                    "type": "integer",
-                    "description": "Maximum sessions to return (default: 20)",
-                    "default": 20,
-                },
-            },
-        },
-    ),
     Tool(
         name="read_brain_entity",
         description="Read a brain graph entity by name.",
@@ -128,7 +65,7 @@ TOOLS = [
         },
     ),
     Tool(
-        name="write_output",
+        name="write_card",
         description=(
             "Write agent output as a card. Used by agents to save their "
             "reflection or analysis results."
@@ -148,159 +85,10 @@ TOOLS = [
             "required": ["content", "date"],
         },
     ),
-] + CHAT_MEMORY_TOOLS  # Chat memory tools (search_chats, get_chat, get_exchange)
+] + VAULT_TOOLS  # Shared vault tools (search_memory, search_chats, list_chats, list_notes, get_chat, get_exchange)
 
 
 # ── Tool Handlers ─────────────────────────────────────────────────────────────
-
-
-async def _handle_read_journal(arguments: dict[str, Any]) -> str:
-    """Read journal entries for a specific date."""
-    date = arguments.get("date", "")
-    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
-        return json.dumps({"error": "Invalid date format. Use YYYY-MM-DD"})
-
-    graph = _get_graph()
-    if graph is None:
-        return json.dumps({"error": "BrainDB not available"})
-
-    rows = await graph.execute_cypher(
-        "MATCH (e:Note) WHERE e.date = $date "
-        "RETURN e ORDER BY e.created_at ASC",
-        {"date": date},
-    )
-
-    entries = []
-    for row in rows:
-        entries.append({
-            "entry_id": row.get("entry_id", ""),
-            "date": row.get("date", ""),
-            "content": row.get("content", ""),
-            "title": row.get("title", ""),
-            "entry_type": row.get("entry_type", "text"),
-            "created_at": row.get("created_at", ""),
-        })
-
-    return json.dumps({"entries": entries, "count": len(entries), "date": date}, default=str)
-
-
-async def _handle_read_recent_journals(arguments: dict[str, Any]) -> str:
-    """Read recent journal entries from the last N days."""
-    days = arguments.get("days", 7)
-    days = max(1, min(days, 90))  # Clamp to 1-90
-
-    # Calculate date range
-    today = datetime.now(timezone.utc).date()
-    start_date = (today - timedelta(days=days - 1)).isoformat()
-
-    graph = _get_graph()
-    if graph is None:
-        return json.dumps({"error": "BrainDB not available"})
-
-    rows = await graph.execute_cypher(
-        "MATCH (e:Note) WHERE e.date >= $start_date "
-        "RETURN e ORDER BY e.date DESC, e.created_at DESC",
-        {"start_date": start_date},
-    )
-
-    entries = []
-    for row in rows:
-        entries.append({
-            "entry_id": row.get("entry_id", ""),
-            "date": row.get("date", ""),
-            "content": row.get("content", ""),
-            "title": row.get("title", ""),
-            "entry_type": row.get("entry_type", "text"),
-            "created_at": row.get("created_at", ""),
-        })
-
-    return json.dumps(
-        {"entries": entries, "count": len(entries), "days": days, "from_date": start_date},
-        default=str,
-    )
-
-
-async def _handle_search_memory(arguments: dict[str, Any]) -> str:
-    """Search across all memory — journals, sessions, exchanges."""
-    query = arguments.get("query", "").strip()
-    if not query:
-        return json.dumps({"error": "Query cannot be empty"})
-
-    limit = min(arguments.get("limit", 10), 50)
-
-    graph = _get_graph()
-    if graph is None:
-        return json.dumps({"error": "BrainDB not available"})
-
-    results: list[dict] = []
-
-    # Search journal entries (Note nodes)
-    note_rows = await graph.execute_cypher(
-        "MATCH (e:Note) WHERE e.content CONTAINS $query "
-        "RETURN e ORDER BY e.date DESC LIMIT $limit",
-        {"query": query, "limit": limit},
-    )
-    for row in note_rows:
-        content = row.get("content", "")
-        # Extract snippet around the match (CONTAINS is case-sensitive)
-        idx = content.find(query)
-        if idx == -1:
-            idx = 0  # Fallback: show beginning if exact match not found
-        start = max(0, idx - 100)
-        end = min(len(content), idx + len(query) + 100)
-        snippet = ("..." if start > 0 else "") + content[start:end] + ("..." if end < len(content) else "")
-
-        results.append({
-            "type": "journal",
-            "id": row.get("entry_id", ""),
-            "date": row.get("date", ""),
-            "title": row.get("title", ""),
-            "snippet": snippet,
-        })
-
-    # Search chat sessions (Chat nodes- title + summary)
-    session_rows = await graph.execute_cypher(
-        "MATCH (s:Chat) WHERE "
-        "(s.title CONTAINS $query OR (s.summary IS NOT NULL AND s.summary CONTAINS $query)) "
-        "AND (s.archived IS NULL OR s.archived = false) "
-        "RETURN s ORDER BY s.last_accessed DESC LIMIT $limit",
-        {"query": query, "limit": limit},
-    )
-    for row in session_rows:
-        summary = row.get("summary") or row.get("title") or ""
-        results.append({
-            "type": "session",
-            "id": row.get("session_id", ""),
-            "title": row.get("title", ""),
-            "snippet": summary[:200],
-            "module": row.get("module", "chat"),
-        })
-
-    return json.dumps({"results": results, "count": len(results), "query": query}, default=str)
-
-
-async def _handle_list_recent_chats(arguments: dict[str, Any]) -> str:
-    """List recent chats."""
-    limit = min(arguments.get("limit", 20), 100)
-
-    session_store = _get_chat_store()
-    if session_store is None:
-        return json.dumps({"error": "ChatStore not available"})
-
-    sessions = await session_store.list_sessions(limit=limit)
-
-    items = []
-    for s in sessions:
-        items.append({
-            "session_id": s.session_id,
-            "title": s.title or "Untitled",
-            "module": s.module or "chat",
-            "created_at": s.created_at.isoformat() if s.created_at else "",
-            "last_accessed": s.last_accessed.isoformat() if s.last_accessed else "",
-            "message_count": s.message_count or 0,
-        })
-
-    return json.dumps({"sessions": items, "count": len(items)}, default=str)
 
 
 async def _handle_read_brain_entity(arguments: dict[str, Any]) -> str:
@@ -325,7 +113,7 @@ async def _handle_read_brain_entity(arguments: dict[str, Any]) -> str:
     return json.dumps(entity, default=str)
 
 
-async def _handle_write_output(arguments: dict[str, Any]) -> str:
+async def _handle_write_card(arguments: dict[str, Any]) -> str:
     """Write agent output as a Card. Requires write permission."""
     from parachute.api.mcp_bridge import get_sandbox_context
 
@@ -333,9 +121,9 @@ async def _handle_write_output(arguments: dict[str, Any]) -> str:
     if ctx is None:
         return json.dumps({"error": "No sandbox context available"})
 
-    # Check write permission
-    if "write_output" not in ctx.allowed_writes:
-        return json.dumps({"error": "write_output not permitted for this session"})
+    # Check write permission (accept both old and new name during transition)
+    if "write_output" not in ctx.allowed_writes and "write_card" not in ctx.allowed_writes:
+        return json.dumps({"error": "write_card not permitted for this session"})
 
     content = arguments.get("content", "").strip()
     date_str = arguments.get("date", "").strip()
@@ -389,65 +177,74 @@ async def _handle_write_output(arguments: dict[str, Any]) -> str:
     return json.dumps({"card_id": card_id, "status": "done", "date": date_str})
 
 
-# ── Chat Memory Handlers (shared with direct MCP server) ─────────────────────
+# ── Vault Tool Handlers (shared with direct MCP server) ──────────────────────
 
-
-async def _handle_search_chats(arguments: dict[str, Any]) -> str:
-    """Search across all chats with bundled exchange results."""
+async def _handle_vault_tool(name: str, arguments: dict[str, Any]) -> str:
+    """Handle shared vault tools by routing to vault_tools handlers."""
     graph = _get_graph()
     if graph is None:
         return json.dumps({"error": "BrainDB not available"})
 
-    result = await _search_chats(
-        graph,
-        query=arguments["query"],
-        limit=arguments.get("limit", 10),
-        module=arguments.get("module"),
-    )
+    if name == "search_memory":
+        result = await _search_memory(
+            graph,
+            query=arguments["query"],
+            source=arguments.get("source"),
+            date_from=arguments.get("date_from"),
+            date_to=arguments.get("date_to"),
+            limit=arguments.get("limit", 10),
+        )
+    elif name == "search_chats":
+        result = await _search_chats(
+            graph,
+            query=arguments["query"],
+            limit=arguments.get("limit", 10),
+            module=arguments.get("module"),
+        )
+    elif name == "list_chats":
+        result = await _list_chats(
+            graph,
+            module=arguments.get("module"),
+            limit=arguments.get("limit", 20),
+            archived=arguments.get("archived", False),
+            search=arguments.get("search"),
+        )
+    elif name == "list_notes":
+        result = await _list_notes(
+            graph,
+            date_from=arguments.get("date_from"),
+            date_to=arguments.get("date_to"),
+            limit=arguments.get("limit", 20),
+            note_type=arguments.get("note_type"),
+            search=arguments.get("search"),
+        )
+    elif name == "get_chat":
+        result = await _get_chat(
+            graph,
+            session_id=arguments["session_id"],
+            exchange_limit=arguments.get("exchange_limit", 25),
+            max_chars=arguments.get("max_chars", 2000),
+        )
+    elif name == "get_exchange":
+        result = await _get_exchange(
+            graph,
+            exchange_id=arguments["exchange_id"],
+        )
+    else:
+        return json.dumps({"error": f"Unknown vault tool: {name}"})
+
     return json.dumps(result, default=str)
 
 
-async def _handle_get_chat(arguments: dict[str, Any]) -> str:
-    """Browse a specific chat with paginated exchanges."""
-    graph = _get_graph()
-    if graph is None:
-        return json.dumps({"error": "BrainDB not available"})
-
-    result = await _get_chat(
-        graph,
-        session_id=arguments["session_id"],
-        exchange_limit=arguments.get("exchange_limit", 25),
-        max_chars=arguments.get("max_chars", 2000),
-    )
-    return json.dumps(result, default=str)
-
-
-async def _handle_get_exchange(arguments: dict[str, Any]) -> str:
-    """Get a single exchange with full untruncated content."""
-    graph = _get_graph()
-    if graph is None:
-        return json.dumps({"error": "BrainDB not available"})
-
-    result = await _get_exchange(
-        graph,
-        exchange_id=arguments["exchange_id"],
-    )
-    return json.dumps(result, default=str)
+# Vault tool names for dispatch
+_VAULT_TOOL_NAMES = {"search_memory", "search_chats", "list_chats", "list_notes", "get_chat", "get_exchange"}
 
 
 # ── Handler Dispatch ──────────────────────────────────────────────────────────
 
 _HANDLERS = {
-    "read_journal": _handle_read_journal,
-    "read_recent_journals": _handle_read_recent_journals,
-    "search_memory": _handle_search_memory,
-    "list_recent_sessions": _handle_list_recent_chats,
     "read_brain_entity": _handle_read_brain_entity,
-    "write_output": _handle_write_output,
-    # Chat memory (shared handlers)
-    "search_chats": _handle_search_chats,
-    "get_chat": _handle_get_chat,
-    "get_exchange": _handle_get_exchange,
+    "write_card": _handle_write_card,
 }
 
 
@@ -460,14 +257,21 @@ def register_tools(server: Server) -> None:
 
     @server.call_tool()
     async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
-        handler = _HANDLERS.get(name)
-        if handler is None:
-            result = json.dumps({"error": f"Unknown tool: {name}"})
-        else:
+        if name in _VAULT_TOOL_NAMES:
             try:
-                result = await handler(arguments)
+                result = await _handle_vault_tool(name, arguments)
             except Exception as e:
                 logger.error(f"MCP tool error ({name}): {e}", exc_info=True)
                 result = json.dumps({"error": f"Internal error processing {name}"})
+        else:
+            handler = _HANDLERS.get(name)
+            if handler is None:
+                result = json.dumps({"error": f"Unknown tool: {name}"})
+            else:
+                try:
+                    result = await handler(arguments)
+                except Exception as e:
+                    logger.error(f"MCP tool error ({name}): {e}", exc_info=True)
+                    result = json.dumps({"error": f"Internal error processing {name}"})
 
         return [TextContent(type="text", text=result)]

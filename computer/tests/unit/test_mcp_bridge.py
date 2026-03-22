@@ -15,7 +15,7 @@ class TestSandboxTokenStore:
             session_id="caller-test",
             trust_level="sandboxed",
             agent_name="test-agent",
-            allowed_writes=["write_output"],
+            allowed_writes=["write_card"],
         )
         token = store.create_token(ctx)
 
@@ -26,7 +26,7 @@ class TestSandboxTokenStore:
         assert validated is not None
         assert validated.session_id == "caller-test"
         assert validated.agent_name == "test-agent"
-        assert validated.allowed_writes == ["write_output"]
+        assert validated.allowed_writes == ["write_card"]
 
     def test_invalid_token_returns_none(self):
         store = SandboxTokenStore()
@@ -86,21 +86,21 @@ class TestMcpToolRegistration:
     def test_tools_defined(self):
         from parachute.api.mcp_tools import TOOLS
         tool_names = {t.name for t in TOOLS}
-        assert "read_journal" in tool_names
-        assert "read_recent_journals" in tool_names
-        assert "search_memory" in tool_names
-        assert "list_recent_sessions" in tool_names
         assert "read_brain_entity" in tool_names
-        assert "write_output" in tool_names
-        # Chat memory tools (shared handlers)
+        assert "write_card" in tool_names
+        # Shared vault tools
+        assert "search_memory" in tool_names
         assert "search_chats" in tool_names
+        assert "list_chats" in tool_names
+        assert "list_notes" in tool_names
         assert "get_chat" in tool_names
         assert "get_exchange" in tool_names
 
     def test_all_tools_have_handlers(self):
-        from parachute.api.mcp_tools import TOOLS, _HANDLERS
+        from parachute.api.mcp_tools import TOOLS, _HANDLERS, _VAULT_TOOL_NAMES
         for tool in TOOLS:
-            assert tool.name in _HANDLERS, f"No handler for tool: {tool.name}"
+            has_handler = tool.name in _HANDLERS or tool.name in _VAULT_TOOL_NAMES
+            assert has_handler, f"No handler for tool: {tool.name}"
 
     def test_tool_schemas_valid(self):
         from parachute.api.mcp_tools import TOOLS
@@ -142,8 +142,8 @@ class TestWritePermissionGating:
     """Tests for write tool permission enforcement."""
 
     @pytest.mark.asyncio
-    async def test_write_output_denied_without_permission(self):
-        from parachute.api.mcp_tools import _handle_write_output
+    async def test_write_card_denied_without_permission(self):
+        from parachute.api.mcp_tools import _handle_write_card
         from parachute.api.mcp_bridge import _current_sandbox_ctx
 
         ctx = SandboxTokenContext(
@@ -154,7 +154,7 @@ class TestWritePermissionGating:
         )
         reset = _current_sandbox_ctx.set(ctx)
         try:
-            result = await _handle_write_output({"content": "hello", "date": "2026-03-12"})
+            result = await _handle_write_card({"content": "hello", "date": "2026-03-12"})
             data = json.loads(result)
             assert "error" in data
             assert "not permitted" in data["error"]
@@ -162,13 +162,13 @@ class TestWritePermissionGating:
             _current_sandbox_ctx.reset(reset)
 
     @pytest.mark.asyncio
-    async def test_write_output_denied_without_context(self):
-        from parachute.api.mcp_tools import _handle_write_output
+    async def test_write_card_denied_without_context(self):
+        from parachute.api.mcp_tools import _handle_write_card
         from parachute.api.mcp_bridge import _current_sandbox_ctx
 
         reset = _current_sandbox_ctx.set(None)
         try:
-            result = await _handle_write_output({"content": "hello", "date": "2026-03-12"})
+            result = await _handle_write_card({"content": "hello", "date": "2026-03-12"})
             data = json.loads(result)
             assert "error" in data
             assert "No sandbox context" in data["error"]
