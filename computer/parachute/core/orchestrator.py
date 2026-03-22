@@ -2108,7 +2108,7 @@ The user is now continuing this conversation with you. Respond naturally as if y
         Returns None if no context notes exist or graph is unavailable.
         """
         try:
-            graph = self.db.graph
+            graph = self.session_store.graph
         except Exception:
             return None
 
