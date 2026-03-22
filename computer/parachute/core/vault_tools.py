@@ -633,7 +633,7 @@ async def write_note(
             "    n.snippet = $snippet, "
             "    n.status = 'active', "
             "    n.created_by = 'agent', "
-            "    n.updated_at = $now",
+            "    n.created_at = $now",
             {
                 "entry_id": entry_id,
                 "note_type": note_type,
