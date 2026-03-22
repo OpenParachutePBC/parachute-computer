@@ -632,8 +632,7 @@ async def write_note(
             "    n.content = $content, "
             "    n.snippet = $snippet, "
             "    n.status = 'active', "
-            "    n.created_by = COALESCE(n.created_by, 'agent'), "
-            "    n.created_at = COALESCE(n.created_at, $now), "
+            "    n.created_by = 'agent', "
             "    n.updated_at = $now",
             {
                 "entry_id": entry_id,
