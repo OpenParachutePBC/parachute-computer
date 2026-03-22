@@ -1,8 +1,10 @@
 """
-Tests for multi-agent MCP tools (create_session, send_message).
+Tests for multi-agent MCP tools (create_session).
 
 Tests session context injection, trust level enforcement, rate limiting,
 spawn limits, and content validation.
+
+Note: send_message was removed (not yet implemented, tracked in #303).
 """
 
 import asyncio
@@ -18,7 +20,6 @@ from parachute.models.session import Session, SessionCreate, SessionSource, Trus
 from parachute.mcp_server import (
     SessionContext,
     create_session,
-    send_message,
 )
 
 
@@ -273,119 +274,7 @@ class TestCreateSession:
             assert "Rate limit" in result2["error"]
 
 
-# ---------------------------------------------------------------------------
-# send_message Tests
-# ---------------------------------------------------------------------------
 
-
-class TestSendMessage:
-    @pytest.mark.asyncio
-    async def test_send_message_success(self, db, parent_session, session_context_direct):
-        """Test successful message validation (delivery pending SDK support)."""
-        # Create a recipient session
-        recipient = SessionCreate(
-            id="recipient_sess_789",
-            title="Recipient",
-            trust_level="direct",
-        )
-        await db.create_session(recipient)
-
-        with patch("parachute.mcp_server._session_context", session_context_direct), \
-             patch("parachute.mcp_server.get_db", return_value=db):
-
-            result = await send_message(
-                session_id="recipient_sess_789",
-                message="Hello from parent!",
-            )
-
-            # Validation passes; delivery is not yet implemented
-            assert result.get("validation_passed") is True
-            assert result["sender_session_id"] == "parent_sess_abc123"
-            assert result["recipient_session_id"] == "recipient_sess_789"
-
-    @pytest.mark.asyncio
-    async def test_send_message_no_context(self):
-        """Test send_message fails without session context."""
-        with patch("parachute.mcp_server._session_context", None):
-            result = await send_message(
-                session_id="recipient",
-                message="Hello",
-            )
-
-            assert "error" in result
-            assert "Session context not available" in result["error"]
-
-    @pytest.mark.asyncio
-    async def test_send_message_recipient_not_found(self, db, session_context_direct):
-        """Test send_message fails if recipient doesn't exist."""
-        with patch("parachute.mcp_server._session_context", session_context_direct), \
-             patch("parachute.mcp_server.get_db", return_value=db):
-
-            result = await send_message(
-                session_id="nonexistent",
-                message="Hello",
-            )
-
-            assert "error" in result
-            assert "not found" in result["error"]
-
-    @pytest.mark.asyncio
-    async def test_send_message_trust_level_enforcement(self, db, session_context_sandboxed):
-        """Test sandboxed sessions can only message other sandboxed sessions."""
-        # Create a sandboxed sender session
-        sender = SessionCreate(
-            id="sandbox_sess_def456",
-            title="Sandboxed Sender",
-            trust_level="sandboxed",
-        )
-        await db.create_session(sender)
-
-        # Create a direct recipient
-        recipient = SessionCreate(
-            id="direct_sess_888",
-            title="Direct Recipient",
-            trust_level="direct",
-        )
-        await db.create_session(recipient)
-
-        with patch("parachute.mcp_server._session_context", session_context_sandboxed), \
-             patch("parachute.mcp_server.get_db", return_value=db):
-
-            result = await send_message(
-                session_id="direct_sess_888",
-                message="Trying to escalate",
-            )
-
-            assert "error" in result
-            assert "Sandboxed sessions can only message other sandboxed sessions" in result["error"]
-
-    @pytest.mark.asyncio
-    async def test_send_message_content_validation(self, db, parent_session, session_context_direct):
-        """Test send_message validates message content."""
-        recipient = SessionCreate(
-            id="recipient_sess_789",
-            title="Recipient",
-            trust_level="direct",
-        )
-        await db.create_session(recipient)
-
-        with patch("parachute.mcp_server._session_context", session_context_direct), \
-             patch("parachute.mcp_server.get_db", return_value=db):
-
-            # Test oversized message
-            result = await send_message(
-                session_id="recipient_sess_789",
-                message="x" * 50_001,
-            )
-            assert "error" in result
-            assert "too long" in result["error"]
-
-            # Test control characters
-            result = await send_message(
-                session_id="recipient_sess_789",
-                message="Hello\x00World",
-            )
-            assert "error" in result
-            assert "control characters" in result["error"]
+# send_message tests removed — tool disabled pending implementation (#303)
 
 

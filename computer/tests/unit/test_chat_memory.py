@@ -3,7 +3,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from parachute.core.chat_memory import (
+from parachute.core.vault_tools import (
     search_chats,
     get_chat,
     get_exchange,

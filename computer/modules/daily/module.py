@@ -444,7 +444,6 @@ async def _cleanup_transcription(
         async for event in query_streaming(
             prompt=f"Clean up this voice transcription:\n\n{raw_text}",
             system_prompt=POST_PROCESS_SYSTEM_PROMPT,
-            use_claude_code_preset=False,
             tools=[],  # No tools — pure text transform
             permission_mode="default",
             claude_token=claude_token,

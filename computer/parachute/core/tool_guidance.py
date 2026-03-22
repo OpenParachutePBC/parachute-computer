@@ -48,43 +48,46 @@ TOOL_GROUPS: list[ToolGroup] = [
                     "Use date_from/date_to to scope by date."
                 ),
             },
+            {
+                "name": "search_chats",
+                "description": (
+                    "Search chat conversations with matched exchanges inline. "
+                    "Use get_exchange to drill into full content."
+                ),
+            },
         ],
     },
     {
-        "name": "Brain: Browse",
+        "name": "Browse",
         "trust": "sandboxed",
         "guidance": (
             "Browse and read past conversations, journal entries, and projects. "
-            "Use brain_list_chats to find conversations, brain_get_chat to read one, "
-            "and brain_get_exchange for full untruncated content of a specific exchange. "
-            "Use brain_list_notes for Daily journal entries."
+            "Use list_chats to find conversations, get_chat to read one, "
+            "and get_exchange for full untruncated content of a specific exchange. "
+            "Use list_notes for journal entries."
         ),
         "tools": [
             {
-                "name": "brain_list_chats",
-                "description": "List recent conversations. Filter by module (chat, daily), search by keyword.",
+                "name": "list_chats",
+                "description": "List recent conversations. Filter by module (chat, daily) or search by keyword.",
             },
             {
-                "name": "brain_get_chat",
+                "name": "get_chat",
                 "description": (
                     "Get a conversation by ID with its exchanges (truncated). "
-                    "Use brain_get_exchange for full content."
+                    "Use get_exchange for full content."
                 ),
             },
             {
-                "name": "brain_get_exchange",
+                "name": "get_exchange",
                 "description": (
                     "Get a single exchange by ID with full untruncated content. "
-                    "Use after search_memory or brain_get_chat identifies a specific exchange."
+                    "Use after search_memory or get_chat identifies a specific exchange."
                 ),
             },
             {
-                "name": "brain_list_notes",
+                "name": "list_notes",
                 "description": "List journal entries. Use date_from/date_to to scope by date, note_type='journal' for Daily entries.",
-            },
-            {
-                "name": "brain_list_containers",
-                "description": "List container environments.",
             },
             {
                 "name": "brain_schema",
@@ -126,7 +129,7 @@ TOOL_GROUPS: list[ToolGroup] = [
         "name": "Multi-Agent",
         "trust": "sandboxed",
         "guidance": (
-            "Spawn child sessions or send messages to other sessions. "
+            "Spawn child sessions. "
             "Child sessions inherit trust level and container environment."
         ),
         "tools": [
@@ -134,18 +137,14 @@ TOOL_GROUPS: list[ToolGroup] = [
                 "name": "create_session",
                 "description": "Create a child session with a title, agent type, and initial message.",
             },
-            {
-                "name": "send_message",
-                "description": "Send a message to another session by ID.",
-            },
         ],
     },
     {
-        "name": "Brain: Raw Queries",
+        "name": "Raw Queries",
         "trust": "direct",
         "guidance": (
             "Execute Cypher queries directly against the brain graph. "
-            "Prefer the structured tools (search_memory, brain_list_chats, etc.) for common use cases. "
+            "Prefer the structured tools (search_memory, list_chats, etc.) for common use cases. "
             "Call brain_schema first to discover available tables and columns."
         ),
         "tools": [

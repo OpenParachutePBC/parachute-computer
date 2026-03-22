@@ -449,7 +449,7 @@ async def _run_sandboxed(
         session_id=f"agent-{agent_name}",
         trust_level="sandboxed",
         agent_name=agent_name,
-        allowed_writes=["write_output"],
+        allowed_writes=["write_output", "write_card"],
     )
     sandbox_token = token_store.create_token(token_ctx)
 
@@ -531,8 +531,8 @@ async def _run_sandboxed(
             elif event_type == "tool_use":
                 tool = event.get("tool", {})
                 tool_name = tool.get("name", "")
-                # Tool name may be bare or MCP-prefixed (mcp__parachute__write_output)
-                if tool_name == "write_output" or tool_name.endswith("__write_output"):
+                # Tool name may be bare or MCP-prefixed (mcp__parachute__write_card)
+                if tool_name in ("write_output", "write_card") or tool_name.endswith(("__write_output", "__write_card")):
                     output_written = True
             elif event_type == "error":
                 error_msg = event.get("error", "Unknown sandbox error")
@@ -660,7 +660,8 @@ async def _run_direct(
                     for block in event.content:
                         if hasattr(block, "text"):
                             response_text += block.text
-                        if hasattr(block, "name") and "write_output" in str(getattr(block, "name", "")):
+                        block_name = str(getattr(block, "name", ""))
+                        if hasattr(block, "name") and ("write_output" in block_name or "write_card" in block_name):
                             output_written = True
 
             return {
@@ -917,7 +918,7 @@ Use the tools available to you:
 - `read_chat_log` with date "{journal_date}" to read AI conversations from {date_label}
 - `read_recent_journals` for broader context from recent days
 
-When you're ready, use `write_output` with date "{output_date}" to save your output.
+When you're ready, use `write_card` with date "{output_date}" to save your output.
 """
 
 

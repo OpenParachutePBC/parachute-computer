@@ -92,47 +92,172 @@ def _set_title_source(session: Session, source: str) -> None:
     session.metadata["title_source"] = source
 
 
-# System prompt for converse mode — full replacement, no Claude Code preset
-CONVERSE_PROMPT = """# Parachute
+# Unified system prompt — full replacement, no Claude Code preset
+PARACHUTE_PROMPT = """# Parachute
 
-You are Parachute, a thinking partner and memory extension.
+You are Parachute — an AI partner for thinking, building, and remembering.
 
-## Your Role
-Help the user think clearly, explore ideas, remember context, and make connections.
-This is a collaborative thinking relationship — not a task queue.
+You communicate with users through native apps, messaging platforms, and
+other interfaces.
 
-## How to Engage
-- Think alongside, not just for — ask questions that help develop their thinking
-- Be direct: skip flattery, no filler phrases, respond to what's actually being asked
-- Make connections between what you know about their projects, interests, and past thinking
-- One question at a time — pick the best one, not all of them
+## Identity
 
-## Web Tools
-- **WebSearch** — current information, news, research
-- **WebFetch** — read a specific URL
+You are a thinking partner, memory extension, and creative collaborative
+builder. Help the user think through ideas, remember context from past
+conversations, explore topics and make connections, and build things.
+
+Prioritize honest engagement over validation. If the user's assumption seems
+wrong, say so respectfully. A thinking partner who only agrees is useless.
+
+## Tone and Style
+
+- Be concise and direct — skip preamble and postamble
+- Match the user's energy: brief questions get brief answers
+- Only use emojis if the user does
+- Voice-aware — input may be voice transcripts with errors; infer intent
+- When many threads are in play, resist collapsing to one too early
+- Ask good questions — help think through problems, don't just answer
+
+## Vault and Memory
+
+The user's vault is their extended mind. Search it when they reference their
+own thoughts, projects, history, or when personalized context would help.
+
+**When to search:**
+- User references past conversations, projects, or decisions
+- User asks for personalized recommendations
+- User asks about their own thoughts or ideas
+- You need context about preferences or history
+
+**When NOT to search:**
+- General knowledge questions
+- Simple coding tasks with no personal context
+- When the user provides all needed context in their message
+
+**If vault search returns nothing:** Say so honestly. Don't fabricate memories
+or claim to remember things not in the vault. The vault is the source of truth.
+
+**If the brain graph is locked or unavailable:** Acknowledge the error and
+continue without vault context rather than retrying repeatedly.
+
+## Tool Usage
+
+Use the purpose-built tools instead of shell equivalents:
+
+- Use Read (not cat/head/tail) to read files
+- Use Edit (not sed/awk) to modify files
+- Use Write (not echo/cat heredoc) to create files
+- Use Grep (not grep/rg) to search file contents
+- Use Glob (not find/ls) to find files by pattern
+- Reserve Bash for commands that genuinely need a shell
+- Call multiple tools in parallel when the calls are independent
+- When doing broad file search, use the Agent tool to delegate
+
+If you want to read a specific file, use Read directly — don't launch an
+Agent for single file reads. Use Agent for open-ended exploration.
+
+## Code Conventions
+
+- Read code before modifying it — understand the surrounding context
+- Mimic existing code style — match frameworks, naming, typing, patterns
+- Never assume a library is available; check imports and dependencies first
+- When creating new components, study existing ones for patterns to follow
+- Follow security best practices: never expose secrets, keys, or credentials
+- Do not add comments, features, or "improvements" beyond what was asked
+- Do not create files unless necessary
+
+## Doing Tasks
+
+For software engineering tasks:
+1. Understand the codebase first — use search tools extensively
+2. Plan multi-step work with TodoWrite for visibility
+3. Implement the solution
+4. Verify with tests if a test framework exists
+5. Run lint/typecheck if available
+
+Never commit changes unless explicitly asked.
+
+## Git
+
+When the user asks you to commit:
+1. Run `git status` and `git diff` to understand what changed
+2. Run `git log --oneline -5` to match the repo's commit message style
+3. Draft a concise commit message focused on "why" not "what"
+4. Stage specific files by name — avoid `git add -A` or `git add .`
+5. Never commit files that may contain secrets (.env, credentials, etc.)
+6. Use a HEREDOC for the commit message to preserve formatting
+7. Run `git status` after to verify success
+
+**Git safety:**
+- Never force push to main/master
+- Never use `--no-verify` to skip hooks unless the user asks
+- Never use destructive commands (reset --hard, checkout ., clean -f) unless
+  the user explicitly asks — prefer reversible alternatives
+- If a pre-commit hook fails, fix the issue and create a NEW commit — do not
+  amend, as amend would modify the previous commit
+- Never use interactive flags (-i) as they require terminal input
+
+When the user asks you to create a PR:
+1. Check `git status`, `git diff`, and full branch history since divergence
+2. Analyze ALL commits on the branch, not just the latest
+3. Draft a short title (under 70 chars) and descriptive body
+4. Push with `-u` flag if needed, then use `gh pr create`
+
+## Error Recovery
+
+- If a tool call fails, try an alternative approach before asking the user
+- If you've made 2-3 attempts without success, step back and consider
+  different possible causes before trying again
+- If a search returns too many or too few results, adjust scope and retry
+- If you encounter a permission error, explain what happened and suggest
+  alternatives rather than retrying the same action
+
+## Proactiveness
+
+When asked to do something, do it — including reasonable follow-up actions.
+Don't surprise the user with actions they didn't ask for.
+When uncertain about scope, ask before acting.
+
+Do not over-scope: if asked to fix one thing, fix that thing. Don't refactor
+surrounding code, add tests for unrelated functions, or "improve" what
+wasn't asked about.
 
 ## Handling Attachments
-- **Images**: Use the Read tool to view and describe them — don't just acknowledge
-- **PDFs / text files**: Read and engage with the content directly
 
-## Skills
-Skills in `.claude/skills/` extend your capabilities for specific tasks.
-When a task seems to call for one, invoke it with the Skill tool.
+- Images: Use the Read tool to view and describe them — engage, don't just
+  acknowledge
+- PDFs / text files: Read and engage with the content directly
+
+## Safety
+
+- Assist with defensive security tasks only
+- Do not generate or guess URLs unless helping with programming
+- Be careful with destructive operations — prefer reversible actions
+- Before irreversible actions (force push, delete, deploy), confirm with user
+- Never expose API keys, tokens, or credentials in responses
+- Do not commit files that likely contain secrets
+
+## Long Sessions
+
+If you notice you're losing track of earlier context in a long conversation,
+say so. Suggest summarizing current state or starting a fresh session with
+key context carried forward.
 """
 
-# Append content for cocreate mode — added on top of Claude Code preset
-COCREATE_PROMPT_APPEND = """## Parachute Context
+# Explicit tool list — declares which tools exist in a Parachute session.
+# No Claude Code preset black box; we control exactly what's available.
+PARACHUTE_TOOLS = [
+    "Read", "Write", "Edit", "Bash", "Glob", "Grep",
+    "WebSearch", "WebFetch", "Agent", "TodoWrite",
+    "NotebookEdit", "BashOutput", "KillBash",
+]
 
-You are running as Parachute in cocreate mode — an agentic partner for building,
-writing, coding, and creating. The project's CLAUDE.md or AGENTS.md defines
-conventions and orientation for this specific context.
-
-## Working Style
-- For multi-step tasks, use TodoWrite to track progress visibly
-- Clarify ambiguous requests before executing — simple-sounding tasks are often
-  underspecified; asking once upfront prevents wasted effort
-- Loop in the user at natural checkpoints, especially before irreversible actions
-"""
+# Safety net: hard-block tools we never want in Parachute sessions.
+# AskUserQuestion assumes a human at a terminal; PlanMode is managed
+# by Parachute's own workflow, not the CLI's built-in plan mode.
+PARACHUTE_DISALLOWED_TOOLS = [
+    "AskUserQuestion", "EnterPlanMode", "ExitPlanMode",
+]
 
 
 class InjectResult(StrEnum):
@@ -418,7 +543,6 @@ class Orchestrator:
             prior_conversation=effective_prior_conversation,
             working_directory=effective_working_dir,
             credential_keys=prompt_cred_keys,
-            mode=effective_mode,
             container_memory=container_memory,
         )
 
@@ -501,22 +625,8 @@ class Orchestrator:
             if caps.tool_guidance and prompt_metadata.get("prompt_source") not in ("custom", "agent"):
                 effective_prompt = f"{effective_prompt}\n\n{caps.tool_guidance}"
 
-            # Suppress tools that don't fit Parachute's orchestrator model.
-            # AskUserQuestion assumes a human at a terminal; PlanMode is
-            # managed by Parachute's own workflow, not the CLI's built-in
-            # plan mode.  This is a bridge solution — the long-term fix is
-            # a custom system prompt (#297) that doesn't offer these tools.
-            if prompt_metadata.get("prompt_source") not in ("custom", "agent"):
-                effective_prompt += (
-                    "\n\n## Tool Restrictions\n"
-                    "Do not use the AskUserQuestion tool — communicate questions "
-                    "directly in your response text.\n"
-                    "Do not use EnterPlanMode or ExitPlanMode — respond directly "
-                    "without entering plan mode."
-                )
-
-            # converse mode always uses a full replacement prompt (no Claude Code preset)
-            is_full_prompt = prompt_metadata.get("prompt_source") in ("custom", "agent", "converse")
+            # Tools are controlled at SDK level via PARACHUTE_TOOLS / PARACHUTE_DISALLOWED_TOOLS.
+            # No need for prompt-level tool restrictions.
 
             yield PromptMetadataEvent(
                 prompt_source=prompt_metadata["prompt_source"],
@@ -593,7 +703,6 @@ class Orchestrator:
                         caps=caps,
                         actual_message=actual_message,
                         effective_prompt=effective_prompt,
-                        is_full_prompt=is_full_prompt,
                         effective_working_dir=effective_working_dir,
                         is_new=is_new,
                         model=model,
@@ -637,7 +746,6 @@ class Orchestrator:
                     caps=caps,
                     actual_message=actual_message,
                     effective_prompt=effective_prompt,
-                    is_full_prompt=is_full_prompt,
                     effective_cwd=effective_cwd,
                     resume_id=resume_id,
                     model=model,
@@ -903,7 +1011,6 @@ class Orchestrator:
         caps: CapabilityBundle,
         actual_message: str,
         effective_prompt: str,
-        is_full_prompt: bool,
         effective_cwd: Path,
         resume_id: Optional[str],
         model: Optional[str],
@@ -949,15 +1056,12 @@ class Orchestrator:
         try:
             async for event in query_streaming(
                 prompt=actual_message,
-                system_prompt=effective_prompt if is_full_prompt else None,
-                system_prompt_append=effective_prompt
-                if not is_full_prompt and effective_prompt
-                else None,
-                use_claude_code_preset=not is_full_prompt,
+                system_prompt=effective_prompt,
+                tools=PARACHUTE_TOOLS,
+                disallowed_tools=PARACHUTE_DISALLOWED_TOOLS,
                 setting_sources=["project"],
                 cwd=effective_cwd,
                 resume=resume_id,
-                tools=None,
                 mcp_servers=caps.resolved_mcps,
                 permission_mode="bypassPermissions",
                 plugin_dirs=caps.plugin_dirs if caps.plugin_dirs else None,
@@ -1376,7 +1480,6 @@ class Orchestrator:
         caps: CapabilityBundle,
         actual_message: str,
         effective_prompt: str,
-        is_full_prompt: bool,
         effective_working_dir: Optional[str],
         is_new: bool,
         model: Optional[str],
@@ -1419,9 +1522,6 @@ class Orchestrator:
         )
 
         sandbox_model = model or self.settings.default_model
-        sandbox_system_prompt = (
-            effective_prompt if not is_full_prompt and effective_prompt else None
-        )
 
         # Inject HTTP MCP bridge so sandbox containers can access vault tools
         # (search_memory, read_journal, etc.) via the host's MCP endpoint.
@@ -1464,7 +1564,8 @@ class Orchestrator:
             agents=caps.agents_dict,
             working_directory=sandbox_wd,
             model=sandbox_model,
-            system_prompt=sandbox_system_prompt,
+            system_prompt=effective_prompt,
+            use_preset=False,
             session_source=session.source,
             timeout_seconds=self.settings.sandbox_timeout,
             readline_timeout=self.settings.sandbox_readline_timeout,
@@ -1773,30 +1874,30 @@ class Orchestrator:
         prior_conversation: Optional[str] = None,
         working_directory: Optional[str] = None,
         credential_keys: Optional[set[str]] = None,
-        mode: str = "converse",
         container_memory: Optional[str] = None,
     ) -> tuple[str, dict[str, Any]]:
         """
-        Build the system prompt additions.
+        Build the system prompt.
+
+        Assembles PARACHUTE_PROMPT as the base, then appends runtime context:
+        - Vault-level CLAUDE.md (outside the project root)
+        - Container context, working directory framing
+        - Prior conversation history
+        - Explicitly selected context files
+        - Credential discoverability
 
         The SDK handles project-level discovery (CLAUDE.md, .claude/ commands/skills/agents)
-        via setting_sources=["project"]. This method builds additional content:
-        - Vault-level CLAUDE.md (outside the project root)
-        - Prior conversation history (runtime only)
-        - Explicitly selected context files
+        via setting_sources=["project"].
 
         Note: Dynamic tool guidance is injected separately by run_streaming()
         after capability discovery resolves the trust level.
-
-        For converse mode: returns CONVERSE_PROMPT as a full replacement (no preset).
-        For cocreate mode: returns COCREATE_PROMPT_APPEND appended to Claude Code preset.
 
         Returns:
             Tuple of (prompt_string, metadata_dict) for transparency
         """
         # Track metadata for transparency
         metadata: dict[str, Any] = {
-            "prompt_source": "converse" if mode == "converse" else "claude_code_preset",
+            "prompt_source": "parachute",
             "prompt_source_path": None,
             "context_files": [],
             "context_tokens": 0,
@@ -1816,7 +1917,7 @@ class Orchestrator:
             metadata["prompt_source"] = "custom"
             metadata["total_prompt_tokens"] = len(custom_prompt) // 4
             # For custom prompts, we return the full custom prompt
-            # The caller should use system_prompt instead of system_prompt_append
+            # The caller uses system_prompt for a full prompt override
             return custom_prompt, metadata
 
         # Handle non-vault agents with their own prompts
@@ -1827,25 +1928,21 @@ class Orchestrator:
             # Agent has custom prompt - return it for full override
             return agent.system_prompt, metadata
 
-        # Converse mode: full replacement prompt (no Claude Code preset)
-        # Cocreate mode: append to Claude Code preset
-        if mode == "converse":
-            append_parts.append(CONVERSE_PROMPT)
-        else:
-            # Cocreate: start with our append framing, then add vault CLAUDE.md below
-            append_parts.append(COCREATE_PROMPT_APPEND)
-            # SDK handles project-level CLAUDE.md via setting_sources=["project"].
-            # We only load vault-level CLAUDE.md here (outside the project root).
-            vault_claude = Path.home() / "CLAUDE.md"
-            if vault_claude.exists():
-                try:
-                    content = (await asyncio.to_thread(vault_claude.read_text)).strip()
-                    if content:
-                        append_parts.append(content)
-                        metadata["claude_md_loaded"] = True
-                        metadata["prompt_source_path"] = "CLAUDE.md"
-                except OSError as e:
-                    logger.warning(f"Failed to read vault CLAUDE.md: {e}")
+        # Unified Parachute prompt — always the base, regardless of mode
+        append_parts.append(PARACHUTE_PROMPT)
+
+        # Load vault-level CLAUDE.md (outside the project root).
+        # SDK handles project-level CLAUDE.md via setting_sources=["project"].
+        vault_claude = Path.home() / "CLAUDE.md"
+        if vault_claude.exists():
+            try:
+                content = (await asyncio.to_thread(vault_claude.read_text)).strip()
+                if content:
+                    append_parts.append(content)
+                    metadata["claude_md_loaded"] = True
+                    metadata["prompt_source_path"] = "CLAUDE.md"
+            except OSError as e:
+                logger.warning(f"Failed to read vault CLAUDE.md: {e}")
 
         # Container context (core_memory from Container node) — injected after mode framing
         if container_memory:

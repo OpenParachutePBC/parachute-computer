@@ -6,7 +6,7 @@ These tools can be used by any daily agent:
 - read_chat_log: Read AI chat logs for a specific date from vault files
 - read_recent_journals: Read recent journal entries from the graph
 - read_recent_sessions: Read recent AI chat sessions from vault files
-- write_output: Write the agent's output as a Card to the graph
+- write_card: Write the agent's output as a Card to the graph
 
 Uses the claude-agent-sdk's in-process MCP server.
 """
@@ -35,7 +35,7 @@ def create_daily_agent_tools(
     Args:
         vault_path: Path to the vault (used only for chat-log vault reads)
         config: Agent configuration
-        graph: GraphDB instance (required for read_journal and write_output)
+        graph: GraphDB instance (required for read_journal and write_card)
 
     Returns:
         Tuple of (list of SdkMcpTool instances, server config dict)
@@ -211,11 +211,11 @@ def create_daily_agent_tools(
         }
 
     @tool(
-        "write_output",
+        "write_card",
         "Write the agent's output. Saves as a Card in the graph.",
         {"date": str, "content": str}
     )
-    async def write_output(args: dict[str, Any]) -> dict[str, Any]:
+    async def write_card(args: dict[str, Any]) -> dict[str, Any]:
         """Write the agent's output as a Card to the graph."""
         date_str = args.get("date", "").strip()
         content = args.get("content", "").strip()
@@ -329,7 +329,7 @@ def create_daily_agent_tools(
                 "is_error": True
             }
 
-    tools = [read_journal, read_chat_log, read_recent_journals, read_recent_sessions, write_output, update_entry]
+    tools = [read_journal, read_chat_log, read_recent_journals, read_recent_sessions, write_card, update_entry]
 
     # Create the MCP server config
     server_config = create_sdk_mcp_server(
