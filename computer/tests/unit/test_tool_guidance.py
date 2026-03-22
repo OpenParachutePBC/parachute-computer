@@ -54,6 +54,7 @@ class TestToolGroups:
             "get_chat",
             "get_exchange",
             "list_notes",
+            "write_note",
             "brain_schema",
         }
         assert expected_read_tools.issubset(sandboxed_tools), (
@@ -93,6 +94,7 @@ class TestBuildToolGuidance:
         assert "get_chat" in result
         assert "get_exchange" in result
         assert "list_notes" in result
+        assert "write_note" in result
 
     def test_tool_names_have_mcp_prefix(self):
         """Tool names should include the mcp__parachute__ prefix for discoverability."""

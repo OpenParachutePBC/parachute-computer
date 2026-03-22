@@ -1,4 +1,4 @@
-"""Tests for chat memory retrieval — shared handlers for MCP tools."""
+"""Tests for vault tools — shared handlers for MCP tools."""
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock
@@ -7,6 +7,7 @@ from parachute.core.vault_tools import (
     search_chats,
     get_chat,
     get_exchange,
+    write_note,
     _extract_snippet,
     _truncate,
     _determine_match_field,
@@ -476,3 +477,94 @@ class TestGetExchange:
         assert len(ex["ai_response"]) == 10000
         assert ex["tools_used"] == "Read(test.py), Bash(pytest)"
         assert ex["context"] == "Session was about testing"
+
+
+# ── write_note ──────────────────────────────────────────────────────────────
+
+
+class TestWriteNote:
+    @pytest.mark.asyncio
+    async def test_empty_note_type(self):
+        graph = _make_graph()
+        result = await write_note(graph, "", "Title", "Content")
+        assert "error" in result
+        assert "note_type" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_empty_title(self):
+        graph = _make_graph()
+        result = await write_note(graph, "context", "", "Content")
+        assert "error" in result
+        assert "title" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_empty_content(self):
+        graph = _make_graph()
+        result = await write_note(graph, "context", "Profile", "")
+        assert "error" in result
+        assert "content" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_content_too_large(self):
+        graph = _make_graph()
+        result = await write_note(graph, "context", "Profile", "x" * 10_001)
+        assert "error" in result
+        assert "too large" in result["error"].lower()
+
+    @pytest.mark.asyncio
+    async def test_invalid_date_format(self):
+        graph = _make_graph()
+        result = await write_note(graph, "journal", "Entry", "Content", date="not-a-date")
+        assert "error" in result
+        assert "date" in result["error"].lower()
+
+    @pytest.mark.asyncio
+    async def test_context_note_creates_with_deterministic_id(self):
+        graph = _make_graph()
+        result = await write_note(graph, "context", "Profile", "Name: Aaron")
+
+        assert result["status"] == "updated"
+        assert result["entry_id"] == "context:profile"
+        assert result["note_type"] == "context"
+        assert result["title"] == "Profile"
+
+        # Should use MERGE with the deterministic entry_id
+        call_args = graph.execute_cypher.call_args
+        cypher = call_args[0][0]
+        assert "MERGE" in cypher
+        params = call_args[0][1]
+        assert params["entry_id"] == "context:profile"
+
+    @pytest.mark.asyncio
+    async def test_context_note_title_normalization(self):
+        """Context entry_id is normalized from the title."""
+        graph = _make_graph()
+        result = await write_note(graph, "context", "Current Focus", "Parachute thesis")
+        assert result["entry_id"] == "context:current-focus"
+
+    @pytest.mark.asyncio
+    async def test_non_context_note_creates_with_generated_id(self):
+        graph = _make_graph()
+        result = await write_note(graph, "reference", "API Notes", "Some API docs")
+
+        assert result["status"] == "created"
+        assert result["note_type"] == "reference"
+        assert result["title"] == "API Notes"
+        # entry_id should be a timestamp format, not context:*
+        assert not result["entry_id"].startswith("context:")
+        assert "date" in result
+
+    @pytest.mark.asyncio
+    async def test_journal_note_with_date(self):
+        graph = _make_graph()
+        result = await write_note(graph, "journal", "Morning", "Felt good today", date="2026-03-22")
+
+        assert result["status"] == "created"
+        assert result["date"] == "2026-03-22"
+
+    @pytest.mark.asyncio
+    async def test_note_type_normalized_to_lowercase(self):
+        graph = _make_graph()
+        result = await write_note(graph, "  Context  ", "Profile", "Content")
+        assert result["note_type"] == "context"
+        assert result["entry_id"] == "context:profile"

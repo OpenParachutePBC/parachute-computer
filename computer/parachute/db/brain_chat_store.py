@@ -129,6 +129,30 @@ class BrainChatStore:
             },
             primary_key="request_id",
         )
+        # Note table — shared across modules (journals, context, reference, etc.)
+        # Originally created by the daily module; registered here so context notes
+        # are available even if the daily module isn't loaded.
+        await self.graph.ensure_node_table(
+            "Note",
+            {
+                "entry_id": "STRING",
+                "note_type": "STRING",
+                "date": "STRING",
+                "content": "STRING",
+                "snippet": "STRING",
+                "created_at": "STRING",
+                "title": "STRING",
+                "entry_type": "STRING",
+                "audio_path": "STRING",
+                "aliases": "STRING",
+                "status": "STRING",
+                "created_by": "STRING",
+                "metadata_json": "STRING",
+                "brain_links_json": "STRING",
+                "updated_at": "STRING",
+            },
+            primary_key="entry_id",
+        )
         logger.info("BrainChatStore: schema ready")
 
     # ── Session CRUD ──────────────────────────────────────────────────────────

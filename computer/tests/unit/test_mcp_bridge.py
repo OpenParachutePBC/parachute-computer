@@ -95,6 +95,7 @@ class TestMcpToolRegistration:
         assert "list_notes" in tool_names
         assert "get_chat" in tool_names
         assert "get_exchange" in tool_names
+        assert "write_note" in tool_names
 
     def test_all_tools_have_handlers(self):
         from parachute.api.mcp_tools import TOOLS, _HANDLERS, _VAULT_TOOL_NAMES

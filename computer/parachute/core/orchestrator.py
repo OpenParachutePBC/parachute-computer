@@ -140,6 +140,10 @@ or claim to remember things not in the vault. The vault is the source of truth.
 **If the brain graph is locked or unavailable:** Acknowledge the error and
 continue without vault context rather than retrying repeatedly.
 
+**Updating context:** When the user says "remember" something about themselves
+(preferences, location, current focus), use write_note with note_type='context'
+to save it. Context notes are automatically loaded into every session.
+
 ## Tool Usage
 
 Use the purpose-built tools instead of shell equivalents:
@@ -1944,6 +1948,15 @@ class Orchestrator:
             except OSError as e:
                 logger.warning(f"Failed to read vault CLAUDE.md: {e}")
 
+        # Load context notes from graph (user profile, preferences, current focus, etc.)
+        try:
+            context_section = await self._load_context_notes()
+            if context_section:
+                append_parts.append(context_section)
+                metadata["context_notes_loaded"] = True
+        except Exception as e:
+            logger.warning(f"Failed to load context notes: {e}")
+
         # Container context (core_memory from Container node) — injected after mode framing
         if container_memory:
             append_parts.append(f"## Container Context\n\n{container_memory}")
@@ -2083,6 +2096,47 @@ The user is now continuing this conversation with you. Respond naturally as if y
         metadata["total_prompt_tokens"] = len(append_content) // 4
 
         return append_content, metadata
+
+    # Max chars for all context notes combined
+    _MAX_CONTEXT_CHARS = 8000
+
+    async def _load_context_notes(self) -> str | None:
+        """Load context notes from the graph for injection into the system prompt.
+
+        Queries all Note nodes with note_type='context' and status='active',
+        formats them as markdown sections, and returns the combined string.
+        Returns None if no context notes exist or graph is unavailable.
+        """
+        try:
+            graph = self.db.graph
+        except Exception:
+            return None
+
+        rows = await graph.execute_cypher(
+            "MATCH (n:Note) "
+            "WHERE n.note_type = 'context' AND n.status = 'active' "
+            "RETURN n.title AS title, n.content AS content "
+            "ORDER BY n.title",
+            None,
+        )
+
+        if not rows:
+            return None
+
+        parts = ["## User Context\n"]
+        total_chars = 0
+
+        for row in rows:
+            title = row.get("title") or "Untitled"
+            content = row.get("content") or ""
+            section = f"### {title}\n\n{content}\n"
+
+            if total_chars + len(section) > self._MAX_CONTEXT_CHARS:
+                break
+            parts.append(section)
+            total_chars += len(section)
+
+        return "\n".join(parts) if len(parts) > 1 else None
 
     # =========================================================================
     # Session Management (delegated to SessionManager)

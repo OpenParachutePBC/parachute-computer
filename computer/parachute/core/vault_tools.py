@@ -9,14 +9,17 @@ Tools:
 - search_memory: Unified search across chats, exchanges, and journal notes
 - search_chats: Search chat conversations with matched exchanges inline
 - list_chats: List/browse recent conversations
-- list_notes: List/browse journal entries
+- list_notes: List/browse journal entries and context notes
 - get_chat: Get a specific chat with paginated exchanges
 - get_exchange: Get full untruncated exchange content
+- write_note: Create or update notes (including user context notes)
 """
 
 from __future__ import annotations
 
 import logging
+import re
+from datetime import datetime, timezone
 from typing import Any
 
 from mcp.types import Tool
@@ -573,6 +576,116 @@ async def get_exchange(
     }
 
 
+# ── write_note ────────────────────────────────────────────────────────────────
+
+# Max content size for notes
+_MAX_NOTE_CONTENT = 10_000
+
+
+async def write_note(
+    graph: BrainService,
+    note_type: str,
+    title: str,
+    content: str,
+    date: str | None = None,
+) -> dict[str, Any]:
+    """Create or update a note.
+
+    For context notes (note_type='context'), merges on note_type + title
+    so there is always exactly one note per context title (e.g., "Profile",
+    "Now", "Preferences"). For other note types, creates a new note with
+    a generated entry_id.
+
+    Args:
+        graph: BrainService instance
+        note_type: Type of note ("context", "journal", "reference", etc.)
+        title: Note title (required)
+        content: Markdown content
+        date: Optional date in YYYY-MM-DD format (required for journals)
+    """
+    note_type = note_type.strip().lower()
+    title = title.strip()
+    content = content.strip()
+
+    if not note_type:
+        return {"error": "note_type is required"}
+    if not title:
+        return {"error": "title is required"}
+    if not content:
+        return {"error": "content is required"}
+    if len(content) > _MAX_NOTE_CONTENT:
+        return {"error": f"Content too large ({len(content)} chars, max {_MAX_NOTE_CONTENT})"}
+
+    if date and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
+        return {"error": "Invalid date format. Use YYYY-MM-DD"}
+
+    now = datetime.now(timezone.utc).isoformat()
+
+    if note_type == "context":
+        # Context notes: MERGE on note_type + title (one per title)
+        # Use a deterministic entry_id so MERGE is idempotent
+        entry_id = f"context:{title.lower().replace(' ', '-')}"
+        await graph.execute_cypher(
+            "MERGE (n:Note {entry_id: $entry_id}) "
+            "SET n.note_type = $note_type, "
+            "    n.title = $title, "
+            "    n.content = $content, "
+            "    n.snippet = $snippet, "
+            "    n.status = 'active', "
+            "    n.created_by = CASE WHEN n.created_by IS NULL THEN 'agent' ELSE n.created_by END, "
+            "    n.created_at = CASE WHEN n.created_at IS NULL THEN $now ELSE n.created_at END, "
+            "    n.updated_at = $now",
+            {
+                "entry_id": entry_id,
+                "note_type": note_type,
+                "title": title,
+                "content": content,
+                "snippet": content[:200],
+                "now": now,
+            },
+        )
+        return {
+            "entry_id": entry_id,
+            "note_type": note_type,
+            "title": title,
+            "status": "updated",
+        }
+    else:
+        # Other notes: CREATE with generated entry_id
+        ts = datetime.now(timezone.utc)
+        entry_id = ts.strftime("%Y-%m-%d-%H-%M-%S-%f")
+        effective_date = date or ts.strftime("%Y-%m-%d")
+
+        await graph.execute_cypher(
+            "MERGE (n:Note {entry_id: $entry_id}) "
+            "SET n.note_type = $note_type, "
+            "    n.title = $title, "
+            "    n.content = $content, "
+            "    n.snippet = $snippet, "
+            "    n.date = $date, "
+            "    n.status = 'active', "
+            "    n.created_by = 'agent', "
+            "    n.created_at = $now, "
+            "    n.entry_type = 'text'",
+            {
+                "entry_id": entry_id,
+                "note_type": note_type,
+                "title": title,
+                "content": content,
+                "snippet": content[:200],
+                "date": effective_date,
+                "now": now,
+            },
+        )
+        return {
+            "entry_id": entry_id,
+            "note_type": note_type,
+            "title": title,
+            "date": effective_date,
+            "status": "created",
+        }
+
+
 # ── Tool Definitions ─────────────────────────────────────────────────────────
 # Registered in both the direct MCP server (mcp_server.py)
 # and the sandbox HTTP bridge (mcp_tools.py).
@@ -752,6 +865,41 @@ VAULT_TOOLS = [
                 },
             },
             "required": ["exchange_id"],
+        },
+    ),
+    Tool(
+        name="write_note",
+        description=(
+            "Create or update a note. For context notes (note_type='context'), "
+            "merges on title so there is exactly one per title — use to save "
+            "user profile, preferences, current focus, orientation, etc. "
+            "Context notes are automatically loaded into every session. "
+            "For other note types, creates a new note."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "note_type": {
+                    "type": "string",
+                    "description": (
+                        "Type of note: 'context' for persistent user context, "
+                        "'journal' for daily entries, 'reference' for reference material"
+                    ),
+                },
+                "title": {
+                    "type": "string",
+                    "description": "Note title (e.g. 'Profile', 'Now', 'Preferences')",
+                },
+                "content": {
+                    "type": "string",
+                    "description": "Markdown content of the note",
+                },
+                "date": {
+                    "type": "string",
+                    "description": "Optional date in YYYY-MM-DD format",
+                },
+            },
+            "required": ["note_type", "title", "content"],
         },
     ),
 ]
