@@ -430,13 +430,14 @@ async def write_note(body: WriteNoteRequest):
     from parachute.core.vault_tools import write_note as _write_note
 
     graph = _get_graph()
-    result = await _write_note(
-        graph,
-        note_type=body.note_type,
-        title=body.title,
-        content=body.content,
-        date=body.date,
-    )
+    async with graph.write_lock:
+        result = await _write_note(
+            graph,
+            note_type=body.note_type,
+            title=body.title,
+            content=body.content,
+            date=body.date,
+        )
     if "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])
     return result
