@@ -51,6 +51,7 @@ from parachute.core.vault_tools import (
     list_notes as _list_notes,
     get_chat as _get_chat,
     get_exchange as _get_exchange,
+    write_note as _write_note,
 )
 
 # Configure logging to stderr (stdout is for MCP protocol)
@@ -626,6 +627,15 @@ async def handle_tool_call(name: str, arguments: dict[str, Any]) -> str:
             result = await _get_exchange(
                 db.graph,
                 exchange_id=arguments["exchange_id"],
+            )
+        elif name == "write_note":
+            db = await get_db()
+            result = await _write_note(
+                db.graph,
+                note_type=arguments["note_type"],
+                title=arguments["title"],
+                content=arguments["content"],
+                date=arguments.get("date"),
             )
         else:
             return json.dumps({"error": f"Unknown tool: {name}"})

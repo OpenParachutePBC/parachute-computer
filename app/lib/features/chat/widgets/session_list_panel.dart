@@ -176,7 +176,7 @@ class _SessionListPanelState extends ConsumerState<SessionListPanel> {
     }
   }
 
-  void _selectSession(ChatSession session, bool isPanelMode) {
+  Future<void> _selectSession(ChatSession session, bool isPanelMode) async {
     // Pending approval — use inline buttons, don't navigate into chat
     if (session.isPendingApproval) return;
 
@@ -190,8 +190,9 @@ class _SessionListPanelState extends ConsumerState<SessionListPanel> {
       return;
     }
 
-    ref.read(switchSessionProvider)(session.id);
+    await ref.read(switchSessionProvider)(session.id);
 
+    if (!mounted) return;
     if (!isPanelMode) {
       Navigator.push(
         context,

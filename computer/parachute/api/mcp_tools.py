@@ -32,6 +32,7 @@ from parachute.core.vault_tools import (
     list_notes as _list_notes,
     get_chat as _get_chat,
     get_exchange as _get_exchange,
+    write_note as _write_note,
 )
 
 logger = logging.getLogger(__name__)
@@ -230,6 +231,14 @@ async def _handle_vault_tool(name: str, arguments: dict[str, Any]) -> str:
             graph,
             exchange_id=arguments["exchange_id"],
         )
+    elif name == "write_note":
+        result = await _write_note(
+            graph,
+            note_type=arguments["note_type"],
+            title=arguments["title"],
+            content=arguments["content"],
+            date=arguments.get("date"),
+        )
     else:
         return json.dumps({"error": f"Unknown vault tool: {name}"})
 
@@ -237,7 +246,7 @@ async def _handle_vault_tool(name: str, arguments: dict[str, Any]) -> str:
 
 
 # Vault tool names for dispatch
-_VAULT_TOOL_NAMES = {"search_memory", "search_chats", "list_chats", "list_notes", "get_chat", "get_exchange"}
+_VAULT_TOOL_NAMES = {"search_memory", "search_chats", "list_chats", "list_notes", "get_chat", "get_exchange", "write_note"}
 
 
 # ── Handler Dispatch ──────────────────────────────────────────────────────────

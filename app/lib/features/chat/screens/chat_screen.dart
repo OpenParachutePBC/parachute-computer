@@ -1019,7 +1019,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               ],
             ),
             const SizedBox(height: Spacing.xl),
-            const SizedBox(height: Spacing.md),
             // Trust level selector for new chats
             _buildTrustLevelSelector(isDark),
             const SizedBox(height: Spacing.md),

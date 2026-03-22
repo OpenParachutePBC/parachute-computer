@@ -87,7 +87,18 @@ TOOL_GROUPS: list[ToolGroup] = [
             },
             {
                 "name": "list_notes",
-                "description": "List journal entries. Use date_from/date_to to scope by date, note_type='journal' for Daily entries.",
+                "description": (
+                    "List notes. Filter by note_type: 'journal' for daily entries, "
+                    "'context' for user context notes."
+                ),
+            },
+            {
+                "name": "write_note",
+                "description": (
+                    "Create or update a note. Use note_type='context' for persistent "
+                    "user context (profile, preferences, current focus). "
+                    "Context notes are auto-loaded into every session."
+                ),
             },
             {
                 "name": "brain_schema",

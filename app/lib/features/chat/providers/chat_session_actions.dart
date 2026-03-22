@@ -85,6 +85,12 @@ final newChatProvider = Provider<void Function()>((ref) {
 /// All sessions are loaded from the server API.
 final switchSessionProvider = Provider<Future<void> Function(String)>((ref) {
   return (String sessionId) async {
+    // Yield to allow any in-progress widget disposals to complete.
+    // Without this, synchronous state changes below fire Riverpod
+    // notifications to widget elements that may have been disposed
+    // in the same frame (e.g. from a concurrent list refresh),
+    // causing "defunct element markNeedsBuild" assertions.
+    await Future<void>.delayed(Duration.zero);
     // Exit new chat mode if active
     ref.read(newChatModeProvider.notifier).state = false;
     // Clear unread badge for this session
