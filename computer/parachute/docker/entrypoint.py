@@ -49,7 +49,28 @@ def _patch_sdk_parse_message() -> None:
 _patch_sdk_parse_message()
 
 
-async def run_query_and_emit(message: str, options) -> str | None:
+async def _keep_stdin_open(message: str, done_event: asyncio.Event):
+    """Yield a user message then block until done_event is set.
+
+    The SDK's query() with a string prompt calls end_input() immediately,
+    closing stdin.  The CLI subprocess needs stdin open for its internal tool
+    execution loop (reading permission responses, processing tool results).
+    Without this wrapper, the CLI crashes with exit code 1 on any turn that
+    involves tool use — including session resume.
+
+    Mirrors the _string_to_async_iterable() pattern from claude_sdk.py.
+    """
+    yield {
+        "type": "user",
+        "message": {
+            "role": "user",
+            "content": message,
+        }
+    }
+    await done_event.wait()
+
+
+async def run_query_and_emit(message: str, options, done_event: asyncio.Event) -> str | None:
     """Run SDK query, emit JSONL events to stdout. Returns captured session ID."""
     from claude_agent_sdk import query
 
@@ -57,7 +78,9 @@ async def run_query_and_emit(message: str, options) -> str | None:
     captured_session_id = None
     captured_model = None
 
-    async for event in query(prompt=message, options=options):
+    prompt_iterable = _keep_stdin_open(message, done_event)
+
+    async for event in query(prompt=prompt_iterable, options=options):
         # Raw dicts come from patched parse_message (unknown event types)
         if isinstance(event, dict):
             continue  # Skip unknown events (rate_limit_event, etc.)
@@ -132,9 +155,13 @@ async def run_query_and_emit(message: str, options) -> str | None:
             sid = getattr(event, "session_id", None)
             if sid:
                 captured_session_id = sid
+            # Signal the stdin wrapper to close — CLI is done with this turn
+            done_event.set()
 
         # Silently ignore other SDK event types (RateLimitEvent, UsageEvent, etc.)
 
+    # Ensure stdin closes even if ResultMessage was not received
+    done_event.set()
     return captured_session_id
 
 
@@ -213,6 +240,11 @@ async def run():
     elif os.path.isdir("/home/sandbox"):
         os.chdir("/home/sandbox")
 
+    # Prevent the CLI from detecting a "nested session" and refusing to start.
+    # Each docker exec is an independent process — CLAUDECODE should never be set,
+    # but clear it defensively (mirrors claude_sdk.py's direct path).
+    os.environ.pop("CLAUDECODE", None)
+
     if not oauth_token:
         emit({"type": "error", "error": "CLAUDE_CODE_OAUTH_TOKEN not set"})
         sys.exit(1)
@@ -241,7 +273,7 @@ async def run():
         # is not fully mounted in sandboxed sessions, so no vault-wide leakage.
         options_kwargs: dict = {
             "permission_mode": "bypassPermissions",
-            "env": {"CLAUDE_CODE_OAUTH_TOKEN": oauth_token},
+            "env": {"CLAUDE_CODE_OAUTH_TOKEN": oauth_token, "CLAUDECODE": ""},
             "cwd": effective_cwd,
             "setting_sources": ["project"],
         }
@@ -272,6 +304,19 @@ async def run():
             else:
                 options_kwargs["system_prompt"] = system_prompt
 
+        # Tool filtering: control which built-in CLI tools are available.
+        # Without this, sandbox sessions get the full Claude Code tool set
+        # (including AskUserQuestion, EnterPlanMode, etc.) which are not
+        # appropriate for non-interactive container execution.
+        # Persistent mode: tools come via stdin payload.
+        # Ephemeral mode: tools come via capabilities JSON.
+        tools = request.get("tools") or capabilities.get("tools")
+        if tools:
+            options_kwargs["tools"] = tools
+        disallowed_tools = request.get("disallowed_tools") or capabilities.get("disallowed_tools")
+        if disallowed_tools:
+            options_kwargs["disallowed_tools"] = disallowed_tools
+
         # Pass capabilities to SDK if available
         if capabilities.get("mcp_servers"):
             options_kwargs["mcp_servers"] = capabilities["mcp_servers"]
@@ -301,22 +346,35 @@ async def run():
         # Non-UUID session IDs (e.g. slug-format "agent-daily-reflection") are used
         # only for container identification, not transcript naming.
         # Skip when resuming — CLI rejects --session-id + --resume.
-        if session_id and not resume_id and re.match(
+        # Also skip when fresh_session is set (retry after resume failure) — the
+        # CLI would reject a --session-id that already has a transcript.
+        fresh_session = request.get("fresh_session", False)
+        if session_id and not resume_id and not fresh_session and re.match(
             r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
             session_id, re.IGNORECASE,
         ):
             options_kwargs.setdefault("extra_args", {})["session-id"] = session_id
 
         options = ClaudeAgentOptions(**options_kwargs)
+        done_event = asyncio.Event()
 
         try:
-            captured_session_id = await run_query_and_emit(message, options)
+            captured_session_id = await run_query_and_emit(message, options, done_event)
             emit({"type": "done", "sessionId": captured_session_id or ""})
         except Exception as e:
             if resume_id:
                 # Resume failed — emit structured event so orchestrator can retry
-                # with history injection instead of dropping to zero context
-                emit({"type": "resume_failed", "error": str(e), "session_id": resume_id})
+                # with history injection instead of dropping to zero context.
+                # Extract real error from ProcessError if available.
+                if hasattr(e, "stderr") and e.stderr:
+                    resume_error = e.stderr.strip()
+                else:
+                    resume_error = str(e)
+                emit({
+                    "type": "resume_failed",
+                    "error": resume_error,
+                    "session_id": resume_id,
+                })
                 emit({"type": "done", "sessionId": session_id or ""})
                 sys.exit(0)  # Clean exit — orchestrator handles retry
             else:
@@ -331,11 +389,17 @@ async def run():
         # (e.g. "Invalid session ID") — surface it instead of the generic wrapper.
         if hasattr(e, "stderr") and e.stderr:
             error_detail = e.stderr.strip()
+        elif hasattr(e, "returncode") and hasattr(e, "stdout"):
+            # ProcessError with returncode but no stderr — include exit code
+            error_detail = f"CLI exited {e.returncode}: {e}"
         elif hasattr(e, "__cause__") and e.__cause__:
             error_detail = f"{e} (cause: {e.__cause__})"
         else:
             error_detail = str(e)
         emit({"type": "error", "error": error_detail})
+        # Also write to stderr so the orchestrator's _stream_process can
+        # capture it when the process exit code is non-zero
+        print(f"ENTRYPOINT_ERROR: {error_detail}", file=sys.stderr, flush=True)
         sys.exit(1)
 
 

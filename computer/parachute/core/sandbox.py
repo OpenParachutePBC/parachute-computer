@@ -72,6 +72,8 @@ class AgentSandboxConfig:
     system_prompt: str | None = None  # System prompt to pass to SDK inside container
     use_preset: bool = True  # Whether to wrap system_prompt in claude_code preset
     session_source: SessionSource | None = None  # Used to gate credential injection
+    tools: list[str] | None = None  # Explicit tool allow-list (passed to SDK)
+    disallowed_tools: list[str] | None = None  # Tool block-list (passed to SDK)
 
 
 class DockerSandbox:
@@ -377,6 +379,12 @@ class DockerSandbox:
         if config.agents:
             capabilities["agents"] = config.agents
 
+        # Tool filtering: pass through to entrypoint via capabilities JSON
+        if config.tools is not None:
+            capabilities["tools"] = config.tools
+        if config.disallowed_tools is not None:
+            capabilities["disallowed_tools"] = config.disallowed_tools
+
         if capabilities:
             fd2, caps_file_path = tempfile.mkstemp(
                 suffix='.json', prefix='parachute-caps-', dir=run_dir
@@ -634,12 +642,17 @@ class DockerSandbox:
         message: str,
         resume_session_id: str | None = None,
         container_slug: str | None = None,
+        fresh_session: bool = False,
     ) -> AsyncGenerator[dict, None]:
         """Run an agent session in a container, yielding streaming events.
 
         container_slug must be set by the caller. The orchestrator auto-creates
         a container record before calling this method, so it is always set for
         sandboxed sessions.
+
+        Args:
+            fresh_session: If True, tells entrypoint to skip --session-id
+                (used on retry after resume failure to avoid transcript conflict)
         """
         if not container_slug:
             raise ValueError(
@@ -651,7 +664,8 @@ class DockerSandbox:
         target = await self.ensure_container(container_slug, config)
 
         async for event in self._run_in_container(
-            target, config, message, resume_session_id, "sandbox"
+            target, config, message, resume_session_id, "sandbox",
+            fresh_session=fresh_session,
         ):
             yield event
 
@@ -793,6 +807,7 @@ class DockerSandbox:
         message: str,
         resume_session_id: str | None,
         label: str,
+        fresh_session: bool = False,
     ) -> AsyncGenerator[dict, None]:
         """Execute an agent session in a running container via docker exec.
 
@@ -805,6 +820,8 @@ class DockerSandbox:
             message: User message to send
             resume_session_id: Optional SDK session ID to resume
             label: Label for logging (e.g., "persistent sandbox", "default sandbox")
+            fresh_session: If True, tells entrypoint to skip --session-id
+                (used on retry after resume failure to avoid transcript conflict)
         """
         # Build exec args — env vars for non-sensitive config only
         exec_args = [
@@ -849,6 +866,12 @@ class DockerSandbox:
                 stdin_payload["use_preset"] = False
             if resume_session_id:
                 stdin_payload["resume_session_id"] = resume_session_id
+            if fresh_session:
+                stdin_payload["fresh_session"] = True
+            if config.tools is not None:
+                stdin_payload["tools"] = config.tools
+            if config.disallowed_tools is not None:
+                stdin_payload["disallowed_tools"] = config.disallowed_tools
 
             # Pass broker secret via stdin (not -e flag) to avoid
             # exposure in docker events / process table
