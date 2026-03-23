@@ -1109,6 +1109,14 @@ class Orchestrator:
                             f"Early finalized session: {captured_session_id[:8]}..."
                         )
 
+                        # Register the finalized session for abort/inject.
+                        # New sessions start with id="pending" and are NOT
+                        # registered in active_streams at creation time. Once
+                        # the SDK provides the real session ID, register it so
+                        # the abort, inject, and status APIs can find it.
+                        self.active_streams[captured_session_id] = interrupt
+                        self.active_stream_queues[captured_session_id] = message_queue
+
                         # (Permission handler update removed — DIRECT trust
                         # sessions bypass permissions entirely.)
 
@@ -1221,6 +1229,35 @@ class Orchestrator:
                 elif event_type == "event_timeout":
                     timeout_s = event.get("timeout_seconds", "?")
                     end_reason = f"event_timeout ({timeout_s}s)"
+
+                    # Salvage session: if the SDK never sent a session_id
+                    # (e.g. deep research timed out before first response),
+                    # create a DB record so the session isn't silently lost.
+                    # The user will see it in their history with the timeout
+                    # error, and can retry or continue the conversation.
+                    if is_new and not captured_session_id:
+                        salvage_id = str(uuid.uuid4())
+                        salvage_title = (
+                            generate_title_from_message(message)
+                            if message.strip()
+                            else "Timed out session"
+                        )
+                        _set_title_source(session, "default")
+                        session = await self.session_manager.finalize_session(
+                            session,
+                            salvage_id,
+                            captured_model,
+                            title=salvage_title,
+                            agent_type=agent_type,
+                            mode=mode,
+                        )
+                        captured_session_id = salvage_id
+                        session_finalized = True
+                        logger.warning(
+                            f"Salvaged timed-out session as {salvage_id[:8]}... "
+                            f"(SDK never provided session_id)"
+                        )
+
                     logger.warning(
                         f"SDK event timeout after {timeout_s}s: "
                         f"session={captured_session_id or session.id[:8]}"
@@ -1239,6 +1276,30 @@ class Orchestrator:
                     error_msg = event.get("error", "Unknown SDK error")
                     logger.error(f"SDK error event received: {error_msg}")
 
+                    # Salvage session on error (same as timeout salvage)
+                    if is_new and not captured_session_id:
+                        salvage_id = str(uuid.uuid4())
+                        salvage_title = (
+                            generate_title_from_message(message)
+                            if message.strip()
+                            else "Failed session"
+                        )
+                        _set_title_source(session, "default")
+                        session = await self.session_manager.finalize_session(
+                            session,
+                            salvage_id,
+                            captured_model,
+                            title=salvage_title,
+                            agent_type=agent_type,
+                            mode=mode,
+                        )
+                        captured_session_id = salvage_id
+                        session_finalized = True
+                        logger.warning(
+                            f"Salvaged errored session as {salvage_id[:8]}... "
+                            f"(SDK never provided session_id)"
+                        )
+
                     error_lower = error_msg.lower()
                     is_session_issue = (
                         "not found" in error_lower
@@ -1249,7 +1310,7 @@ class Orchestrator:
                     if is_session_issue:
                         yield SessionUnavailableEvent(
                             reason="sdk_error",
-                            session_id=session.id,
+                            session_id=captured_session_id or session.id,
                             has_markdown_history=False,
                             message_count=session.message_count,
                             message=f"Session could not be loaded: {error_msg}",
@@ -1284,6 +1345,9 @@ class Orchestrator:
                     mode=mode,
                 )
                 session_finalized = True
+                # Register late-finalized session for active_streams cleanup
+                self.active_streams[captured_session_id] = interrupt
+                self.active_stream_queues[captured_session_id] = message_queue
                 logger.info(f"Finalized session: {captured_session_id[:8]}...")
 
             # Update message count
@@ -1364,6 +1428,12 @@ class Orchestrator:
                 ).model_dump(by_alias=True)
 
         finally:
+            # Clean up active_streams for sessions registered after
+            # finalization (new sessions that started as "pending").
+            if captured_session_id:
+                self.active_streams.pop(captured_session_id, None)
+                self.active_stream_queues.pop(captured_session_id, None)
+
             session_label = captured_session_id or (session.id[:8] if session.id else "unknown")
             logger.info(
                 f"Stream ended: session={session_label}, reason={end_reason}, "
