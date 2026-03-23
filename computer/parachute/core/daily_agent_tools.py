@@ -1,14 +1,11 @@
 """
-Generic Daily Agent Tools.
+Day-scoped agent tools.
 
-These tools can be used by any daily agent:
-- read_journal: Read journal entries for a specific date from the graph
-- read_chat_log: Read AI chat logs for a specific date from vault files
-- read_recent_journals: Read recent journal entries from the graph
-- read_recent_sessions: Read recent AI chat sessions from vault files
-- write_card: Write the agent's output as a Card to the graph
+Tools that operate on a date's worth of data — notes, chat logs, etc.
+Each factory creates a single SDK tool bound to scope data via closure.
 
-Uses the claude-agent-sdk's in-process MCP server.
+Also provides create_daily_agent_tools() for backwards compatibility with
+the old monolithic tool creation pattern.
 """
 
 import logging
@@ -24,119 +21,88 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def create_daily_agent_tools(
-    vault_path: Path,
-    config: "DailyAgentConfig",
-    graph=None,
-) -> tuple[list[SdkMcpTool], dict[str, Any]]:
-    """
-    Create tools for a daily agent.
+# ── Individual tool factories ─────────────────────────────────────────────────
+# Each returns a single SdkMcpTool, bound to scope data via closure.
+# Signature: (graph, scope, agent_name, vault_path) -> SdkMcpTool
 
-    Args:
-        vault_path: Path to the vault (used only for chat-log vault reads)
-        config: Agent configuration
-        graph: GraphDB instance (required for read_journal and write_card)
 
-    Returns:
-        Tuple of (list of SdkMcpTool instances, server config dict)
-    """
-    chat_log_dir = vault_path / "Daily" / "chat-log"
+def _make_read_days_notes(graph: Any, scope: dict, agent_name: str, vault_path: Path) -> SdkMcpTool:
+    """Read all notes for a specific date from the graph."""
 
     @tool(
-        "read_journal",
-        "Read journal entries for a specific date. Returns the full content of that day's journal.",
-        {"date": str}
+        "read_days_notes",
+        "Read all notes for a specific date. Returns the full content of that day's entries.",
+        {"date": str},
     )
-    async def read_journal(args: dict[str, Any]) -> dict[str, Any]:
-        """Read journal entries for a date from the graph."""
+    async def read_days_notes(args: dict[str, Any]) -> dict[str, Any]:
         date_str = args.get("date", "").strip()
-
         if not date_str:
-            return {
-                "content": [{"type": "text", "text": "Error: date is required (YYYY-MM-DD format)"}],
-                "is_error": True
-            }
+            return {"content": [{"type": "text", "text": "Error: date is required (YYYY-MM-DD format)"}], "is_error": True}
 
         if graph is None:
-            return {
-                "content": [{"type": "text", "text": f"No journal found for {date_str} (graph unavailable)"}]
-            }
+            return {"content": [{"type": "text", "text": f"No notes found for {date_str} (graph unavailable)"}]}
 
         try:
             rows = await graph.execute_cypher(
                 "MATCH (e:Note) WHERE e.date = $date "
                 "RETURN e.content AS content, e.created_at AS created_at "
                 "ORDER BY e.created_at ASC",
-                {"date": date_str}
+                {"date": date_str},
             )
             if not rows:
-                return {
-                    "content": [{"type": "text", "text": f"No journal found for {date_str}"}]
-                }
-            entries_text = "\n\n---\n\n".join(
-                r["content"] for r in rows if r.get("content")
-            )
-            return {
-                "content": [{"type": "text", "text": f"# Journal for {date_str}\n\n{entries_text}"}]
-            }
+                return {"content": [{"type": "text", "text": f"No notes found for {date_str}"}]}
+            entries_text = "\n\n---\n\n".join(r["content"] for r in rows if r.get("content"))
+            return {"content": [{"type": "text", "text": f"# Notes for {date_str}\n\n{entries_text}"}]}
         except Exception as e:
-            logger.error(f"Error reading journal from graph: {e}")
-            return {
-                "content": [{"type": "text", "text": f"Error reading journal: {e}"}],
-                "is_error": True
-            }
+            logger.error(f"Error reading notes from graph: {e}")
+            return {"content": [{"type": "text", "text": f"Error reading notes: {e}"}], "is_error": True}
+
+    return read_days_notes
+
+
+def _make_read_days_chats(graph: Any, scope: dict, agent_name: str, vault_path: Path) -> SdkMcpTool:
+    """Read AI chat logs for a specific date from vault files."""
+    chat_log_dir = vault_path / "Daily" / "chat-log"
 
     @tool(
-        "read_chat_log",
+        "read_days_chats",
         "Read AI chat logs for a specific date. Shows what conversations happened with AI assistants that day.",
-        {"date": str}
+        {"date": str},
     )
-    async def read_chat_log(args: dict[str, Any]) -> dict[str, Any]:
-        """Read chat logs for a date from vault files."""
+    async def read_days_chats(args: dict[str, Any]) -> dict[str, Any]:
         date_str = args.get("date", "").strip()
-
         if not date_str:
-            return {
-                "content": [{"type": "text", "text": "Error: date is required (YYYY-MM-DD format)"}],
-                "is_error": True
-            }
+            return {"content": [{"type": "text", "text": "Error: date is required (YYYY-MM-DD format)"}], "is_error": True}
 
         chat_log_file = chat_log_dir / f"{date_str}.md"
-
         if not chat_log_file.exists():
-            return {
-                "content": [{"type": "text", "text": f"No chat log found for {date_str}"}]
-            }
+            return {"content": [{"type": "text", "text": f"No chat log found for {date_str}"}]}
 
         try:
             content = chat_log_file.read_text(encoding="utf-8")
-            # Truncate if very long
             if len(content) > 10000:
                 content = content[:10000] + "\n\n...(truncated - chat log was very long)"
-            return {
-                "content": [{"type": "text", "text": f"# Chat Log for {date_str}\n\n{content}"}]
-            }
+            return {"content": [{"type": "text", "text": f"# Chat Log for {date_str}\n\n{content}"}]}
         except Exception as e:
             logger.error(f"Error reading chat log: {e}")
-            return {
-                "content": [{"type": "text", "text": f"Error reading chat log: {e}"}],
-                "is_error": True
-            }
+            return {"content": [{"type": "text", "text": f"Error reading chat log: {e}"}], "is_error": True}
+
+    return read_days_chats
+
+
+def _make_read_recent_journals(graph: Any, scope: dict, agent_name: str, vault_path: Path) -> SdkMcpTool:
+    """Read journal entries from the past N days for context."""
 
     @tool(
         "read_recent_journals",
         "Read journal entries from the past N days for context. Useful for noticing patterns across days.",
-        {"days": int}
+        {"days": int},
     )
     async def read_recent_journals(args: dict[str, Any]) -> dict[str, Any]:
-        """Read recent journal entries from the graph."""
-        days_back = args.get("days", 7)
-        days_back = min(int(days_back), 30)  # Cap at 30 days
+        days_back = min(int(args.get("days", 7)), 30)
 
         if graph is None:
-            return {
-                "content": [{"type": "text", "text": "Graph unavailable — cannot read recent journals"}]
-            }
+            return {"content": [{"type": "text", "text": "Graph unavailable — cannot read recent journals"}]}
 
         today = datetime.now().astimezone().date()
         journals_found = []
@@ -144,12 +110,11 @@ def create_daily_agent_tools(
         for i in range(1, days_back + 1):
             date = today - timedelta(days=i)
             date_str = date.strftime("%Y-%m-%d")
-
             try:
                 rows = await graph.execute_cypher(
                     "MATCH (e:Note) WHERE e.date = $date "
                     "RETURN e.content AS content ORDER BY e.created_at ASC",
-                    {"date": date_str}
+                    {"date": date_str},
                 )
                 if rows:
                     content = "\n\n".join(r["content"] for r in rows if r.get("content"))
@@ -160,26 +125,24 @@ def create_daily_agent_tools(
                 continue
 
         if not journals_found:
-            return {
-                "content": [{"type": "text", "text": f"No journals found in the past {days_back} days"}]
-            }
+            return {"content": [{"type": "text", "text": f"No journals found in the past {days_back} days"}]}
 
-        return {
-            "content": [{
-                "type": "text",
-                "text": f"# Recent Journals ({len(journals_found)} days)\n\n" + "\n\n---\n\n".join(journals_found)
-            }]
-        }
+        return {"content": [{"type": "text", "text": f"# Recent Journals ({len(journals_found)} days)\n\n" + "\n\n---\n\n".join(journals_found)}]}
+
+    return read_recent_journals
+
+
+def _make_read_recent_sessions(graph: Any, scope: dict, agent_name: str, vault_path: Path) -> SdkMcpTool:
+    """Read recent AI chat sessions for context from vault files."""
+    chat_log_dir = vault_path / "Daily" / "chat-log"
 
     @tool(
         "read_recent_sessions",
         "Read recent AI chat sessions for context. Returns summaries of recent conversations.",
-        {"days": int}
+        {"days": int},
     )
     async def read_recent_sessions(args: dict[str, Any]) -> dict[str, Any]:
-        """Read recent chat sessions from vault files."""
-        days_back = args.get("days", 7)
-        days_back = min(int(days_back), 30)
+        days_back = min(int(args.get("days", 7)), 30)
 
         today = datetime.now().astimezone().date()
         logs_found = []
@@ -188,7 +151,6 @@ def create_daily_agent_tools(
             date = today - timedelta(days=i)
             date_str = date.strftime("%Y-%m-%d")
             log_file = chat_log_dir / f"{date_str}.md"
-
             if log_file.exists():
                 try:
                     content = log_file.read_text(encoding="utf-8")
@@ -199,50 +161,38 @@ def create_daily_agent_tools(
                     continue
 
         if not logs_found:
-            return {
-                "content": [{"type": "text", "text": f"No chat logs found in the past {days_back} days"}]
-            }
+            return {"content": [{"type": "text", "text": f"No chat logs found in the past {days_back} days"}]}
 
-        return {
-            "content": [{
-                "type": "text",
-                "text": f"# Recent Chat Sessions ({len(logs_found)} days)\n\n" + "\n\n---\n\n".join(logs_found)
-            }]
-        }
+        return {"content": [{"type": "text", "text": f"# Recent Chat Sessions ({len(logs_found)} days)\n\n" + "\n\n---\n\n".join(logs_found)}]}
+
+    return read_recent_sessions
+
+
+def _make_write_card(graph: Any, scope: dict, agent_name: str, vault_path: Path) -> SdkMcpTool:
+    """Write the agent's output as a Card to the graph."""
 
     @tool(
         "write_card",
         "Write the agent's output. Saves as a Card in the graph.",
-        {"date": str, "content": str}
+        {"date": str, "content": str},
     )
     async def write_card(args: dict[str, Any]) -> dict[str, Any]:
-        """Write the agent's output as a Card to the graph."""
         date_str = args.get("date", "").strip()
         content = args.get("content", "").strip()
 
         if not date_str:
-            return {
-                "content": [{"type": "text", "text": "Error: date is required"}],
-                "is_error": True
-            }
-
+            return {"content": [{"type": "text", "text": "Error: date is required"}], "is_error": True}
         if not content:
-            return {
-                "content": [{"type": "text", "text": "Error: content is required"}],
-                "is_error": True
-            }
-
+            return {"content": [{"type": "text", "text": "Error: content is required"}], "is_error": True}
         if graph is None:
-            return {
-                "content": [{"type": "text", "text": "Error: graph unavailable — cannot write output"}],
-                "is_error": True
-            }
+            return {"content": [{"type": "text", "text": "Error: graph unavailable — cannot write output"}], "is_error": True}
 
-        card_id = f"{config.name}:{date_str}"
+        # Use display_name from scope if available (set by runner from config)
+        display_name = scope.get("display_name", agent_name.replace("-", " ").title())
+        card_id = f"{agent_name}:{date_str}"
         generated_at = datetime.now(timezone.utc).isoformat()
 
         try:
-            # Upsert Card — MERGE is idempotent (re-run for same date updates the card)
             await graph.execute_cypher(
                 "MERGE (c:Card {card_id: $card_id}) "
                 "SET c.agent_name = $agent_name, "
@@ -253,89 +203,62 @@ def create_daily_agent_tools(
                 "    c.date = $date",
                 {
                     "card_id": card_id,
-                    "agent_name": config.name,
-                    "display_name": config.display_name,
+                    "agent_name": agent_name,
+                    "display_name": display_name,
                     "content": content,
                     "generated_at": generated_at,
                     "date": date_str,
                 },
             )
-
-            logger.info(f"Agent '{config.name}' wrote Card to graph for {date_str}")
-            return {
-                "content": [{"type": "text", "text": f"Successfully wrote output to graph (card_id: {card_id})"}]
-            }
+            logger.info(f"Agent '{agent_name}' wrote Card to graph for {date_str}")
+            return {"content": [{"type": "text", "text": f"Successfully wrote output to graph (card_id: {card_id})"}]}
         except Exception as e:
             logger.error(f"Error writing Card to graph: {e}")
-            return {
-                "content": [{"type": "text", "text": f"Error writing output: {e}"}],
-                "is_error": True
-            }
+            return {"content": [{"type": "text", "text": f"Error writing output: {e}"}], "is_error": True}
 
-    @tool(
-        "update_entry",
-        "Update a journal entry's content. Use for cleaning up or rewriting an entry.",
-        {"entry_id": str, "content": str}
+    return write_card
+
+
+# ── Register into shared registry ─────────────────────────────────────────────
+
+from parachute.core.agent_tools import TOOL_FACTORIES  # noqa: E402
+
+TOOL_FACTORIES["read_days_notes"] = (_make_read_days_notes, frozenset({"date"}))
+TOOL_FACTORIES["read_days_chats"] = (_make_read_days_chats, frozenset({"date"}))
+TOOL_FACTORIES["read_recent_journals"] = (_make_read_recent_journals, frozenset())
+TOOL_FACTORIES["read_recent_sessions"] = (_make_read_recent_sessions, frozenset())
+TOOL_FACTORIES["write_card"] = (_make_write_card, frozenset())
+
+# Legacy aliases — old tool names still work
+TOOL_FACTORIES["read_journal"] = TOOL_FACTORIES["read_days_notes"]
+TOOL_FACTORIES["read_chat_log"] = TOOL_FACTORIES["read_days_chats"]
+
+
+# ── Backwards-compatible monolithic creator ───────────────────────────────────
+
+
+def create_daily_agent_tools(
+    vault_path: Path,
+    config: "DailyAgentConfig",
+    graph=None,
+) -> tuple[list[SdkMcpTool], dict[str, Any]]:
+    """
+    Create tools for a daily agent (backwards-compatible).
+
+    Delegates to bind_tools() with a day scope built from config.
+    Kept for callers that haven't migrated to the unified runner yet.
+    """
+    from parachute.core.agent_tools import bind_tools
+
+    scope = {
+        "date": "",  # Placeholder — actual date comes from the prompt, not tool binding
+        "display_name": config.display_name,
+    }
+
+    return bind_tools(
+        tool_names=config.tools,
+        scope=scope,
+        graph=graph,
+        agent_name=config.name,
+        vault_path=vault_path,
     )
-    async def update_entry(args: dict[str, Any]) -> dict[str, Any]:
-        """Update an existing Note's content in the graph."""
-        entry_id = args.get("entry_id", "").strip()
-        content = args.get("content", "").strip()
-
-        if not entry_id:
-            return {
-                "content": [{"type": "text", "text": "Error: entry_id is required"}],
-                "is_error": True
-            }
-
-        if not content:
-            return {
-                "content": [{"type": "text", "text": "Error: content is required"}],
-                "is_error": True
-            }
-
-        if graph is None:
-            return {
-                "content": [{"type": "text", "text": "Error: graph unavailable — cannot update entry"}],
-                "is_error": True
-            }
-
-        try:
-            # Check the entry exists
-            rows = await graph.execute_cypher(
-                "MATCH (e:Note {entry_id: $entry_id}) RETURN e.entry_id AS eid",
-                {"entry_id": entry_id},
-            )
-            if not rows:
-                return {
-                    "content": [{"type": "text", "text": f"Error: no entry found with id {entry_id}"}],
-                    "is_error": True
-                }
-
-            # Update the content
-            await graph.execute_cypher(
-                "MATCH (e:Note {entry_id: $entry_id}) SET e.content = $content",
-                {"entry_id": entry_id, "content": content},
-            )
-
-            logger.info(f"Agent '{config.name}' updated entry {entry_id}")
-            return {
-                "content": [{"type": "text", "text": f"Successfully updated entry {entry_id}"}]
-            }
-        except Exception as e:
-            logger.error(f"Error updating entry: {e}")
-            return {
-                "content": [{"type": "text", "text": f"Error updating entry: {e}"}],
-                "is_error": True
-            }
-
-    tools = [read_journal, read_chat_log, read_recent_journals, read_recent_sessions, write_card, update_entry]
-
-    # Create the MCP server config
-    server_config = create_sdk_mcp_server(
-        name=f"daily_{config.name}",
-        version="1.0.0",
-        tools=tools
-    )
-
-    return tools, server_config

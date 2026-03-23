@@ -55,11 +55,11 @@ class AgentTemplateDict(TypedDict, total=False):
     template_version: str
 
 
-POST_PROCESS_SYSTEM_PROMPT = (
+PROCESS_NOTE_SYSTEM_PROMPT = (
     "You are a post-processing assistant for journal entries.\n\n"
     "## Your Job\n\n"
-    "Read the entry with `read_entry`. If it came from a voice recording, "
-    "clean up the transcript and save it with `update_entry_content`. "
+    "Read the entry with `read_this_note`. If it came from a voice recording, "
+    "clean up the transcript and save it with `update_this_note`. "
     "If the entry was typed (not voice), do nothing — just return.\n\n"
     "## Transcription Cleanup Rules\n\n"
     "- Remove filler words: \"um\", \"uh\", \"like\", \"you know\", \"I mean\", \"so\", \"right\"\n"
@@ -74,11 +74,14 @@ POST_PROCESS_SYSTEM_PROMPT = (
     "- Output ONLY the cleaned text — no preamble, no explanation"
 )
 
+# Backwards compat alias
+POST_PROCESS_SYSTEM_PROMPT = PROCESS_NOTE_SYSTEM_PROMPT
+
 
 AGENT_TEMPLATES: list[AgentTemplateDict] = [
     {
-        "name": "daily-reflection",
-        "template_version": "2026-03-17",
+        "name": "process-day",
+        "template_version": "2026-03-23",
         "display_name": "Daily Reflection",
         "description": "Reviews your journal entries and offers a thoughtful daily reflection",
         "system_prompt": (
@@ -98,28 +101,28 @@ AGENT_TEMPLATES: list[AgentTemplateDict] = [
             "- **One insight, well-developed** is better than five shallow observations.\n"
             "- Write in second person (\"you\") — this is for them.\n\n"
             "## Process\n\n"
-            "1. Read yesterday's journal entries with `read_journal`\n"
+            "1. Read yesterday's journal entries with `read_days_notes`\n"
             "2. Read recent journals with `read_recent_journals` for broader context\n"
-            "3. Optionally read chat logs with`read_chat_log` for additional context\n"
-            "4. Write your reflection using `write_output`\n\n"
+            "3. Optionally read chat logs with `read_days_chats` for additional context\n"
+            "4. Write your reflection using `write_card`\n\n"
             "## User Context\n\n"
             "{user_context}"
         ),
-        "tools": ["read_journal", "read_chat_log", "read_recent_journals"],
+        "tools": ["read_days_notes", "read_days_chats", "read_recent_journals"],
         "schedule_time": "4:00",
         "trust_level": "sandboxed",
         "memory_mode": "persistent",
     },
     {
-        "name": "post-process",
-        "template_version": "2026-03-17",
-        "display_name": "Post-Process",
+        "name": "process-note",
+        "template_version": "2026-03-23",
+        "display_name": "Process Note",
         "description": (
             "Runs after voice transcription completes. Cleans up filler "
             "words, fixes grammar, adds punctuation."
         ),
-        "system_prompt": POST_PROCESS_SYSTEM_PROMPT,
-        "tools": ["read_entry", "update_entry_content"],
+        "system_prompt": PROCESS_NOTE_SYSTEM_PROMPT,
+        "tools": ["read_this_note", "update_this_note"],
         "trigger_event": "note.transcription_complete",
         "trust_level": "direct",
         "memory_mode": "fresh",
@@ -305,6 +308,7 @@ class BrainChatStore:
                 "duration_seconds": "DOUBLE",
                 "ran_at": "STRING",
                 "session_id": "STRING",
+                "scope": "STRING",
             },
             primary_key="run_id",
         )
@@ -408,6 +412,7 @@ class BrainChatStore:
             "started_at": ("STRING", "''"),
             "completed_at": ("STRING", "''"),
             "duration_seconds": ("DOUBLE", "0.0"),
+            "scope": ("STRING", "'{}'"),
         }
         run_missing = {c: v for c, v in run_new.items() if c not in run_cols}
         if run_missing:
@@ -546,6 +551,46 @@ class BrainChatStore:
         """
         now = _now()
 
+        # Rename old agent names → new names (one-time migration)
+        renames = {
+            "daily-reflection": "process-day",
+            "post-process": "process-note",
+        }
+        for old_name, new_name in renames.items():
+            try:
+                rows = await self.graph.execute_cypher(
+                    "MATCH (a:Agent {name: $name}) "
+                    "RETURN a.user_modified AS um",
+                    {"name": old_name},
+                )
+                if rows:
+                    um = (rows[0].get("um") or "").strip()
+                    if um == "true":
+                        logger.info(
+                            f"Agent '{old_name}' user-modified — keeping as-is. "
+                            f"New template '{new_name}' will be seeded separately."
+                        )
+                    else:
+                        # Not customized — rename the node
+                        async with self.graph.write_lock:
+                            await self.graph.execute_cypher(
+                                "MATCH (a:Agent {name: $old}) SET a.name = $new",
+                                {"old": old_name, "new": new_name},
+                            )
+                        logger.info(f"Renamed agent '{old_name}' → '{new_name}'")
+                        # Also update any AgentRun references
+                        try:
+                            async with self.graph.write_lock:
+                                await self.graph.execute_cypher(
+                                    "MATCH (r:AgentRun {agent_name: $old}) "
+                                    "SET r.agent_name = $new",
+                                    {"old": old_name, "new": new_name},
+                                )
+                        except Exception:
+                            pass  # Non-critical
+            except Exception as e:
+                logger.warning(f"Failed to check rename for '{old_name}': {e}")
+
         for tpl in AGENT_TEMPLATES:
             name = tpl["name"]
             tpl_version = tpl.get("template_version", "")
@@ -652,6 +697,8 @@ class BrainChatStore:
                     logger.warning(f"Failed to update Agent '{name}': {e}")
 
         # Clean up renamed/retired agents
+        # Note: daily-reflection and post-process are handled by rename logic above,
+        # so only delete them if the rename already happened (node doesn't exist)
         for old_name in ["transcription-cleanup"]:
             try:
                 rows = await self.graph.execute_cypher(
