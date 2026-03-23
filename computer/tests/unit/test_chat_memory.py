@@ -528,11 +528,13 @@ class TestWriteNote:
         assert result["note_type"] == "context"
         assert result["title"] == "Profile"
 
-        # Should use MERGE with the deterministic entry_id
-        call_args = graph.execute_cypher.call_args
-        cypher = call_args[0][0]
+        # Should use MERGE with the deterministic entry_id (first call)
+        # Second call conditionally sets created_at on new nodes
+        assert graph.execute_cypher.call_count == 2
+        first_call = graph.execute_cypher.call_args_list[0]
+        cypher = first_call[0][0]
         assert "MERGE" in cypher
-        params = call_args[0][1]
+        params = first_call[0][1]
         assert params["entry_id"] == "context:profile"
 
     @pytest.mark.asyncio

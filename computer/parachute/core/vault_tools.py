@@ -625,6 +625,7 @@ async def write_note(
         # Context notes: MERGE on note_type + title (one per title)
         # Use a deterministic entry_id so MERGE is idempotent
         entry_id = f"context:{title.lower().replace(' ', '-')}"
+        # Upsert content fields + updated_at
         await graph.execute_cypher(
             "MERGE (n:Note {entry_id: $entry_id}) "
             "SET n.note_type = $note_type, "
@@ -632,8 +633,7 @@ async def write_note(
             "    n.content = $content, "
             "    n.snippet = $snippet, "
             "    n.status = 'active', "
-            "    n.created_by = 'agent', "
-            "    n.created_at = $now",
+            "    n.updated_at = $now",
             {
                 "entry_id": entry_id,
                 "note_type": note_type,
@@ -642,6 +642,15 @@ async def write_note(
                 "snippet": content[:200],
                 "now": now,
             },
+        )
+        # Set created_at/created_by only if not already set (new node).
+        # Separate query due to Kuzu limitation: COALESCE + other SET
+        # fields in the same statement fails on existing nodes (#311).
+        await graph.execute_cypher(
+            "MATCH (n:Note {entry_id: $entry_id}) "
+            "WHERE n.created_at = '' OR n.created_at IS NULL "
+            "SET n.created_at = $now, n.created_by = 'agent'",
+            {"entry_id": entry_id, "now": now},
         )
         return {
             "entry_id": entry_id,
@@ -665,6 +674,7 @@ async def write_note(
             "    n.status = 'active', "
             "    n.created_by = 'agent', "
             "    n.created_at = $now, "
+            "    n.updated_at = $now, "
             "    n.entry_type = 'text'",
             {
                 "entry_id": entry_id,

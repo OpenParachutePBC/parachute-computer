@@ -171,17 +171,15 @@ class BrainService:
         primary_key: str = "name",
     ) -> None:
         """
-        Create a node table if it doesn't exist. Idempotent.
+        Create a node table if it doesn't exist, and add any missing columns.
 
         columns: {column_name: kuzu_type} e.g. {"title": "STRING", "count": "INT64"}
         The primary_key column must be included in columns.
 
-        Example:
-            await graph.ensure_node_table("Chat_Session", {
-                "name": "STRING",
-                "title": "STRING",
-                "created_at": "STRING",
-            }, primary_key="name")
+        If the table already exists, any columns in the definition that are
+        missing from the table will be added via ALTER TABLE. This prevents
+        schema drift when new columns are added to the code but the DB
+        already has the table from a previous version.
         """
         self._ensure_connected()
         col_defs = ", ".join(f"{col} {typ}" for col, typ in columns.items())
@@ -191,6 +189,28 @@ class BrainService:
         )
         async with self._write_lock:
             await self._conn.execute(ddl)
+
+            # Add any missing columns to an existing table
+            try:
+                result = await self._conn.execute(
+                    f"CALL table_info('{name}') RETURN *"
+                )
+                col_names = result.get_column_names()
+                existing_cols: set[str] = set()
+                while result.has_next():
+                    row = result.get_next()
+                    row_dict = dict(zip(col_names, row))
+                    existing_cols.add(row_dict["name"])
+                for col, typ in columns.items():
+                    if col not in existing_cols:
+                        default = '""' if typ == "STRING" else "NULL"
+                        await self._conn.execute(
+                            f"ALTER TABLE {name} ADD {col} {typ} DEFAULT {default}"
+                        )
+                        logger.info(f"BrainService: added column {col} ({typ}) to {name}")
+            except Exception as e:
+                logger.warning(f"BrainService: could not check/add columns for {name}: {e}")
+
         logger.debug(f"BrainService: ensured node table {name!r}")
 
     async def ensure_rel_table(
