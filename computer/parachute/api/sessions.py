@@ -697,46 +697,10 @@ async def deny_permission(
 @router.post("/chat/{session_id}/bridge/trigger")
 async def trigger_bridge(request: Request, session_id: str) -> dict[str, Any]:
     """
-    Manually trigger a bridge agent observe run for a session.
-
-    Returns immediately with {"status": "queued"} — the bridge runs
-    fire-and-forget in the background. Useful for dev/testing and for
-    users who want to force a context update.
+    Deprecated — bridge agent removed. Message nodes are now written
+    directly by the orchestrator. Kept for API backward compat.
     """
-    import asyncio
-
-    db = request.app.state.session_store
-    if not db:
-        raise HTTPException(status_code=503, detail="Database not ready")
-
-    session = await db.get_session(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
-
-    orchestrator = get_orchestrator(request)
-    settings = request.app.state.settings
-
-    from parachute.core.bridge_agent import observe as bridge_observe
-
-    session_metadata = session.metadata or {}
-    exchange_number = max(1, (session.message_count or 2) // 2)
-
-    asyncio.create_task(
-        bridge_observe(
-            session_id=session_id,
-            message="(manual trigger — no specific exchange)",
-            result_text="",
-            tool_calls=[],
-            exchange_number=exchange_number,
-            session_title=session.title,
-            title_source=session_metadata.get("title_source"),
-            session_store=db,
-            vault_path=Path.home(),
-            claude_token=settings.claude_code_oauth_token if settings else None,
-        )
-    )
-
-    return {"status": "queued", "sessionId": session_id}
+    return {"status": "deprecated", "sessionId": session_id, "message": "Bridge agent removed — messages are written automatically"}
 
 
 @router.get("/chat/{session_id}/bridge/messages")

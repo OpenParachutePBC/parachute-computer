@@ -7,7 +7,10 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from parachute.core.bridge_agent import BRIDGE_ENRICH_PROMPT, BRIDGE_OBSERVE_PROMPT
+# Bridge prompts removed — observe/enrich replaced by system Message writes.
+# Constants kept for API backward compat (Flutter settings screen may display them).
+BRIDGE_ENRICH_PROMPT = "(Bridge enrich removed — pre-turn context injection is paused)"
+BRIDGE_OBSERVE_PROMPT = "(Bridge observe removed — Message nodes are written directly by the system)"
 
 router = APIRouter()
 
