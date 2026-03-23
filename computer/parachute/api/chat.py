@@ -60,6 +60,7 @@ async def _with_heartbeat(stream, request: Request, interval: float = 15.0):
             else:
                 # Timeout — the __anext__ task is still pending (not cancelled)
                 if await request.is_disconnected():
+                    logger.info("Client disconnected (detected at heartbeat)")
                     next_task.cancel()
                     return
                 yield None  # heartbeat sentinel
@@ -141,10 +142,6 @@ async def event_generator(request: Request, chat_request: ChatRequest):
                 yield ": heartbeat\n\n"
             else:
                 event_count += 1
-                # Check if client disconnected
-                if await request.is_disconnected():
-                    end_reason = "client_disconnected"
-                    return
                 yield f"data: {json.dumps(event)}\n\n"
 
         end_reason = "normal"

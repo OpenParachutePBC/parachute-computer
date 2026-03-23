@@ -302,6 +302,10 @@ async def query_streaming(
                 async for event in sdk_query(prompt=effective_prompt, options=options):
                     event_dict = _event_to_dict(event)
                     event_count += 1
+                    logger.debug(
+                        f"SDK event #{event_count}: type={event_dict.get('type')}, "
+                        f"keys={sorted(event_dict.keys())}"
+                    )
                     event_queue.put_nowait(event_dict)
                     if event_dict.get("type") == "result":
                         done_event.set()
