@@ -207,7 +207,13 @@ async def get_exchange_compat(
     exchange_id: str = Query(..., alias="id", description="Message/Exchange ID"),
 ):
     """Backward-compatible alias for /messages."""
-    return await get_message(id=exchange_id)
+    from parachute.core.vault_tools import get_message as _get_message
+
+    graph = _get_graph()
+    result = await _get_message(graph, message_id=exchange_id)
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
 
 
 @router.get("/containers")

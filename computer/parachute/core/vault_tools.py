@@ -101,8 +101,8 @@ async def search_memory(
     Searches Chat title/summary, Message content/description, and Note content.
     Results are merged and sorted by timestamp.
 
-    Sessions found via message match include matched_message_id for
-    drill-down with get_message.
+    Sessions found via message match include matched_exchange_id for
+    drill-down with get_exchange (backward-compatible key name).
     """
     query = query.strip()
     if not query:

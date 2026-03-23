@@ -1354,8 +1354,11 @@ class Orchestrator:
                 self.active_stream_queues[captured_session_id] = message_queue
                 logger.info(f"Finalized session: {captured_session_id[:8]}...")
 
-            # Update message count
+            # Capture message count before increment (used for Message sequence)
             final_session_id = captured_session_id or session.id
+            pre_turn_count = session.message_count
+
+            # Update message count
             if final_session_id and final_session_id != "pending":
                 await self.session_manager.increment_message_count(
                     final_session_id, 2 + inject_count
@@ -1374,8 +1377,6 @@ class Orchestrator:
                 msg_status = "complete" if end_reason == "normal" else (
                     "interrupted" if end_reason in ("interrupted", "cancelled") else "error"
                 )
-                # Use message_count before this turn's increment
-                pre_turn_count = session.message_count
 
                 async def _write_messages():
                     try:
@@ -1403,14 +1404,7 @@ class Orchestrator:
                             f"write_turn_messages error: {e}"
                         )
 
-                _msg_task = asyncio.create_task(_write_messages())
-                _msg_task.add_done_callback(
-                    lambda t: logger.warning(
-                        f"write_turn_messages task error: {t.exception()}"
-                    )
-                    if not t.cancelled() and t.exception()
-                    else None
-                )
+                asyncio.create_task(_write_messages())
 
             duration_ms = int((time.time() - start_time) * 1000)
             yield DoneEvent(
@@ -1886,14 +1880,7 @@ class Orchestrator:
                             f"write_turn_messages error (sandbox): {e}"
                         )
 
-                _msg_task = asyncio.create_task(_write_sandbox_messages())
-                _msg_task.add_done_callback(
-                    lambda t: logger.warning(
-                        f"write_turn_messages task error (sandbox): {t.exception()}"
-                    )
-                    if not t.cancelled() and t.exception()
-                    else None
-                )
+                asyncio.create_task(_write_sandbox_messages())
 
     async def abort_stream(self, session_id: str) -> bool:
         """Abort an active streaming session."""

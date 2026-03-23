@@ -515,31 +515,16 @@ class BrainChatStore:
             )
 
             # 4. Create HAS_MESSAGE relationships
-            if session_meta:
-                await self.graph.execute_cypher(
-                    "MATCH (s:Chat {session_id: $sid}), "
-                    "(m:Message {message_id: $mid}) "
-                    "MERGE (s)-[:HAS_MESSAGE]->(m)",
-                    {"sid": session_id, "mid": human_id},
-                )
-                await self.graph.execute_cypher(
-                    "MATCH (s:Chat {session_id: $sid}), "
-                    "(m:Message {message_id: $mid}) "
-                    "MERGE (s)-[:HAS_MESSAGE]->(m)",
-                    {"sid": session_id, "mid": machine_id},
-                )
-            else:
-                # Chat node might have been created on a prior turn
-                for mid in (human_id, machine_id):
-                    try:
-                        await self.graph.execute_cypher(
-                            "MATCH (s:Chat {session_id: $sid}), "
-                            "(m:Message {message_id: $mid}) "
-                            "MERGE (s)-[:HAS_MESSAGE]->(m)",
-                            {"sid": session_id, "mid": mid},
-                        )
-                    except Exception:
-                        pass  # Chat node may not exist yet for resumed sessions
+            for mid in (human_id, machine_id):
+                try:
+                    await self.graph.execute_cypher(
+                        "MATCH (s:Chat {session_id: $sid}), "
+                        "(m:Message {message_id: $mid}) "
+                        "MERGE (s)-[:HAS_MESSAGE]->(m)",
+                        {"sid": session_id, "mid": mid},
+                    )
+                except Exception as e:
+                    logger.debug(f"HAS_MESSAGE edge skipped for {mid}: {e}")
 
         logger.debug(
             f"Wrote messages {human_id}, {machine_id} "

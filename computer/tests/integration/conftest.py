@@ -32,31 +32,11 @@ async def brain_graph(tmp_path: Path) -> AsyncGenerator[BrainService, None]:
 async def brain_store(brain_graph: BrainService) -> BrainChatStore:
     """Create a BrainChatStore with full schema initialized.
 
-    Includes Exchange table and HAS_EXCHANGE relationship which are
-    normally created by the chat module on_load.
+    Includes Message table and HAS_MESSAGE relationship for chat
+    message storage.
     """
     store = BrainChatStore(brain_graph)
     await store.ensure_schema()
-
-    # Exchange table (normally created by chat module)
-    await brain_graph.ensure_node_table(
-        "Exchange",
-        {
-            "exchange_id": "STRING",
-            "session_id": "STRING",
-            "exchange_number": "STRING",
-            "description": "STRING",
-            "user_message": "STRING",
-            "ai_response": "STRING",
-            "context": "STRING",
-            "session_title": "STRING",
-            "tools_used": "STRING",
-            "created_at": "STRING",
-        },
-        primary_key="exchange_id",
-    )
-    await brain_graph.ensure_rel_table("HAS_EXCHANGE", "Chat", "Exchange")
-
     return store
 
 
