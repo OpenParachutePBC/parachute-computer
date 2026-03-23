@@ -190,7 +190,7 @@ def _format_context_block(query_results: list[dict[str, Any]]) -> str:
 
 # ── Observe helpers ───────────────────────────────────────────────────────────
 
-def _summarize_tool_calls(tool_calls: list[dict]) -> str:
+def summarize_tool_calls(tool_calls: list[dict]) -> str:
     """Build a readable summary of tool calls made during the exchange."""
     if not tool_calls:
         return "None"
@@ -316,7 +316,7 @@ async def _store_exchange(
         ai_snippet = result_text[:_DESC_AI_LIMIT]
         description = f"User: {user_snippet} | AI: {ai_snippet}"
 
-    tools_summary = _summarize_tool_calls(tool_calls)
+    tools_summary = summarize_tool_calls(tool_calls)
 
     async with graph.write_lock:
         # 1. Lazy-upsert Chat node
@@ -439,7 +439,7 @@ async def observe(
         )
 
         # Build the full exchange context
-        tools_str = _summarize_tool_calls(tool_calls)
+        tools_str = summarize_tool_calls(tool_calls)
         prompt = (
             f"Observe exchange #{exchange_number} and return structured metadata.\n\n"
             f"{title_note}\n"
