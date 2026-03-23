@@ -139,6 +139,99 @@ class TestMcpBridge:
         assert callable(asgi_app)
 
 
+class TestToolFiltering:
+    """Tests for scoped tool visibility based on allowed_tools."""
+
+    @pytest.mark.asyncio
+    async def test_list_tools_no_context_returns_all(self):
+        """With no sandbox context, all tools are returned."""
+        from parachute.api.mcp_tools import TOOLS, register_tools
+        from parachute.api.mcp_bridge import _current_sandbox_ctx
+        from mcp.server import Server
+        from mcp.types import ListToolsRequest
+
+        server = Server("test")
+        register_tools(server)
+
+        handler = server.request_handlers[ListToolsRequest]
+        reset = _current_sandbox_ctx.set(None)
+        try:
+            result = await handler(ListToolsRequest(method="tools/list"))
+            assert len(result.root.tools) == len(TOOLS)
+        finally:
+            _current_sandbox_ctx.reset(reset)
+
+    @pytest.mark.asyncio
+    async def test_list_tools_filtered_by_allowed_tools(self):
+        """With allowed_tools set, only those tools are returned."""
+        from parachute.api.mcp_tools import register_tools
+        from parachute.api.mcp_bridge import _current_sandbox_ctx
+        from mcp.server import Server
+        from mcp.types import ListToolsRequest
+
+        server = Server("test")
+        register_tools(server)
+        handler = server.request_handlers[ListToolsRequest]
+
+        ctx = SandboxTokenContext(
+            session_id="test",
+            trust_level="sandboxed",
+            allowed_tools=frozenset({"search_memory", "list_notes"}),
+        )
+        reset = _current_sandbox_ctx.set(ctx)
+        try:
+            result = await handler(ListToolsRequest(method="tools/list"))
+            tool_names = {t.name for t in result.root.tools}
+            assert tool_names == {"search_memory", "list_notes"}
+        finally:
+            _current_sandbox_ctx.reset(reset)
+
+    def test_chat_tools_profile_exact_membership(self):
+        """CHAT_TOOLS contains exactly the expected read-only vault tools."""
+        from parachute.api.mcp_tools import CHAT_TOOLS
+        assert CHAT_TOOLS == {
+            "search_memory", "search_chats", "list_chats",
+            "get_chat", "get_exchange", "list_notes",
+        }
+
+    def test_daily_tools_profile_exact_membership(self):
+        """DAILY_TOOLS contains exactly the expected daily agent tools."""
+        from parachute.api.mcp_tools import DAILY_TOOLS
+        assert DAILY_TOOLS == {
+            "read_brain_entity", "write_card",
+            "search_memory", "list_notes", "get_exchange",
+        }
+
+    @pytest.mark.asyncio
+    async def test_call_tool_rejected_when_not_in_allowed(self):
+        """call_tool rejects tools not in allowed_tools (defense in depth)."""
+        from parachute.api.mcp_tools import register_tools
+        from parachute.api.mcp_bridge import _current_sandbox_ctx
+        from mcp.server import Server
+        from mcp.types import CallToolRequest
+
+        server = Server("test")
+        register_tools(server)
+        handler = server.request_handlers[CallToolRequest]
+
+        ctx = SandboxTokenContext(
+            session_id="test",
+            trust_level="sandboxed",
+            allowed_tools=frozenset({"search_memory"}),
+        )
+        reset = _current_sandbox_ctx.set(ctx)
+        try:
+            result = await handler(CallToolRequest(
+                method="tools/call",
+                params={"name": "write_card", "arguments": {"content": "hi", "date": "2026-01-01"}},
+            ))
+            data = json.loads(result.root.content[0].text)
+            assert "error" in data
+            assert "not available" in data["error"]
+        finally:
+            _current_sandbox_ctx.reset(reset)
+
+
 class TestWritePermissionGating:
     """Tests for write tool permission enforcement."""
 

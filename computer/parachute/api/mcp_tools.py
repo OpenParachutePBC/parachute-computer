@@ -38,6 +38,22 @@ from parachute.core.vault_tools import (
 logger = logging.getLogger(__name__)
 
 
+# ── Default tool profiles per session type ────────────────────────────────────
+# None = all tools visible (backwards-compatible).
+# Agents can override via config later (#319).
+
+CHAT_TOOLS = frozenset({
+    "search_memory", "search_chats", "list_chats",
+    "get_chat", "get_exchange", "list_notes",
+})
+
+DAILY_TOOLS = frozenset({
+    "read_brain_entity",
+    "write_card",
+    "search_memory", "list_notes", "get_exchange",
+})
+
+
 def _get_graph():
     """Get BrainService from the service registry."""
     try:
@@ -87,6 +103,11 @@ TOOLS = [
         },
     ),
 ] + VAULT_TOOLS  # Shared vault tools (search_memory, search_chats, list_chats, list_notes, get_chat, get_exchange)
+
+# Validate profiles reference real tool names (catches renames at import time)
+_ALL_TOOL_NAMES = frozenset(t.name for t in TOOLS)
+assert CHAT_TOOLS <= _ALL_TOOL_NAMES, f"CHAT_TOOLS has unknown tools: {CHAT_TOOLS - _ALL_TOOL_NAMES}"
+assert DAILY_TOOLS <= _ALL_TOOL_NAMES, f"DAILY_TOOLS has unknown tools: {DAILY_TOOLS - _ALL_TOOL_NAMES}"
 
 
 # ── Tool Handlers ─────────────────────────────────────────────────────────────
@@ -262,10 +283,25 @@ def register_tools(server: Server) -> None:
 
     @server.list_tools()
     async def list_tools() -> list[Tool]:
-        return TOOLS
+        from parachute.api.mcp_bridge import get_sandbox_context
+
+        ctx = get_sandbox_context()
+        if ctx is None or ctx.allowed_tools is None:
+            return TOOLS  # No filtering (direct sessions, or no context)
+        return [t for t in TOOLS if t.name in ctx.allowed_tools]
 
     @server.call_tool()
     async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
+        # Defense in depth: reject calls to tools not in allowed set
+        from parachute.api.mcp_bridge import get_sandbox_context
+
+        ctx = get_sandbox_context()
+        if ctx and ctx.allowed_tools is not None and name not in ctx.allowed_tools:
+            return [TextContent(
+                type="text",
+                text=json.dumps({"error": f"Tool not available: {name}"}),
+            )]
+
         if name in _VAULT_TOOL_NAMES:
             try:
                 result = await _handle_vault_tool(name, arguments)
