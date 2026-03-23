@@ -77,19 +77,19 @@ class TestTruncate:
 
 class TestDetermineMatchField:
     def test_description_match(self):
-        assert _determine_match_field("test", "other", "other", "test content") == "description"
+        assert _determine_match_field("test", "other", "test content") == "description"
 
-    def test_user_message_match(self):
-        assert _determine_match_field("test", "test content", "other", "other") == "user_message"
+    def test_content_match(self):
+        assert _determine_match_field("test", "test content", "other") == "content"
 
-    def test_ai_response_match(self):
-        assert _determine_match_field("test", "other", "test content", "other") == "ai_response"
-
-    def test_description_preferred_over_user(self):
-        assert _determine_match_field("test", "test a", "other", "test b") == "description"
+    def test_description_preferred_over_content(self):
+        assert _determine_match_field("test", "test a", "test b") == "description"
 
     def test_case_insensitive(self):
-        assert _determine_match_field("Test", "TEST content", "other", "other") == "user_message"
+        assert _determine_match_field("Test", "TEST content", "other") == "content"
+
+    def test_no_match(self):
+        assert _determine_match_field("test", "other", "other") == "unknown"
 
 
 # ── search_chats ─────────────────────────────────────────────────────────────
@@ -136,39 +136,39 @@ class TestSearchChats:
         assert chat["matching_exchanges"] == []
 
     @pytest.mark.asyncio
-    async def test_exchange_match(self):
-        """Chat found via exchange content."""
+    async def test_message_match(self):
+        """Chat found via message content."""
         title_rows = []  # No title match
-        exchange_rows = [
+        message_rows = [
             {
                 "session_id": "def456",
                 "title": "Debug session",
                 "summary": "Investigating a bug",
                 "last_accessed": "2026-03-11T15:00:00",
                 "module": "chat",
-                "exchange_id": "def45678:ex:3",
-                "exchange_number": "3",
+                "message_id": "def45678:msg:3",
+                "sequence": 3,
+                "role": "human",
                 "description": "Discussed auth token handling",
-                "user_message": "How should we handle auth tokens?",
-                "ai_response": "I recommend bearer tokens with short expiry...",
+                "content": "How should we handle auth tokens?",
             }
         ]
 
-        graph = _make_graph(side_effects=[title_rows, exchange_rows])
+        graph = _make_graph(side_effects=[title_rows, message_rows])
         result = await search_chats(graph, "auth tokens")
 
         assert result["count"] == 1
         chat = result["chats"][0]
         assert chat["session_id"] == "def456"
-        assert chat["match_source"] == "exchange"
+        assert chat["match_source"] == "message"
         assert len(chat["matching_exchanges"]) == 1
         ex = chat["matching_exchanges"][0]
-        assert ex["exchange_id"] == "def45678:ex:3"
+        assert ex["exchange_id"] == "def45678:msg:3"
         assert "auth token" in ex["user_snippet"].lower()
 
     @pytest.mark.asyncio
-    async def test_dedup_title_and_exchange(self):
-        """Same chat matched via title AND exchange — appears once with exchanges bundled."""
+    async def test_dedup_title_and_message(self):
+        """Same chat matched via title AND message — appears once with messages bundled."""
         title_rows = [
             {
                 "session_id": "abc123",
@@ -179,29 +179,29 @@ class TestSearchChats:
                 "created_at": "2026-03-12T09:00:00",
             }
         ]
-        exchange_rows = [
+        message_rows = [
             {
                 "session_id": "abc123",  # Same session!
                 "title": "Token authentication",
                 "summary": "Implementing token auth",
                 "last_accessed": "2026-03-12T10:00:00",
                 "module": "chat",
-                "exchange_id": "abc12345:ex:1",
-                "exchange_number": "1",
+                "message_id": "abc12345:msg:1",
+                "sequence": 1,
+                "role": "human",
                 "description": "Token validation flow",
-                "user_message": "How does token validation work?",
-                "ai_response": "The token is verified against the store...",
+                "content": "How does token validation work?",
             }
         ]
 
-        graph = _make_graph(side_effects=[title_rows, exchange_rows])
+        graph = _make_graph(side_effects=[title_rows, message_rows])
         result = await search_chats(graph, "token")
 
         # Should appear once, not twice
         assert result["count"] == 1
         chat = result["chats"][0]
         assert chat["session_id"] == "abc123"
-        # Should have exchanges bundled
+        # Should have messages bundled
         assert len(chat["matching_exchanges"]) == 1
         # match_source stays as title (found via title first)
         assert chat["match_source"] == "title"
@@ -236,32 +236,32 @@ class TestSearchChats:
 
     @pytest.mark.asyncio
     async def test_snippet_extraction_in_results(self):
-        """Exchange snippets are extracted around the match."""
+        """Message snippets are extracted around the match."""
         title_rows = []
-        long_user_msg = "A" * 200 + "FINDME" + "B" * 200
-        exchange_rows = [
+        long_content = "A" * 200 + "FINDME" + "B" * 200
+        message_rows = [
             {
                 "session_id": "snap1",
                 "title": "Snippet test",
                 "summary": "",
                 "last_accessed": "2026-03-12T10:00:00",
                 "module": "chat",
-                "exchange_id": "snap1234:ex:1",
-                "exchange_number": "1",
+                "message_id": "snap1234:msg:1",
+                "sequence": 1,
+                "role": "human",
                 "description": "Some other description",
-                "user_message": long_user_msg,
-                "ai_response": "Shorter response",
+                "content": long_content,
             }
         ]
 
-        graph = _make_graph(side_effects=[title_rows, exchange_rows])
+        graph = _make_graph(side_effects=[title_rows, message_rows])
         result = await search_chats(graph, "FINDME")
 
         ex = result["chats"][0]["matching_exchanges"][0]
         assert "FINDME" in ex["user_snippet"]
-        assert ex["match_field"] == "user_message"
+        assert ex["match_field"] == "content"
         # Snippet should be truncated, not the full 400+ char message
-        assert len(ex["user_snippet"]) < len(long_user_msg)
+        assert len(ex["user_snippet"]) < len(long_content)
 
     @pytest.mark.asyncio
     async def test_multiple_chats_sorted_by_recency(self):
@@ -311,8 +311,8 @@ class TestGetChat:
         assert "not found" in result["error"].lower()
 
     @pytest.mark.asyncio
-    async def test_with_exchanges(self):
-        """Returns chat metadata + truncated exchanges in chronological order."""
+    async def test_with_messages(self):
+        """Returns chat metadata + messages paired as exchanges in chronological order."""
         chat_row = [
             {
                 "session_id": "abc123",
@@ -324,45 +324,68 @@ class TestGetChat:
                 "message_count": 10,
             }
         ]
-        count_row = [{"total": 3}]
-        exchange_rows = [
+        count_row = [{"total": 4}]  # 4 messages = 2 exchanges
+        # DESC order from query, then reversed in code
+        message_rows = [
             {
-                "exchange_id": "abc12345:ex:3",
-                "exchange_number": "3",
-                "description": "Third exchange",
-                "user_message": "Third question",
-                "ai_response": "Third answer",
-                "tools_used": "",
+                "message_id": "abc12345:msg:4",
+                "sequence": 4,
+                "role": "machine",
+                "content": "Second answer",
+                "description": "Second exchange desc",
+                "tools_used": "Read(file.txt)",
+                "status": "complete",
                 "created_at": "2026-03-12T10:00:00",
             },
             {
-                "exchange_id": "abc12345:ex:2",
-                "exchange_number": "2",
-                "description": "Second exchange",
-                "user_message": "Second question",
-                "ai_response": "Second answer",
-                "tools_used": "Read(file.txt)",
+                "message_id": "abc12345:msg:3",
+                "sequence": 3,
+                "role": "human",
+                "content": "Second question",
+                "description": "",
+                "tools_used": "",
+                "status": "complete",
                 "created_at": "2026-03-12T09:30:00",
+            },
+            {
+                "message_id": "abc12345:msg:2",
+                "sequence": 2,
+                "role": "machine",
+                "content": "First answer",
+                "description": "First exchange desc",
+                "tools_used": "",
+                "status": "complete",
+                "created_at": "2026-03-12T09:01:00",
+            },
+            {
+                "message_id": "abc12345:msg:1",
+                "sequence": 1,
+                "role": "human",
+                "content": "First question",
+                "description": "",
+                "tools_used": "",
+                "status": "complete",
+                "created_at": "2026-03-12T09:00:00",
             },
         ]
 
-        graph = _make_graph(side_effects=[chat_row, count_row, exchange_rows])
+        graph = _make_graph(side_effects=[chat_row, count_row, message_rows])
         result = await get_chat(graph, "abc123")
 
         assert "chat" in result
         assert result["chat"]["session_id"] == "abc123"
         assert result["chat"]["title"] == "Test Chat"
-        assert result["exchange_count"] == 3
-        assert result["has_more"] is False  # 3 total, limit 25
 
-        # Exchanges should be in chronological order (reversed from DESC)
+        # Should pair messages into exchanges
         assert len(result["exchanges"]) == 2
-        assert result["exchanges"][0]["exchange_number"] == "2"
-        assert result["exchanges"][1]["exchange_number"] == "3"
+        assert result["exchanges"][0]["user_message"] == "First question"
+        assert result["exchanges"][0]["ai_response"] == "First answer"
+        assert result["exchanges"][1]["user_message"] == "Second question"
+        assert result["exchanges"][1]["ai_response"] == "Second answer"
 
     @pytest.mark.asyncio
     async def test_has_more_flag(self):
-        """has_more is True when total exchanges > limit."""
+        """has_more is True when total messages > limit."""
         chat_row = [
             {
                 "session_id": "abc123",
@@ -374,24 +397,24 @@ class TestGetChat:
                 "message_count": 100,
             }
         ]
-        count_row = [{"total": 50}]  # 50 exchanges total
-        exchange_rows = [
+        count_row = [{"total": 100}]  # 100 messages total
+        message_rows = [
             {
-                "exchange_id": f"abc12345:ex:{i}",
-                "exchange_number": str(i),
-                "description": f"Exchange {i}",
-                "user_message": f"Question {i}",
-                "ai_response": f"Answer {i}",
+                "message_id": f"abc12345:msg:{i}",
+                "sequence": i,
+                "role": "human" if i % 2 == 1 else "machine",
+                "content": f"Content {i}",
+                "description": f"Message {i}",
                 "tools_used": "",
-                "created_at": f"2026-03-12T{10+i}:00:00",
+                "status": "complete",
+                "created_at": f"2026-03-12T{10}:00:0{i}",
             }
-            for i in range(5, 0, -1)  # Only 5 returned (limit=5)
+            for i in range(10, 0, -1)  # Only 10 returned (limit=5 → 10 messages)
         ]
 
-        graph = _make_graph(side_effects=[chat_row, count_row, exchange_rows])
+        graph = _make_graph(side_effects=[chat_row, count_row, message_rows])
         result = await get_chat(graph, "abc123", exchange_limit=5)
 
-        assert result["exchange_count"] == 50
         assert result["has_more"] is True
 
     @pytest.mark.asyncio
@@ -406,23 +429,34 @@ class TestGetChat:
                 "module": "chat",
                 "created_at": "2026-03-12T09:00:00",
                 "last_accessed": "2026-03-12T10:00:00",
-                "message_count": 1,
+                "message_count": 2,
             }
         ]
-        count_row = [{"total": 1}]
-        exchange_rows = [
+        count_row = [{"total": 2}]
+        message_rows = [
             {
-                "exchange_id": "abc12345:ex:1",
-                "exchange_number": "1",
+                "message_id": "abc12345:msg:2",
+                "sequence": 2,
+                "role": "machine",
+                "content": long_message,
                 "description": "Long message",
-                "user_message": long_message,
-                "ai_response": long_message,
                 "tools_used": "",
+                "status": "complete",
+                "created_at": "2026-03-12T09:01:00",
+            },
+            {
+                "message_id": "abc12345:msg:1",
+                "sequence": 1,
+                "role": "human",
+                "content": long_message,
+                "description": "",
+                "tools_used": "",
+                "status": "complete",
                 "created_at": "2026-03-12T09:00:00",
-            }
+            },
         ]
 
-        graph = _make_graph(side_effects=[chat_row, count_row, exchange_rows])
+        graph = _make_graph(side_effects=[chat_row, count_row, message_rows])
         result = await get_chat(graph, "abc123", max_chars=100)
 
         ex = result["exchanges"][0]
@@ -443,39 +477,38 @@ class TestGetExchange:
     @pytest.mark.asyncio
     async def test_not_found(self):
         graph = _make_graph(return_value=[])
-        result = await get_exchange(graph, "nonexistent:ex:1")
+        result = await get_exchange(graph, "nonexistent:msg:1")
         assert "error" in result
         assert "not found" in result["error"].lower()
 
     @pytest.mark.asyncio
     async def test_full_content(self):
-        """Returns full untruncated content."""
-        long_user = "U" * 10000
-        long_ai = "A" * 10000
-        exchange_row = [
+        """Returns full untruncated content via exchange-compat shape."""
+        long_content = "U" * 10000
+        message_row = [
             {
-                "exchange_id": "abc12345:ex:5",
+                "message_id": "abc12345:msg:1",
                 "session_id": "abc123",
-                "exchange_number": "5",
-                "description": "A detailed exchange",
-                "user_message": long_user,
-                "ai_response": long_ai,
+                "sequence": 1,
+                "role": "human",
+                "content": long_content,
+                "description": "A detailed message",
                 "context": "Session was about testing",
-                "tools_used": "Read(test.py), Bash(pytest)",
+                "tools_used": "",
+                "thinking": "",
+                "status": "complete",
                 "created_at": "2026-03-12T10:00:00",
             }
         ]
 
-        graph = _make_graph(return_value=exchange_row)
-        result = await get_exchange(graph, "abc12345:ex:5")
+        graph = _make_graph(return_value=message_row)
+        result = await get_exchange(graph, "abc12345:msg:1")
 
         assert "exchange" in result
         ex = result["exchange"]
-        assert ex["exchange_id"] == "abc12345:ex:5"
+        assert ex["exchange_id"] == "abc12345:msg:1"
         assert ex["session_id"] == "abc123"
         assert len(ex["user_message"]) == 10000  # Full, not truncated
-        assert len(ex["ai_response"]) == 10000
-        assert ex["tools_used"] == "Read(test.py), Bash(pytest)"
         assert ex["context"] == "Session was about testing"
 
 
