@@ -75,6 +75,7 @@ async def lifespan(app: FastAPI):
     # Initialize brain-backed session store and register schema
     session_store = BrainChatStore(brain)
     await session_store.ensure_schema()
+    await session_store.seed_builtin_agents()
     app.state.brain = brain
     app.state.session_store = session_store
     from parachute.core.interfaces import get_registry
