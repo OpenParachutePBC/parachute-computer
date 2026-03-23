@@ -17,7 +17,7 @@ Tags and context folders are stored as JSON arrays on the session node
 import json
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional, Union
+from typing import Any, Optional, TypedDict, Union
 
 from parachute.db.brain import BrainService
 from parachute.models.session import (
@@ -35,6 +35,96 @@ logger = logging.getLogger(__name__)
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
+
+# ── Agent templates ──────────────────────────────────────────────────────────
+# Built-in agent definitions seeded on startup.  Also returned by the daily
+# module's GET /agents/templates endpoint.
+
+
+class AgentTemplateDict(TypedDict, total=False):
+    name: str
+    display_name: str
+    description: str
+    system_prompt: str
+    tools: list[str]
+    schedule_time: str
+    trust_level: str
+    trigger_event: str
+    trigger_filter: str
+    memory_mode: str
+    template_version: str
+
+
+POST_PROCESS_SYSTEM_PROMPT = (
+    "You are a post-processing assistant for journal entries.\n\n"
+    "## Your Job\n\n"
+    "Read the entry with `read_entry`. If it came from a voice recording, "
+    "clean up the transcript and save it with `update_entry_content`. "
+    "If the entry was typed (not voice), do nothing — just return.\n\n"
+    "## Transcription Cleanup Rules\n\n"
+    "- Remove filler words: \"um\", \"uh\", \"like\", \"you know\", \"I mean\", \"so\", \"right\"\n"
+    "- Fix grammar and sentence structure\n"
+    "- Add proper punctuation (periods, commas, question marks)\n"
+    "- Create paragraph breaks at natural topic transitions\n"
+    "- Very light restructuring for readability — combine fragments, smooth transitions\n"
+    "- Preserve the speaker's voice, tone, and meaning exactly\n"
+    "- Do NOT summarize, add commentary, or change the substance\n"
+    "- Do NOT add headers, bullet points, or other structural formatting "
+    "unless the speaker clearly intended a list\n"
+    "- Output ONLY the cleaned text — no preamble, no explanation"
+)
+
+
+AGENT_TEMPLATES: list[AgentTemplateDict] = [
+    {
+        "name": "daily-reflection",
+        "template_version": "2026-03-17",
+        "display_name": "Daily Reflection",
+        "description": "Reviews your journal entries and offers a thoughtful daily reflection",
+        "system_prompt": (
+            "You are a thoughtful, perceptive reflection partner for {user_name}.\n\n"
+            "## Your Role\n\n"
+            "Read yesterday's journal entries and recent journals to understand what's on "
+            "their mind. Then write a short, meaningful reflection — something that "
+            "helps them see their day clearly.\n\n"
+            "## Guidelines\n\n"
+            "- **Be genuine, not performative.** No empty affirmations. Reflect what "
+            "you actually notice.\n"
+            "- **Make connections.** Link yesterday's entries to patterns from recent days "
+            "when relevant.\n"
+            "- **Keep it concise.** 3-5 paragraphs. Quality over quantity.\n"
+            "- **Match their energy.** If the day was hard, acknowledge it honestly. "
+            "If it was good, celebrate without overdoing it.\n"
+            "- **One insight, well-developed** is better than five shallow observations.\n"
+            "- Write in second person (\"you\") — this is for them.\n\n"
+            "## Process\n\n"
+            "1. Read yesterday's journal entries with `read_journal`\n"
+            "2. Read recent journals with `read_recent_journals` for broader context\n"
+            "3. Optionally read chat logs with`read_chat_log` for additional context\n"
+            "4. Write your reflection using `write_output`\n\n"
+            "## User Context\n\n"
+            "{user_context}"
+        ),
+        "tools": ["read_journal", "read_chat_log", "read_recent_journals"],
+        "schedule_time": "4:00",
+        "trust_level": "sandboxed",
+        "memory_mode": "persistent",
+    },
+    {
+        "name": "post-process",
+        "template_version": "2026-03-17",
+        "display_name": "Post-Process",
+        "description": (
+            "Runs after voice transcription completes. Cleans up filler "
+            "words, fixes grammar, adds punctuation."
+        ),
+        "system_prompt": POST_PROCESS_SYSTEM_PROMPT,
+        "tools": ["read_entry", "update_entry_content"],
+        "trigger_event": "note.transcription_complete",
+        "trust_level": "direct",
+        "memory_mode": "fresh",
+    },
+]
 
 
 class BrainChatStore:
@@ -129,9 +219,11 @@ class BrainChatStore:
             },
             primary_key="request_id",
         )
-        # Note table — shared across modules (journals, context, reference, etc.)
-        # Originally created by the daily module; registered here so context notes
-        # are available even if the daily module isn't loaded.
+        # ── Shared schema tables ─────────────────────────────────────────────
+        # All node/rel tables are registered here so they exist at startup
+        # regardless of which modules are loaded.  Modules are views (route
+        # providers) — not data owners.
+
         await self.graph.ensure_node_table(
             "Note",
             {
@@ -153,7 +245,327 @@ class BrainChatStore:
             },
             primary_key="entry_id",
         )
+        await self.graph.ensure_node_table(
+            "Card",
+            {
+                "card_id": "STRING",
+                "agent_name": "STRING",
+                "display_name": "STRING",
+                "content": "STRING",
+                "generated_at": "STRING",
+                "status": "STRING",
+                "date": "STRING",
+            },
+            primary_key="card_id",
+        )
+        await self.graph.ensure_node_table(
+            "Agent",
+            {
+                "name": "STRING",
+                "display_name": "STRING",
+                "description": "STRING",
+                "system_prompt": "STRING",
+                "tools": "STRING",
+                "model": "STRING",
+                "schedule_enabled": "STRING",
+                "schedule_time": "STRING",
+                "enabled": "STRING",
+                "trust_level": "STRING",
+                "created_at": "STRING",
+                "updated_at": "STRING",
+                "sdk_session_id": "STRING",
+                "last_run_at": "STRING",
+                "last_processed_date": "STRING",
+                "run_count": "INT64",
+                "memory_mode": "STRING",
+                # Columns added post-launch (migrations keep old DBs in sync):
+                "trigger_event": "STRING",
+                "trigger_filter": "STRING",
+                "template_version": "STRING",
+                "user_modified": "STRING",
+                "container_slug": "STRING",
+            },
+            primary_key="name",
+        )
+        await self.graph.ensure_node_table(
+            "AgentRun",
+            {
+                "run_id": "STRING",
+                "agent_name": "STRING",
+                "display_name": "STRING",
+                "entry_id": "STRING",
+                "date": "STRING",
+                "trigger": "STRING",
+                "status": "STRING",
+                "error": "STRING",
+                "container_slug": "STRING",
+                "card_id": "STRING",
+                "started_at": "STRING",
+                "completed_at": "STRING",
+                "duration_seconds": "DOUBLE",
+                "ran_at": "STRING",
+                "session_id": "STRING",
+            },
+            primary_key="run_id",
+        )
+        await self.graph.ensure_node_table(
+            "Exchange",
+            {
+                "exchange_id": "STRING",
+                "session_id": "STRING",
+                "exchange_number": "STRING",
+                "description": "STRING",
+                "user_message": "STRING",
+                "ai_response": "STRING",
+                "context": "STRING",
+                "session_title": "STRING",
+                "tools_used": "STRING",
+                "created_at": "STRING",
+            },
+            primary_key="exchange_id",
+        )
+        await self.graph.ensure_rel_table("HAS_EXCHANGE", "Chat", "Exchange")
+
+        # ── Column migrations ────────────────────────────────────────────────
+        await self._ensure_column_migrations()
+
         logger.info("BrainChatStore: schema ready")
+
+    async def _ensure_column_migrations(self) -> None:
+        """Add columns introduced after initial table creation.
+
+        Idempotent — checks existing columns before ALTERing.  Moved from
+        the daily module so migrations run at startup regardless of which
+        modules are loaded.
+        """
+        # ── Note migrations ──
+        note_cols = await self.graph.get_table_columns("Note")
+        note_new = {
+            "title": "STRING",
+            "entry_type": "STRING",
+            "audio_path": "STRING",
+            "note_type": "STRING",
+            "aliases": "STRING",
+            "status": "STRING",
+            "created_by": "STRING",
+            "metadata_json": "STRING",
+            "brain_links_json": "STRING",
+        }
+        note_missing = {c: t for c, t in note_new.items() if c not in note_cols}
+        if note_missing:
+            async with self.graph.write_lock:
+                for col, typ in note_missing.items():
+                    await self.graph.execute_cypher(
+                        f"ALTER TABLE Note ADD {col} {typ} DEFAULT NULL"
+                    )
+                    logger.info(f"Schema migration: added Note.{col}")
+
+        # ── Agent migrations ──
+        try:
+            agent_cols = await self.graph.get_table_columns("Agent")
+        except Exception as e:
+            logger.warning(f"Schema migration: could not inspect Agent columns: {e}")
+            agent_cols = {}
+
+        agent_new = {
+            "trust_level": ("STRING", "'sandboxed'"),
+            "sdk_session_id": ("STRING", "''"),
+            "last_run_at": ("STRING", "''"),
+            "last_processed_date": ("STRING", "''"),
+            "run_count": ("INT64", "0"),
+            "trigger_event": ("STRING", "''"),
+            "trigger_filter": ("STRING", "'{}'"),
+            "memory_mode": ("STRING", "'persistent'"),
+            "template_version": ("STRING", "''"),
+            "user_modified": ("STRING", "''"),
+            "container_slug": ("STRING", "''"),
+        }
+        agent_missing = {c: v for c, v in agent_new.items() if c not in agent_cols}
+        if agent_missing:
+            async with self.graph.write_lock:
+                for col, (typ, default) in agent_missing.items():
+                    await self.graph.execute_cypher(
+                        f"ALTER TABLE Agent ADD {col} {typ} DEFAULT {default}"
+                    )
+                    logger.info(f"Schema migration: added Agent.{col}")
+
+        # ── AgentRun migrations ──
+        try:
+            run_cols = await self.graph.get_table_columns("AgentRun")
+        except Exception as e:
+            logger.warning(f"Schema migration: could not inspect AgentRun columns: {e}")
+            run_cols = {}
+
+        run_new = {
+            "date": ("STRING", "''"),
+            "trigger": ("STRING", "''"),
+            "error": ("STRING", "''"),
+            "container_slug": ("STRING", "''"),
+            "card_id": ("STRING", "''"),
+            "started_at": ("STRING", "''"),
+            "completed_at": ("STRING", "''"),
+            "duration_seconds": ("DOUBLE", "0.0"),
+        }
+        run_missing = {c: v for c, v in run_new.items() if c not in run_cols}
+        if run_missing:
+            async with self.graph.write_lock:
+                for col, (typ, default) in run_missing.items():
+                    await self.graph.execute_cypher(
+                        f"ALTER TABLE AgentRun ADD {col} {typ} DEFAULT {default}"
+                    )
+                    logger.info(f"Schema migration: added AgentRun.{col}")
+
+    async def seed_builtin_agents(self) -> None:
+        """Seed or update built-in Agents from AGENT_TEMPLATES.
+
+        Version-aware:
+        - New agent → CREATE with template_version, user_modified="false"
+        - Pre-versioned (template_version == "") → stamp version, mark modified
+        - Modified by user → skip, log "update available"
+        - Unmodified + older version → auto-update config fields
+        - Already current → skip
+
+        Also cleans up renamed/retired agents.
+        """
+        now = _now()
+
+        for tpl in AGENT_TEMPLATES:
+            name = tpl["name"]
+            tpl_version = tpl.get("template_version", "")
+
+            is_triggered = bool(tpl.get("trigger_event", ""))
+            seed_data = {
+                "name": name,
+                "display_name": tpl.get("display_name", name.replace("-", " ").title()),
+                "description": tpl.get("description", ""),
+                "system_prompt": tpl.get("system_prompt", ""),
+                "tools": json.dumps(tpl.get("tools", [])),
+                "schedule_enabled": "false" if is_triggered else "true",
+                "schedule_time": tpl.get("schedule_time", ""),
+                "enabled": "true",
+                "trust_level": tpl.get("trust_level", "sandboxed"),
+                "trigger_event": tpl.get("trigger_event", ""),
+                "trigger_filter": tpl.get("trigger_filter", "{}"),
+                "memory_mode": tpl.get("memory_mode", "persistent"),
+                "template_version": tpl_version,
+                "user_modified": "false",
+            }
+
+            rows = await self.graph.execute_cypher(
+                "MATCH (a:Agent {name: $name}) "
+                "RETURN a.template_version AS tv, a.user_modified AS um",
+                {"name": name},
+            )
+
+            if not rows:
+                try:
+                    async with self.graph.write_lock:
+                        await self.graph.execute_cypher(
+                            "CREATE (a:Agent {"
+                            "  name: $name,"
+                            "  display_name: $display_name,"
+                            "  description: $description,"
+                            "  system_prompt: $system_prompt,"
+                            "  tools: $tools,"
+                            "  schedule_enabled: $schedule_enabled,"
+                            "  schedule_time: $schedule_time,"
+                            "  enabled: $enabled,"
+                            "  trust_level: $trust_level,"
+                            "  trigger_event: $trigger_event,"
+                            "  trigger_filter: $trigger_filter,"
+                            "  memory_mode: $memory_mode,"
+                            "  template_version: $template_version,"
+                            "  user_modified: $user_modified,"
+                            "  created_at: $now,"
+                            "  updated_at: $now"
+                            "})",
+                            {**seed_data, "now": now},
+                        )
+                    logger.info(f"Seeded built-in Agent '{name}' (v{tpl_version})")
+                except Exception as e:
+                    logger.warning(f"Failed to seed Agent '{name}': {e}")
+                continue
+
+            existing_tv = (rows[0].get("tv") or "").strip()
+            existing_um = (rows[0].get("um") or "").strip()
+
+            if not existing_tv:
+                try:
+                    async with self.graph.write_lock:
+                        await self.graph.execute_cypher(
+                            "MATCH (a:Agent {name: $name}) "
+                            "SET a.template_version = $tv, a.user_modified = 'true'",
+                            {"name": name, "tv": tpl_version},
+                        )
+                    logger.info(
+                        f"Stamped pre-versioned Agent '{name}' "
+                        f"with v{tpl_version}, marked user_modified=true"
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to stamp Agent '{name}': {e}")
+            elif existing_um == "true":
+                if existing_tv < tpl_version:
+                    logger.info(
+                        f"Update available for '{name}' "
+                        f"(v{existing_tv} → v{tpl_version}) but user customized, skipping"
+                    )
+            elif existing_tv < tpl_version:
+                try:
+                    async with self.graph.write_lock:
+                        await self.graph.execute_cypher(
+                            "MATCH (a:Agent {name: $name}) "
+                            "SET a.display_name = $display_name,"
+                            "    a.description = $description,"
+                            "    a.system_prompt = $system_prompt,"
+                            "    a.tools = $tools,"
+                            "    a.schedule_time = $schedule_time,"
+                            "    a.trust_level = $trust_level,"
+                            "    a.trigger_event = $trigger_event,"
+                            "    a.trigger_filter = $trigger_filter,"
+                            "    a.memory_mode = $memory_mode,"
+                            "    a.template_version = $template_version,"
+                            "    a.updated_at = $now",
+                            {**seed_data, "now": now},
+                        )
+                    logger.info(
+                        f"Updated builtin Agent '{name}' "
+                        f"from v{existing_tv} to v{tpl_version}"
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to update Agent '{name}': {e}")
+
+        # Clean up renamed/retired agents
+        for old_name in ["transcription-cleanup"]:
+            try:
+                rows = await self.graph.execute_cypher(
+                    "MATCH (a:Agent {name: $name}) RETURN a.name",
+                    {"name": old_name},
+                )
+                if rows:
+                    async with self.graph.write_lock:
+                        await self.graph.execute_cypher(
+                            "MATCH (a:Agent {name: $name}) DELETE a",
+                            {"name": old_name},
+                        )
+                    logger.info(f"Removed retired Agent '{old_name}'")
+                    try:
+                        run_rows = await self.graph.execute_cypher(
+                            "MATCH (r:AgentRun {agent_name: $name}) RETURN r.run_id",
+                            {"name": old_name},
+                        )
+                        if run_rows:
+                            async with self.graph.write_lock:
+                                await self.graph.execute_cypher(
+                                    "MATCH (r:AgentRun {agent_name: $name}) DELETE r",
+                                    {"name": old_name},
+                                )
+                            logger.info(
+                                f"Removed {len(run_rows)} orphaned AgentRun(s) for '{old_name}'"
+                            )
+                    except Exception:
+                        pass
+            except Exception:
+                pass
 
     # ── Session CRUD ──────────────────────────────────────────────────────────
 

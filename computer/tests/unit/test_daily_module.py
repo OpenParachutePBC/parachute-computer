@@ -14,6 +14,7 @@ import pytest
 
 from modules.daily.module import DailyModule
 from parachute.db.brain import BrainService
+from parachute.db.brain_chat_store import BrainChatStore
 
 
 # ---------------------------------------------------------------------------
@@ -30,10 +31,16 @@ async def tmp_vault(tmp_path):
 
 @pytest.fixture
 async def graph(tmp_path):
-    """Live temporary Kuzu database for testing."""
+    """Live temporary Kuzu database for testing.
+
+    Runs BrainChatStore.ensure_schema() to register all core tables
+    (Note, Card, Agent, etc.) before modules load — same as server startup.
+    """
     db_path = tmp_path / "graph.db"
     svc = BrainService(db_path)
     await svc.connect()
+    store = BrainChatStore(svc)
+    await store.ensure_schema()
     yield svc
     await svc.close()
 
