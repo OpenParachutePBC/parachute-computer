@@ -55,7 +55,7 @@ class AgentTemplateDict(TypedDict, total=False):
     template_version: str
 
 
-_POST_PROCESS_SYSTEM_PROMPT = (
+POST_PROCESS_SYSTEM_PROMPT = (
     "You are a post-processing assistant for journal entries.\n\n"
     "## Your Job\n\n"
     "Read the entry with `read_entry`. If it came from a voice recording, "
@@ -118,7 +118,7 @@ AGENT_TEMPLATES: list[AgentTemplateDict] = [
             "Runs after voice transcription completes. Cleans up filler "
             "words, fixes grammar, adds punctuation."
         ),
-        "system_prompt": _POST_PROCESS_SYSTEM_PROMPT,
+        "system_prompt": POST_PROCESS_SYSTEM_PROMPT,
         "tools": ["read_entry", "update_entry_content"],
         "trigger_event": "note.transcription_complete",
         "trust_level": "direct",
@@ -278,6 +278,12 @@ class BrainChatStore:
                 "last_processed_date": "STRING",
                 "run_count": "INT64",
                 "memory_mode": "STRING",
+                # Columns added post-launch (migrations keep old DBs in sync):
+                "trigger_event": "STRING",
+                "trigger_filter": "STRING",
+                "template_version": "STRING",
+                "user_modified": "STRING",
+                "container_slug": "STRING",
             },
             primary_key="name",
         )
@@ -357,8 +363,9 @@ class BrainChatStore:
         # ── Agent migrations ──
         try:
             agent_cols = await self.graph.get_table_columns("Agent")
-        except Exception:
-            return  # Agent table doesn't exist yet — first run
+        except Exception as e:
+            logger.warning(f"Schema migration: could not inspect Agent columns: {e}")
+            agent_cols = {}
 
         agent_new = {
             "trust_level": ("STRING", "'sandboxed'"),
@@ -385,8 +392,9 @@ class BrainChatStore:
         # ── AgentRun migrations ──
         try:
             run_cols = await self.graph.get_table_columns("AgentRun")
-        except Exception:
-            return  # AgentRun table doesn't exist yet
+        except Exception as e:
+            logger.warning(f"Schema migration: could not inspect AgentRun columns: {e}")
+            run_cols = {}
 
         run_new = {
             "date": ("STRING", "''"),
