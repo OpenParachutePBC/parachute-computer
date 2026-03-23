@@ -1043,6 +1043,7 @@ class Orchestrator:
         """
         result_text = ""
         text_blocks: list[str] = []
+        thinking_blocks: list[str] = []
         tool_calls: list[dict[str, Any]] = []
         captured_session_id: Optional[str] = None
         captured_model: Optional[str] = None
@@ -1147,8 +1148,11 @@ class Orchestrator:
                         block_type = block.get("type")
 
                         if block_type == "thinking":
+                            thinking_text = block.get("thinking", "")
+                            if thinking_text:
+                                thinking_blocks.append(thinking_text)
                             yield ThinkingEvent(
-                                content=block.get("thinking", "")
+                                content=thinking_text
                             ).model_dump(by_alias=True)
 
                         elif block_type == "text":
@@ -1350,43 +1354,57 @@ class Orchestrator:
                 self.active_stream_queues[captured_session_id] = message_queue
                 logger.info(f"Finalized session: {captured_session_id[:8]}...")
 
-            # Update message count
+            # Capture message count before increment (used for Message sequence)
             final_session_id = captured_session_id or session.id
+            pre_turn_count = session.message_count
+
+            # Update message count
             if final_session_id and final_session_id != "pending":
                 await self.session_manager.increment_message_count(
                     final_session_id, 2 + inject_count
                 )
 
-            # Bridge agent post-turn observe (fire-and-forget)
+            # Write Message nodes to brain graph (fire-and-forget)
             if (
                 final_session_id
                 and final_session_id != "pending"
                 and message
-                and result_text
             ):
-                from parachute.core.bridge_agent import observe as bridge_observe
+                from parachute.core.bridge_agent import summarize_tool_calls
 
-                exchange_number = session.message_count // 2 + 1
-                session_metadata = session.metadata or {}
-                _bridge_task = asyncio.create_task(
-                    bridge_observe(
-                        session_id=final_session_id,
-                        message=message,
-                        result_text=result_text,
-                        tool_calls=tool_calls or [],
-                        exchange_number=exchange_number,
-                        session_title=session.title,
-                        title_source=session_metadata.get("title_source"),
-                        session_store=self.session_store,
-                        vault_path=Path.home(),
-                        claude_token=self.settings.claude_code_oauth_token,
-                    )
+                tools_summary = summarize_tool_calls(tool_calls or [])
+                thinking_text = "\n\n".join(thinking_blocks) if thinking_blocks else None
+                msg_status = "complete" if end_reason == "normal" else (
+                    "interrupted" if end_reason in ("interrupted", "cancelled") else "error"
                 )
-                _bridge_task.add_done_callback(
-                    lambda t: logger.warning(f"bridge_observe error: {t.exception()}")
-                    if not t.cancelled() and t.exception()
-                    else None
-                )
+
+                async def _write_messages():
+                    try:
+                        await self.session_store.write_turn_messages(
+                            session_id=final_session_id,
+                            human_content=message,
+                            machine_content=result_text or "",
+                            tools_used=tools_summary,
+                            thinking=thinking_text,
+                            status=msg_status,
+                            message_count=pre_turn_count,
+                            session_meta={
+                                "title": session.title,
+                                "module": session.module,
+                                "source": session.source or "parachute",
+                                "agent_type": session.agent_type or "",
+                                "created_at": (
+                                    session.created_at.isoformat()
+                                    if session.created_at else None
+                                ),
+                            },
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            f"write_turn_messages error: {e}"
+                        )
+
+                asyncio.create_task(_write_messages())
 
             duration_ms = int((time.time() - start_time) * 1000)
             yield DoneEvent(
@@ -1816,7 +1834,7 @@ class Orchestrator:
                     f"Failed to increment message count for {sandbox_sid[:8]}: {e}"
                 )
 
-        # Fire-and-forget bridge agent for sandbox sessions (auto-title, exchange nodes)
+        # Write Message nodes for sandbox sessions (fire-and-forget)
         if sbx["had_content"] and sandbox_sid:
             text_parts = [
                 b.get("text", "") for b in sbx["content_blocks"]
@@ -1826,31 +1844,43 @@ class Orchestrator:
                 {"name": b.get("name", ""), "input": b.get("input", {})}
                 for b in sbx["content_blocks"] if b.get("type") == "tool_use"
             ]
-            result_text = "\n".join(text_parts)
-            if result_text and sbx["message"]:
-                from parachute.core.bridge_agent import observe as bridge_observe
+            sbx_result_text = "\n".join(text_parts)
+            if sbx["message"]:
+                from parachute.core.bridge_agent import summarize_tool_calls
 
+                tools_summary = summarize_tool_calls(tool_calls_list)
                 final_session = sbx["session"]
-                session_metadata = final_session.metadata or {}
-                _bridge_task = asyncio.create_task(bridge_observe(
-                    session_id=sandbox_sid,
-                    message=sbx["message"],
-                    result_text=result_text,
-                    tool_calls=tool_calls_list,
-                    exchange_number=(final_session.message_count or 0) // 2 + 1,
-                    session_title=final_session.title,
-                    title_source=session_metadata.get("title_source"),
-                    session_store=self.session_store,
-                    vault_path=Path.home(),
-                    claude_token=self.settings.claude_code_oauth_token,
-                ))
-                _bridge_task.add_done_callback(
-                    lambda t: logger.warning(
-                        f"bridge_observe error (sandbox): {t.exception()}"
-                    )
-                    if not t.cancelled() and t.exception()
-                    else None
-                )
+                # No thinking blocks in sandboxed path (Docker doesn't expose them)
+                msg_status = "interrupted" if interrupted else "complete"
+                pre_turn_count = (final_session.message_count or 0)
+
+                async def _write_sandbox_messages():
+                    try:
+                        await self.session_store.write_turn_messages(
+                            session_id=sandbox_sid,
+                            human_content=sbx["message"],
+                            machine_content=sbx_result_text,
+                            tools_used=tools_summary,
+                            thinking=None,  # sandboxed: no thinking blocks
+                            status=msg_status,
+                            message_count=pre_turn_count,
+                            session_meta={
+                                "title": final_session.title,
+                                "module": final_session.module,
+                                "source": final_session.source or "parachute",
+                                "agent_type": final_session.agent_type or "",
+                                "created_at": (
+                                    final_session.created_at.isoformat()
+                                    if final_session.created_at else None
+                                ),
+                            },
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            f"write_turn_messages error (sandbox): {e}"
+                        )
+
+                asyncio.create_task(_write_sandbox_messages())
 
     async def abort_stream(self, session_id: str) -> bool:
         """Abort an active streaming session."""

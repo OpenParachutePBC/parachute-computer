@@ -6,12 +6,12 @@ Provides the unified set of memory/vault tools used by both:
 - HTTP MCP bridge (api/mcp_tools.py) — sandbox Docker containers
 
 Tools:
-- search_memory: Unified search across chats, exchanges, and journal notes
-- search_chats: Search chat conversations with matched exchanges inline
+- search_memory: Unified search across chats, messages, and journal notes
+- search_chats: Search chat conversations with matched messages inline
 - list_chats: List/browse recent conversations
 - list_notes: List/browse journal entries and context notes
-- get_chat: Get a specific chat with paginated exchanges
-- get_exchange: Get full untruncated exchange content
+- get_chat: Get a specific chat with paginated messages
+- get_message: Get full untruncated message content
 - write_note: Create or update notes (including user context notes)
 """
 
@@ -30,8 +30,8 @@ logger = logging.getLogger(__name__)
 # Snippet window: chars before + after the match
 _SNIPPET_WINDOW = 300
 
-# Max exchange matches to fetch per search (prevents runaway queries)
-_MAX_EXCHANGE_MATCHES = 100
+# Max message matches to fetch per search (prevents runaway queries)
+_MAX_MESSAGE_MATCHES = 100
 
 # Base filters: non-archived, human-initiated sessions only
 _BASE_CHAT_FILTERS = (
@@ -73,18 +73,15 @@ def _truncate(text: str | None, max_chars: int) -> str:
 
 def _determine_match_field(
     query: str,
-    user_message: str | None,
-    ai_response: str | None,
+    content: str | None,
     description: str | None,
 ) -> str:
     """Determine which field contains the match (case-insensitive)."""
     q = query.lower()
     if description and q in description.lower():
         return "description"
-    if user_message and q in user_message.lower():
-        return "user_message"
-    if ai_response and q in ai_response.lower():
-        return "ai_response"
+    if content and q in content.lower():
+        return "content"
     return "unknown"
 
 
@@ -99,13 +96,13 @@ async def search_memory(
     date_to: str | None = None,
     limit: int = 10,
 ) -> dict[str, Any]:
-    """Unified search across chats, exchanges, and journal notes.
+    """Unified search across chats, messages, and journal notes.
 
-    Searches Chat title/summary, Exchange content (user_message, ai_response,
-    description), and Note content. Results are merged and sorted by timestamp.
+    Searches Chat title/summary, Message content/description, and Note content.
+    Results are merged and sorted by timestamp.
 
-    Sessions found via exchange match include matched_exchange_id for
-    drill-down with get_exchange.
+    Sessions found via message match include matched_exchange_id for
+    drill-down with get_exchange (backward-compatible key name).
     """
     query = query.strip()
     if not query:
@@ -145,22 +142,21 @@ async def search_memory(
                 "module": s.get("module", "chat"),
             })
 
-        # --- Exchange search (content match → parent session) ---
-        ex_rows = await graph.execute_cypher(
-            f"MATCH (s:Chat)-[:HAS_EXCHANGE]->(e:Exchange) "
+        # --- Message search (content match → parent session) ---
+        msg_rows = await graph.execute_cypher(
+            f"MATCH (s:Chat)-[:HAS_MESSAGE]->(m:Message) "
             f"WHERE {_BASE_CHAT_FILTERS} "
-            f"AND (e.user_message CONTAINS $search "
-            f"     OR e.ai_response CONTAINS $search "
-            f"     OR e.description CONTAINS $search) "
+            f"AND (m.content CONTAINS $search "
+            f"     OR (m.description IS NOT NULL AND m.description CONTAINS $search)) "
             f"RETURN s.session_id AS session_id, s.title AS title, "
             f"       s.summary AS summary, s.last_accessed AS last_accessed, "
             f"       s.created_at AS created_at, s.module AS module, "
-            f"       e.description AS matched_description, "
-            f"       e.exchange_id AS matched_exchange_id "
+            f"       m.description AS matched_description, "
+            f"       m.message_id AS matched_message_id "
             f"ORDER BY s.last_accessed DESC LIMIT {limit}",
             {"search": query},
         )
-        for row in ex_rows:
+        for row in msg_rows:
             sid = row.get("session_id", "")
             if sid in seen_session_ids:
                 continue
@@ -171,7 +167,7 @@ async def search_memory(
                 "title": row.get("title") or "Untitled conversation",
                 "summary": row.get("summary") or "",
                 "snippet": row.get("matched_description") or "",
-                "matched_exchange_id": row.get("matched_exchange_id") or "",
+                "matched_exchange_id": row.get("matched_message_id") or "",
                 "ts": row.get("last_accessed") or row.get("created_at") or "",
                 "module": row.get("module") or "chat",
             })
@@ -227,9 +223,9 @@ async def search_chats(
 ) -> dict[str, Any]:
     """Search across all chats by keyword, returning bundled results.
 
-    Returns chats grouped with their matching exchanges underneath.
-    Each exchange includes snippets from the matching field so the caller
-    can decide whether to drill deeper with get_exchange.
+    Returns chats grouped with their matching messages underneath.
+    Each message includes snippets from the matching field so the caller
+    can decide whether to drill deeper with get_message.
     """
     query = query.strip()
     if not query:
@@ -277,40 +273,38 @@ async def search_chats(
             "matching_exchanges": [],
         }
 
-    # --- 2. Exchange content search ---
-    exchange_rows = await graph.execute_cypher(
-        f"MATCH (s:Chat)-[:HAS_EXCHANGE]->(e:Exchange) "
+    # --- 2. Message content search ---
+    message_rows = await graph.execute_cypher(
+        f"MATCH (s:Chat)-[:HAS_MESSAGE]->(m:Message) "
         f"WHERE {_BASE_CHAT_FILTERS}{module_filter} "
-        f"AND (e.user_message CONTAINS $query "
-        f"     OR e.ai_response CONTAINS $query "
-        f"     OR e.description CONTAINS $query) "
+        f"AND (m.content CONTAINS $query "
+        f"     OR (m.description IS NOT NULL AND m.description CONTAINS $query)) "
         f"RETURN s.session_id AS session_id, s.title AS title, "
         f"       s.summary AS summary, s.last_accessed AS last_accessed, "
         f"       s.module AS module, "
-        f"       e.exchange_id AS exchange_id, "
-        f"       e.exchange_number AS exchange_number, "
-        f"       e.description AS description, "
-        f"       e.user_message AS user_message, "
-        f"       e.ai_response AS ai_response "
-        f"ORDER BY s.last_accessed DESC, e.exchange_number ASC "
-        f"LIMIT {_MAX_EXCHANGE_MATCHES}",
+        f"       m.message_id AS message_id, "
+        f"       m.sequence AS sequence, "
+        f"       m.role AS role, "
+        f"       m.description AS description, "
+        f"       m.content AS content "
+        f"ORDER BY s.last_accessed DESC, m.sequence ASC "
+        f"LIMIT {_MAX_MESSAGE_MATCHES}",
         params,
     )
 
-    for row in exchange_rows:
+    for row in message_rows:
         sid = row.get("session_id", "")
-        user_msg = row.get("user_message") or ""
-        ai_resp = row.get("ai_response") or ""
+        content = row.get("content") or ""
         desc = row.get("description") or ""
 
-        match_field = _determine_match_field(query, user_msg, ai_resp, desc)
+        match_field = _determine_match_field(query, content, desc)
 
         exchange_entry = {
-            "exchange_id": row.get("exchange_id", ""),
-            "exchange_number": row.get("exchange_number", ""),
+            "exchange_id": row.get("message_id", ""),
+            "exchange_number": str(row.get("sequence", "")),
             "description": _truncate(desc, 200),
-            "user_snippet": _extract_snippet(user_msg, query),
-            "ai_snippet": _extract_snippet(ai_resp, query),
+            "user_snippet": _extract_snippet(content, query) if row.get("role") == "human" else "",
+            "ai_snippet": _extract_snippet(content, query) if row.get("role") == "machine" else "",
             "match_field": match_field,
         }
 
@@ -323,7 +317,7 @@ async def search_chats(
                 "summary": row.get("summary") or "",
                 "module": row.get("module", "chat"),
                 "last_accessed": row.get("last_accessed") or "",
-                "match_source": "exchange",
+                "match_source": "message",
                 "matching_exchanges": [exchange_entry],
             }
 
@@ -465,17 +459,21 @@ async def get_chat(
     exchange_limit: int = 25,
     max_chars: int = 2000,
 ) -> dict[str, Any]:
-    """Get a specific chat with its exchanges (paginated, truncated).
+    """Get a specific chat with its messages (paginated, truncated).
 
-    Returns the most recent `exchange_limit` exchanges in chronological order.
-    Messages are truncated to `max_chars`. Includes `has_more` flag when
-    there are earlier exchanges not returned.
+    Returns the most recent messages in chronological order.
+    Content is truncated to `max_chars`. Includes `has_more` flag when
+    there are earlier messages not returned.
+
+    Returns data in exchange-compatible shape for backward compat:
+    pairs of consecutive human+machine messages are grouped as exchanges.
     """
     session_id = session_id.strip()
     if not session_id:
         return {"error": "session_id is required"}
 
-    exchange_limit = max(1, min(exchange_limit, 200))
+    # exchange_limit refers to exchanges (pairs), so fetch 2x messages
+    msg_limit = max(1, min(exchange_limit, 200)) * 2
     max_chars = max(100, min(max_chars, 50000))
 
     chat_rows = await graph.execute_cypher(
@@ -500,78 +498,126 @@ async def get_chat(
     }
 
     count_rows = await graph.execute_cypher(
-        "MATCH (s:Chat {session_id: $session_id})-[:HAS_EXCHANGE]->(e:Exchange) "
-        "RETURN count(e) AS total",
+        "MATCH (s:Chat {session_id: $session_id})-[:HAS_MESSAGE]->(m:Message) "
+        "RETURN count(m) AS total",
         {"session_id": session_id},
     )
-    total = count_rows[0].get("total", 0) if count_rows else 0
+    total_messages = count_rows[0].get("total", 0) if count_rows else 0
 
-    exchange_rows = await graph.execute_cypher(
-        f"MATCH (s:Chat {{session_id: $session_id}})-[:HAS_EXCHANGE]->(e:Exchange) "
-        f"RETURN e.exchange_id AS exchange_id, e.exchange_number AS exchange_number, "
-        f"       e.description AS description, e.user_message AS user_message, "
-        f"       e.ai_response AS ai_response, e.tools_used AS tools_used, "
-        f"       e.created_at AS created_at "
-        f"ORDER BY e.exchange_number DESC LIMIT {exchange_limit}",
+    message_rows = await graph.execute_cypher(
+        f"MATCH (s:Chat {{session_id: $session_id}})-[:HAS_MESSAGE]->(m:Message) "
+        f"RETURN m.message_id AS message_id, m.sequence AS sequence, "
+        f"       m.role AS role, m.content AS content, "
+        f"       m.description AS description, m.tools_used AS tools_used, "
+        f"       m.status AS status, m.created_at AS created_at "
+        f"ORDER BY m.sequence DESC LIMIT {msg_limit}",
         {"session_id": session_id},
     )
 
+    # Build exchange-compatible pairs from messages (for backward compat)
+    messages_chrono = list(reversed(message_rows))
     exchanges = []
-    for row in reversed(exchange_rows):
-        exchanges.append({
-            "exchange_id": row.get("exchange_id", ""),
-            "exchange_number": row.get("exchange_number", ""),
-            "description": row.get("description") or "",
-            "user_message": _truncate(row.get("user_message"), max_chars),
-            "ai_response": _truncate(row.get("ai_response"), max_chars),
-            "tools_used": row.get("tools_used") or "",
-            "created_at": row.get("created_at") or "",
-        })
+    i = 0
+    while i < len(messages_chrono):
+        msg = messages_chrono[i]
+        if msg.get("role") == "human":
+            user_msg = _truncate(msg.get("content"), max_chars)
+            ai_resp = ""
+            tools = ""
+            desc = msg.get("description") or ""
+            exchange_id = msg.get("message_id", "")
+            created = msg.get("created_at") or ""
+            # Look for paired machine message
+            if i + 1 < len(messages_chrono) and messages_chrono[i + 1].get("role") == "machine":
+                machine = messages_chrono[i + 1]
+                ai_resp = _truncate(machine.get("content"), max_chars)
+                tools = machine.get("tools_used") or ""
+                desc = desc or machine.get("description") or ""
+                i += 2
+            else:
+                i += 1
+            exchanges.append({
+                "exchange_id": exchange_id,
+                "exchange_number": str(msg.get("sequence", "")),
+                "description": desc,
+                "user_message": user_msg,
+                "ai_response": ai_resp,
+                "tools_used": tools,
+                "created_at": created,
+            })
+        else:
+            # Standalone machine message (no preceding human)
+            exchanges.append({
+                "exchange_id": msg.get("message_id", ""),
+                "exchange_number": str(msg.get("sequence", "")),
+                "description": msg.get("description") or "",
+                "user_message": "",
+                "ai_response": _truncate(msg.get("content"), max_chars),
+                "tools_used": msg.get("tools_used") or "",
+                "created_at": msg.get("created_at") or "",
+            })
+            i += 1
+
+    exchange_count = total_messages // 2  # approximate
 
     return {
         "chat": chat_meta,
         "exchanges": exchanges,
-        "exchange_count": total,
-        "has_more": total > exchange_limit,
+        "exchange_count": exchange_count,
+        "has_more": total_messages > msg_limit,
     }
 
 
-# ── get_exchange ──────────────────────────────────────────────────────────────
+# ── get_exchange / get_message ────────────────────────────────────────────────
 
 
 async def get_exchange(
     graph: BrainService,
     exchange_id: str,
 ) -> dict[str, Any]:
-    """Get a single exchange with full untruncated content."""
-    exchange_id = exchange_id.strip()
-    if not exchange_id:
-        return {"error": "exchange_id is required"}
+    """Get a single message with full untruncated content.
+
+    Accepts either a Message ID (new) or legacy Exchange ID.
+    Returns exchange-compatible shape for backward compat.
+    """
+    return await get_message(graph, exchange_id)
+
+
+async def get_message(
+    graph: BrainService,
+    message_id: str,
+) -> dict[str, Any]:
+    """Get a single message with full untruncated content."""
+    message_id = message_id.strip()
+    if not message_id:
+        return {"error": "message_id is required"}
 
     rows = await graph.execute_cypher(
-        "MATCH (e:Exchange {exchange_id: $exchange_id}) "
-        "RETURN e.exchange_id AS exchange_id, e.session_id AS session_id, "
-        "       e.exchange_number AS exchange_number, e.description AS description, "
-        "       e.user_message AS user_message, e.ai_response AS ai_response, "
-        "       e.context AS context, e.tools_used AS tools_used, "
-        "       e.created_at AS created_at",
-        {"exchange_id": exchange_id},
+        "MATCH (m:Message {message_id: $message_id}) "
+        "RETURN m.message_id AS message_id, m.session_id AS session_id, "
+        "       m.sequence AS sequence, m.role AS role, "
+        "       m.content AS content, m.description AS description, "
+        "       m.context AS context, m.tools_used AS tools_used, "
+        "       m.thinking AS thinking, m.status AS status, "
+        "       m.created_at AS created_at",
+        {"message_id": message_id},
     )
     if not rows:
-        return {"error": f"Exchange not found: {exchange_id}"}
+        return {"error": f"Message not found: {message_id}"}
 
-    ex = rows[0]
+    m = rows[0]
+    # Return exchange-compatible shape for backward compat
     return {
         "exchange": {
-            "exchange_id": ex.get("exchange_id", ""),
-            "session_id": ex.get("session_id", ""),
-            "exchange_number": ex.get("exchange_number", ""),
-            "description": ex.get("description") or "",
-            "user_message": ex.get("user_message") or "",
-            "ai_response": ex.get("ai_response") or "",
-            "context": ex.get("context") or "",
-            "tools_used": ex.get("tools_used") or "",
-            "created_at": ex.get("created_at") or "",
+            "exchange_id": m.get("message_id", ""),
+            "session_id": m.get("session_id", ""),
+            "exchange_number": str(m.get("sequence", "")),
+            "description": m.get("description") or "",
+            "user_message": m.get("content") or "" if m.get("role") == "human" else "",
+            "ai_response": m.get("content") or "" if m.get("role") == "machine" else "",
+            "context": m.get("context") or "",
+            "tools_used": m.get("tools_used") or "",
+            "created_at": m.get("created_at") or "",
         },
     }
 
@@ -703,9 +749,9 @@ VAULT_TOOLS = [
     Tool(
         name="search_memory",
         description=(
-            "Search all memory — chat sessions, conversation exchanges, and journal entries — by keyword. "
+            "Search all memory — chat sessions, conversation messages, and journal entries — by keyword. "
             "Returns ranked results with summaries and matched snippets. "
-            "Sessions matched via exchange content include matched_exchange_id for follow-up with get_exchange. "
+            "Sessions matched via message content include matched_exchange_id for follow-up with get_exchange. "
             "By default searches everything; use 'source' to narrow to 'journal' or 'chat'. "
             "Use date_from/date_to (YYYY-MM-DD) to scope journal results by date."
         ),
@@ -741,10 +787,10 @@ VAULT_TOOLS = [
         name="search_chats",
         description=(
             "Search across all past chat conversations by keyword. "
-            "Returns chats with matching exchanges bundled underneath — "
+            "Returns chats with matching messages bundled underneath — "
             "shows what was actually said, not just chat-level pointers. "
-            "Each matching exchange includes user/AI snippets for quick review. "
-            "Use get_exchange to drill into full content of a specific exchange."
+            "Each matching message includes user/AI snippets for quick review. "
+            "Use get_exchange to drill into full content of a specific message."
         ),
         inputSchema={
             "type": "object",
@@ -834,8 +880,8 @@ VAULT_TOOLS = [
         name="get_chat",
         description=(
             "Browse a specific chat conversation. Returns chat metadata "
-            "plus its exchanges (most recent N, truncated). Use get_exchange "
-            "to see full untruncated content of any specific exchange."
+            "plus its messages (most recent N, truncated). Use get_exchange "
+            "to see full untruncated content of any specific message."
         ),
         inputSchema={
             "type": "object",
@@ -861,8 +907,8 @@ VAULT_TOOLS = [
     Tool(
         name="get_exchange",
         description=(
-            "Get a single exchange with full untruncated content. "
-            "Use after search_chats or get_chat identifies a specific exchange "
+            "Get a single message with full untruncated content. "
+            "Use after search_chats or get_chat identifies a specific message "
             "of interest."
         ),
         inputSchema={

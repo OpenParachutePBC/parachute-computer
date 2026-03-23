@@ -309,22 +309,25 @@ class BrainChatStore:
             primary_key="run_id",
         )
         await self.graph.ensure_node_table(
-            "Exchange",
+            "Message",
             {
-                "exchange_id": "STRING",
+                "message_id": "STRING",
                 "session_id": "STRING",
-                "exchange_number": "STRING",
-                "description": "STRING",
-                "user_message": "STRING",
-                "ai_response": "STRING",
-                "context": "STRING",
-                "session_title": "STRING",
-                "tools_used": "STRING",
+                "role": "STRING",           # "human" | "machine"
+                "content": "STRING",
+                "status": "STRING",         # "complete" | "interrupted" | "error" | "pending"
+                "sequence": "INT64",
+                "tools_used": "STRING",     # JSON: tool names + param keys (machine only)
+                "thinking": "STRING",       # thinking blocks (machine only, null for sandboxed)
+                "description": "STRING",    # search-optimized summary (set by enrichment)
+                "context": "STRING",        # session state snapshot (set by enrichment)
                 "created_at": "STRING",
+                "updated_at": "STRING",
+                "metadata_json": "STRING",
             },
-            primary_key="exchange_id",
+            primary_key="message_id",
         )
-        await self.graph.ensure_rel_table("HAS_EXCHANGE", "Chat", "Exchange")
+        await self.graph.ensure_rel_table("HAS_MESSAGE", "Chat", "Message")
 
         # ── Column migrations ────────────────────────────────────────────────
         await self._ensure_column_migrations()
@@ -414,6 +417,120 @@ class BrainChatStore:
                         f"ALTER TABLE AgentRun ADD {col} {typ} DEFAULT {default}"
                     )
                     logger.info(f"Schema migration: added AgentRun.{col}")
+
+    # ── Message writes ─────────────────────────────────────────────────────
+
+    async def write_turn_messages(
+        self,
+        session_id: str,
+        human_content: str,
+        machine_content: str,
+        tools_used: str,
+        thinking: str | None,
+        status: str,
+        message_count: int,
+        session_meta: dict[str, Any] | None = None,
+    ) -> tuple[str, str]:
+        """Write human + machine Message nodes for a completed turn.
+
+        Args:
+            session_id: Parachute session ID (grouping key).
+            human_content: Full text the user sent.
+            machine_content: All text blocks from the AI (mid-stream included).
+            tools_used: Tool summary string (from summarize_tool_calls).
+            thinking: Concatenated thinking blocks (None for sandboxed).
+            status: "complete" | "interrupted" | "error".
+            message_count: Session message_count *before* this turn's increment.
+            session_meta: If provided, lazy-creates the Chat node on first write.
+
+        Returns:
+            Tuple of (human_message_id, machine_message_id).
+        """
+        now = datetime.now(timezone.utc).isoformat()
+        human_seq = message_count + 1
+        machine_seq = message_count + 2
+        sid_prefix = session_id[:8] if len(session_id) >= 8 else session_id
+        human_id = f"{sid_prefix}:msg:{human_seq}"
+        machine_id = f"{sid_prefix}:msg:{machine_seq}"
+
+        async with self.graph.write_lock:
+            # 1. Lazy-upsert Chat node on first message
+            if session_meta:
+                await self.graph.execute_cypher(
+                    "MERGE (s:Chat {session_id: $session_id}) "
+                    "ON CREATE SET s.title = $title, s.module = $module, "
+                    "s.source = $source, s.agent_type = $agent_type, "
+                    "s.created_at = $created_at",
+                    {
+                        "session_id": session_id,
+                        "title": session_meta.get("title") or "",
+                        "module": session_meta.get("module") or "chat",
+                        "source": session_meta.get("source") or "parachute",
+                        "agent_type": session_meta.get("agent_type") or "",
+                        "created_at": session_meta.get("created_at") or now,
+                    },
+                )
+
+            # 2. Write human Message
+            await self.graph.execute_cypher(
+                "MERGE (m:Message {message_id: $message_id}) "
+                "ON CREATE SET m.created_at = $created_at "
+                "SET m.session_id = $session_id, "
+                "m.role = $role, m.content = $content, "
+                "m.status = $status, m.sequence = $sequence, "
+                "m.updated_at = $updated_at",
+                {
+                    "message_id": human_id,
+                    "session_id": session_id,
+                    "role": "human",
+                    "content": human_content,
+                    "status": "complete",
+                    "sequence": human_seq,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+
+            # 3. Write machine Message
+            await self.graph.execute_cypher(
+                "MERGE (m:Message {message_id: $message_id}) "
+                "ON CREATE SET m.created_at = $created_at "
+                "SET m.session_id = $session_id, "
+                "m.role = $role, m.content = $content, "
+                "m.status = $status, m.sequence = $sequence, "
+                "m.tools_used = $tools_used, m.thinking = $thinking, "
+                "m.updated_at = $updated_at",
+                {
+                    "message_id": machine_id,
+                    "session_id": session_id,
+                    "role": "machine",
+                    "content": machine_content,
+                    "status": status,
+                    "sequence": machine_seq,
+                    "tools_used": tools_used,
+                    "thinking": thinking or "",
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+
+            # 4. Create HAS_MESSAGE relationships
+            for mid in (human_id, machine_id):
+                try:
+                    await self.graph.execute_cypher(
+                        "MATCH (s:Chat {session_id: $sid}), "
+                        "(m:Message {message_id: $mid}) "
+                        "MERGE (s)-[:HAS_MESSAGE]->(m)",
+                        {"sid": session_id, "mid": mid},
+                    )
+                except Exception as e:
+                    logger.debug(f"HAS_MESSAGE edge skipped for {mid}: {e}")
+
+        logger.debug(
+            f"Wrote messages {human_id}, {machine_id} "
+            f"(status={status}) for session {session_id[:8]}"
+        )
+        return human_id, machine_id
 
     async def seed_builtin_agents(self) -> None:
         """Seed or update built-in Agents from AGENT_TEMPLATES.

@@ -4,12 +4,13 @@ Brain query API — access to the shared Kuzu graph.
 Endpoints:
   GET  /api/brain/schema            — all tables with column types
   GET  /api/brain/chats             — conversation chats, supports ?search=
-  GET  /api/brain/chats/{id}        — single chat + exchanges
-  GET  /api/brain/chats/search      — search chats with matched exchanges inline
-  GET  /api/brain/exchanges         — single exchange by ?id=
+  GET  /api/brain/chats/{id}        — single chat + messages
+  GET  /api/brain/chats/search      — search chats with matched messages inline
+  GET  /api/brain/messages          — single message by ?id=
+  GET  /api/brain/exchanges         — (compat) alias for /messages
   GET  /api/brain/containers        — container environments
   GET  /api/brain/daily/entries     — notes and journal entries, supports ?search=
-  GET  /api/brain/memory            — unified memory search across chats, notes, and exchanges
+  GET  /api/brain/memory            — unified memory search across chats, notes, and messages
   POST /api/brain/notes             — create or update a note
   POST /api/brain/query             — read-only Cypher passthrough
   POST /api/brain/execute           — write Cypher passthrough (auth required)
@@ -150,10 +151,10 @@ async def search_chats(
     limit: int = Query(10, ge=1, le=50),
     module: str | None = Query(None, description="Filter by module: chat, daily"),
 ):
-    """Search chats by keyword with matched exchanges bundled inline.
+    """Search chats by keyword with matched messages bundled inline.
 
-    Returns chats grouped with their matching exchanges underneath.
-    Each exchange includes snippets from the matching field.
+    Returns chats grouped with their matching messages underneath.
+    Each message includes snippets from the matching field.
     """
     from parachute.core.vault_tools import search_chats as _search_chats
 
@@ -165,67 +166,54 @@ async def search_chats(
 @router.get("/chats/{session_id}")
 async def get_chat(
     session_id: str,
-    exchange_limit: int = Query(25, ge=1, le=200, description="Max exchanges to return (default 25, most recent first)"),
+    exchange_limit: int = Query(25, ge=1, le=200, description="Max messages to return (default 25, most recent first)"),
     max_chars: int = Query(2000, ge=100, le=50000, description="Max chars per message field before truncation"),
 ):
-    """Get a single chat by ID with its exchanges.
+    """Get a single chat by ID with its messages.
 
-    Exchanges are returned most-recent-first up to exchange_limit, then reversed to
-    chronological order. Long user_message/ai_response fields are truncated at max_chars.
-    For full content of a specific exchange, use GET /exchanges?id=...
+    Messages are returned in chronological order up to exchange_limit pairs.
+    Long content fields are truncated at max_chars.
+    For full content of a specific message, use GET /messages?id=...
     """
+    from parachute.core.vault_tools import get_chat as _get_chat
+
     graph = _get_graph()
+    result = await _get_chat(graph, session_id=session_id, exchange_limit=exchange_limit, max_chars=max_chars)
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
 
-    rows = await graph.execute_cypher(
-        "MATCH (s:Chat {session_id: $session_id}) RETURN s",
-        {"session_id": session_id},
-    )
-    if not rows:
-        raise HTTPException(status_code=404, detail=f"Chat not found: {session_id}")
 
-    session = rows[0]
+@router.get("/messages")
+async def get_message(
+    id: str = Query(..., description="Message ID (e.g. session_id:msg:N)"),
+):
+    """Get a single message by ID with full content.
 
-    # Fetch most recent N exchanges, then reverse to chronological order
-    try:
-        exchange_rows = await graph.execute_cypher(
-            "MATCH (s:Chat {session_id: $session_id})-[:HAS_EXCHANGE]->(e:Exchange) "
-            f"RETURN e ORDER BY e.exchange_number DESC LIMIT {exchange_limit}",
-            {"session_id": session_id},
-        )
-        # Reverse to chronological order
-        exchange_rows = list(reversed(exchange_rows))
-        # Truncate long message fields
-        exchanges = []
-        for e in exchange_rows:
-            e["user_message"] = _truncate(e.get("user_message"), max_chars)
-            e["ai_response"] = _truncate(e.get("ai_response"), max_chars)
-            exchanges.append(e)
-    except Exception:
-        logger.exception("Failed to fetch exchanges for session %s", session_id)
-        exchanges = []
+    Use after search_memory or brain_get_chat identifies a specific message of interest.
+    Returns full content without truncation.
+    """
+    from parachute.core.vault_tools import get_message as _get_message
 
-    return {"chat": session, "exchanges": exchanges, "exchange_count": len(exchanges)}
+    graph = _get_graph()
+    result = await _get_message(graph, message_id=id)
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
 
 
 @router.get("/exchanges")
-async def get_exchange(
-    exchange_id: str = Query(..., alias="id", description="Exchange ID (e.g. session_id:ex:N)"),
+async def get_exchange_compat(
+    exchange_id: str = Query(..., alias="id", description="Message/Exchange ID"),
 ):
-    """Get a single exchange by ID with full message content.
+    """Backward-compatible alias for /messages."""
+    from parachute.core.vault_tools import get_message as _get_message
 
-    Use after search_memory or brain_get_chat identifies a specific exchange of interest.
-    Returns full user_message and ai_response without truncation.
-    """
     graph = _get_graph()
-
-    rows = await graph.execute_cypher(
-        "MATCH (e:Exchange {exchange_id: $exchange_id}) RETURN e",
-        {"exchange_id": exchange_id},
-    )
-    if not rows:
-        raise HTTPException(status_code=404, detail=f"Exchange not found: {exchange_id}")
-
-    return {"exchange": rows[0]}
+    result = await _get_message(graph, message_id=exchange_id)
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
 
 
 @router.get("/containers")
@@ -285,22 +273,22 @@ async def list_daily_entries(
 @router.get("/memory")
 async def get_memory(
     limit: int = Query(50, ge=1, le=200),
-    search: str | None = Query(None, description="Search query across session summaries, note content, and exchange messages"),
+    search: str | None = Query(None, description="Search query across session summaries, note content, and messages"),
     type: Literal["chats", "notes"] | None = Query(None, description="Filter by type: chats, notes"),
     date_from: str | None = Query(None, description="YYYY-MM-DD — filter notes by date (start)"),
     date_to: str | None = Query(None, description="YYYY-MM-DD — filter notes by date (end)"),
     note_type: str | None = Query(None, description="Filter notes by note_type (e.g. 'journal')"),
 ):
-    """Unified memory search — sessions, notes, and exchanges merged, sorted by time descending.
+    """Unified memory search — sessions, notes, and messages merged, sorted by time descending.
 
     When search is provided:
     - Matches Chat.summary + Chat.title for sessions
-    - Matches Exchange.user_message + Exchange.ai_response + Exchange.description for exchanges
-      (returns parent Chat session with matched exchange description as snippet)
+    - Matches Message.content + Message.description for messages
+      (returns parent Chat session with matched message description as snippet)
     - Matches Note.content for notes
 
-    Sessions found via exchange match include matched_exchange_id for follow-up with brain_get_exchange.
-    Results are deduplicated: a session appears once even if multiple exchanges match.
+    Sessions found via message match include matched_exchange_id for follow-up with get_message.
+    Results are deduplicated: a session appears once even if multiple messages match.
     """
     brain = _get_graph()
     items: list[dict] = []
@@ -339,27 +327,27 @@ async def get_memory(
                 "module": s.get("module", "chat"),
             })
 
-        # --- Exchange search (full content, returns parent session + description as snippet) ---
+        # --- Message search (content match → parent session) ---
         if search:
-            exchange_where_clauses = [
+            msg_where_clauses = [
                 "(s.archived IS NULL OR s.archived = false)",
                 "(s.source = 'parachute' AND (s.agent_type IS NULL OR s.agent_type = 'orchestrator'))",
-                "(e.user_message CONTAINS $search OR e.ai_response CONTAINS $search "
-                "OR e.description CONTAINS $search)",
+                "(m.content CONTAINS $search "
+                "OR (m.description IS NOT NULL AND m.description CONTAINS $search))",
             ]
-            ex_rows = await brain.execute_cypher(
-                f"MATCH (s:Chat)-[:HAS_EXCHANGE]->(e:Exchange) "
-                f"WHERE {' AND '.join(exchange_where_clauses)} "
+            msg_rows = await brain.execute_cypher(
+                f"MATCH (s:Chat)-[:HAS_MESSAGE]->(m:Message) "
+                f"WHERE {' AND '.join(msg_where_clauses)} "
                 f"RETURN s.session_id AS session_id, s.title AS title, s.summary AS summary, "
                 f"s.last_accessed AS last_accessed, s.created_at AS created_at, s.module AS module, "
-                f"e.description AS matched_description, e.exchange_id AS matched_exchange_id "
+                f"m.description AS matched_description, m.message_id AS matched_message_id "
                 f"ORDER BY s.last_accessed DESC LIMIT {limit}",
                 {"search": search},
             )
-            for row in ex_rows:
+            for row in msg_rows:
                 sid = row.get("session_id", "")
                 if sid in seen_session_ids:
-                    continue  # already found via session summary search
+                    continue
                 seen_session_ids.add(sid)
                 items.append({
                     "kind": "session",
@@ -367,7 +355,7 @@ async def get_memory(
                     "title": row.get("title") or "Untitled conversation",
                     "summary": row.get("summary") or "",
                     "snippet": row.get("matched_description") or "",
-                    "matched_exchange_id": row.get("matched_exchange_id") or "",
+                    "matched_exchange_id": row.get("matched_message_id") or "",
                     "ts": row.get("last_accessed") or row.get("created_at") or "",
                     "module": row.get("module") or "chat",
                 })

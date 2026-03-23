@@ -8,8 +8,8 @@ Tools access host services via the service registry (BrainService,
 BrainChatStore) — no HTTP loopback needed since we're in the same process.
 
 Shared vault tools (search_memory, search_chats, list_chats, list_notes,
-get_chat, get_exchange) are imported from core/vault_tools.py — same
-implementations as the direct MCP server.
+get_chat, get_exchange/get_message) are imported from core/vault_tools.py —
+same implementations as the direct MCP server.
 
 Bridge-only tools:
 - read_brain_entity: Read a brain graph entity by name
