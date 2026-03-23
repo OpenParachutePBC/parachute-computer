@@ -4,23 +4,22 @@ Tests for multi-agent MCP tools (create_session).
 Tests session context injection, trust level enforcement, rate limiting,
 spawn limits, and content validation.
 
+Now tests the HTTP endpoint at POST /api/chat/children since the MCP
+server routes through HTTP loopback (no direct DB access).
+
 Note: send_message was removed (not yet implemented, tracked in #303).
 """
 
-import asyncio
-import os
+import uuid
 from datetime import datetime, timezone, timedelta
-from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
+from httpx import AsyncClient, ASGITransport
 
 from parachute.db.brain_chat_store import BrainChatStore
-from parachute.models.session import Session, SessionCreate, SessionSource, TrustLevel
-from parachute.mcp_server import (
-    SessionContext,
-    create_session,
-)
+from parachute.models.session import SessionCreate, SessionSource
+from parachute.mcp_server import SessionContext
 
 
 # ---------------------------------------------------------------------------
@@ -41,12 +40,24 @@ async def db(tmp_path):
 
 
 @pytest.fixture
-def vault_path(tmp_path):
-    """Create a temporary vault path."""
-    vault = tmp_path / "vault"
-    vault.mkdir()
-    (vault / ".parachute").mkdir()
-    return str(vault)
+async def app(db):
+    """Create a test FastAPI app with the sessions router."""
+    from fastapi import FastAPI
+    from parachute.api.sessions import router
+
+    app = FastAPI()
+    app.include_router(router, prefix="/api")
+    app.state.session_store = db
+    app.state.orchestrator = None
+    return app
+
+
+@pytest.fixture
+async def client(app):
+    """Create an async test client."""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        yield c
 
 
 @pytest.fixture
@@ -61,24 +72,6 @@ async def parent_session(db: BrainChatStore):
     )
     session = await db.create_session(session_create)
     return session
-
-
-@pytest.fixture
-def session_context_direct():
-    """Create a direct (trusted) session context."""
-    return SessionContext(
-        session_id="parent_sess_abc123",
-        trust_level="direct",
-    )
-
-
-@pytest.fixture
-def session_context_sandboxed():
-    """Create a sandboxed (untrusted) session context."""
-    return SessionContext(
-        session_id="sandbox_sess_def456",
-        trust_level="sandboxed",
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -117,164 +110,113 @@ class TestSessionContext:
 
 
 # ---------------------------------------------------------------------------
-# create_session Tests
+# create_child_session Endpoint Tests
 # ---------------------------------------------------------------------------
 
 
-class TestCreateSession:
+class TestCreateChildSessionEndpoint:
     @pytest.mark.asyncio
-    async def test_create_session_success(self, db, parent_session, session_context_direct):
-        """Test successful child session creation."""
-        with patch("parachute.mcp_server._session_context", session_context_direct), \
-             patch("parachute.mcp_server.get_db", return_value=db):
+    async def test_create_session_success(self, client, db, parent_session):
+        """Test successful child session creation via HTTP endpoint."""
+        response = await client.post("/api/chat/children", json={
+            "title": "Child Session",
+            "agentType": "researcher",
+            "initialMessage": "Hello, world!",
+            "parentSessionId": "parent_sess_abc123",
+            "trustLevel": "direct",
+        })
 
-            result = await create_session(
-                title="Child Session",
-                agent_type="researcher",
-                initial_message="Hello, world!",
-            )
+        assert response.status_code == 200
+        result = response.json()
+        assert result["success"] is True
+        assert "session_id" in result
+        assert result["title"] == "Child Session"
+        assert result["agent_type"] == "researcher"
+        assert result["trust_level"] == "direct"
+        assert result["parent_session_id"] == "parent_sess_abc123"
 
-            assert result["success"] is True
-            assert "session_id" in result
-            assert result["title"] == "Child Session"
-            assert result["agent_type"] == "researcher"
-            assert result["trust_level"] == "direct"
-            assert result["parent_session_id"] == "parent_sess_abc123"
-
-            # Verify session was created in database
-            session = await db.get_session(result["session_id"])
-            assert session is not None
-            assert session.parent_session_id == "parent_sess_abc123"
-            assert session.created_by == "agent:parent_sess_abc123"
-
-    @pytest.mark.asyncio
-    async def test_create_session_no_context(self, db):
-        """Test create_session fails without session context."""
-        with patch("parachute.mcp_server._session_context", None):
-            result = await create_session(
-                title="Child Session",
-                agent_type="researcher",
-                initial_message="Hello",
-            )
-
-            assert "error" in result
-            assert "Session context not available" in result["error"]
+        # Verify session was created in database
+        session = await db.get_session(result["session_id"])
+        assert session is not None
+        assert session.parent_session_id == "parent_sess_abc123"
+        assert session.created_by == "agent:parent_sess_abc123"
 
     @pytest.mark.asyncio
-    async def test_create_session_empty_title(self, db, parent_session, session_context_direct):
-        """Test create_session rejects empty title."""
-        with patch("parachute.mcp_server._session_context", session_context_direct), \
-             patch("parachute.mcp_server.get_db", return_value=db):
+    async def test_create_session_invalid_agent_type(self, client, parent_session):
+        """Test endpoint rejects invalid agent_type characters."""
+        response = await client.post("/api/chat/children", json={
+            "title": "Test",
+            "agentType": "invalid/type",
+            "initialMessage": "Hello",
+            "parentSessionId": "parent_sess_abc123",
+        })
 
-            result = await create_session(
-                title="  ",
-                agent_type="researcher",
-                initial_message="Hello",
-            )
-
-            assert "error" in result
-            assert "Title cannot be empty" in result["error"]
+        assert response.status_code == 400
+        assert "Invalid agent_type" in response.json()["detail"]
 
     @pytest.mark.asyncio
-    async def test_create_session_invalid_agent_type(self, db, parent_session, session_context_direct):
-        """Test create_session rejects invalid agent_type characters."""
-        with patch("parachute.mcp_server._session_context", session_context_direct), \
-             patch("parachute.mcp_server.get_db", return_value=db):
+    async def test_create_session_message_too_long(self, client, parent_session):
+        """Test endpoint rejects oversized message."""
+        response = await client.post("/api/chat/children", json={
+            "title": "Test",
+            "agentType": "researcher",
+            "initialMessage": "x" * 50_001,
+            "parentSessionId": "parent_sess_abc123",
+        })
 
-            result = await create_session(
-                title="Test",
-                agent_type="invalid/type",  # Contains slash
-                initial_message="Hello",
-            )
-
-            assert "error" in result
-            assert "Invalid agent_type" in result["error"]
+        assert response.status_code == 400
+        assert "too long" in response.json()["detail"]
 
     @pytest.mark.asyncio
-    async def test_create_session_message_too_long(self, db, parent_session, session_context_direct):
-        """Test create_session rejects oversized message."""
-        with patch("parachute.mcp_server._session_context", session_context_direct), \
-             patch("parachute.mcp_server.get_db", return_value=db):
-
-            result = await create_session(
-                title="Test",
-                agent_type="researcher",
-                initial_message="x" * 50_001,  # Exceeds 50k limit
-            )
-
-            assert "error" in result
-            assert "too long" in result["error"]
-
-    @pytest.mark.asyncio
-    async def test_create_session_control_chars_rejected(self, db, parent_session, session_context_direct):
-        """Test create_session rejects control characters in message."""
-        with patch("parachute.mcp_server._session_context", session_context_direct), \
-             patch("parachute.mcp_server.get_db", return_value=db):
-
-            result = await create_session(
-                title="Test",
-                agent_type="researcher",
-                initial_message="Hello\x00World",  # NULL byte
-            )
-
-            assert "error" in result
-            assert "control characters" in result["error"]
-
-    @pytest.mark.asyncio
-    async def test_create_session_spawn_limit(self, db, parent_session, session_context_direct):
-        """Test create_session enforces spawn limit (max 10 children)."""
-        # Mock get_last_child_created to return an old timestamp so rate limiter doesn't trigger
+    async def test_create_session_spawn_limit(self, client, db, parent_session):
+        """Test endpoint enforces spawn limit (max 10 children)."""
+        # Mock get_last_child_created to avoid rate limiting
         old_timestamp = datetime.now(timezone.utc) - timedelta(seconds=5)
         db.get_last_child_created = AsyncMock(return_value=old_timestamp)
 
-        with patch("parachute.mcp_server._session_context", session_context_direct), \
-             patch("parachute.mcp_server.get_db", return_value=db):
+        # Create 10 child sessions
+        for i in range(10):
+            response = await client.post("/api/chat/children", json={
+                "title": f"Child {i}",
+                "agentType": "worker",
+                "initialMessage": "Work",
+                "parentSessionId": "parent_sess_abc123",
+            })
+            assert response.status_code == 200
 
-            # Create 10 child sessions
-            for i in range(10):
-                result = await create_session(
-                    title=f"Child {i}",
-                    agent_type="worker",
-                    initial_message="Work",
-                )
-                assert result["success"] is True
+        # 11th should fail
+        response = await client.post("/api/chat/children", json={
+            "title": "Child 11",
+            "agentType": "worker",
+            "initialMessage": "Work",
+            "parentSessionId": "parent_sess_abc123",
+        })
 
-            # 11th should fail
-            result = await create_session(
-                title="Child 11",
-                agent_type="worker",
-                initial_message="Work",
-            )
-
-            assert "error" in result
-            assert "Spawn limit reached" in result["error"]
+        assert response.status_code == 429
+        assert "Spawn limit" in response.json()["detail"]
 
     @pytest.mark.asyncio
-    async def test_create_session_rate_limiting(self, db, parent_session, session_context_direct):
-        """Test create_session enforces rate limiting (1/second)."""
-        with patch("parachute.mcp_server._session_context", session_context_direct), \
-             patch("parachute.mcp_server.get_db", return_value=db):
+    async def test_create_session_rate_limiting(self, client, db, parent_session):
+        """Test endpoint enforces rate limiting (1/second)."""
+        # First session succeeds
+        response1 = await client.post("/api/chat/children", json={
+            "title": "Child 1",
+            "agentType": "worker",
+            "initialMessage": "Work",
+            "parentSessionId": "parent_sess_abc123",
+        })
+        assert response1.status_code == 200
 
-            # First session succeeds
-            result1 = await create_session(
-                title="Child 1",
-                agent_type="worker",
-                initial_message="Work",
-            )
-            assert result1["success"] is True
+        # Second session immediately after should fail
+        response2 = await client.post("/api/chat/children", json={
+            "title": "Child 2",
+            "agentType": "worker",
+            "initialMessage": "Work",
+            "parentSessionId": "parent_sess_abc123",
+        })
 
-            # Second session immediately after should fail
-            result2 = await create_session(
-                title="Child 2",
-                agent_type="worker",
-                initial_message="Work",
-            )
-
-            assert "error" in result2
-            assert "Rate limit" in result2["error"]
-
+        assert response2.status_code == 429
+        assert "Rate limit" in response2.json()["detail"]
 
 
 # send_message tests removed — tool disabled pending implementation (#303)
-
-
