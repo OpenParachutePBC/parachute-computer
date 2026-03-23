@@ -487,8 +487,31 @@ class DockerSandbox:
             if proc.stderr:
                 stderr_data = await proc.stderr.read()
             stderr_text = stderr_data.decode().strip()
-            logger.error(f"{label.capitalize()} exited {proc.returncode}: {stderr_text}")
-            yield {"type": "exit_error", "returncode": proc.returncode, "stderr": stderr_text}
+
+            # Try to extract a meaningful error from the container's debug log
+            # when stderr is empty (CLI often writes errors there, not to stderr)
+            error_detail = stderr_text
+            if not error_detail and config.session_id:
+                try:
+                    debug_path = (
+                        self.parachute_dir / "sandbox" / "envs"
+                        / (config.container_slug or f"session-{config.session_id}")
+                        / "home" / ".claude" / "debug" / f"{config.session_id}.txt"
+                    )
+                    if debug_path.exists():
+                        # Read last 5 lines for error context
+                        lines = debug_path.read_text().strip().split("\n")
+                        error_lines = [l for l in lines[-10:] if "[ERROR]" in l]
+                        if error_lines:
+                            error_detail = error_lines[-1].split("[ERROR]", 1)[-1].strip()
+                except Exception:
+                    pass
+
+            if not error_detail:
+                error_detail = f"Command failed with exit code {proc.returncode}"
+
+            logger.error(f"{label.capitalize()} exited {proc.returncode}: {error_detail}")
+            yield {"type": "exit_error", "returncode": proc.returncode, "stderr": error_detail}
 
     async def _validate_docker_ready(self) -> None:
         """Validate Docker and sandbox image are available.
