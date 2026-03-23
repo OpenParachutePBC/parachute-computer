@@ -253,10 +253,9 @@ class DockerSandbox:
             else:
                 logger.warning(f"Skipping non-existent path: {full_path}")
 
-        # If no specific paths, mount home dir read-only
-        if not config.allowed_paths:
-            mounts.extend(["-v", f"{home}:/home/sandbox/Parachute:ro"])
-            logger.debug(f"Mounting home dir read-only: {home} -> /home/sandbox/Parachute:ro")
+        # No wholesale home dir mount — the container's /home/sandbox/ is its own
+        # persistent volume (stored at ~/.parachute/sandbox/envs/{slug}/home/).
+        # Only allowed_paths get mounted as individual bind mounts above.
 
         # Mount capability files/dirs
         mounts.extend(self._build_capability_mounts(config))
@@ -265,29 +264,12 @@ class DockerSandbox:
         return mounts
 
     def _build_capability_mounts(self, config: AgentSandboxConfig) -> list[str]:
-        """Build Docker volume mounts for capabilities (MCP, skills, agents, plugins)."""
+        """Build Docker volume mounts for capabilities (plugins only).
+
+        MCP config is passed via capabilities JSON (not mounted from host).
+        Skills and agents live in the container's own home dir.
+        """
         mounts = []
-
-        home = Path.home()
-        # Mount home MCP config (read-only)
-        mcp_json = home / ".mcp.json"
-        if mcp_json.exists():
-            mounts.extend(["-v", f"{mcp_json}:/home/sandbox/Parachute/.mcp.json:ro"])
-
-        # Mount skills directory (read-only)
-        skills_dir = home / ".skills"
-        if skills_dir.is_dir():
-            mounts.extend(["-v", f"{skills_dir}:/home/sandbox/Parachute/.skills:ro"])
-
-        # Mount custom agents (read-only)
-        agents_dir = self.parachute_dir / "agents"
-        if agents_dir.is_dir():
-            mounts.extend(["-v", f"{agents_dir}:/home/sandbox/Parachute/.parachute/agents:ro"])
-
-        # Mount CLAUDE.md (read-only)
-        claude_md = home / "CLAUDE.md"
-        if claude_md.exists():
-            mounts.extend(["-v", f"{claude_md}:/home/sandbox/Parachute/CLAUDE.md:ro"])
 
         # Mount plugin directories (read-only)
         for i, plugin_dir in enumerate(config.plugin_dirs):
@@ -605,8 +587,9 @@ class DockerSandbox:
             if config.network_enabled:
                 await self._ensure_sandbox_network()
 
-            vault_mounts = ["-v", f"{Path.home()}:/home/sandbox/Parachute:ro"]
-            vault_mounts.extend(self._build_capability_mounts(config))
+            # No wholesale home dir mount — container has its own persistent home.
+            # Only capability mounts (plugins) from the host.
+            vault_mounts = self._build_capability_mounts(config)
 
             args = self._build_persistent_container_args(
                 container_name, slug, config, labels, home_dir, vault_mounts
