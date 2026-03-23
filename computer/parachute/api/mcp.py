@@ -45,21 +45,22 @@ def get_mcp_config_path() -> Path:
 def load_mcp_config() -> dict[str, Any]:
     """Load MCP configuration from file.
 
-    The .mcp.json format has servers as top-level keys:
-    {
-        "parachute": { "command": "node", "args": [...] },
-        "glif": { "command": "npx", ... }
-    }
+    Handles both formats:
+    - Wrapped: { "mcpServers": { "name": {...}, ... } }  (Claude Code standard)
+    - Flat: { "name": {...}, ... }  (legacy)
 
-    We wrap it for internal use with mcpServers key.
+    Always returns wrapped format internally.
     """
     config_path = get_mcp_config_path()
     if not config_path.exists():
         return {"mcpServers": {}}
     try:
-        raw_config = json.loads(config_path.read_text(encoding="utf-8"))
-        # The file has servers as top-level keys, wrap in mcpServers
-        return {"mcpServers": raw_config}
+        raw = json.loads(config_path.read_text(encoding="utf-8"))
+        # Detect format: wrapped has "mcpServers" key with a dict value
+        if "mcpServers" in raw and isinstance(raw["mcpServers"], dict):
+            return raw  # Already wrapped
+        # Flat format — wrap it
+        return {"mcpServers": raw}
     except Exception as e:
         logger.error(f"Error loading MCP config: {e}")
         return {"mcpServers": {}}
@@ -68,8 +69,8 @@ def load_mcp_config() -> dict[str, Any]:
 def save_mcp_config(config: dict[str, Any]) -> None:
     """Save MCP configuration to file atomically.
 
-    Unwraps the mcpServers key before saving since file format
-    has servers as top-level keys.
+    Always saves in wrapped format: { "mcpServers": { ... } }
+    This matches what Claude Code and mcp_loader.py expect.
 
     Uses write-to-temp-then-rename for atomic writes to prevent
     corruption from concurrent writes or crashes mid-write.
@@ -77,9 +78,12 @@ def save_mcp_config(config: dict[str, Any]) -> None:
     import tempfile
 
     config_path = get_mcp_config_path()
-    # Unwrap mcpServers for file format
-    raw_config = config.get("mcpServers", config)
-    content = json.dumps(raw_config, indent=2)
+    # Always save in wrapped format for compatibility
+    if "mcpServers" in config:
+        save_data = config
+    else:
+        save_data = {"mcpServers": config}
+    content = json.dumps(save_data, indent=2)
 
     # Atomic write: write to temp file in same directory, then rename
     fd, tmp_path = tempfile.mkstemp(

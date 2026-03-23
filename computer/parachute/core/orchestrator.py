@@ -1615,9 +1615,20 @@ class Orchestrator:
 
         sandbox_model = model or self.settings.default_model
 
-        # Inject HTTP MCP bridge so sandbox containers can access vault tools
-        # (search_memory, read_journal, etc.) via the host's MCP endpoint.
-        sandbox_mcps = dict(caps.resolved_mcps) if caps.resolved_mcps else {}
+        # Build MCP config for sandbox: only HTTP/SSE servers survive into Docker.
+        # Stdio servers (including the built-in "parachute" stdio MCP) cannot run
+        # inside the container. Vault tools come via the HTTP MCP bridge instead.
+        from parachute.lib.mcp_loader import _get_server_type
+
+        sandbox_mcps: dict[str, Any] = {}
+        if caps.resolved_mcps:
+            for name, cfg in caps.resolved_mcps.items():
+                if _get_server_type(cfg) != "stdio":
+                    sandbox_mcps[name] = cfg
+                else:
+                    logger.debug(f"Filtered stdio MCP '{name}' from sandbox session")
+
+        # Inject HTTP MCP bridge for scoped vault tool access (fail closed).
         sandbox_token: str | None = None
         try:
             from parachute.core.interfaces import get_registry
@@ -1626,7 +1637,6 @@ class Orchestrator:
             token_store = get_registry().get("SandboxTokenStore")
             if token_store is not None:
                 from parachute.api.mcp_bridge import build_http_mcp_config
-
                 from parachute.api.mcp_tools import CHAT_TOOLS
 
                 token_ctx = SandboxTokenContext(
@@ -1648,6 +1658,9 @@ class Orchestrator:
                 )
         except Exception as e:
             logger.warning(f"Failed to inject MCP bridge for sandbox: {e}")
+            # Fail closed: remove any leftover "parachute" entry so the
+            # stdio MCP server doesn't leak into the container.
+            sandbox_mcps.pop("parachute", None)
 
         sandbox_config = AgentSandboxConfig(
             session_id=sandbox_sid,
