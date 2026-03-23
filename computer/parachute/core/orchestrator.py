@@ -678,9 +678,24 @@ class Orchestrator:
             # Determine resume session ID
             # Only resume if: session exists in DB, not new, not forced fresh,
             # and SDK actually has a JSONL transcript for this session.
+            #
+            # For sandboxed sessions: skip the host-side transcript check.
+            # Sandbox transcripts live inside the container (bind-mounted from
+            # vault/.parachute/sandbox/envs/<slug>/home/.claude/), not on the
+            # host's ~/.claude/. The sandbox entrypoint handles its own resume
+            # via --resume flag passed by _run_sandboxed().
             resume_id = None
+            is_sandboxed = caps.effective_trust == "sandboxed"
             if session.id != "pending" and not is_new and not force_new:
-                if self.session_manager._check_sdk_session_exists(
+                if is_sandboxed:
+                    # Sandboxed sessions always attempt resume inside the
+                    # container — don't flip is_new based on host transcript.
+                    # _run_sandboxed() sets resume_session_id independently.
+                    logger.info(
+                        f"Sandboxed session {session.id[:8]} — skipping host "
+                        f"transcript check, container handles resume"
+                    )
+                elif self.session_manager._check_sdk_session_exists(
                     session.id, session.working_directory
                 ):
                     resume_id = session.id
@@ -1677,6 +1692,8 @@ class Orchestrator:
             session_source=session.source,
             timeout_seconds=self.settings.sandbox_timeout,
             readline_timeout=self.settings.sandbox_readline_timeout,
+            tools=PARACHUTE_TOOLS,
+            disallowed_tools=PARACHUTE_DISALLOWED_TOOLS,
         )
 
         # Three-tier resume strategy: SDK resume → history injection → fresh start
@@ -1805,6 +1822,7 @@ class Orchestrator:
                     config=sandbox_config,
                     message=retry_message,
                     container_slug=session.container_id,
+                    fresh_session=True,  # Skip --session-id to avoid transcript conflict
                 )
                 async for event in retry_stream:
                     if interrupt and interrupt.is_interrupted:
