@@ -18,8 +18,9 @@ Brain Tools:
 - brain_query: Execute a read-only Cypher query (power users / debugging)
 - brain_execute: Execute a write Cypher query against the brain
 
-Tag Tools (read from sessions.db via HTTP API):
-- search_by_tag / list_tags / add_session_tag / remove_session_tag
+Session & Tag Tools (via HTTP API):
+- get_session / search_by_tag / list_tags / add_session_tag / remove_session_tag
+- create_session (child sessions with spawn limits)
 
 Run with:
     python -m parachute.mcp_server /path/to/vault
@@ -32,11 +33,9 @@ import logging
 import os
 import re
 import sys
-import uuid
 
 import httpx
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Self
 
@@ -53,9 +52,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger("ParachuteMCP")
 
-# Global session_store connection
-_db = None
 _brain_base_url: str = ""
+_api_base_url: str = ""
 _PARACHUTE_DIR = Path.home() / ".parachute"
 
 
@@ -103,44 +101,6 @@ class SessionContext:
 _session_context: SessionContext | None = None
 
 
-async def get_db():
-    """Get or create BrainChatStore connection.
-
-    Note: This may fail with a lock error if the Parachute server is running,
-    since Kuzu only allows one process to hold the graph lock. Most vault tools
-    are routed through the server's HTTP API instead. This is only used for
-    session/tag operations that need BrainChatStore methods directly.
-    """
-    global _db
-    if _db is None:
-        from parachute.db.brain import BrainService
-        from parachute.db.brain_chat_store import BrainChatStore
-        brain = BrainService(db_path=_PARACHUTE_DIR / "graph" / "parachute.kz")
-        await brain.connect()
-        _db = BrainChatStore(brain)
-        await _db.ensure_schema()
-        logger.info(f"Connected to brain DB: {_PARACHUTE_DIR / 'graph' / 'parachute.kz'}")
-    return _db
-
-
-def _validate_message_content(
-    content: str,
-    field_name: str = "message",
-    max_length: int = 50_000
-) -> str | None:
-    """Validate message content.
-
-    Returns:
-        Error message if invalid, None if valid.
-    """
-    if len(content) > max_length:
-        return f"{field_name.capitalize()} too long (max {max_length:,} characters)"
-
-    control_chars = [c for c in content if ord(c) < 32 and c not in '\n\r\t']
-    if control_chars:
-        return f"{field_name.capitalize()} contains invalid control characters"
-
-    return None
 
 
 # Tool definitions
@@ -302,183 +262,6 @@ TOOLS = [
 ] + VAULT_TOOLS  # Shared vault tools (search_memory, search_chats, list_chats, list_notes, get_chat, get_exchange)
 
 
-async def get_session(
-    session_id: str,
-    include_messages: bool = True,
-) -> dict[str, Any] | None:
-    """Get a session by ID with optional messages."""
-    db = await get_db()
-    session = await db.get_session(session_id)
-
-    if not session:
-        return None
-
-    result = {
-        "id": session.id,
-        "title": session.title,
-        "source": session.source.value,
-        "module": session.module,
-        "message_count": session.message_count,
-        "created_at": session.created_at.isoformat(),
-        "last_accessed": session.last_accessed.isoformat(),
-        "archived": session.archived,
-        "working_directory": session.working_directory,
-        "model": session.model,
-    }
-
-    # Get tags
-    tags = await db.get_session_tags(session_id)
-    result["tags"] = tags
-
-    if include_messages:
-        # Load messages from SDK JSONL file
-        from parachute.core.session_manager import SessionManager
-        sm = SessionManager(_PARACHUTE_DIR, db)
-        session_with_messages = await sm.get_session_with_messages(session_id)
-        if session_with_messages:
-            result["messages"] = session_with_messages.messages
-        else:
-            result["messages"] = []
-
-    return result
-
-
-async def search_by_tag(tag: str, limit: int = 20) -> list[dict[str, Any]]:
-    """Find sessions with a specific tag."""
-    db = await get_db()
-    sessions = await db.get_sessions_by_tag(tag, limit=limit)
-    return [
-        {
-            "id": s.id,
-            "title": s.title,
-            "source": s.source.value,
-            "module": s.module,
-            "message_count": s.message_count,
-            "last_accessed": s.last_accessed.isoformat(),
-        }
-        for s in sessions
-    ]
-
-
-async def list_tags() -> list[dict[str, Any]]:
-    """List all tags with counts."""
-    db = await get_db()
-    tags = await db.list_all_tags()
-    return [{"tag": tag, "count": count} for tag, count in tags]
-
-
-async def add_session_tag(session_id: str, tag: str) -> dict[str, Any]:
-    """Add a tag to a session."""
-    db = await get_db()
-    await db.add_tag(session_id, tag)
-    return {"success": True, "session_id": session_id, "tag": tag}
-
-
-async def remove_session_tag(session_id: str, tag: str) -> dict[str, Any]:
-    """Remove a tag from a session."""
-    db = await get_db()
-    await db.remove_tag(session_id, tag)
-    return {"success": True, "session_id": session_id, "tag": tag, "removed": True}
-
-
-# =============================================================================
-# Multi-Agent Session Functions
-# =============================================================================
-
-
-async def create_session(
-    title: str,
-    agent_type: str,
-    initial_message: str,
-) -> dict[str, Any]:
-    """
-    Create a child session.
-
-    Trust level and container env are inherited from session context env vars.
-    Enforces spawn limits (max 10 children) and rate limiting (1/second).
-    """
-    # Validate session context is available
-    if not _session_context or not _session_context.is_available:
-        return {
-            "error": "Session context not available. This tool can only be called from an active session."
-        }
-
-    # Validate inputs
-    if not title or not title.strip():
-        return {"error": "Title cannot be empty"}
-
-    if not agent_type or not agent_type.strip():
-        return {"error": "Agent type cannot be empty"}
-
-    if not initial_message or not initial_message.strip():
-        return {"error": "Initial message cannot be empty"}
-
-    # Sanitize agent_type (alphanumeric, hyphens, underscores only)
-    if not re.match(r'^[a-zA-Z0-9_-]+$', agent_type):
-        return {
-            "error": "Invalid agent_type: must contain only letters, numbers, hyphens, and underscores"
-        }
-
-    # Content validation (max 50k chars, no control chars except newlines/tabs)
-    if error := _validate_message_content(initial_message, "initial message"):
-        return {"error": error}
-
-    db = await get_db()
-    parent_session_id = _session_context.session_id
-    trust_level = _session_context.trust_level
-    container_id = _session_context.container_id
-
-    # Enforce spawn limit (max 10 children)
-    child_count = await db.count_children(parent_session_id)
-    if child_count >= 10:
-        return {
-            "error": f"Spawn limit reached: {child_count}/10 children. Archive or delete child sessions to spawn more."
-        }
-
-    # Enforce rate limiting (1 session per second)
-    last_created = await db.get_last_child_created(parent_session_id)
-    if last_created:
-        time_since_last = datetime.now(timezone.utc) - last_created
-        if time_since_last < timedelta(seconds=1):
-            return {
-                "error": f"Rate limit: can only create 1 session per second. Wait {1 - time_since_last.total_seconds():.1f}s."
-            }
-
-    # Create session
-    from parachute.models.session import SessionCreate, SessionSource
-
-    session_id = f"sess_{uuid.uuid4().hex[:16]}"
-
-    session_create = SessionCreate(
-        id=session_id,
-        title=title.strip(),
-        module="chat",
-        source=SessionSource.PARACHUTE,
-        working_directory=None,
-        agent_type=agent_type,
-        trust_level=trust_level,
-        container_id=container_id,
-        parent_session_id=parent_session_id,
-        created_by=f"agent:{parent_session_id}",
-    )
-
-    # Create session in database
-    await db.create_session(session_create)
-
-    logger.info(f"Created child session {session_id} (parent: {parent_session_id})")
-
-    return {
-        "success": True,
-        "session_id": session_id,
-        "title": title,
-        "agent_type": agent_type,
-        "container_id": container_id,
-        "trust_level": trust_level,
-        "parent_session_id": parent_session_id,
-        "initial_message_queued": True,
-        "note": "Session created. Use send_message to deliver the initial message.",
-    }
-
 
 async def _brain_call(
     path: str,
@@ -510,6 +293,38 @@ async def _brain_call(
         return {"error": str(e)}
 
 
+async def _api_call(
+    path: str,
+    method: str = "GET",
+    body: dict[str, Any] | None = None,
+    params: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Make a request to the local server API (any path under /api/)."""
+    if not _api_base_url:
+        return {"error": "Server API not available"}
+    url = f"{_api_base_url}{path}"
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            if method == "POST":
+                response = await client.post(url, json=body or {})
+            elif method == "DELETE":
+                response = await client.delete(url, params=params)
+            else:
+                response = await client.get(url, params=params)
+            if response.status_code >= 400:
+                try:
+                    detail = response.json().get("detail", response.text)
+                except Exception:
+                    detail = response.text
+                return {"error": detail, "status_code": response.status_code}
+            return response.json()
+    except httpx.ConnectError:
+        return {"error": "Server API unavailable — is the server running?"}
+    except Exception as e:
+        logger.error(f"API call failed ({method} {path}): {e}")
+        return {"error": str(e)}
+
+
 async def handle_tool_call(name: str, arguments: dict[str, Any]) -> str:
     """Handle a tool call and return the result as JSON string."""
     try:
@@ -526,36 +341,46 @@ async def handle_tool_call(name: str, arguments: dict[str, Any]) -> str:
             p["limit"] = arguments.get("limit", 10)
             result = await _brain_call("/memory", params=p)
         elif name == "get_session":
-            result = await get_session(
-                session_id=arguments["session_id"],
-                include_messages=arguments.get("include_messages", True),
-            )
-            if result is None:
-                return json.dumps({"error": f"Session not found: {arguments['session_id']}"})
+            sid = arguments["session_id"]
+            result = await _api_call(f"/chat/{sid}")
+            if result.get("error") and result.get("status_code") == 404:
+                return json.dumps({"error": f"Session not found: {sid}"})
         elif name == "search_by_tag":
-            result = await search_by_tag(
-                tag=arguments["tag"],
-                limit=arguments.get("limit", 20),
-            )
+            tag = arguments["tag"]
+            p = {"limit": arguments.get("limit", 20)}
+            result = await _api_call(f"/chat/tags/{tag}", params=p)
         elif name == "list_tags":
-            result = await list_tags()
+            result = await _api_call("/chat/tags")
         elif name == "add_session_tag":
-            result = await add_session_tag(
-                session_id=arguments["session_id"],
-                tag=arguments["tag"],
+            result = await _api_call(
+                f"/chat/{arguments['session_id']}/tags",
+                method="POST",
+                body={"tag": arguments["tag"]},
             )
         elif name == "remove_session_tag":
-            result = await remove_session_tag(
-                session_id=arguments["session_id"],
-                tag=arguments["tag"],
+            result = await _api_call(
+                f"/chat/{arguments['session_id']}/tags/{arguments['tag']}",
+                method="DELETE",
             )
         # Multi-Agent Session Tools
         elif name == "create_session":
-            result = await create_session(
-                title=arguments["title"],
-                agent_type=arguments["agent_type"],
-                initial_message=arguments["initial_message"],
-            )
+            if not _session_context or not _session_context.is_available:
+                result = {
+                    "error": "Session context not available. This tool can only be called from an active session."
+                }
+            else:
+                result = await _api_call(
+                    "/chat/children",
+                    method="POST",
+                    body={
+                        "title": arguments["title"],
+                        "agentType": arguments["agent_type"],
+                        "initialMessage": arguments["initial_message"],
+                        "parentSessionId": _session_context.session_id,
+                        "trustLevel": _session_context.trust_level,
+                        "containerId": _session_context.container_id,
+                    },
+                )
         # Brain Tools
         elif name == "brain_schema":
             result = await _brain_call("/schema")
@@ -645,9 +470,10 @@ async def handle_tool_call(name: str, arguments: dict[str, Any]) -> str:
 
 async def run_server():
     """Run the MCP server."""
-    global _brain_base_url
+    global _brain_base_url, _api_base_url
     port = os.environ.get("PARACHUTE_SERVER_PORT", "3333")
     _brain_base_url = f"http://localhost:{port}/api/brain"
+    _api_base_url = f"http://localhost:{port}/api"
 
     logger.info(f"Starting Parachute MCP server (parachute_dir: {_PARACHUTE_DIR})")
 

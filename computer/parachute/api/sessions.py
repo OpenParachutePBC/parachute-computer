@@ -112,6 +112,147 @@ async def get_session_stats(request: Request) -> dict[str, Any]:
     return await orchestrator.get_session_stats()
 
 
+# NOTE: /chat/tags and /chat/children must be BEFORE /chat/{session_id}
+# to avoid being captured by the wildcard path parameter.
+
+
+# =========================================================================
+# Tags (used by MCP server via HTTP loopback)
+# =========================================================================
+
+
+@router.get("/chat/tags")
+async def list_tags(request: Request) -> dict[str, Any]:
+    """List all tags with usage counts."""
+    db = request.app.state.session_store
+    if not db:
+        raise HTTPException(status_code=503, detail="Database not ready")
+
+    tags = await db.list_all_tags()
+    return {"tags": [{"tag": tag, "count": count} for tag, count in tags]}
+
+
+@router.get("/chat/tags/{tag}")
+async def search_by_tag(
+    request: Request,
+    tag: str,
+    limit: int = Query(20, ge=1, le=100),
+) -> dict[str, Any]:
+    """Find all sessions with a specific tag."""
+    db = request.app.state.session_store
+    if not db:
+        raise HTTPException(status_code=503, detail="Database not ready")
+
+    sessions = await db.get_sessions_by_tag(tag, limit=limit)
+    return {
+        "sessions": [
+            {
+                "id": s.id,
+                "title": s.title,
+                "source": s.source.value,
+                "module": s.module,
+                "message_count": s.message_count,
+                "last_accessed": s.last_accessed.isoformat(),
+            }
+            for s in sessions
+        ]
+    }
+
+
+# =========================================================================
+# Child Session Creation (used by MCP server via HTTP loopback)
+# =========================================================================
+
+
+class CreateChildSessionRequest(BaseModel):
+    """Request body for creating a child session."""
+    title: str = Field(description="Title for the new session")
+    agent_type: str = Field(alias="agentType", description="Agent type/name")
+    initial_message: str = Field(alias="initialMessage", description="Initial message (max 50k chars)")
+    parent_session_id: str = Field(alias="parentSessionId", description="Parent session ID")
+    trust_level: Optional[str] = Field(None, alias="trustLevel", description="Inherited trust level")
+    container_id: Optional[str] = Field(None, alias="containerId", description="Inherited container ID")
+
+    model_config = {"populate_by_name": True}
+
+
+@router.post("/chat/children")
+async def create_child_session(request: Request, body: CreateChildSessionRequest) -> dict[str, Any]:
+    """Create a child session with spawn limits and rate limiting."""
+    import re
+    import uuid
+
+    db = request.app.state.session_store
+    if not db:
+        raise HTTPException(status_code=503, detail="Database not ready")
+
+    # Validate agent_type
+    if not re.match(r'^[a-zA-Z0-9_-]+$', body.agent_type):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid agent_type: must contain only letters, numbers, hyphens, and underscores",
+        )
+
+    # Content length check
+    if len(body.initial_message) > 50_000:
+        raise HTTPException(status_code=400, detail="Initial message too long (max 50,000 characters)")
+
+    # Enforce spawn limit (max 10 children)
+    child_count = await db.count_children(body.parent_session_id)
+    if child_count >= 10:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Spawn limit reached: {child_count}/10 children. Archive or delete child sessions to spawn more.",
+        )
+
+    # Enforce rate limiting (1 session per second)
+    last_created = await db.get_last_child_created(body.parent_session_id)
+    if last_created:
+        from datetime import datetime, timedelta, timezone
+        time_since_last = datetime.now(timezone.utc) - last_created
+        if time_since_last < timedelta(seconds=1):
+            raise HTTPException(
+                status_code=429,
+                detail=f"Rate limit: can only create 1 session per second. Wait {1 - time_since_last.total_seconds():.1f}s.",
+            )
+
+    from parachute.models.session import SessionCreate, SessionSource
+
+    session_id = f"sess_{uuid.uuid4().hex[:16]}"
+    session_create = SessionCreate(
+        id=session_id,
+        title=body.title.strip(),
+        module="chat",
+        source=SessionSource.PARACHUTE,
+        working_directory=None,
+        agent_type=body.agent_type,
+        trust_level=body.trust_level,
+        container_id=body.container_id,
+        parent_session_id=body.parent_session_id,
+        created_by=f"agent:{body.parent_session_id}",
+    )
+
+    await db.create_session(session_create)
+    logger.info(f"Created child session {session_id} (parent: {body.parent_session_id})")
+
+    return {
+        "success": True,
+        "session_id": session_id,
+        "title": body.title,
+        "agent_type": body.agent_type,
+        "container_id": body.container_id,
+        "trust_level": body.trust_level,
+        "parent_session_id": body.parent_session_id,
+        "initial_message_queued": True,
+        "note": "Session created. Use send_message to deliver the initial message.",
+    }
+
+
+# =========================================================================
+# Session by ID (wildcard — must come AFTER /chat/stats, /chat/tags, /chat/children)
+# =========================================================================
+
+
 @router.get("/chat/{session_id}")
 async def get_session(request: Request, session_id: str) -> dict[str, Any]:
     """
@@ -360,6 +501,60 @@ async def abort_session(request: Request, session_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="No active stream for this session")
 
     return {"success": True, "sessionId": session_id}
+
+
+# =========================================================================
+# Per-Session Tags
+# =========================================================================
+
+
+@router.get("/chat/{session_id}/tags")
+async def get_session_tags(request: Request, session_id: str) -> dict[str, Any]:
+    """Get tags for a session."""
+    db = request.app.state.session_store
+    if not db:
+        raise HTTPException(status_code=503, detail="Database not ready")
+
+    session = await db.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    tags = await db.get_session_tags(session_id)
+    return {"session_id": session_id, "tags": tags}
+
+
+@router.post("/chat/{session_id}/tags")
+async def add_session_tag(request: Request, session_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    """Add a tag to a session."""
+    db = request.app.state.session_store
+    if not db:
+        raise HTTPException(status_code=503, detail="Database not ready")
+
+    tag = body.get("tag")
+    if not tag or not isinstance(tag, str) or not tag.strip():
+        raise HTTPException(status_code=400, detail="Tag is required")
+
+    session = await db.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    await db.add_tag(session_id, tag.strip())
+    return {"success": True, "session_id": session_id, "tag": tag.strip()}
+
+
+@router.delete("/chat/{session_id}/tags/{tag}")
+async def remove_session_tag(request: Request, session_id: str, tag: str) -> dict[str, Any]:
+    """Remove a tag from a session."""
+    db = request.app.state.session_store
+    if not db:
+        raise HTTPException(status_code=503, detail="Database not ready")
+
+    session = await db.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    await db.remove_tag(session_id, tag)
+    return {"success": True, "session_id": session_id, "tag": tag, "removed": True}
 
 
 @router.get("/chat/{session_id}/transcript")
