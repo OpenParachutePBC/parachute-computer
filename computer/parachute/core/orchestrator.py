@@ -1616,7 +1616,7 @@ class Orchestrator:
                     trust_level="sandboxed",
                     agent_name=None,  # Chat sessions, not callers
                     allowed_writes=[],  # Read-only for chat sessions
-                    allowed_tools=list(CHAT_TOOLS),
+                    allowed_tools=CHAT_TOOLS,
                 )
                 sandbox_token = token_store.create_token(token_ctx)
                 sandbox_mcps["parachute"] = build_http_mcp_config(sandbox_token)

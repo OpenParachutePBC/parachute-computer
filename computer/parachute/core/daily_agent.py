@@ -452,7 +452,7 @@ async def _run_sandboxed(
         trust_level="sandboxed",
         agent_name=agent_name,
         allowed_writes=["write_output", "write_card"],
-        allowed_tools=list(DAILY_TOOLS),
+        allowed_tools=DAILY_TOOLS,
     )
     sandbox_token = token_store.create_token(token_ctx)
 
