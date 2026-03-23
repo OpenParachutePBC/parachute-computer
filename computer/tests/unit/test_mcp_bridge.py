@@ -139,6 +139,129 @@ class TestMcpBridge:
         assert callable(asgi_app)
 
 
+class TestToolFiltering:
+    """Tests for scoped tool visibility based on allowed_tools."""
+
+    def _list_tools_via_handler(self, server):
+        """Invoke the registered list_tools handler via MCP request dispatch."""
+        import asyncio
+        from mcp.types import ListToolsRequest
+
+        handler = server.request_handlers[ListToolsRequest]
+        result = asyncio.get_event_loop().run_until_complete(
+            handler(ListToolsRequest(method="tools/list"))
+        )
+        return result.root.tools
+
+    @pytest.mark.asyncio
+    async def test_list_tools_no_context_returns_all(self):
+        """With no sandbox context, all tools are returned."""
+        from parachute.api.mcp_tools import TOOLS, register_tools
+        from parachute.api.mcp_bridge import _current_sandbox_ctx
+        from mcp.server import Server
+        from mcp.types import ListToolsRequest
+
+        server = Server("test")
+        register_tools(server)
+
+        handler = server.request_handlers[ListToolsRequest]
+        reset = _current_sandbox_ctx.set(None)
+        try:
+            result = await handler(ListToolsRequest(method="tools/list"))
+            assert len(result.root.tools) == len(TOOLS)
+        finally:
+            _current_sandbox_ctx.reset(reset)
+
+    @pytest.mark.asyncio
+    async def test_list_tools_allowed_none_returns_all(self):
+        """With allowed_tools=None, all tools are returned."""
+        from parachute.api.mcp_tools import TOOLS, register_tools
+        from parachute.api.mcp_bridge import _current_sandbox_ctx
+        from mcp.server import Server
+        from mcp.types import ListToolsRequest
+
+        server = Server("test")
+        register_tools(server)
+        handler = server.request_handlers[ListToolsRequest]
+
+        ctx = SandboxTokenContext(
+            session_id="test",
+            trust_level="sandboxed",
+            allowed_tools=None,
+        )
+        reset = _current_sandbox_ctx.set(ctx)
+        try:
+            result = await handler(ListToolsRequest(method="tools/list"))
+            assert len(result.root.tools) == len(TOOLS)
+        finally:
+            _current_sandbox_ctx.reset(reset)
+
+    @pytest.mark.asyncio
+    async def test_list_tools_filtered_by_allowed_tools(self):
+        """With allowed_tools set, only those tools are returned."""
+        from parachute.api.mcp_tools import register_tools
+        from parachute.api.mcp_bridge import _current_sandbox_ctx
+        from mcp.server import Server
+        from mcp.types import ListToolsRequest
+
+        server = Server("test")
+        register_tools(server)
+        handler = server.request_handlers[ListToolsRequest]
+
+        ctx = SandboxTokenContext(
+            session_id="test",
+            trust_level="sandboxed",
+            allowed_tools=["search_memory", "list_notes"],
+        )
+        reset = _current_sandbox_ctx.set(ctx)
+        try:
+            result = await handler(ListToolsRequest(method="tools/list"))
+            tool_names = {t.name for t in result.root.tools}
+            assert tool_names == {"search_memory", "list_notes"}
+        finally:
+            _current_sandbox_ctx.reset(reset)
+
+    def test_chat_tools_profile_excludes_write_card(self):
+        """CHAT_TOOLS profile does not include write_card or read_brain_entity."""
+        from parachute.api.mcp_tools import CHAT_TOOLS
+        assert "write_card" not in CHAT_TOOLS
+        assert "read_brain_entity" not in CHAT_TOOLS
+
+    def test_daily_tools_profile_includes_write_card(self):
+        """DAILY_TOOLS profile includes write_card."""
+        from parachute.api.mcp_tools import DAILY_TOOLS
+        assert "write_card" in DAILY_TOOLS
+
+    @pytest.mark.asyncio
+    async def test_call_tool_rejected_when_not_in_allowed(self):
+        """call_tool rejects tools not in allowed_tools (defense in depth)."""
+        from parachute.api.mcp_tools import register_tools
+        from parachute.api.mcp_bridge import _current_sandbox_ctx
+        from mcp.server import Server
+        from mcp.types import CallToolRequest
+
+        server = Server("test")
+        register_tools(server)
+        handler = server.request_handlers[CallToolRequest]
+
+        ctx = SandboxTokenContext(
+            session_id="test",
+            trust_level="sandboxed",
+            allowed_tools=["search_memory"],
+        )
+        reset = _current_sandbox_ctx.set(ctx)
+        try:
+            result = await handler(CallToolRequest(
+                method="tools/call",
+                params={"name": "write_card", "arguments": {"content": "hi", "date": "2026-01-01"}},
+            ))
+            data = json.loads(result.root.content[0].text)
+            assert "error" in data
+            assert "not available" in data["error"]
+        finally:
+            _current_sandbox_ctx.reset(reset)
+
+
 class TestWritePermissionGating:
     """Tests for write tool permission enforcement."""
 

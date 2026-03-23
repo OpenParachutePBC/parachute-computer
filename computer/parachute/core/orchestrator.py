@@ -1609,11 +1609,14 @@ class Orchestrator:
             if token_store is not None:
                 from parachute.api.mcp_bridge import build_http_mcp_config
 
+                from parachute.api.mcp_tools import CHAT_TOOLS
+
                 token_ctx = SandboxTokenContext(
                     session_id=sandbox_sid,
                     trust_level="sandboxed",
                     agent_name=None,  # Chat sessions, not callers
                     allowed_writes=[],  # Read-only for chat sessions
+                    allowed_tools=list(CHAT_TOOLS),
                 )
                 sandbox_token = token_store.create_token(token_ctx)
                 sandbox_mcps["parachute"] = build_http_mcp_config(sandbox_token)

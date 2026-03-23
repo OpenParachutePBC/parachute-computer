@@ -26,6 +26,7 @@ class SandboxTokenContext:
     trust_level: str  # "sandboxed"
     agent_name: str | None = None  # For callers
     allowed_writes: list[str] = field(default_factory=list)
+    allowed_tools: list[str] | None = None  # None = all tools visible
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 

@@ -445,11 +445,14 @@ async def _run_sandboxed(
     container_slug = config.container_slug or f"agent-{agent_name}"
     run_session_id = str(uuid.uuid4())
 
+    from parachute.api.mcp_tools import DAILY_TOOLS
+
     token_ctx = SandboxTokenContext(
         session_id=f"agent-{agent_name}",
         trust_level="sandboxed",
         agent_name=agent_name,
         allowed_writes=["write_output", "write_card"],
+        allowed_tools=list(DAILY_TOOLS),
     )
     sandbox_token = token_store.create_token(token_ctx)
 
