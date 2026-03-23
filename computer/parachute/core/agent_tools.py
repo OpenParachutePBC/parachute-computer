@@ -69,15 +69,7 @@ def bind_tools(
     return tools, server_config
 
 
-def _ensure_registered():
-    """Import tool modules so they register their factories.
-
-    Called lazily on first bind_tools() if the registry is empty.
-    This avoids circular imports while ensuring tools are available.
-    """
-    if TOOL_FACTORIES:
-        return
-
-    # These imports trigger registration via module-level TOOL_FACTORIES[] assignments
-    import parachute.core.daily_agent_tools  # noqa: F401
-    import parachute.core.triggered_agent_tools  # noqa: F401
+# Import tool modules so they register their factories at import time.
+# No circular import: these modules import TOOL_FACTORIES from us, not vice versa.
+import parachute.core.daily_agent_tools  # noqa: F401
+import parachute.core.triggered_agent_tools  # noqa: F401

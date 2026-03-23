@@ -308,6 +308,7 @@ class BrainChatStore:
                 "duration_seconds": "DOUBLE",
                 "ran_at": "STRING",
                 "session_id": "STRING",
+                "scope": "STRING",
             },
             primary_key="run_id",
         )

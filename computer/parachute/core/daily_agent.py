@@ -214,7 +214,7 @@ class DailyAgentConfig:
         self.system_prompt = system_prompt
         self.schedule_enabled = schedule_enabled
         self.schedule_time = schedule_time
-        self.tools = tools or ["read_journal", "read_chat_log", "read_recent_journals"]
+        self.tools = tools or ["read_days_notes", "read_days_chats", "read_recent_journals"]
         self.raw_metadata = raw_metadata or {}
         self.trust_level = trust_level if trust_level in ("sandboxed", "direct") else "sandboxed"
         self.trigger_event = trigger_event
@@ -224,11 +224,11 @@ class DailyAgentConfig:
     @classmethod
     def from_row(cls, row: dict) -> "DailyAgentConfig":
         """Build config from an Agent graph node row."""
-        tools_raw = row.get("tools") or '["read_journal", "read_chat_log", "read_recent_journals"]'
+        tools_raw = row.get("tools") or '["read_days_notes", "read_days_chats", "read_recent_journals"]'
         try:
             tools = json.loads(tools_raw)
         except (json.JSONDecodeError, TypeError):
-            tools = ["read_journal", "read_chat_log", "read_recent_journals"]
+            tools = ["read_days_notes", "read_days_chats", "read_recent_journals"]
         schedule_enabled = row.get("schedule_enabled", "true")
         if isinstance(schedule_enabled, str):
             schedule_enabled = schedule_enabled.lower() == "true"
@@ -756,8 +756,7 @@ async def run_agent(
     Returns:
         Result dict with status, agent, run_id, etc.
     """
-    from parachute.core.agent_tools import bind_tools, _ensure_registered
-    _ensure_registered()
+    from parachute.core.agent_tools import bind_tools
 
     # Load agent configuration
     config = await get_daily_agent_config(vault_path, agent_name)
@@ -961,8 +960,6 @@ async def run_daily_agent(
     agent_name: str,
     date: Optional[str] = None,
     force: bool = False,
-    create_tools_fn: Optional[Callable] = None,
-    build_prompt_fn: Optional[Callable] = None,
     trigger: str = "manual",
 ) -> dict[str, Any]:
     """Run a day-scoped agent. Thin wrapper around run_agent()."""
@@ -994,8 +991,8 @@ def _default_prompt(config: DailyAgentConfig, journal_date: str, output_date: st
 Today's date is {output_date}. Reflect on the journal entries from yesterday, {date_label}.
 
 Use the tools available to you:
-- `read_journal` with date "{journal_date}" to read the journal entries from {date_label}
-- `read_chat_log` with date "{journal_date}" to read AI conversations from {date_label}
+- `read_days_notes` with date "{journal_date}" to read the journal entries from {date_label}
+- `read_days_chats` with date "{journal_date}" to read AI conversations from {date_label}
 - `read_recent_journals` for broader context from recent days
 
 When you're ready, use `write_card` with date "{output_date}" to save your output.
