@@ -162,7 +162,7 @@ async def get_scheduler_status(vault_path: Path, graph=None) -> dict[str, Any]:
         "agents": agents_config,
         # Legacy field for backward compatibility
         "config": {
-            "daily_reflection": agents_config.get("reflection"),
+            "daily_reflection": agents_config.get("process-day") or agents_config.get("reflection"),
         },
     }
 
@@ -229,9 +229,14 @@ async def trigger_job_now(job_id: str, vault_path: Path) -> dict[str, Any]:
     global _vault_path
     _vault_path = vault_path
 
-    # Handle legacy job_id format
-    if job_id == "daily_reflection":
-        agent_name = "reflection"
+    # Handle legacy job_id formats
+    LEGACY_NAMES = {
+        "daily_reflection": "process-day",
+        "daily_daily-reflection": "process-day",
+        "daily_post-process": "process-note",
+    }
+    if job_id in LEGACY_NAMES:
+        agent_name = LEGACY_NAMES[job_id]
     elif job_id.startswith("daily_"):
         agent_name = job_id[6:]  # Remove "daily_" prefix
     else:
