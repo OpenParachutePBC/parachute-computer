@@ -108,11 +108,13 @@ async def _create_agent_run(
     container_slug: str,
     entry_id: str = "",
     started_at: str = "",
+    scope: dict[str, Any] | None = None,
 ) -> None:
     """Create an AgentRun node at the start of an agent invocation."""
     if graph is None:
         return
     now = started_at or datetime.now(timezone.utc).isoformat()
+    scope_json = json.dumps(scope) if scope else "{}"
     try:
         async with graph.write_lock:
             await graph.execute_cypher(
@@ -124,6 +126,7 @@ async def _create_agent_run(
                 "    r.trigger = $trigger, "
                 "    r.status = 'running', "
                 "    r.container_slug = $container_slug, "
+                "    r.scope = $scope, "
                 "    r.started_at = $now",
                 {
                     "run_id": run_id,
@@ -133,6 +136,7 @@ async def _create_agent_run(
                     "entry_id": entry_id,
                     "trigger": trigger,
                     "container_slug": container_slug,
+                    "scope": scope_json,
                     "now": now,
                 },
             )
@@ -724,85 +728,98 @@ async def _run_direct(
     return result
 
 
-async def run_daily_agent(
+async def run_agent(
     vault_path: Path,
     agent_name: str,
-    date: Optional[str] = None,
+    scope: dict[str, Any],
     force: bool = False,
-    create_tools_fn: Optional[Callable[[Path, DailyAgentConfig], Awaitable[tuple[list, dict[str, Any]]]]] = None,
-    build_prompt_fn: Optional[Callable[[DailyAgentConfig, str, str], str]] = None,
     trigger: str = "manual",
 ) -> dict[str, Any]:
     """
-    Run a daily agent for a specific date.
+    Unified agent runner. Takes an agent name and a scope dict.
 
-    Routes through Docker sandbox when the Agent's trust_level is "sandboxed"
-    and Docker is available. Falls back to direct (in-process) execution otherwise.
+    Scope is plain data that determines how tools get bound:
+    - {"date": "2026-03-22"} → day-scoped (process-day, scheduled)
+    - {"entry_id": "abc", "event": "note.transcription_complete"} → note-scoped (process-note, triggered)
+    - Can carry both keys for agents that mix scopes.
+
+    Pre-checks, tool creation, and prompt building are driven by scope keys.
+    Execution routes through sandbox or direct based on config.trust_level.
 
     Args:
         vault_path: Path to the vault
-        agent_name: Name of the agent (e.g., "content-scout", "reflections")
-        date: Date to process (YYYY-MM-DD), defaults to yesterday
+        agent_name: Name of the agent
+        scope: Dict of scope data (date, entry_id, event, etc.)
         force: Run even if already processed
-        create_tools_fn: Optional function to create custom tools for this agent
-        build_prompt_fn: Optional function to build the user prompt
         trigger: How the run was initiated ("scheduled", "event", "manual")
 
     Returns:
-        Result dict with status, output path, etc.
+        Result dict with status, agent, run_id, etc.
     """
+    from parachute.core.agent_tools import bind_tools, _ensure_registered
+    _ensure_registered()
+
     # Load agent configuration
     config = await get_daily_agent_config(vault_path, agent_name)
     if not config:
-        return {
-            "status": "error",
-            "error": f"Agent '{agent_name}' not found",
-        }
-
-    # Determine date - default to yesterday
-    if date is None:
-        now = datetime.now().astimezone()
-        yesterday = now - timedelta(days=1)
-        date = yesterday.strftime("%Y-%m-%d")
-        output_date = now.strftime("%Y-%m-%d")
-    else:
-        journal_date_obj = datetime.strptime(date, "%Y-%m-%d")
-        output_date_obj = journal_date_obj + timedelta(days=1)
-        output_date = output_date_obj.strftime("%Y-%m-%d")
+        return {"status": "error", "agent": agent_name, "error": f"Agent '{agent_name}' not found"}
 
     graph = _get_graph()
 
-    # Load runtime state from the Agent graph node
+    # ── Resolve date / output_date ────────────────────────────────────────
+    date = scope.get("date", "")
+    if date:
+        try:
+            journal_date_obj = datetime.strptime(date, "%Y-%m-%d")
+            output_date_obj = journal_date_obj + timedelta(days=1)
+            output_date = output_date_obj.strftime("%Y-%m-%d")
+        except ValueError:
+            output_date = date
+    else:
+        output_date = ""
+
+    # ── Load runtime state ────────────────────────────────────────────────
     if graph is not None:
         agent_state = await _load_agent_state(graph, agent_name)
     else:
         agent_state = {"sdk_session_id": None, "last_run_at": None, "last_processed_date": None, "run_count": 0}
 
-    # Check if already processed (unless forced)
-    if not force and agent_state["last_processed_date"] == date:
-        return {
-            "status": "skipped",
-            "reason": f"Already processed {date}",
-            "last_run_at": agent_state["last_run_at"],
-        }
+    # ── Pre-checks (driven by scope keys) ─────────────────────────────────
 
-    # Check if journal entries exist for this date in the graph
-    if "read_journal" in config.tools:
+    # Date-based dedup
+    if date and not force and agent_state["last_processed_date"] == date:
+        return {"status": "skipped", "reason": f"Already processed {date}", "last_run_at": agent_state["last_run_at"]}
+
+    # Check notes exist for date (if agent reads day's notes)
+    day_read_tools = {"read_days_notes", "read_journal"}
+    if date and day_read_tools & set(config.tools):
         if graph is not None:
             rows = await graph.execute_cypher(
                 "MATCH (e:Note) WHERE e.date = $date RETURN count(e) AS cnt",
                 {"date": date},
             )
-            has_journal = rows and rows[0].get("cnt", 0) > 0
+            has_notes = rows and rows[0].get("cnt", 0) > 0
         else:
-            has_journal = False
-        if not has_journal:
-            return {
-                "status": "skipped",
-                "reason": f"No journal found for {date}",
-            }
+            has_notes = False
+        if not has_notes:
+            return {"status": "skipped", "reason": f"No notes found for {date}"}
 
-    # Load user context and format system prompt
+    # Check entry exists (if agent processes a specific note)
+    entry_id = scope.get("entry_id", "")
+    if entry_id:
+        if graph is None:
+            return {"status": "error", "agent": agent_name, "error": "BrainDB unavailable"}
+        rows = await graph.execute_cypher(
+            "MATCH (e:Note {entry_id: $entry_id}) RETURN e.entry_type AS entry_type, e.date AS date",
+            {"entry_id": entry_id},
+        )
+        if not rows:
+            return {"status": "error", "agent": agent_name, "entry_id": entry_id, "error": f"Entry '{entry_id}' not found"}
+        # Enrich scope with entry metadata for prompt building
+        scope.setdefault("entry_type", rows[0].get("entry_type") or "text")
+        scope.setdefault("entry_date", rows[0].get("date") or "")
+
+    # ── Build system prompt ───────────────────────────────────────────────
     user_name, user_context = load_user_context(vault_path)
     system_prompt = config.system_prompt
     if "{user_name}" in system_prompt or "{user_context}" in system_prompt:
@@ -810,36 +827,73 @@ async def run_daily_agent(
     elif user_context:
         system_prompt = system_prompt + f"\n\n## User Context\n\n{user_context}"
 
-    # Write initial "running" Card to graph so Flutter can poll status
-    card_id = await _write_initial_card(graph, agent_name, config.display_name, output_date)
-
-    # Build the prompt
-    if build_prompt_fn:
-        prompt_text = build_prompt_fn(config, date, output_date)
-    else:
+    # ── Build user prompt (scope-driven) ──────────────────────────────────
+    if entry_id:
+        # Note-scoped prompt
+        event = scope.get("event", "")
+        event_desc = {
+            "note.created": "created",
+            "note.transcription_complete": "transcribed (voice transcription completed)",
+        }.get(event, event.replace("note.", "").replace("_", " ") if event else "ready for processing")
+        entry_type = scope.get("entry_type", "text")
+        entry_date = scope.get("entry_date", "")
+        prompt_text = (
+            f"A note has been {event_desc}. Use your tools to process it.\n\n"
+            f"Entry ID: {entry_id}\n"
+            f"Entry type: {entry_type}\n"
+            f"Date: {entry_date}\n\n"
+            f"Start by using `read_this_note` to read the note's content, then process it "
+            f"according to your instructions."
+        )
+    elif date:
+        # Day-scoped prompt
         prompt_text = _default_prompt(config, date, output_date)
+    else:
+        prompt_text = "Process according to your instructions."
 
-    # Create AgentRun record for observability
+    # ── Create tools via bind_tools ───────────────────────────────────────
+    # Add display_name to scope for write_card
+    scope.setdefault("display_name", config.display_name)
+
+    async def _create_tools_fn(vp, cfg):
+        return bind_tools(
+            tool_names=cfg.tools,
+            scope=scope,
+            graph=graph,
+            agent_name=cfg.name,
+            vault_path=vp,
+        )
+
+    # ── Write initial Card (only if agent writes cards) ───────────────────
+    card_id = ""
+    if "write_card" in config.tools and output_date:
+        card_id = await _write_initial_card(graph, agent_name, config.display_name, output_date)
+
+    # ── AgentRun record ───────────────────────────────────────────────────
     container_slug = config.container_slug or f"agent-{agent_name}"
     run_id = str(uuid.uuid4())
     started_at = datetime.now(timezone.utc).isoformat()
     await _create_agent_run(
         graph, run_id=run_id, agent_name=agent_name,
-        display_name=config.display_name, date=date,
+        display_name=config.display_name, date=date or scope.get("entry_date", ""),
         trigger=trigger, container_slug=container_slug,
-        started_at=started_at,
+        entry_id=entry_id, started_at=started_at, scope=scope,
     )
 
-    # Route: sandboxed vs direct execution
+    logger.info(
+        f"Running agent '{agent_name}' (trigger={trigger}, "
+        f"scope_keys={list(scope.keys())}, tools={config.tools})"
+    )
+
+    # ── Route execution ───────────────────────────────────────────────────
     use_sandbox = config.trust_level == "sandboxed"
     sandbox = _get_sandbox() if use_sandbox else None
     result: dict[str, Any] | None = None
 
     try:
         if use_sandbox and sandbox is not None:
-            # Check Docker availability
             if await sandbox.is_available() and await sandbox.image_exists():
-                logger.info(f"Agent '{agent_name}' routing to sandbox (trust_level=sandboxed)")
+                logger.info(f"Agent '{agent_name}' routing to sandbox")
                 result = await _run_sandboxed(
                     sandbox=sandbox,
                     config=config,
@@ -847,8 +901,8 @@ async def run_daily_agent(
                     prompt_text=prompt_text,
                     agent_state=agent_state,
                     card_id=card_id,
-                    date=date,
-                    output_date=output_date,
+                    date=date or scope.get("entry_date", ""),
+                    output_date=output_date or date,
                     vault_path=vault_path,
                     graph=graph,
                 )
@@ -859,7 +913,6 @@ async def run_daily_agent(
                 )
 
         if result is None:
-            # Direct execution (trust_level=direct, Docker unavailable, or no sandbox instance)
             logger.info(f"Agent '{agent_name}' running directly (trust_level={config.trust_level})")
             result = await _run_direct(
                 config=config,
@@ -867,23 +920,18 @@ async def run_daily_agent(
                 prompt_text=prompt_text,
                 agent_state=agent_state,
                 card_id=card_id,
-                date=date,
-                output_date=output_date,
+                date=date or scope.get("entry_date", ""),
+                output_date=output_date or date,
                 vault_path=vault_path,
                 graph=graph,
-                create_tools_fn=create_tools_fn,
+                create_tools_fn=_create_tools_fn,
             )
     except Exception as exc:
         logger.error(f"Agent '{agent_name}' execution failed: {exc}", exc_info=True)
-        await _complete_agent_run(
-            graph, run_id=run_id,
-            status="failed",
-            error=str(exc),
-            started_at=started_at,
-        )
+        await _complete_agent_run(graph, run_id=run_id, status="failed", error=str(exc), started_at=started_at)
         raise
 
-    # Complete the AgentRun record with final status
+    # ── Record result ─────────────────────────────────────────────────────
     await _complete_agent_run(
         graph, run_id=run_id,
         status=result.get("status", "unknown"),
@@ -894,7 +942,36 @@ async def run_daily_agent(
     )
     result["run_id"] = run_id
 
+    # Annotate result with scope info
+    if entry_id:
+        result["entry_id"] = entry_id
+        result["event"] = scope.get("event", "")
+        result["execution_type"] = "triggered"
+
     return result
+
+
+# ---------------------------------------------------------------------------
+# Backwards-compatible wrappers (callers don't need to change)
+# ---------------------------------------------------------------------------
+
+
+async def run_daily_agent(
+    vault_path: Path,
+    agent_name: str,
+    date: Optional[str] = None,
+    force: bool = False,
+    create_tools_fn: Optional[Callable] = None,
+    build_prompt_fn: Optional[Callable] = None,
+    trigger: str = "manual",
+) -> dict[str, Any]:
+    """Run a day-scoped agent. Thin wrapper around run_agent()."""
+    if date is None:
+        now = datetime.now().astimezone()
+        yesterday = now - timedelta(days=1)
+        date = yesterday.strftime("%Y-%m-%d")
+
+    return await run_agent(vault_path, agent_name, {"date": date}, force=force, trigger=trigger)
 
 
 def _default_prompt(config: DailyAgentConfig, journal_date: str, output_date: str) -> str:
@@ -935,112 +1012,9 @@ async def run_triggered_agent(
     entry_id: str,
     event: str,
 ) -> dict[str, Any]:
-    """
-    Run a triggered Agent on a specific Note.
-
-    Unlike run_daily_agent() which is day-scoped and produces Cards, this
-    function is note-scoped and transforms the triggering Note in place.
-
-    Args:
-        vault_path: Path to the vault
-        agent_name: Name of the Agent (e.g., "post-process")
-        entry_id: The Note entry_id to process
-        event: The event that triggered this (e.g., "note.transcription_complete")
-
-    Returns:
-        Result dict with status, agent, entry_id, etc.
-    """
-    config = await get_daily_agent_config(vault_path, agent_name)
-    if not config:
-        return {
-            "status": "error",
-            "agent": agent_name,
-            "entry_id": entry_id,
-            "error": f"Agent '{agent_name}' not found",
-        }
-
-    graph = _get_graph()
-    if graph is None:
-        return {
-            "status": "error",
-            "agent": agent_name,
-            "entry_id": entry_id,
-            "error": "BrainDB unavailable",
-        }
-
-    rows = await graph.execute_cypher(
-        "MATCH (e:Note {entry_id: $entry_id}) RETURN e",
-        {"entry_id": entry_id},
+    """Run a note-scoped triggered agent. Thin wrapper around run_agent()."""
+    return await run_agent(
+        vault_path, agent_name,
+        {"entry_id": entry_id, "event": event},
+        trigger="event",
     )
-    if not rows:
-        return {
-            "status": "error",
-            "agent": agent_name,
-            "entry_id": entry_id,
-            "error": f"Entry '{entry_id}' not found",
-        }
-    entry_data = rows[0]
-
-    entry_type = entry_data.get("entry_type") or "text"
-    entry_date = entry_data.get("date") or ""
-
-    # Load runtime state from the Agent graph node
-    agent_state = await _load_agent_state(graph, agent_name)
-
-    # Build system prompt with user context
-    user_name, user_context = load_user_context(vault_path)
-    system_prompt = config.system_prompt
-    if "{user_name}" in system_prompt or "{user_context}" in system_prompt:
-        system_prompt = system_prompt.format(user_name=user_name, user_context=user_context)
-    elif user_context:
-        system_prompt = system_prompt + f"\n\n## User Context\n\n{user_context}"
-
-    # Build note-scoped prompt
-    event_desc = {
-        "note.created": "created",
-        "note.transcription_complete": "transcribed (voice transcription completed)",
-    }.get(event, event.replace("note.", "").replace("_", " "))
-    prompt_text = (
-        f"A note has been {event_desc}. Use your tools to process it.\n\n"
-        f"Entry ID: {entry_id}\n"
-        f"Entry type: {entry_type}\n"
-        f"Date: {entry_date}\n\n"
-        f"Start by using `read_entry` to read the note's content, then process it "
-        f"according to your instructions."
-    )
-
-    # Create note-scoped tools
-    from parachute.core.triggered_agent_tools import create_triggered_agent_tools
-
-    async def _create_tools(vp, cfg):
-        return create_triggered_agent_tools(
-            graph=graph,
-            entry_id=entry_id,
-            allowed_tools=cfg.tools,
-            agent_name=cfg.name,
-        )
-
-    logger.info(
-        f"Running triggered agent '{agent_name}' on entry {entry_id} "
-        f"(event={event}, tools={config.tools})"
-    )
-
-    # Triggered agents run direct (no sandbox, no Card)
-    result = await _run_direct(
-        config=config,
-        system_prompt=system_prompt,
-        prompt_text=prompt_text,
-        agent_state=agent_state,
-        card_id="",  # No Card for triggered agents
-        date=entry_date,
-        output_date=entry_date,
-        vault_path=vault_path,
-        graph=graph,
-        create_tools_fn=_create_tools,
-    )
-
-    result["entry_id"] = entry_id
-    result["event"] = event
-    result["execution_type"] = "triggered"
-
-    return result
