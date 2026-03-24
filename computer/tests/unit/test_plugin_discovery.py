@@ -22,18 +22,18 @@ class TestPluginConfigDefaults:
 
     def test_default_plugin_dirs_empty(self):
         """Test plugin_dirs defaults to empty list."""
-        settings = Settings(vault_path=Path("/tmp/test-vault"))
+        settings = Settings(home_path=Path("/tmp/test-vault"))
         assert settings.plugin_dirs == []
 
     def test_default_include_user_plugins_true(self):
         """Test include_user_plugins defaults to True."""
-        settings = Settings(vault_path=Path("/tmp/test-vault"))
+        settings = Settings(home_path=Path("/tmp/test-vault"))
         assert settings.include_user_plugins is True
 
     def test_custom_plugin_dirs(self):
         """Test setting custom plugin directories."""
         settings = Settings(
-            vault_path=Path("/tmp/test-vault"),
+            home_path=Path("/tmp/test-vault"),
             plugin_dirs=["/opt/plugins/a", "/opt/plugins/b"],
         )
         assert settings.plugin_dirs == ["/opt/plugins/a", "/opt/plugins/b"]
@@ -41,7 +41,7 @@ class TestPluginConfigDefaults:
     def test_disable_user_plugins(self):
         """Test disabling user plugin loading."""
         settings = Settings(
-            vault_path=Path("/tmp/test-vault"),
+            home_path=Path("/tmp/test-vault"),
             include_user_plugins=False,
         )
         assert settings.include_user_plugins is False
@@ -91,7 +91,7 @@ class TestPluginDiscovery:
     def test_skips_when_user_plugins_disabled(self, tmp_path, user_plugins_dir):
         """Test that user plugins are skipped when include_user_plugins=False."""
         settings = Settings(
-            vault_path=Path("/tmp/test-vault"),
+            home_path=Path("/tmp/test-vault"),
             include_user_plugins=False,
         )
         plugin_dirs: list[Path] = []
@@ -129,7 +129,7 @@ class TestPluginDiscovery:
         dir_b.mkdir(parents=True)
 
         settings = Settings(
-            vault_path=Path("/tmp/test-vault"),
+            home_path=Path("/tmp/test-vault"),
             plugin_dirs=[str(dir_a), str(dir_b)],
         )
 
@@ -144,7 +144,7 @@ class TestPluginDiscovery:
     def test_warns_for_missing_configured_dirs(self, tmp_path, caplog):
         """Test warning for configured dirs that don't exist."""
         settings = Settings(
-            vault_path=Path("/tmp/test-vault"),
+            home_path=Path("/tmp/test-vault"),
             plugin_dirs=[str(tmp_path / "nonexistent-plugin")],
         )
 
@@ -168,7 +168,7 @@ class TestPluginDiscovery:
         valid_dir.mkdir()
 
         settings = Settings(
-            vault_path=Path("/tmp/test-vault"),
+            home_path=Path("/tmp/test-vault"),
             plugin_dirs=[str(valid_dir), str(tmp_path / "missing-plugin")],
         )
 

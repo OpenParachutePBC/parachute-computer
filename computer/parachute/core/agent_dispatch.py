@@ -22,9 +22,9 @@ logger = logging.getLogger(__name__)
 class AgentDispatcher:
     """Discovers triggered Agents and invokes them when events fire."""
 
-    def __init__(self, graph: Any, vault_path: Path):
+    def __init__(self, graph: Any, home_path: Path):
         self.graph = graph
-        self.vault_path = vault_path
+        self.home_path = home_path
 
     async def dispatch(
         self,
@@ -165,7 +165,7 @@ class AgentDispatcher:
 
         try:
             result = await run_triggered_agent(
-                vault_path=self.vault_path,
+                home_path=self.home_path,
                 agent_name=agent_name,
                 entry_id=entry_id,
                 event=event,

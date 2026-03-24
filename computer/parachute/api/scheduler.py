@@ -66,7 +66,7 @@ async def trigger_agent(agent_name: str) -> dict[str, Any]:
     """
     result = await trigger_agent_now(
         agent_name=agent_name,
-        vault_path=Path.home(),
+        home_path=Path.home(),
     )
 
     if result.get("status") == "error" or not result.get("success", True):

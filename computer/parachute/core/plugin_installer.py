@@ -32,16 +32,16 @@ logger = logging.getLogger(__name__)
 # Manifest helpers
 # ---------------------------------------------------------------------------
 
-def _read_plugin_manifests_dir(vault_path: Path) -> Path:
+def _read_plugin_manifests_dir(home_path: Path) -> Path:
     """Return the plugin manifests directory, creating if needed."""
-    d = vault_path / ".parachute" / "plugin-manifests"
+    d = home_path / ".parachute" / "plugin-manifests"
     d.mkdir(parents=True, exist_ok=True)
     return d
 
 
-def get_install_manifest(vault_path: Path, slug: str) -> Optional[dict[str, Any]]:
+def get_install_manifest(home_path: Path, slug: str) -> Optional[dict[str, Any]]:
     """Read an install manifest for a plugin. Returns None if not found."""
-    path = _read_plugin_manifests_dir(vault_path) / f"{slug}.json"
+    path = _read_plugin_manifests_dir(home_path) / f"{slug}.json"
     if not path.exists():
         return None
     try:
@@ -51,9 +51,9 @@ def get_install_manifest(vault_path: Path, slug: str) -> Optional[dict[str, Any]
         return None
 
 
-def list_install_manifests(vault_path: Path) -> list[dict[str, Any]]:
+def list_install_manifests(home_path: Path) -> list[dict[str, Any]]:
     """List all install manifests."""
-    manifests_dir = _read_plugin_manifests_dir(vault_path)
+    manifests_dir = _read_plugin_manifests_dir(home_path)
     results: list[dict[str, Any]] = []
     for f in sorted(manifests_dir.iterdir()):
         if f.suffix == ".json":
@@ -64,9 +64,9 @@ def list_install_manifests(vault_path: Path) -> list[dict[str, Any]]:
     return results
 
 
-def _write_manifest(vault_path: Path, manifest: dict[str, Any]) -> None:
+def _write_manifest(home_path: Path, manifest: dict[str, Any]) -> None:
     """Atomically write an install manifest."""
-    manifests_dir = _read_plugin_manifests_dir(vault_path)
+    manifests_dir = _read_plugin_manifests_dir(home_path)
     target = manifests_dir / f"{manifest['slug']}.json"
     content = json.dumps(manifest, indent=2) + "\n"
 
@@ -176,7 +176,7 @@ def _scan_plugin_content(plugin_dir: Path) -> dict[str, list[str]]:
 # ---------------------------------------------------------------------------
 
 def _check_conflicts(
-    vault_path: Path,
+    home_path: Path,
     slug: str,
     content: dict[str, list[str]],
     plugin_dir: Path,
@@ -189,14 +189,14 @@ def _check_conflicts(
     prefix = f"plugin-{slug}-"
 
     # Check agent name conflicts
-    agents_dir = vault_path / ".claude" / "agents"
+    agents_dir = home_path / ".claude" / "agents"
     for agent_rel in content["agents"]:
         target_name = f"{prefix}{Path(agent_rel).stem}.md"
         if (agents_dir / target_name).exists():
             conflicts.append(f"Agent file already exists: .claude/agents/{target_name}")
 
     # Check skill name conflicts
-    skills_dir = vault_path / ".skills"
+    skills_dir = home_path / ".skills"
     for skill_name in content["skills"]:
         target_name = f"{prefix}{skill_name}"
         if (skills_dir / f"{target_name}.md").exists():
@@ -206,7 +206,7 @@ def _check_conflicts(
 
     # Check MCP name conflicts
     if content["mcps"]:
-        mcp_path = vault_path / ".mcp.json"
+        mcp_path = home_path / ".mcp.json"
         if mcp_path.exists():
             try:
                 existing = json.loads(mcp_path.read_text(encoding="utf-8"))
@@ -225,7 +225,7 @@ def _check_conflicts(
 # ---------------------------------------------------------------------------
 
 def _install_files(
-    vault_path: Path,
+    home_path: Path,
     slug: str,
     plugin_dir: Path,
     content: dict[str, list[str]],
@@ -240,7 +240,7 @@ def _install_files(
 
     # Copy agents
     src_agents = plugin_dir / ".claude" / "agents"
-    dst_agents = vault_path / ".claude" / "agents"
+    dst_agents = home_path / ".claude" / "agents"
     if src_agents.is_dir() and content["agents"]:
         dst_agents.mkdir(parents=True, exist_ok=True)
         for agent_rel in content["agents"]:
@@ -256,7 +256,7 @@ def _install_files(
 
     # Copy skills
     src_skills = plugin_dir / "skills"
-    dst_skills = vault_path / ".skills"
+    dst_skills = home_path / ".skills"
     if src_skills.is_dir() and content["skills"]:
         dst_skills.mkdir(parents=True, exist_ok=True)
         for skill_name in content["skills"]:
@@ -279,7 +279,7 @@ def _install_files(
     # Merge MCPs into .mcp.json
     src_mcp = plugin_dir / ".mcp.json"
     if src_mcp.exists() and content["mcps"]:
-        mcp_path = vault_path / ".mcp.json"
+        mcp_path = home_path / ".mcp.json"
 
         # Read existing
         existing: dict[str, Any] = {}
@@ -355,11 +355,11 @@ def _atomic_write_json(path: Path, data: dict[str, Any]) -> None:
 # Rollback
 # ---------------------------------------------------------------------------
 
-def _rollback_installed_files(vault_path: Path, installed: dict[str, list[str]], mcps_to_remove: list[str]) -> None:
+def _rollback_installed_files(home_path: Path, installed: dict[str, list[str]], mcps_to_remove: list[str]) -> None:
     """Remove installed files on failure."""
     for category in ("agents", "skills"):
         for rel_path in installed.get(category, []):
-            full = vault_path / rel_path
+            full = home_path / rel_path
             if full.is_dir():
                 shutil.rmtree(full, ignore_errors=True)
             elif full.exists():
@@ -367,7 +367,7 @@ def _rollback_installed_files(vault_path: Path, installed: dict[str, list[str]],
 
     # Remove MCP entries
     if mcps_to_remove:
-        mcp_path = vault_path / ".mcp.json"
+        mcp_path = home_path / ".mcp.json"
         if mcp_path.exists():
             try:
                 data = json.loads(mcp_path.read_text(encoding="utf-8"))
@@ -402,7 +402,7 @@ def _derive_slug(url: str) -> str:
 # ---------------------------------------------------------------------------
 
 async def install_plugin_from_url(
-    vault_path: Path,
+    home_path: Path,
     url: str,
     slug: Optional[str] = None,
 ) -> dict[str, Any]:
@@ -429,7 +429,7 @@ async def install_plugin_from_url(
         slug = _derive_slug(url)
 
     # Check for existing installation
-    existing = get_install_manifest(vault_path, slug)
+    existing = get_install_manifest(home_path, slug)
     if existing:
         raise ValueError(f"Plugin '{slug}' is already installed. Uninstall first.")
 
@@ -464,7 +464,7 @@ async def install_plugin_from_url(
             )
 
         # Check for conflicts BEFORE writing anything
-        conflicts = _check_conflicts(vault_path, slug, content, clone_dir)
+        conflicts = _check_conflicts(home_path, slug, content, clone_dir)
         if conflicts:
             raise ValueError(
                 f"Plugin '{slug}' has conflicts with existing content:\n"
@@ -486,7 +486,7 @@ async def install_plugin_from_url(
             pass
 
         # Install files (copy to vault standard locations)
-        installed = _install_files(vault_path, slug, clone_dir, content)
+        installed = _install_files(home_path, slug, clone_dir, content)
 
         # Write install manifest
         manifest: dict[str, Any] = {
@@ -500,7 +500,7 @@ async def install_plugin_from_url(
             "commit": commit_hash,
             "installed_files": installed,
         }
-        _write_manifest(vault_path, manifest)
+        _write_manifest(home_path, manifest)
 
         logger.info(
             f"Installed plugin '{meta['name']}' v{meta['version']}: "
@@ -514,7 +514,7 @@ async def install_plugin_from_url(
         # installed might not be defined if we failed before that step
         try:
             installed  # noqa: B018
-            _rollback_installed_files(vault_path, installed, installed.get("mcps", []))
+            _rollback_installed_files(home_path, installed, installed.get("mcps", []))
         except NameError:
             pass
         raise
@@ -523,19 +523,19 @@ async def install_plugin_from_url(
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
-async def uninstall_plugin(vault_path: Path, slug: str) -> bool:
+async def uninstall_plugin(home_path: Path, slug: str) -> bool:
     """Remove a plugin by deleting its tracked files and manifest.
 
     Returns True if plugin was removed, False if not found.
     """
-    manifest = get_install_manifest(vault_path, slug)
+    manifest = get_install_manifest(home_path, slug)
     if not manifest:
         # Check for legacy plugin in .parachute/plugins/
-        legacy_dir = vault_path / ".parachute" / "plugins" / slug
+        legacy_dir = home_path / ".parachute" / "plugins" / slug
         if legacy_dir.exists():
             try:
                 legacy_dir.resolve().relative_to(
-                    (vault_path / ".parachute" / "plugins").resolve()
+                    (home_path / ".parachute" / "plugins").resolve()
                 )
             except ValueError:
                 logger.error(f"Refusing to delete plugin outside expected directory: {legacy_dir}")
@@ -550,7 +550,7 @@ async def uninstall_plugin(vault_path: Path, slug: str) -> bool:
     # Remove agents and skills
     for category in ("agents", "skills"):
         for rel_path in installed.get(category, []):
-            full = vault_path / rel_path
+            full = home_path / rel_path
             if full.is_dir():
                 shutil.rmtree(full, ignore_errors=True)
             elif full.exists():
@@ -560,7 +560,7 @@ async def uninstall_plugin(vault_path: Path, slug: str) -> bool:
     # Remove MCP entries
     mcp_names = installed.get("mcps", [])
     if mcp_names:
-        mcp_path = vault_path / ".mcp.json"
+        mcp_path = home_path / ".mcp.json"
         if mcp_path.exists():
             try:
                 data = json.loads(mcp_path.read_text(encoding="utf-8"))
@@ -573,14 +573,14 @@ async def uninstall_plugin(vault_path: Path, slug: str) -> bool:
                 logger.warning(f"Failed to clean MCP entries for '{slug}': {e}")
 
     # Remove manifest
-    manifest_path = _read_plugin_manifests_dir(vault_path) / f"{slug}.json"
+    manifest_path = _read_plugin_manifests_dir(home_path) / f"{slug}.json"
     manifest_path.unlink(missing_ok=True)
 
     logger.info(f"Uninstalled plugin: {slug}")
     return True
 
 
-async def update_plugin(vault_path: Path, slug: str) -> dict[str, Any]:
+async def update_plugin(home_path: Path, slug: str) -> dict[str, Any]:
     """Update a plugin by uninstalling and reinstalling from its source URL.
 
     Returns the new install manifest.
@@ -589,7 +589,7 @@ async def update_plugin(vault_path: Path, slug: str) -> dict[str, Any]:
         ValueError: If plugin not found or has no source URL
         RuntimeError: If git operations fail
     """
-    manifest = get_install_manifest(vault_path, slug)
+    manifest = get_install_manifest(home_path, slug)
     if not manifest:
         raise ValueError(f"Plugin '{slug}' not found")
 
@@ -598,18 +598,18 @@ async def update_plugin(vault_path: Path, slug: str) -> dict[str, Any]:
         raise ValueError(f"Plugin '{slug}' has no source URL, cannot update")
 
     # Uninstall first
-    await uninstall_plugin(vault_path, slug)
+    await uninstall_plugin(home_path, slug)
 
     # Reinstall from source
-    return await install_plugin_from_url(vault_path, source_url, slug=slug)
+    return await install_plugin_from_url(home_path, source_url, slug=slug)
 
 
-async def check_plugin_update(vault_path: Path, slug: str) -> Optional[dict]:
+async def check_plugin_update(home_path: Path, slug: str) -> Optional[dict]:
     """Check if a newer version is available for a plugin.
 
     Returns None if up to date, or {"behind": N, "slug": slug} if updates available.
     """
-    manifest = get_install_manifest(vault_path, slug)
+    manifest = get_install_manifest(home_path, slug)
     if not manifest:
         return None
 

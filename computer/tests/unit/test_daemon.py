@@ -21,11 +21,11 @@ from parachute.daemon import (
 
 @pytest.fixture
 def vault(tmp_path):
-    vault_path = tmp_path / "vault"
-    vault_path.mkdir()
-    (vault_path / ".parachute").mkdir()
-    (vault_path / ".parachute" / "logs").mkdir()
-    return vault_path
+    home_path = tmp_path / "vault"
+    home_path.mkdir()
+    (home_path / ".parachute").mkdir()
+    (home_path / ".parachute" / "logs").mkdir()
+    return home_path
 
 
 @pytest.fixture

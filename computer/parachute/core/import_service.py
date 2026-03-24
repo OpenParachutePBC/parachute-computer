@@ -51,15 +51,15 @@ class ImportResult:
 class ImportService:
     """Service for importing external chat exports."""
 
-    def __init__(self, vault_path: str, session_store: BrainChatStore, module: str = "chat"):
-        self.vault_path = vault_path
+    def __init__(self, home_path: str, session_store: BrainChatStore, module: str = "chat"):
+        self.home_path = home_path
         self.database = session_store  # keep alias for compatibility
         self.module = module
         # Sessions are stored in ~/.claude/ (real home)
         self._sdk_projects_dir = Path.home() / ".claude" / "projects"
 
         # Working directory for this module (e.g., ~/Parachute/Chat)
-        self.working_directory = str(Path(vault_path) / module.capitalize())
+        self.working_directory = str(Path(home_path) / module.capitalize())
 
     def _get_encoded_working_dir(self) -> str:
         """Encode working directory for SDK directory naming."""

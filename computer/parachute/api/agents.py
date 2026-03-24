@@ -16,7 +16,7 @@ from fastapi import APIRouter, HTTPException, Request, UploadFile, File
 from pydantic import BaseModel
 
 from parachute.config import get_settings
-from parachute.models.agent import create_vault_agent
+from parachute.models.agent import create_default_agent
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -56,14 +56,14 @@ def _validate_agent_name(name: str) -> None:
         )
 
 
-def _get_sdk_agents_dir(vault_path: Path) -> Path:
+def _get_sdk_agents_dir(home_path: Path) -> Path:
     """Get the SDK-native agents directory."""
-    return vault_path / ".claude" / "agents"
+    return home_path / ".claude" / "agents"
 
 
-def _vault_agent_to_item() -> AgentListItem:
+def _default_agent_to_item() -> AgentListItem:
     """Convert the built-in vault-agent to an API response item."""
-    agent = create_vault_agent()
+    agent = create_default_agent()
     return AgentListItem(
         name=agent.name,
         description=agent.description,
@@ -75,9 +75,9 @@ def _vault_agent_to_item() -> AgentListItem:
     )
 
 
-def _scan_sdk_agents(vault_path: Path) -> list[AgentListItem]:
+def _scan_sdk_agents(home_path: Path) -> list[AgentListItem]:
     """Scan .claude/agents/ for user-created agent files."""
-    agents_dir = _get_sdk_agents_dir(vault_path)
+    agents_dir = _get_sdk_agents_dir(home_path)
     if not agents_dir.exists():
         return []
 
@@ -129,7 +129,7 @@ async def list_agents(request: Request) -> dict[str, Any]:
     items: list[dict[str, Any]] = []
 
     # 1. Built-in vault-agent always first
-    items.append(_vault_agent_to_item().model_dump())
+    items.append(_default_agent_to_item().model_dump())
 
     # 2. SDK-native agents from {vault}/.claude/agents/
     for agent_item in _scan_sdk_agents(Path.home()):
@@ -147,8 +147,8 @@ async def get_agent(request: Request, name: str) -> dict[str, Any]:
 
     # Check built-in
     if name == "vault-agent":
-        agent = create_vault_agent()
-        item = _vault_agent_to_item().model_dump()
+        agent = create_default_agent()
+        item = _default_agent_to_item().model_dump()
         prompt = agent.system_prompt or ""
         item["system_prompt"] = prompt
         item["system_prompt_preview"] = prompt[:500] if prompt else None

@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 def discover_plugins(
-    vault_path: Path,
+    home_path: Path,
     include_user: bool = True,
 ) -> list[InstalledPlugin]:
     """Discover all installed plugins.
@@ -31,7 +31,7 @@ def discover_plugins(
     Fallback: legacy .parachute/plugins/ directories and CLI plugins.
 
     Args:
-        vault_path: Path to the vault directory
+        home_path: Path to the vault directory
         include_user: Whether to include ~/.claude/plugins/
 
     Returns:
@@ -41,7 +41,7 @@ def discover_plugins(
     seen_slugs: set[str] = set()
 
     # 1. Manifest-based plugins (new install format)
-    for manifest in list_install_manifests(vault_path):
+    for manifest in list_install_manifests(home_path):
         slug = manifest.get("slug", "")
         if not slug:
             continue
@@ -55,7 +55,7 @@ def discover_plugins(
             author=manifest.get("author"),
             source="parachute",
             source_url=manifest.get("source_url"),
-            path=str(vault_path / ".parachute" / "plugin-manifests" / f"{slug}.json"),
+            path=str(home_path / ".parachute" / "plugin-manifests" / f"{slug}.json"),
             skills=_extract_skill_names(installed_files.get("skills", [])),
             agents=_extract_agent_names(installed_files.get("agents", [])),
             mcps={name: {} for name in installed_files.get("mcps", [])},
@@ -64,7 +64,7 @@ def discover_plugins(
         seen_slugs.add(slug)
 
     # 2. Legacy: .parachute/plugins/ directories (backwards compat)
-    legacy_dir = vault_path / ".parachute" / "plugins"
+    legacy_dir = home_path / ".parachute" / "plugins"
     if legacy_dir.is_dir():
         for entry in sorted(legacy_dir.iterdir()):
             if entry.is_dir() and entry.name not in seen_slugs:

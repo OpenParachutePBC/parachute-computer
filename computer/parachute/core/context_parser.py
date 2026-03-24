@@ -45,9 +45,9 @@ class ContextParser:
 
     SECTION_PATTERN = re.compile(r'^##\s+(.+)$', re.MULTILINE)
 
-    def __init__(self, vault_path: Path):
-        self.vault_path = vault_path
-        self.contexts_dir = vault_path / "Chat" / "contexts"
+    def __init__(self, home_path: Path):
+        self.home_path = home_path
+        self.contexts_dir = home_path / "Chat" / "contexts"
 
     def parse_file(self, file_path: Path) -> ParsedContextFile:
         """Parse a context file into structured representation."""

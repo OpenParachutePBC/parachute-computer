@@ -120,7 +120,7 @@ class PermissionHandler:
     def __init__(
         self,
         session: Session,
-        vault_path: str,
+        home_path: str,
         on_denial: Optional[Callable[[dict[str, Any]], None]] = None,
         on_request: Optional[Callable[[PermissionRequest], None]] = None,
         on_permission_update: Optional[Callable[[SessionPermissions], None]] = None,
@@ -131,14 +131,14 @@ class PermissionHandler:
 
         Args:
             session: Session with permissions in metadata
-            vault_path: Path to vault root
+            home_path: Path to vault root
             on_denial: Callback when permission is denied
             on_request: Callback when permission needs user approval
             on_permission_update: Callback when session permissions are updated
             on_user_question: Callback when Claude asks user a question (AskUserQuestion)
         """
         self.session = session
-        self.vault_path = Path(vault_path)
+        self.home_path = Path(home_path)
         self.on_denial = on_denial
         self.on_request = on_request
         self.on_user_question = on_user_question
@@ -303,8 +303,8 @@ class PermissionHandler:
         """Convert an absolute path to a vault-relative path."""
         try:
             abs_path = Path(path).resolve()
-            if abs_path.is_relative_to(self.vault_path):
-                return str(abs_path.relative_to(self.vault_path))
+            if abs_path.is_relative_to(self.home_path):
+                return str(abs_path.relative_to(self.home_path))
             return path
         except (ValueError, OSError):
             return path

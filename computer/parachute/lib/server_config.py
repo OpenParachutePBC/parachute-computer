@@ -111,17 +111,17 @@ class ServerConfig:
         return None
 
 
-def load_server_config(vault_path: Path) -> ServerConfig:
+def load_server_config(home_path: Path) -> ServerConfig:
     """
     Load server configuration from vault.
 
     Args:
-        vault_path: Path to the Parachute vault
+        home_path: Path to the Parachute vault
 
     Returns:
         ServerConfig with loaded or default values
     """
-    config_path = vault_path / "server.yaml"
+    config_path = home_path / "server.yaml"
 
     config = ServerConfig(_config_path=config_path)
 
@@ -163,10 +163,10 @@ def load_server_config(vault_path: Path) -> ServerConfig:
 _server_config: Optional[ServerConfig] = None
 
 
-def init_server_config(vault_path: Path) -> ServerConfig:
+def init_server_config(home_path: Path) -> ServerConfig:
     """Initialize and return the global server config."""
     global _server_config
-    _server_config = load_server_config(vault_path)
+    _server_config = load_server_config(home_path)
     return _server_config
 
 

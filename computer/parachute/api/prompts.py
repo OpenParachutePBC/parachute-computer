@@ -11,7 +11,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Request, Query
 from pydantic import BaseModel, Field
 
-from parachute.models.agent import create_vault_agent
+from parachute.models.agent import create_default_agent
 
 router = APIRouter(prefix="/prompt")
 logger = logging.getLogger(__name__)
@@ -86,7 +86,7 @@ async def preview_prompt(
 
         # Always use the default vault-agent.
         # Custom agents are discovered by the SDK natively via .claude/agents/.
-        agent = create_vault_agent()
+        agent = create_default_agent()
 
         # Build the system prompt using orchestrator's method
         prompt, metadata = await orchestrator._build_system_prompt(

@@ -22,19 +22,19 @@ class WriteFileRequest(BaseModel):
     content: str
 
 
-def get_vault_path(request: Request) -> Path:
+def get_home_path(request: Request) -> Path:
     """Get vault path from app state."""
     return Path.home()
 
 
-def _check_vault_path(vault_path: Path, target: Path) -> Path:
+def _check_home_path(home_path: Path, target: Path) -> Path:
     """Verify target is within vault. Returns normalized path.
 
     Uses normpath instead of resolve() so intentional symlinks inside the vault
     (e.g. ~/Parachute → /Volumes/ExternalSSD/Parachute) are permitted while
     still blocking path traversal attacks via '..' components.
     """
-    vault_norm = Path(os.path.normpath(vault_path))
+    vault_norm = Path(os.path.normpath(home_path))
     target_norm = Path(os.path.normpath(target))
     try:
         target_norm.relative_to(vault_norm)
@@ -61,9 +61,9 @@ async def list_directory(
     - hasAgentsMd: (directories only) Whether AGENTS.md exists
     - hasClaudeMd: (directories only) Whether CLAUDE.md exists
     """
-    vault_path = get_vault_path(request).resolve()
-    target_path = vault_path / path if path else vault_path
-    target_path = _check_vault_path(vault_path, target_path)
+    home_path = get_home_path(request).resolve()
+    target_path = home_path / path if path else home_path
+    target_path = _check_home_path(home_path, target_path)
 
     if not target_path.exists():
         raise HTTPException(status_code=404, detail="Path not found")
@@ -78,7 +78,7 @@ async def list_directory(
             if item.name.startswith(".") and not includeHidden:
                 continue
 
-            relative_path = str(item.relative_to(vault_path))
+            relative_path = str(item.relative_to(home_path))
             is_symlink = item.is_symlink()
 
             # Check if symlink target exists (for broken symlink detection)
@@ -162,8 +162,8 @@ async def read_file(
     - size: File size in bytes
     - lastModified: ISO timestamp
     """
-    vault_path = get_vault_path(request).resolve()
-    file_path = _check_vault_path(vault_path, vault_path / path)
+    home_path = get_home_path(request).resolve()
+    file_path = _check_home_path(home_path, home_path / path)
 
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="File not found")
@@ -197,9 +197,9 @@ async def write_file(
 
     Creates parent directories if needed.
     """
-    vault_path = get_vault_path(request).resolve()
-    file_path = vault_path / body.path
-    _check_vault_path(vault_path, file_path.parent)
+    home_path = get_home_path(request).resolve()
+    file_path = home_path / body.path
+    _check_home_path(home_path, file_path.parent)
 
     try:
         # Create parent directories if needed

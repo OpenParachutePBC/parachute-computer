@@ -48,7 +48,7 @@ MAX_VOICE_BYTES = 200 * 1024 * 1024  # 200 MB
 ALLOWED_AUDIO_EXTENSIONS = {".wav", ".m4a", ".mp3", ".aac", ".ogg", ".webm", ".mp4"}
 
 # Default redo log path for crash recovery (rolled to 90 days).
-# DailyModule derives the actual path from its vault_path at init time,
+# DailyModule derives the actual path from its home_path at init time,
 # so tests with a temp vault don't pollute the production log.
 _DEFAULT_REDO_LOG_PATH = Path.home() / ".parachute" / "daily" / "entries.jsonl"
 
@@ -481,9 +481,9 @@ class DailyModule:
     name = "daily"
     provides = []
 
-    def __init__(self, vault_path: Path, **kwargs):
-        self.vault_path = vault_path
-        self._redo_log_path = vault_path / ".parachute" / "daily" / "entries.jsonl"
+    def __init__(self, home_path: Path, **kwargs):
+        self.home_path = home_path
+        self._redo_log_path = home_path / ".parachute" / "daily" / "entries.jsonl"
 
     async def on_load(self) -> None:
         """Daily-specific initialization.
@@ -768,7 +768,7 @@ class DailyModule:
             if event == "note.transcription_complete":
                 await self._set_entry_meta(graph, entry_id, {"cleanup_status": "running"})
 
-            dispatcher = AgentDispatcher(graph=graph, vault_path=self.vault_path)
+            dispatcher = AgentDispatcher(graph=graph, home_path=self.home_path)
             results = await dispatcher.dispatch(event, entry_id, entry_meta)
 
             # Post-dispatch lifecycle bookkeeping
@@ -1927,7 +1927,7 @@ class DailyModule:
             """Trigger an agent run for a date (async — returns 202 immediately)."""
             from parachute.core.daily_agent import run_daily_agent
             task = asyncio.create_task(
-                run_daily_agent(self.vault_path, agent_name, date=date, force=force, trigger="manual")
+                run_daily_agent(self.home_path, agent_name, date=date, force=force, trigger="manual")
             )
             _background_tasks.add(task)
             task.add_done_callback(_log_task_exception)
@@ -2244,7 +2244,7 @@ class DailyModule:
 
             from parachute.core.daily_agent import run_triggered_agent
             task = asyncio.create_task(
-                run_triggered_agent(self.vault_path, name, entry_id, event)
+                run_triggered_agent(self.home_path, name, entry_id, event)
             )
             _background_tasks.add(task)
             task.add_done_callback(_log_task_exception)
@@ -2352,8 +2352,8 @@ class DailyModule:
             # Reload scheduler so deleted scheduled agents are removed
             try:
                 from parachute.core.scheduler import reload_scheduler
-                vault_path = Path(self.vault_path)
-                await reload_scheduler(vault_path, graph=graph)
+                home_path = Path(self.home_path)
+                await reload_scheduler(home_path, graph=graph)
             except Exception as e:
                 logger.warning(f"Daily: scheduler reload after delete failed: {e}")
             return Response(status_code=204)

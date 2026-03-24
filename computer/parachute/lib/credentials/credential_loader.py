@@ -42,7 +42,7 @@ _cache: dict[str, str] | None = None
 _cache_mtime: float = 0.0
 
 
-def load_credentials(vault_path: Path) -> dict[str, str]:
+def load_credentials(home_path: Path) -> dict[str, str]:
     """Load credentials from vault/.parachute/credentials.yaml.
 
     Returns a dict of env-var name → value for all string-valued entries
@@ -54,7 +54,7 @@ def load_credentials(vault_path: Path) -> dict[str, str]:
     """
     global _cache, _cache_mtime
 
-    path = vault_path / ".parachute" / "credentials.yaml"
+    path = home_path / ".parachute" / "credentials.yaml"
     if not path.exists():
         return {}
 

@@ -94,9 +94,9 @@ class ChatLogService:
     Uses surgical append to avoid conflicts with external editors.
     """
 
-    def __init__(self, vault_path: Path):
-        self.vault_path = vault_path
-        self.chat_log_dir = vault_path / "Daily" / "chat-log"
+    def __init__(self, home_path: Path):
+        self.home_path = home_path
+        self.chat_log_dir = home_path / "Daily" / "chat-log"
 
     def _ensure_dir(self) -> None:
         """Ensure chat-log directory exists."""
@@ -419,6 +419,6 @@ class ChatLogService:
         return self.append_entry(entry)
 
 
-def get_chat_log_service(vault_path: Path) -> ChatLogService:
+def get_chat_log_service(home_path: Path) -> ChatLogService:
     """Get a ChatLogService instance."""
-    return ChatLogService(vault_path)
+    return ChatLogService(home_path)

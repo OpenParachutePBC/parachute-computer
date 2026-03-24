@@ -19,7 +19,7 @@ from claude_agent_sdk import SdkMcpTool, create_sdk_mcp_server
 logger = logging.getLogger(__name__)
 
 # Tool name → (factory_fn, required_scope_keys)
-# factory_fn signature: (graph, scope, agent_name, vault_path) -> SdkMcpTool
+# factory_fn signature: (graph, scope, agent_name, home_path) -> SdkMcpTool
 ToolFactory = Callable[[Any, dict[str, Any], str, Path], SdkMcpTool]
 TOOL_FACTORIES: dict[str, tuple[ToolFactory, frozenset[str]]] = {}
 
@@ -29,7 +29,7 @@ def bind_tools(
     scope: dict[str, Any],
     graph: Any,
     agent_name: str,
-    vault_path: Path,
+    home_path: Path,
 ) -> tuple[list[SdkMcpTool], dict[str, Any]]:
     """
     Create tools for an agent run by matching declared tools against the registry.
@@ -55,7 +55,7 @@ def bind_tools(
                 f"but scope only has {set(scope.keys())} (missing: {missing})"
             )
 
-        tools.append(factory(graph, scope, agent_name, vault_path))
+        tools.append(factory(graph, scope, agent_name, home_path))
 
     if not tools:
         logger.warning(f"Agent '{agent_name}' has no tools after bind_tools()")

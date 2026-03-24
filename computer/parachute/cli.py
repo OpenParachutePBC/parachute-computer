@@ -197,7 +197,7 @@ def _migrate_env_to_yaml(parachute_dir: Path) -> bool:
     config_file = get_config_path(parachute_dir)
     existing = _load_yaml_config(parachute_dir)
 
-    # Map env vars to config keys (vault_path excluded — no longer valid)
+    # Map env vars to config keys (home_path excluded — no longer valid)
     env_to_config = {
         "PORT": "port",
         "HOST": "host",

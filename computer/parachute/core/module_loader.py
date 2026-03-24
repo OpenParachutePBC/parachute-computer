@@ -239,8 +239,8 @@ class ModuleLoader:
         for attr_name in dir(py_module):
             attr = getattr(py_module, attr_name)
             if isinstance(attr, type) and hasattr(attr, 'name') and attr.name == name:
-                # Pass home dir as vault_path (user data root) and parachute_dir for system data
-                instance = attr(vault_path=Path.home(), parachute_dir=self.parachute_dir)
+                # Pass home dir as home_path (user data root) and parachute_dir for system data
+                instance = attr(home_path=Path.home(), parachute_dir=self.parachute_dir)
                 instance.manifest = manifest
                 if hasattr(instance, 'on_load') and asyncio.iscoroutinefunction(instance.on_load):
                     await instance.on_load()

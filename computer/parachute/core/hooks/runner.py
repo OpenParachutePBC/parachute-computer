@@ -33,8 +33,8 @@ class HookRunner:
     User-facing hooks are configured via .claude/settings.json (SDK hooks).
     """
 
-    def __init__(self, vault_path: Path):
-        self.vault_path = vault_path
+    def __init__(self, home_path: Path):
+        self.home_path = home_path
         self._hooks: dict[str, list[HookConfig]] = {}
         self._hook_modules: dict[str, Any] = {}  # name -> loaded module
         self._recent_errors: deque[HookError] = deque(maxlen=MAX_RECENT_ERRORS)

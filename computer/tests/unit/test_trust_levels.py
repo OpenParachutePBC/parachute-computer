@@ -38,7 +38,7 @@ from parachute.core.module_loader import (
 
 
 @pytest.fixture
-def vault_path(tmp_path):
+def home_path(tmp_path):
     """Create a temporary parachute system directory (replaces old vault/.parachute)."""
     pdir = tmp_path / ".parachute"
     pdir.mkdir()
@@ -179,33 +179,33 @@ class TestAgentSandboxConfig:
 
 
 class TestDockerSandbox:
-    def test_init(self, vault_path):
-        sandbox = DockerSandbox(parachute_dir=vault_path)
-        assert sandbox.parachute_dir == vault_path
+    def test_init(self, home_path):
+        sandbox = DockerSandbox(parachute_dir=home_path)
+        assert sandbox.parachute_dir == home_path
         assert sandbox.claude_token is None
 
-    def test_with_token(self, vault_path):
-        sandbox = DockerSandbox(parachute_dir=vault_path, claude_token="sk-ant-oat01-test")
+    def test_with_token(self, home_path):
+        sandbox = DockerSandbox(parachute_dir=home_path, claude_token="sk-ant-oat01-test")
         assert sandbox.claude_token == "sk-ant-oat01-test"
 
-    def test_health_info_initial(self, vault_path):
-        sandbox = DockerSandbox(parachute_dir=vault_path)
+    def test_health_info_initial(self, home_path):
+        sandbox = DockerSandbox(parachute_dir=home_path)
         info = sandbox.health_info()
         assert info["docker_available"] is None
         assert info["sandbox_image"] == SANDBOX_IMAGE
 
-    def test_build_mounts_no_paths(self, vault_path):
-        sandbox = DockerSandbox(parachute_dir=vault_path)
+    def test_build_mounts_no_paths(self, home_path):
+        sandbox = DockerSandbox(parachute_dir=home_path)
         config = AgentSandboxConfig(session_id="test")
         mounts = sandbox._build_mounts(config)
         # Should mount entire home dir read-only when no allowed_paths
         assert "-v" in mounts
         assert f"{Path.home()}:/home/sandbox/Parachute:ro" in mounts
 
-    def test_build_mounts_with_paths(self, vault_path, tmp_path):
+    def test_build_mounts_with_paths(self, home_path, tmp_path):
         blogs_dir = tmp_path / "Blogs"
         blogs_dir.mkdir()
-        sandbox = DockerSandbox(parachute_dir=vault_path)
+        sandbox = DockerSandbox(parachute_dir=home_path)
         config = AgentSandboxConfig(
             session_id="test", allowed_paths=[str(blogs_dir)]
         )
@@ -218,8 +218,8 @@ class TestDockerSandbox:
         assert "Blogs" in mount_str
         assert ":rw" in mount_str
 
-    def test_build_run_args_network_disabled(self, vault_path):
-        sandbox = DockerSandbox(parachute_dir=vault_path)
+    def test_build_run_args_network_disabled(self, home_path):
+        sandbox = DockerSandbox(parachute_dir=home_path)
         config = AgentSandboxConfig(session_id="test-session-id")
         args, _ = sandbox._build_run_args(config)
         assert "--network" in args
@@ -227,9 +227,9 @@ class TestDockerSandbox:
         assert "--memory" in args
         assert CONTAINER_MEMORY_LIMIT_EPHEMERAL in args
 
-    def test_build_run_args_network_enabled(self, vault_path):
+    def test_build_run_args_network_enabled(self, home_path):
         from parachute.core.sandbox import SANDBOX_NETWORK_NAME
-        sandbox = DockerSandbox(parachute_dir=vault_path)
+        sandbox = DockerSandbox(parachute_dir=home_path)
         config = AgentSandboxConfig(
             session_id="test", network_enabled=True
         )
@@ -238,29 +238,29 @@ class TestDockerSandbox:
         assert SANDBOX_NETWORK_NAME in args
         assert "none" not in args
 
-    def test_build_run_args_container_name(self, vault_path):
-        sandbox = DockerSandbox(parachute_dir=vault_path)
+    def test_build_run_args_container_name(self, home_path):
+        sandbox = DockerSandbox(parachute_dir=home_path)
         config = AgentSandboxConfig(session_id="abcdef1234567890")
         args, _ = sandbox._build_run_args(config)
         assert "parachute-sandbox-abcdef12" in args
 
-    def test_get_container_home_dir(self, vault_path):
-        sandbox = DockerSandbox(parachute_dir=vault_path)
+    def test_get_container_home_dir(self, home_path):
+        sandbox = DockerSandbox(parachute_dir=home_path)
         home_dir = sandbox._get_container_home_dir("my-env")
-        expected = vault_path / "sandbox" / "envs" / "my-env" / "home"
+        expected = home_path / "sandbox" / "envs" / "my-env" / "home"
         assert home_dir == expected
 
-    def test_container_name_always_env_prefix(self, vault_path):
+    def test_container_name_always_env_prefix(self, home_path):
         """All containers use parachute-env-<slug> regardless of private/named."""
         slug = "my-project"
         container_name = f"parachute-env-{slug}"
         assert container_name == "parachute-env-my-project"
 
-    def test_persistent_container_args_has_tools_volume(self, vault_path):
-        sandbox = DockerSandbox(parachute_dir=vault_path)
+    def test_persistent_container_args_has_tools_volume(self, home_path):
+        sandbox = DockerSandbox(parachute_dir=home_path)
         config = AgentSandboxConfig(session_id="test123")
         labels = {"app": "parachute", "type": "env"}
-        home_dir = vault_path / "sandbox" / "envs" / "test123" / "home"
+        home_dir = home_path / "sandbox" / "envs" / "test123" / "home"
         vault_mounts = ["-v", f"{Path.home()}:/home/sandbox/Parachute:ro"]
         args = sandbox._build_persistent_container_args(
             "parachute-env-test123", "test123", config, labels, home_dir, vault_mounts
@@ -270,12 +270,12 @@ class TestDockerSandbox:
         assert "/opt/parachute-tools" in arg_str
         assert "readonly" in arg_str
 
-    def test_persistent_container_args_mounts_home_dir(self, vault_path):
+    def test_persistent_container_args_mounts_home_dir(self, home_path):
         """All containers bind-mount the parachute home dir to /home/sandbox/."""
-        sandbox = DockerSandbox(parachute_dir=vault_path)
+        sandbox = DockerSandbox(parachute_dir=home_path)
         config = AgentSandboxConfig(session_id="test123")
         labels = {"app": "parachute", "type": "env"}
-        home_dir = vault_path / "sandbox" / "envs" / "my-env" / "home"
+        home_dir = home_path / "sandbox" / "envs" / "my-env" / "home"
         vault_mounts = ["-v", f"{Path.home()}:/home/sandbox/Parachute:ro"]
         args = sandbox._build_persistent_container_args(
             "parachute-env-my-env", "my-env", config, labels, home_dir, vault_mounts
@@ -284,12 +284,12 @@ class TestDockerSandbox:
         assert f"{home_dir}:/home/sandbox:rw" in arg_str
         assert home_dir.exists()  # Must be created by the method
 
-    def test_persistent_container_args_vault_nested_in_home(self, vault_path):
+    def test_persistent_container_args_vault_nested_in_home(self, home_path):
         """Home dir is mounted inside container (/home/sandbox/Parachute) for nested overlay."""
-        sandbox = DockerSandbox(parachute_dir=vault_path)
+        sandbox = DockerSandbox(parachute_dir=home_path)
         config = AgentSandboxConfig(session_id="test123")
         labels = {"app": "parachute", "type": "env"}
-        home_dir = vault_path / "sandbox" / "envs" / "my-env" / "home"
+        home_dir = home_path / "sandbox" / "envs" / "my-env" / "home"
         vault_mounts = ["-v", f"{Path.home()}:/home/sandbox/Parachute:ro"]
         args = sandbox._build_persistent_container_args(
             "parachute-env-my-env", "my-env", config, labels, home_dir, vault_mounts
@@ -364,25 +364,25 @@ class TestModuleHash:
 
 
 class TestModuleLoaderHashes:
-    def test_hash_file_path(self, vault_path):
-        loader = ModuleLoader(parachute_dir=vault_path)
-        assert loader._hash_file == vault_path / "module_hashes.json"
+    def test_hash_file_path(self, home_path):
+        loader = ModuleLoader(parachute_dir=home_path)
+        assert loader._hash_file == home_path / "module_hashes.json"
 
-    def test_save_and_load_hashes(self, vault_path):
-        loader = ModuleLoader(parachute_dir=vault_path)
+    def test_save_and_load_hashes(self, home_path):
+        loader = ModuleLoader(parachute_dir=home_path)
         hashes = {"brain": "abc123", "daily": "def456"}
         loader._save_known_hashes(hashes)
 
         loaded = loader._load_known_hashes()
         assert loaded == hashes
 
-    def test_load_hashes_missing_file(self, vault_path):
-        loader = ModuleLoader(parachute_dir=vault_path)
+    def test_load_hashes_missing_file(self, home_path):
+        loader = ModuleLoader(parachute_dir=home_path)
         loaded = loader._load_known_hashes()
         assert loaded == {}
 
-    def test_approve_module(self, vault_path):
-        loader = ModuleLoader(parachute_dir=vault_path)
+    def test_approve_module(self, home_path):
+        loader = ModuleLoader(parachute_dir=home_path)
         loader._known_hashes = {"brain": "old_hash"}
         loader._pending_approval = {
             "brain": {"hash": "new_hash", "path": "/modules/brain"}
@@ -396,12 +396,12 @@ class TestModuleLoaderHashes:
         saved = json.loads(loader._hash_file.read_text())
         assert saved["brain"] == "new_hash"
 
-    def test_approve_nonexistent_module(self, vault_path):
-        loader = ModuleLoader(parachute_dir=vault_path)
+    def test_approve_nonexistent_module(self, home_path):
+        loader = ModuleLoader(parachute_dir=home_path)
         assert not loader.approve_module("nonexistent")
 
-    def test_get_module_status(self, vault_path):
-        loader = ModuleLoader(parachute_dir=vault_path)
+    def test_get_module_status(self, home_path):
+        loader = ModuleLoader(parachute_dir=home_path)
         loader._known_hashes = {"brain": "abc123def456", "daily": "789012345678"}
         loader._pending_approval = {
             "daily": {"hash": "new_hash_here", "path": "/modules/daily"}
@@ -424,15 +424,15 @@ class TestModuleLoaderHashes:
 
 class TestPermissionHandlerTrustLevels:
     @pytest.fixture
-    def vault_str(self, vault_path):
-        return str(vault_path)
+    def vault_str(self, home_path):
+        return str(home_path)
 
     @pytest.mark.asyncio
     async def test_direct_trust_allows_bash(self, vault_str):
         from parachute.core.permission_handler import PermissionHandler
 
         session = _make_session(trust_level="direct")
-        handler = PermissionHandler(session=session, vault_path=vault_str)
+        handler = PermissionHandler(session=session, home_path=vault_str)
         decision = await handler.check_permission("Bash", {"command": "ls -la"})
         assert decision.behavior == "allow"
 
@@ -441,7 +441,7 @@ class TestPermissionHandlerTrustLevels:
         from parachute.core.permission_handler import PermissionHandler
 
         session = _make_session(trust_level="sandboxed")
-        handler = PermissionHandler(session=session, vault_path=vault_str)
+        handler = PermissionHandler(session=session, home_path=vault_str)
         decision = await handler.check_permission("Bash", {"command": "ls -la"})
         assert decision.behavior == "deny"
 
@@ -450,7 +450,7 @@ class TestPermissionHandlerTrustLevels:
         from parachute.core.permission_handler import PermissionHandler
 
         session = _make_session(trust_level="direct")
-        handler = PermissionHandler(session=session, vault_path=vault_str)
+        handler = PermissionHandler(session=session, home_path=vault_str)
         decision = await handler.check_permission("Bash", {"command": "git status"})
         assert decision.behavior == "allow"
 
@@ -459,7 +459,7 @@ class TestPermissionHandlerTrustLevels:
         from parachute.core.permission_handler import PermissionHandler
 
         session = _make_session(trust_level="sandboxed")
-        handler = PermissionHandler(session=session, vault_path=vault_str)
+        handler = PermissionHandler(session=session, home_path=vault_str)
 
         for tool in ["Bash", "Read", "Write", "Edit", "Glob", "Grep"]:
             decision = await handler.check_permission(tool, {})
@@ -470,7 +470,7 @@ class TestPermissionHandlerTrustLevels:
         from parachute.core.permission_handler import PermissionHandler
 
         session = _make_session(trust_level="sandboxed")
-        handler = PermissionHandler(session=session, vault_path=vault_str)
+        handler = PermissionHandler(session=session, home_path=vault_str)
         decision = await handler.check_permission("mcp__vault__list", {})
         assert decision.behavior == "allow"
 
@@ -479,7 +479,7 @@ class TestPermissionHandlerTrustLevels:
         from parachute.core.permission_handler import PermissionHandler
 
         session = _make_session(trust_level="sandboxed")
-        handler = PermissionHandler(session=session, vault_path=vault_str)
+        handler = PermissionHandler(session=session, home_path=vault_str)
         decision = await handler.check_permission("WebSearch", {"query": "test"})
         assert decision.behavior == "allow"
 
@@ -488,6 +488,6 @@ class TestPermissionHandlerTrustLevels:
         from parachute.core.permission_handler import PermissionHandler
 
         session = _make_session(trust_level="direct")
-        handler = PermissionHandler(session=session, vault_path=vault_str)
+        handler = PermissionHandler(session=session, home_path=vault_str)
         decision = await handler.check_permission("Write", {"file_path": "/tmp/test.md"})
         assert decision.behavior == "allow"

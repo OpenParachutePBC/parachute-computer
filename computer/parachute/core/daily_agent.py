@@ -275,7 +275,7 @@ def _get_graph() -> Any | None:
         return None
 
 
-async def discover_daily_agents(vault_path: Path, graph=None) -> list[DailyAgentConfig]:
+async def discover_daily_agents(home_path: Path, graph=None) -> list[DailyAgentConfig]:
     """Discover all enabled Agents from the graph database.
 
     Returns a list of agent configurations sorted by name, or empty if graph
@@ -297,7 +297,7 @@ async def discover_daily_agents(vault_path: Path, graph=None) -> list[DailyAgent
         return []
 
 
-async def get_daily_agent_config(vault_path: Path, agent_name: str, graph=None) -> Optional[DailyAgentConfig]:
+async def get_daily_agent_config(home_path: Path, agent_name: str, graph=None) -> Optional[DailyAgentConfig]:
     """Get configuration for a specific Agent from the graph database."""
     g = graph or _get_graph()
     if g is None:
@@ -314,7 +314,7 @@ async def get_daily_agent_config(vault_path: Path, agent_name: str, graph=None) 
     return None
 
 
-async def load_vault_mcps(vault_path: Path) -> dict[str, dict[str, Any]]:
+async def load_user_mcps(home_path: Path) -> dict[str, dict[str, Any]]:
     """
     Load stdio MCP servers from the vault's .mcp.json.
 
@@ -324,7 +324,7 @@ async def load_vault_mcps(vault_path: Path) -> dict[str, dict[str, Any]]:
     from parachute.lib.mcp_loader import load_mcp_servers, filter_stdio_servers
 
     try:
-        all_servers = await load_mcp_servers(vault_path)
+        all_servers = await load_mcp_servers(home_path)
         stdio_servers = filter_stdio_servers(all_servers)
         logger.info(f"Loaded {len(stdio_servers)} stdio MCP servers")
         return stdio_servers
@@ -333,15 +333,15 @@ async def load_vault_mcps(vault_path: Path) -> dict[str, dict[str, Any]]:
         return {}
 
 
-def load_user_context(vault_path: Path) -> tuple[str, str]:
+def load_user_context(home_path: Path) -> tuple[str, str]:
     """Load user context from the vault for agent personalization."""
     user_name = "the user"
     context_text = ""
 
     # Legacy path — kept for users with existing context/curator.md files
     for context_path in [
-        vault_path / "context" / "curator.md",
-        vault_path / ".parachute" / "profile.md",
+        home_path / "context" / "curator.md",
+        home_path / ".parachute" / "profile.md",
     ]:
         if context_path.exists():
             try:
@@ -424,7 +424,7 @@ async def _run_sandboxed(
     card_id: str,
     date: str,
     output_date: str,
-    vault_path: Path,
+    home_path: Path,
     graph,
 ) -> dict[str, Any]:
     """Run a daily agent inside a Docker sandbox container."""
@@ -594,7 +594,7 @@ async def _run_direct(
     card_id: str,
     date: str,
     output_date: str,
-    vault_path: Path,
+    home_path: Path,
     graph,
     create_tools_fn: Optional[Callable] = None,
 ) -> dict[str, Any]:
@@ -606,12 +606,12 @@ async def _run_direct(
 
     # Create tools for this agent
     if create_tools_fn:
-        _tools, agent_mcp_config = await create_tools_fn(vault_path, config)
+        _tools, agent_mcp_config = await create_tools_fn(home_path, config)
     else:
-        _tools, agent_mcp_config = create_daily_agent_tools(vault_path, config, graph=graph)
+        _tools, agent_mcp_config = create_daily_agent_tools(home_path, config, graph=graph)
 
     # Load vault MCPs
-    vault_mcps = await load_vault_mcps(vault_path)
+    vault_mcps = await load_user_mcps(home_path)
 
     # Combine all MCP servers
     all_mcp_servers = {
@@ -729,7 +729,7 @@ async def _run_direct(
 
 
 async def run_agent(
-    vault_path: Path,
+    home_path: Path,
     agent_name: str,
     scope: dict[str, Any],
     force: bool = False,
@@ -747,7 +747,7 @@ async def run_agent(
     Execution routes through sandbox or direct based on config.trust_level.
 
     Args:
-        vault_path: Path to the vault
+        home_path: Path to the vault
         agent_name: Name of the agent
         scope: Dict of scope data (date, entry_id, event, etc.)
         force: Run even if already processed
@@ -759,7 +759,7 @@ async def run_agent(
     from parachute.core.agent_tools import bind_tools
 
     # Load agent configuration
-    config = await get_daily_agent_config(vault_path, agent_name)
+    config = await get_daily_agent_config(home_path, agent_name)
     if not config:
         return {"status": "error", "agent": agent_name, "error": f"Agent '{agent_name}' not found"}
 
@@ -819,7 +819,7 @@ async def run_agent(
         scope.setdefault("entry_date", rows[0].get("date") or "")
 
     # ── Build system prompt ───────────────────────────────────────────────
-    user_name, user_context = load_user_context(vault_path)
+    user_name, user_context = load_user_context(home_path)
     system_prompt = config.system_prompt
     if "{user_name}" in system_prompt or "{user_context}" in system_prompt:
         system_prompt = system_prompt.format(user_name=user_name, user_context=user_context)
@@ -860,7 +860,7 @@ async def run_agent(
             scope=scope,
             graph=graph,
             agent_name=cfg.name,
-            vault_path=vp,
+            home_path=vp,
         )
 
     # ── Write initial Card (only if agent writes cards) ───────────────────
@@ -902,7 +902,7 @@ async def run_agent(
                     card_id=card_id,
                     date=date or scope.get("entry_date", ""),
                     output_date=output_date or date,
-                    vault_path=vault_path,
+                    home_path=home_path,
                     graph=graph,
                 )
             else:
@@ -921,7 +921,7 @@ async def run_agent(
                 card_id=card_id,
                 date=date or scope.get("entry_date", ""),
                 output_date=output_date or date,
-                vault_path=vault_path,
+                home_path=home_path,
                 graph=graph,
                 create_tools_fn=_create_tools_fn,
             )
@@ -956,7 +956,7 @@ async def run_agent(
 
 
 async def run_daily_agent(
-    vault_path: Path,
+    home_path: Path,
     agent_name: str,
     date: Optional[str] = None,
     force: bool = False,
@@ -968,7 +968,7 @@ async def run_daily_agent(
         yesterday = now - timedelta(days=1)
         date = yesterday.strftime("%Y-%m-%d")
 
-    return await run_agent(vault_path, agent_name, {"date": date}, force=force, trigger=trigger)
+    return await run_agent(home_path, agent_name, {"date": date}, force=force, trigger=trigger)
 
 
 def _default_prompt(config: DailyAgentConfig, journal_date: str, output_date: str) -> str:
@@ -1004,14 +1004,14 @@ When you're ready, use `write_card` with date "{output_date}" to save your outpu
 # ---------------------------------------------------------------------------
 
 async def run_triggered_agent(
-    vault_path: Path,
+    home_path: Path,
     agent_name: str,
     entry_id: str,
     event: str,
 ) -> dict[str, Any]:
     """Run a note-scoped triggered agent. Thin wrapper around run_agent()."""
     return await run_agent(
-        vault_path, agent_name,
+        home_path, agent_name,
         {"entry_id": entry_id, "event": event},
         trigger="event",
     )

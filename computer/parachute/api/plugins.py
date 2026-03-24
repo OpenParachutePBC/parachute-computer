@@ -119,7 +119,7 @@ async def install_plugin(request: Request, body: InstallPluginInput) -> dict[str
 
     try:
         manifest = await install_plugin_from_url(
-            vault_path=Path.home(),
+            home_path=Path.home(),
             url=body.url,
             slug=body.slug,
         )

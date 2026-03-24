@@ -91,17 +91,17 @@ class PullResponse(BaseModel):
 # --- Helpers ---
 
 
-def get_vault_path() -> Path:
+def get_home_path() -> Path:
     """Get user home directory (vault root for file syncing)."""
     return Path.home()
 
 
-def validate_sync_path(vault_path: Path, root: str, subpath: str = "") -> Path:
+def validate_sync_path(home_path: Path, root: str, subpath: str = "") -> Path:
     """
     Validate and resolve a sync path, ensuring it's within the vault.
 
     Args:
-        vault_path: The vault root path
+        home_path: The vault root path
         root: Sync root folder (e.g., "Daily")
         subpath: Optional path within the root
 
@@ -114,13 +114,13 @@ def validate_sync_path(vault_path: Path, root: str, subpath: str = "") -> Path:
     if ".." in root or ".." in subpath:
         raise HTTPException(status_code=400, detail="Path traversal not allowed")
 
-    target = vault_path / root
+    target = home_path / root
     if subpath:
         target = target / subpath
 
     try:
         resolved = target.resolve()
-        vault_resolved = vault_path.resolve()
+        vault_resolved = home_path.resolve()
 
         if not str(resolved).startswith(str(vault_resolved)):
             raise HTTPException(status_code=403, detail="Access denied: path outside vault")
@@ -169,8 +169,8 @@ async def get_manifest(
 
     This enables efficient sync for a single day without scanning the entire vault.
     """
-    vault_path = get_vault_path()
-    sync_root = validate_sync_path(vault_path, root)
+    home_path = get_home_path()
+    sync_root = validate_sync_path(home_path, root)
 
     if not sync_root.exists():
         # Return empty manifest for non-existent folder
@@ -312,8 +312,8 @@ async def get_changes(
 
     Note: Uses file mtime, not content hashing - fast but relies on accurate clocks.
     """
-    vault_path = get_vault_path()
-    sync_root = validate_sync_path(vault_path, root)
+    home_path = get_home_path()
+    sync_root = validate_sync_path(home_path, root)
 
     if not sync_root.exists():
         return ChangedFilesResponse(
@@ -377,15 +377,15 @@ async def push_files(request: Request, body: PushRequest) -> PushResponse:
     Parent directories are created automatically.
     Binary files should have is_binary=True and content as base64.
     """
-    vault_path = get_vault_path()
-    sync_root = validate_sync_path(vault_path, body.root)
+    home_path = get_home_path()
+    sync_root = validate_sync_path(home_path, body.root)
 
     pushed = 0
     errors: list[str] = []
 
     for file in body.files:
         try:
-            file_path = validate_sync_path(vault_path, body.root, file.path)
+            file_path = validate_sync_path(home_path, body.root, file.path)
 
             # Create parent directories
             file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -418,15 +418,15 @@ async def pull_files(request: Request, body: PullRequest) -> PullResponse:
     Returns file content along with metadata for each requested path.
     Binary files are returned with base64-encoded content and is_binary=True.
     """
-    vault_path = get_vault_path()
-    sync_root = validate_sync_path(vault_path, body.root)
+    home_path = get_home_path()
+    sync_root = validate_sync_path(home_path, body.root)
 
     files: list[PulledFile] = []
     errors: list[str] = []
 
     for path in body.paths:
         try:
-            file_path = validate_sync_path(vault_path, body.root, path)
+            file_path = validate_sync_path(home_path, body.root, path)
 
             if not file_path.exists():
                 errors.append(f"{path}: File not found")
@@ -501,14 +501,14 @@ async def delete_files(
 
     Used when client detects files that should be removed.
     """
-    vault_path = get_vault_path()
+    home_path = get_home_path()
 
     deleted = 0
     errors: list[str] = []
 
     for path in paths:
         try:
-            file_path = validate_sync_path(vault_path, root, path)
+            file_path = validate_sync_path(home_path, root, path)
 
             if not file_path.exists():
                 # Already gone, count as success

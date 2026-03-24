@@ -23,20 +23,20 @@ logger = logging.getLogger(__name__)
 
 
 def create_orchestrator_tools(
-    vault_path: Path,
+    home_path: Path,
     database: Any,  # Database instance
 ) -> tuple[list[SdkMcpTool], dict[str, Any]]:
     """
     Create tools for the orchestrator agent.
 
     Args:
-        vault_path: Path to the vault
+        home_path: Path to the vault
         database: Database instance for session queries
 
     Returns:
         Tuple of (list of SdkMcpTool instances, server config dict)
     """
-    activity_dir = vault_path / "Daily" / ".activity"
+    activity_dir = home_path / "Daily" / ".activity"
 
     @tool(
         "read_activity_log",

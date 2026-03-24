@@ -7,11 +7,11 @@ and credential propagation for the Claude Agent SDK.
 Used for all sandboxed sessions. Docker must be available — no fallback.
 
 All sandboxed sessions use containers named `parachute-env-<slug>`. Every container
-has its home directory bind-mounted from the vault at:
+has its home directory bind-mounted from:
 
-    vault/.parachute/sandbox/envs/<slug>/home/ → /home/sandbox/
+    ~/.parachute/sandbox/envs/<slug>/home/ → /home/sandbox/
 
-This makes container state fully portable: moving the vault to another machine and
+This makes container state portable: moving ~/.parachute/ to another machine and
 restarting the server recreates containers against the same home dirs, allowing any
 session to resume exactly where it left off.
 
@@ -67,7 +67,7 @@ class AgentSandboxConfig:
     plugin_dirs: list[Path] = field(default_factory=list)
     mcp_servers: dict[str, Any] | None = None  # Filtered MCP configs to pass to container
     agents: dict[str, Any] | None = None
-    working_directory: str | None = None  # /vault/... absolute path for container CWD
+    working_directory: str | None = None  # Container CWD (absolute path)
     model: str | None = None  # Model to use (e.g., "claude-opus-4-6")
     system_prompt: str | None = None  # System prompt to pass to SDK inside container
     use_preset: bool = True  # Whether to wrap system_prompt in claude_code preset
@@ -336,7 +336,7 @@ class DockerSandbox:
         else:
             logger.warning("No claude_token configured for sandbox — container will fail auth")
 
-        # Set container working directory (path already starts with /vault/)
+        # Set container working directory
         if config.working_directory:
             env_lines.append(f"PARACHUTE_CWD={config.working_directory}")
 
@@ -670,7 +670,7 @@ class DockerSandbox:
             yield event
 
     async def delete_container(self, slug: str) -> None:
-        """Stop and remove a container env and its vault home directory."""
+        """Stop and remove a container env and its persistent home directory."""
         container_name = f"parachute-env-{slug}"
         await self._stop_container(container_name)
         await self._remove_container(container_name)

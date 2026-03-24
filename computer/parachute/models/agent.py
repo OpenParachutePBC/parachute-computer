@@ -111,7 +111,7 @@ DEFAULT_VAULT_TOOLS = [
 ]
 
 
-def create_vault_agent() -> AgentDefinition:
+def create_default_agent() -> AgentDefinition:
     """Create the default vault agent."""
     return AgentDefinition(
         name="vault-agent",

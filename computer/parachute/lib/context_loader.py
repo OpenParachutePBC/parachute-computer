@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 async def load_agent_context(
     context_config: dict[str, Any],
-    vault_path: Path,
+    home_path: Path,
     options: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """
@@ -25,7 +25,7 @@ async def load_agent_context(
 
     Args:
         context_config: Agent's context configuration with 'include', 'exclude', etc.
-        vault_path: Path to the vault
+        home_path: Path to the vault
         options: Additional options like max_tokens
 
     Returns:
@@ -44,7 +44,7 @@ async def load_agent_context(
 
     # Handle knowledge_file (single file path)
     if knowledge_file:
-        kf_path = vault_path / knowledge_file
+        kf_path = home_path / knowledge_file
         if kf_path.exists():
             files_to_load.append(kf_path)
 
@@ -52,12 +52,12 @@ async def load_agent_context(
     for pattern in include_patterns:
         if "*" in pattern:
             # Glob pattern
-            for match in vault_path.glob(pattern):
-                if match.is_file() and not _matches_exclude(match, exclude_patterns, vault_path):
+            for match in home_path.glob(pattern):
+                if match.is_file() and not _matches_exclude(match, exclude_patterns, home_path):
                     files_to_load.append(match)
         else:
             # Direct path
-            file_path = vault_path / pattern
+            file_path = home_path / pattern
             if file_path.exists() and file_path.is_file():
                 files_to_load.append(file_path)
 
@@ -73,7 +73,7 @@ async def load_agent_context(
             break
 
         try:
-            relative_path = str(file_path.relative_to(vault_path))
+            relative_path = str(file_path.relative_to(home_path))
             file_content = await _load_file_content(file_path)
 
             if file_content:
@@ -100,11 +100,11 @@ async def load_agent_context(
     }
 
 
-def _matches_exclude(file_path: Path, patterns: list[str], vault_path: Path) -> bool:
+def _matches_exclude(file_path: Path, patterns: list[str], home_path: Path) -> bool:
     """Check if a file matches any exclude pattern."""
-    from parachute.lib.vault_utils import matches_patterns
+    from parachute.lib.file_utils import matches_patterns
 
-    relative = str(file_path.relative_to(vault_path))
+    relative = str(file_path.relative_to(home_path))
     return matches_patterns(relative, patterns)
 
 

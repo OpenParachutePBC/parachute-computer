@@ -98,7 +98,7 @@ class TestHookRunnerDiscoverNoop:
 
     @pytest.mark.asyncio
     async def test_discover_returns_zero(self, tmp_path):
-        runner = HookRunner(vault_path=tmp_path)
+        runner = HookRunner(home_path=tmp_path)
         count = await runner.discover()
         assert count == 0
 
@@ -111,7 +111,7 @@ class TestHookRunnerDiscoverNoop:
             "HOOK_CONFIG = {'events': ['session.completed']}\n"
             "async def run(ctx): pass\n"
         )
-        runner = HookRunner(vault_path=tmp_path)
+        runner = HookRunner(home_path=tmp_path)
         count = await runner.discover()
         assert count == 0
 
@@ -121,13 +121,13 @@ class TestHookRunnerFireWithNoHooks:
 
     @pytest.mark.asyncio
     async def test_fire_no_hooks(self, tmp_path):
-        runner = HookRunner(vault_path=tmp_path)
+        runner = HookRunner(home_path=tmp_path)
         # Should not raise
         await runner.fire("session.completed", {})
 
     @pytest.mark.asyncio
     async def test_fire_with_enum(self, tmp_path):
-        runner = HookRunner(vault_path=tmp_path)
+        runner = HookRunner(home_path=tmp_path)
         # Should not raise
         await runner.fire(HookEvent.SERVER_STARTED, {})
 
@@ -137,13 +137,13 @@ class TestHookRunnerAPI:
 
     @pytest.mark.asyncio
     async def test_get_registered_hooks_empty(self, tmp_path):
-        runner = HookRunner(vault_path=tmp_path)
+        runner = HookRunner(home_path=tmp_path)
         hooks = runner.get_registered_hooks()
         assert hooks == []
 
     @pytest.mark.asyncio
     async def test_health_info_empty(self, tmp_path):
-        runner = HookRunner(vault_path=tmp_path)
+        runner = HookRunner(home_path=tmp_path)
         health = runner.health_info()
         assert health["hooks_count"] == 0
         assert health["events_registered"] == []
@@ -151,6 +151,6 @@ class TestHookRunnerAPI:
 
     @pytest.mark.asyncio
     async def test_get_recent_errors_empty(self, tmp_path):
-        runner = HookRunner(vault_path=tmp_path)
+        runner = HookRunner(home_path=tmp_path)
         errors = runner.get_recent_errors()
         assert errors == []

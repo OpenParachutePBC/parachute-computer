@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 AuthType = Literal["none", "bearer"]
 
 
-def _get_builtin_mcp_servers(vault_path: Path) -> dict[str, dict[str, Any]]:
+def _get_builtin_mcp_servers(home_path: Path) -> dict[str, dict[str, Any]]:
     """
     Get built-in MCP server configurations.
 
@@ -98,7 +98,7 @@ def _process_config(config: dict[str, Any]) -> dict[str, Any]:
 
 
 async def load_mcp_servers(
-    vault_path: Path, raw: bool = False
+    home_path: Path, raw: bool = False
 ) -> dict[str, dict[str, Any]]:
     """
     Load MCP server configurations.
@@ -107,7 +107,7 @@ async def load_mcp_servers(
     User servers from .mcp.json can override built-ins or add new ones.
 
     Args:
-        vault_path: Path to the vault
+        home_path: Path to the vault
         raw: If True, don't substitute environment variables
 
     Returns:
@@ -115,14 +115,14 @@ async def load_mcp_servers(
     """
     global _mcp_cache, _mcp_cache_path
 
-    mcp_path = vault_path / ".mcp.json"
+    mcp_path = home_path / ".mcp.json"
 
     # Check cache
     if not raw and _mcp_cache_path == mcp_path and _mcp_cache:
         return _mcp_cache
 
     # Start with built-in servers
-    servers = _get_builtin_mcp_servers(vault_path)
+    servers = _get_builtin_mcp_servers(home_path)
 
     # Load user servers from .mcp.json (can override built-ins)
     if mcp_path.exists():
@@ -332,9 +332,9 @@ def _validate_stdio_server(name: str, config: dict[str, Any]) -> list[str]:
     return errors
 
 
-async def list_mcp_servers(vault_path: Path) -> list[dict[str, Any]]:
+async def list_mcp_servers(home_path: Path) -> list[dict[str, Any]]:
     """List all configured MCP servers with metadata."""
-    servers = await load_mcp_servers(vault_path)
+    servers = await load_mcp_servers(home_path)
     result = []
 
     for name, config in servers.items():
@@ -364,10 +364,10 @@ async def list_mcp_servers(vault_path: Path) -> list[dict[str, Any]]:
 
 
 async def add_mcp_server(
-    vault_path: Path, name: str, config: dict[str, Any]
+    home_path: Path, name: str, config: dict[str, Any]
 ) -> dict[str, dict[str, Any]]:
     """Add or update an MCP server configuration."""
-    mcp_path = vault_path / ".mcp.json"
+    mcp_path = home_path / ".mcp.json"
 
     # Load existing config or create new
     if mcp_path.exists():
@@ -392,9 +392,9 @@ async def add_mcp_server(
     return data["mcpServers"]
 
 
-async def remove_mcp_server(vault_path: Path, name: str) -> dict[str, dict[str, Any]]:
+async def remove_mcp_server(home_path: Path, name: str) -> dict[str, dict[str, Any]]:
     """Remove an MCP server configuration."""
-    mcp_path = vault_path / ".mcp.json"
+    mcp_path = home_path / ".mcp.json"
 
     if not mcp_path.exists():
         return {}

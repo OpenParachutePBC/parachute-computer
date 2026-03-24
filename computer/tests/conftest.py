@@ -58,7 +58,7 @@ This is a test vault for automated testing.
 
 
 @pytest.fixture
-def test_vault_path(test_vault: Path) -> str:
+def test_home_path(test_vault: Path) -> str:
     """Get test vault path as string."""
     return str(test_vault)
 

@@ -27,16 +27,16 @@ def test_app():
 
     # Create temporary vault
     with tempfile.TemporaryDirectory() as tmpdir:
-        vault_path = Path(tmpdir)
+        home_path = Path(tmpdir)
 
         # Set up required directories
-        (vault_path / "Chat" / "sessions").mkdir(parents=True)
-        (vault_path / "Chat" / "contexts").mkdir(parents=True)
-        (vault_path / ".parachute").mkdir()
-        (vault_path / ".agents").mkdir()
+        (home_path / "Chat" / "sessions").mkdir(parents=True)
+        (home_path / "Chat" / "contexts").mkdir(parents=True)
+        (home_path / ".parachute").mkdir()
+        (home_path / ".agents").mkdir()
 
         # Write a general context file
-        (vault_path / "Chat" / "contexts" / "general-context.md").write_text("""
+        (home_path / "Chat" / "contexts" / "general-context.md").write_text("""
 # Test Context
 
 This is a test context file for E2E testing.
@@ -44,12 +44,12 @@ This is a test context file for E2E testing.
 
         # Override vault path
         original_env = os.environ.get("VAULT_PATH")
-        os.environ["VAULT_PATH"] = str(vault_path)
+        os.environ["VAULT_PATH"] = str(home_path)
 
         # Import app after setting env
         from parachute.server import app
 
-        yield app, vault_path
+        yield app, home_path
 
         # Restore env
         if original_env:
@@ -61,7 +61,7 @@ This is a test context file for E2E testing.
 @pytest.fixture
 async def client(test_app):
     """Create async test client."""
-    app, vault_path = test_app
+    app, home_path = test_app
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:

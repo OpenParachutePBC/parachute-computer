@@ -1,15 +1,15 @@
 """
-Unit tests for vault utilities.
+Unit tests for file utilities.
 """
 
 import pytest
 from pathlib import Path
 
-from parachute.lib.vault_utils import (
+from parachute.lib.file_utils import (
     matches_pattern,
     matches_patterns,
     validate_path,
-    get_vault_stats,
+    get_file_stats,
 )
 
 
@@ -87,7 +87,7 @@ class TestGetVaultStats:
 
     def test_basic_stats(self, test_vault: Path):
         """Test basic vault stats."""
-        stats = get_vault_stats(test_vault)
+        stats = get_file_stats(test_vault)
 
         assert stats["path"] == str(test_vault)
         assert stats["exists"] is True
@@ -97,7 +97,7 @@ class TestGetVaultStats:
     def test_nonexistent_vault(self, tmp_path: Path):
         """Test stats for nonexistent vault."""
         nonexistent = tmp_path / "nonexistent"
-        stats = get_vault_stats(nonexistent)
+        stats = get_file_stats(nonexistent)
 
         assert stats["exists"] is False
         assert stats["modules"] == []

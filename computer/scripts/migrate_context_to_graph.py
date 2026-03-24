@@ -68,7 +68,7 @@ def strip_frontmatter(content: str) -> str:
     return "\n".join(result).strip()
 
 
-async def migrate(vault_path: Path) -> None:
+async def migrate(home_path: Path) -> None:
     """Run the migration."""
     # Import here to avoid import errors when running standalone
     from parachute.db.brain import BrainService
@@ -103,10 +103,10 @@ async def migrate(vault_path: Path) -> None:
         primary_key="entry_id",
     )
 
-    context_dir = vault_path / "parachute" / "context"
+    context_dir = home_path / "parachute" / "context"
     if not context_dir.exists():
         # Try alternate path
-        context_dir = vault_path / "context"
+        context_dir = home_path / "context"
 
     if not context_dir.exists():
         print(f"Context directory not found: {context_dir}")
@@ -158,10 +158,10 @@ async def migrate(vault_path: Path) -> None:
 
 
 if __name__ == "__main__":
-    vault_path = Path.home() / "Parachute"
-    if not vault_path.exists():
-        vault_path = Path.home()  # Fallback: vault root is home
+    home_path = Path.home() / "Parachute"
+    if not home_path.exists():
+        home_path = Path.home()  # Fallback: vault root is home
 
-    print(f"Migrating context files from: {vault_path}")
+    print(f"Migrating context files from: {home_path}")
     print()
-    asyncio.run(migrate(vault_path))
+    asyncio.run(migrate(home_path))

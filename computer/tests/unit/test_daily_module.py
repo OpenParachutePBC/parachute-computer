@@ -53,7 +53,7 @@ async def module(tmp_vault, graph, monkeypatch):
     never touches the global InterfaceRegistry (and therefore never
     writes to the production BrainDB).
     """
-    mod = DailyModule(vault_path=tmp_vault)
+    mod = DailyModule(home_path=tmp_vault)
     monkeypatch.setattr(mod, "_get_graph", lambda: graph)
     await mod.on_load()
     return mod

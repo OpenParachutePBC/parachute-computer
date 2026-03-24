@@ -13,7 +13,7 @@ from parachute.models.session import Session, SessionPermissions, SessionSource,
 
 
 @pytest.fixture
-def vault_path(tmp_path):
+def home_path(tmp_path):
     """Create a temporary vault path."""
     return tmp_path / "vault"
 
@@ -153,9 +153,9 @@ class TestIgnorePatterns:
 class TestPermissionChecker:
     """Tests for PermissionChecker."""
 
-    def test_deny_list_takes_precedence(self, trust_mode_session, vault_path):
+    def test_deny_list_takes_precedence(self, trust_mode_session, home_path):
         """Test that deny list blocks access even in trust mode."""
-        checker = PermissionChecker(trust_mode_session, vault_path)
+        checker = PermissionChecker(trust_mode_session, home_path)
 
         # Trust mode allows regular files
         allowed, reason = checker.can_read("Blogs/post.md")
@@ -166,17 +166,17 @@ class TestPermissionChecker:
         assert not allowed
         assert "deny pattern" in reason.lower()
 
-    def test_read_without_permission(self, basic_session, vault_path):
+    def test_read_without_permission(self, basic_session, home_path):
         """Test reading without explicit permission."""
-        checker = PermissionChecker(basic_session, vault_path)
+        checker = PermissionChecker(basic_session, home_path)
 
         allowed, reason = checker.can_read("Blogs/post.md")
         assert not allowed
         assert "no read permission" in reason.lower()
 
-    def test_read_with_permission(self, session_with_read_permission, vault_path):
+    def test_read_with_permission(self, session_with_read_permission, home_path):
         """Test reading with granted permission."""
-        checker = PermissionChecker(session_with_read_permission, vault_path)
+        checker = PermissionChecker(session_with_read_permission, home_path)
 
         allowed, reason = checker.can_read("Blogs/post.md")
         assert allowed
@@ -185,16 +185,16 @@ class TestPermissionChecker:
         allowed, reason = checker.can_read("Daily/journals/2024-01-01.md")
         assert not allowed
 
-    def test_write_to_artifacts(self, basic_session, vault_path):
+    def test_write_to_artifacts(self, basic_session, home_path):
         """Test writing to artifacts folder (default allowed)."""
-        checker = PermissionChecker(basic_session, vault_path)
+        checker = PermissionChecker(basic_session, home_path)
 
         allowed, reason = checker.can_write("Chat/artifacts/output.txt")
         assert allowed
 
-    def test_dangerous_commands_blocked(self, trust_mode_session, vault_path):
+    def test_dangerous_commands_blocked(self, trust_mode_session, home_path):
         """Test that dangerous commands are blocked even in trust mode."""
-        checker = PermissionChecker(trust_mode_session, vault_path)
+        checker = PermissionChecker(trust_mode_session, home_path)
 
         dangerous_commands = [
             "sudo rm -rf /",
@@ -207,9 +207,9 @@ class TestPermissionChecker:
             allowed, reason = checker.can_bash(cmd)
             assert not allowed, f"Command should be blocked: {cmd}"
 
-    def test_suggested_grants(self, basic_session, vault_path):
+    def test_suggested_grants(self, basic_session, home_path):
         """Test that suggested grants are generated correctly."""
-        checker = PermissionChecker(basic_session, vault_path)
+        checker = PermissionChecker(basic_session, home_path)
 
         suggestions = checker.get_suggested_grant("Blogs/drafts/new-post.md")
 
@@ -217,17 +217,17 @@ class TestPermissionChecker:
         assert suggestions[0]["scope"] == "file"
         assert "new-post.md" in suggestions[0]["label"]
 
-    def test_absolute_path_conversion(self, basic_session, vault_path):
+    def test_absolute_path_conversion(self, basic_session, home_path):
         """Test that absolute paths are converted to relative."""
-        vault_path.mkdir(parents=True, exist_ok=True)
-        checker = PermissionChecker(basic_session, vault_path)
+        home_path.mkdir(parents=True, exist_ok=True)
+        checker = PermissionChecker(basic_session, home_path)
 
         # Create a session with permission
         perms = SessionPermissions(read=["Blogs/**/*"])
         session = basic_session.with_permissions(perms)
-        checker = PermissionChecker(session, vault_path)
+        checker = PermissionChecker(session, home_path)
 
         # Absolute path should be converted and matched
-        abs_path = str(vault_path / "Blogs" / "post.md")
+        abs_path = str(home_path / "Blogs" / "post.md")
         allowed, reason = checker.can_read(abs_path)
         assert allowed

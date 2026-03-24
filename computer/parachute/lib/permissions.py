@@ -28,17 +28,17 @@ class PermissionChecker:
     def __init__(
         self,
         session: Session,
-        vault_path: Path,
+        home_path: Path,
     ):
         """
         Initialize permission checker.
 
         Args:
             session: The session with permissions in metadata
-            vault_path: Path to the vault root for path normalization
+            home_path: Path to the vault root for path normalization
         """
         self.session = session
-        self.vault_path = vault_path
+        self.home_path = home_path
         self.permissions = session.permissions
         self.ignore = get_ignore_patterns()
 
@@ -114,8 +114,8 @@ class PermissionChecker:
         """Convert an absolute path to a vault-relative path."""
         try:
             abs_path = Path(path).resolve()
-            if abs_path.is_relative_to(self.vault_path):
-                return str(abs_path.relative_to(self.vault_path))
+            if abs_path.is_relative_to(self.home_path):
+                return str(abs_path.relative_to(self.home_path))
             # Path is outside vault - return as-is
             return path
         except (ValueError, OSError):
@@ -211,24 +211,24 @@ class PermissionChecker:
 
 
 def check_read_permission(
-    session: Session, path: str, vault_path: Path
+    session: Session, path: str, home_path: Path
 ) -> tuple[bool, Optional[str]]:
     """Convenience function to check read permission."""
-    checker = PermissionChecker(session, vault_path)
+    checker = PermissionChecker(session, home_path)
     return checker.can_read(path)
 
 
 def check_write_permission(
-    session: Session, path: str, vault_path: Path
+    session: Session, path: str, home_path: Path
 ) -> tuple[bool, Optional[str]]:
     """Convenience function to check write permission."""
-    checker = PermissionChecker(session, vault_path)
+    checker = PermissionChecker(session, home_path)
     return checker.can_write(path)
 
 
 def check_bash_permission(
-    session: Session, command: str, vault_path: Path
+    session: Session, command: str, home_path: Path
 ) -> tuple[bool, Optional[str]]:
     """Convenience function to check bash permission."""
-    checker = PermissionChecker(session, vault_path)
+    checker = PermissionChecker(session, home_path)
     return checker.can_bash(command)

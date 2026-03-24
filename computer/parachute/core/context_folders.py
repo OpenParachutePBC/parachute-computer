@@ -69,8 +69,8 @@ class ContextChain:
 class ContextFolderService:
     """Service for discovering and loading folder-based context."""
 
-    def __init__(self, vault_path: Path):
-        self.vault_path = vault_path
+    def __init__(self, home_path: Path):
+        self.home_path = home_path
 
     def discover_folders(self) -> list[ContextFolder]:
         """
@@ -81,22 +81,22 @@ class ContextFolderService:
         folders: list[ContextFolder] = []
 
         # Check root
-        root_file = self._find_context_file(self.vault_path)
+        root_file = self._find_context_file(self.home_path)
         if root_file:
             folders.append(ContextFolder(
                 path="",
                 context_file=root_file,
-                has_agents_md=(self.vault_path / "AGENTS.md").exists(),
-                has_claude_md=(self.vault_path / "CLAUDE.md").exists(),
+                has_agents_md=(self.home_path / "AGENTS.md").exists(),
+                has_claude_md=(self.home_path / "CLAUDE.md").exists(),
             ))
 
         # Walk the vault looking for context files
-        for folder in self.vault_path.rglob("*"):
+        for folder in self.home_path.rglob("*"):
             if not folder.is_dir():
                 continue
 
             # Skip hidden folders and common non-content folders
-            relative = folder.relative_to(self.vault_path)
+            relative = folder.relative_to(self.home_path)
             parts = relative.parts
             if any(p.startswith(".") for p in parts):
                 continue
@@ -189,7 +189,7 @@ class ContextFolderService:
                 continue
             seen_paths.add(folder_path)
 
-            folder_full_path = self.vault_path / folder_path if folder_path else self.vault_path
+            folder_full_path = self.home_path / folder_path if folder_path else self.home_path
             context_filename = self._find_context_file(folder_full_path)
 
             if not context_filename:
@@ -280,6 +280,6 @@ class ContextFolderService:
 
         return "\n".join(parts)
 
-def get_context_folder_service(vault_path: Path) -> ContextFolderService:
+def get_context_folder_service(home_path: Path) -> ContextFolderService:
     """Get a ContextFolderService instance."""
-    return ContextFolderService(vault_path)
+    return ContextFolderService(home_path)

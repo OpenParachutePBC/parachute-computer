@@ -499,8 +499,8 @@ async def update_config(body: ConfigUpdateRequest) -> ConfigUpdateResponse:
     try:
         from parachute.config import save_yaml_config_atomic
 
-        vault_path = settings.parachute_dir
-        await asyncio.to_thread(save_yaml_config_atomic, vault_path, body.values)
+        home_path = settings.parachute_dir
+        await asyncio.to_thread(save_yaml_config_atomic, home_path, body.values)
 
         restarted = False
         if body.restart:

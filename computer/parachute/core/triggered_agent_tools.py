@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 # ── Individual tool factories ─────────────────────────────────────────────────
 
 
-def _make_read_this_note(graph: Any, scope: dict, agent_name: str, vault_path: Path) -> SdkMcpTool:
+def _make_read_this_note(graph: Any, scope: dict, agent_name: str, home_path: Path) -> SdkMcpTool:
     """Read the specific note this agent is processing."""
     entry_id = scope["entry_id"]
 
@@ -79,7 +79,7 @@ def _make_read_this_note(graph: Any, scope: dict, agent_name: str, vault_path: P
     return read_this_note
 
 
-def _make_update_this_note(graph: Any, scope: dict, agent_name: str, vault_path: Path) -> SdkMcpTool:
+def _make_update_this_note(graph: Any, scope: dict, agent_name: str, home_path: Path) -> SdkMcpTool:
     """Replace the note's content with cleaned or processed text."""
     entry_id = scope["entry_id"]
 
@@ -119,7 +119,7 @@ def _make_update_this_note(graph: Any, scope: dict, agent_name: str, vault_path:
     return update_this_note
 
 
-def _make_update_note_tags(graph: Any, scope: dict, agent_name: str, vault_path: Path) -> SdkMcpTool:
+def _make_update_note_tags(graph: Any, scope: dict, agent_name: str, home_path: Path) -> SdkMcpTool:
     """Set tags on the note."""
     entry_id = scope["entry_id"]
 
@@ -168,7 +168,7 @@ def _make_update_note_tags(graph: Any, scope: dict, agent_name: str, vault_path:
     return update_note_tags
 
 
-def _make_update_note_metadata(graph: Any, scope: dict, agent_name: str, vault_path: Path) -> SdkMcpTool:
+def _make_update_note_metadata(graph: Any, scope: dict, agent_name: str, home_path: Path) -> SdkMcpTool:
     """Update a metadata field on the note."""
     entry_id = scope["entry_id"]
 
@@ -262,5 +262,5 @@ def create_triggered_agent_tools(
         scope=scope,
         graph=graph,
         agent_name=agent_name,
-        vault_path=Path.home(),  # Note tools don't use vault_path
+        home_path=Path.home(),  # Note tools don't use home_path
     )

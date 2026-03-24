@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 # Global scheduler instance
 _scheduler: Optional[AsyncIOScheduler] = None
-_vault_path: Optional[Path] = None
+_home_path: Optional[Path] = None
 _graph = None
 
 
@@ -44,14 +44,14 @@ def _parse_time(time_str: str) -> tuple[int, int]:
 
 async def _run_daily_agent_job(agent_name: str, trigger: str = "scheduled"):
     """Job function that runs a daily agent."""
-    global _vault_path
-    if not _vault_path:
-        logger.error(f"Cannot run agent '{agent_name}': vault_path not set")
+    global _home_path
+    if not _home_path:
+        logger.error(f"Cannot run agent '{agent_name}': home_path not set")
         return
 
     from parachute.core.daily_agent import run_daily_agent
     try:
-        result = await run_daily_agent(_vault_path, agent_name, trigger=trigger)
+        result = await run_daily_agent(_home_path, agent_name, trigger=trigger)
         logger.info(f"Agent '{agent_name}' result: {result.get('status')}")
     except Exception as e:
         logger.error(f"Agent '{agent_name}' failed: {e}", exc_info=True)
@@ -96,11 +96,11 @@ def _schedule_from_list(scheduler: AsyncIOScheduler, agents: list) -> dict[str, 
 # Scheduler Lifecycle
 # =============================================================================
 
-async def init_scheduler(vault_path: Path, graph=None) -> AsyncIOScheduler:
+async def init_scheduler(home_path: Path, graph=None) -> AsyncIOScheduler:
     """Initialize and start the scheduler."""
-    global _scheduler, _vault_path, _graph
+    global _scheduler, _home_path, _graph
 
-    _vault_path = vault_path
+    _home_path = home_path
     _graph = graph
 
     if _scheduler is not None:
@@ -112,7 +112,7 @@ async def init_scheduler(vault_path: Path, graph=None) -> AsyncIOScheduler:
 
     # Discover and schedule all daily agents
     from parachute.core.daily_agent import discover_daily_agents
-    agents = await discover_daily_agents(vault_path, graph=graph)
+    agents = await discover_daily_agents(home_path, graph=graph)
     results = _schedule_from_list(_scheduler, agents)
     logger.info(f"Scheduled daily agents: {results}")
 
@@ -138,7 +138,7 @@ def get_scheduler() -> Optional[AsyncIOScheduler]:
     return _scheduler
 
 
-async def get_scheduler_status(vault_path: Path, graph=None) -> dict[str, Any]:
+async def get_scheduler_status(home_path: Path, graph=None) -> dict[str, Any]:
     """Get the current scheduler status."""
     global _scheduler, _graph
 
@@ -146,7 +146,7 @@ async def get_scheduler_status(vault_path: Path, graph=None) -> dict[str, Any]:
 
     agents_config: dict[str, Any] = {}
     try:
-        agents = await discover_daily_agents(vault_path, graph=graph or _graph)
+        agents = await discover_daily_agents(home_path, graph=graph or _graph)
         for agent in agents:
             agents_config[agent.name] = {
                 "display_name": agent.display_name,
@@ -179,7 +179,7 @@ async def get_scheduler_status(vault_path: Path, graph=None) -> dict[str, Any]:
     return status
 
 
-async def reload_scheduler(vault_path: Path, graph=None) -> dict[str, Any]:
+async def reload_scheduler(home_path: Path, graph=None) -> dict[str, Any]:
     """Reload scheduler configuration from graph (or vault files as fallback)."""
     global _scheduler, _graph
 
@@ -187,7 +187,7 @@ async def reload_scheduler(vault_path: Path, graph=None) -> dict[str, Any]:
         return {"success": False, "error": "Scheduler not running"}
 
     from parachute.core.daily_agent import discover_daily_agents
-    agents = await discover_daily_agents(vault_path, graph=graph or _graph)
+    agents = await discover_daily_agents(home_path, graph=graph or _graph)
     results = _schedule_from_list(_scheduler, agents)
 
     # Build response with next run times
@@ -224,10 +224,10 @@ def _get_next_run(job_id: str) -> Optional[str]:
     return None
 
 
-async def trigger_job_now(job_id: str, vault_path: Path) -> dict[str, Any]:
+async def trigger_job_now(job_id: str, home_path: Path) -> dict[str, Any]:
     """Manually trigger a scheduled job immediately."""
-    global _vault_path
-    _vault_path = vault_path
+    global _home_path
+    _home_path = home_path
 
     # Handle legacy job_id formats
     LEGACY_NAMES = {
@@ -249,13 +249,13 @@ async def trigger_job_now(job_id: str, vault_path: Path) -> dict[str, Any]:
         return {"success": False, "job_id": job_id, "agent": agent_name, "error": str(e)}
 
 
-async def trigger_agent_now(agent_name: str, vault_path: Path, date: Optional[str] = None, force: bool = False) -> dict[str, Any]:
+async def trigger_agent_now(agent_name: str, home_path: Path, date: Optional[str] = None, force: bool = False) -> dict[str, Any]:
     """
     Manually trigger a daily agent immediately.
 
     Args:
         agent_name: Name of the agent to run
-        vault_path: Path to the vault
+        home_path: Path to the vault
         date: Optional date override (YYYY-MM-DD)
         force: Force run even if already processed
 
@@ -265,7 +265,7 @@ async def trigger_agent_now(agent_name: str, vault_path: Path, date: Optional[st
     from parachute.core.daily_agent import run_daily_agent
 
     try:
-        result = await run_daily_agent(vault_path, agent_name, date=date, force=force, trigger="manual")
+        result = await run_daily_agent(home_path, agent_name, date=date, force=force, trigger="manual")
         return result
     except Exception as e:
         logger.error(f"trigger_agent_now failed for '{agent_name}': {e}", exc_info=True)

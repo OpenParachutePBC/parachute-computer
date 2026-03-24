@@ -34,7 +34,7 @@ from parachute.lib.mcp_loader import (
     resolve_mcp_servers,
     validate_and_filter_servers,
 )
-from parachute.models.agent import AgentDefinition, create_vault_agent
+from parachute.models.agent import AgentDefinition, create_default_agent
 from parachute.lib.typed_errors import ErrorCode, RecoveryAction, parse_error
 from parachute.models.events import (
     AbortedEvent,
@@ -423,7 +423,7 @@ class Orchestrator:
             logger.info(
                 f"Ignoring agent_path={agent_path!r} — SDK handles agent discovery natively"
             )
-        agent = create_vault_agent()
+        agent = create_default_agent()
 
         # Get or create session (before building prompt so we can load prior conversation)
         session, resume_info, is_new = await self.session_manager.get_or_create_session(
@@ -479,7 +479,7 @@ class Orchestrator:
 
         # Determine working directory first (needed for prompt building)
         # Priority: explicit param > config_overrides > session's stored value > vault path
-        # Note: working_directory is stored as RELATIVE to vault_path in the database
+        # Note: working_directory is stored as RELATIVE to home_path in the database
         override_working_dir = config_overrides.get("working_directory")
         effective_working_dir: Optional[str] = (
             working_directory or override_working_dir or session.working_directory
@@ -670,7 +670,7 @@ class Orchestrator:
 
                 permission_handler = PermissionHandler(
                     session=session,
-                    vault_path=str(Path.home()),
+                    home_path=str(Path.home()),
                     on_denial=on_permission_denial,
                 )
                 self.pending_permissions[session.id] = permission_handler

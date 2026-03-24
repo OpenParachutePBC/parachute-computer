@@ -23,10 +23,10 @@ logger = logging.getLogger(__name__)
 
 # ── Individual tool factories ─────────────────────────────────────────────────
 # Each returns a single SdkMcpTool, bound to scope data via closure.
-# Signature: (graph, scope, agent_name, vault_path) -> SdkMcpTool
+# Signature: (graph, scope, agent_name, home_path) -> SdkMcpTool
 
 
-def _make_read_days_notes(graph: Any, scope: dict, agent_name: str, vault_path: Path) -> SdkMcpTool:
+def _make_read_days_notes(graph: Any, scope: dict, agent_name: str, home_path: Path) -> SdkMcpTool:
     """Read all notes for a specific date from the graph."""
 
     @tool(
@@ -60,9 +60,9 @@ def _make_read_days_notes(graph: Any, scope: dict, agent_name: str, vault_path: 
     return read_days_notes
 
 
-def _make_read_days_chats(graph: Any, scope: dict, agent_name: str, vault_path: Path) -> SdkMcpTool:
+def _make_read_days_chats(graph: Any, scope: dict, agent_name: str, home_path: Path) -> SdkMcpTool:
     """Read AI chat logs for a specific date from vault files."""
-    chat_log_dir = vault_path / "Daily" / "chat-log"
+    chat_log_dir = home_path / "Daily" / "chat-log"
 
     @tool(
         "read_days_chats",
@@ -90,7 +90,7 @@ def _make_read_days_chats(graph: Any, scope: dict, agent_name: str, vault_path: 
     return read_days_chats
 
 
-def _make_read_recent_journals(graph: Any, scope: dict, agent_name: str, vault_path: Path) -> SdkMcpTool:
+def _make_read_recent_journals(graph: Any, scope: dict, agent_name: str, home_path: Path) -> SdkMcpTool:
     """Read journal entries from the past N days for context."""
 
     @tool(
@@ -132,9 +132,9 @@ def _make_read_recent_journals(graph: Any, scope: dict, agent_name: str, vault_p
     return read_recent_journals
 
 
-def _make_read_recent_sessions(graph: Any, scope: dict, agent_name: str, vault_path: Path) -> SdkMcpTool:
+def _make_read_recent_sessions(graph: Any, scope: dict, agent_name: str, home_path: Path) -> SdkMcpTool:
     """Read recent AI chat sessions for context from vault files."""
-    chat_log_dir = vault_path / "Daily" / "chat-log"
+    chat_log_dir = home_path / "Daily" / "chat-log"
 
     @tool(
         "read_recent_sessions",
@@ -168,7 +168,7 @@ def _make_read_recent_sessions(graph: Any, scope: dict, agent_name: str, vault_p
     return read_recent_sessions
 
 
-def _make_write_card(graph: Any, scope: dict, agent_name: str, vault_path: Path) -> SdkMcpTool:
+def _make_write_card(graph: Any, scope: dict, agent_name: str, home_path: Path) -> SdkMcpTool:
     """Write the agent's output as a Card to the graph."""
 
     @tool(
@@ -238,7 +238,7 @@ TOOL_FACTORIES["read_chat_log"] = TOOL_FACTORIES["read_days_chats"]
 
 
 def create_daily_agent_tools(
-    vault_path: Path,
+    home_path: Path,
     config: "DailyAgentConfig",
     graph=None,
 ) -> tuple[list[SdkMcpTool], dict[str, Any]]:
@@ -260,5 +260,5 @@ def create_daily_agent_tools(
         scope=scope,
         graph=graph,
         agent_name=config.name,
-        vault_path=vault_path,
+        home_path=home_path,
     )

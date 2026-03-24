@@ -57,14 +57,14 @@ class TestBindTools:
         """Day-scoped tools bind successfully with date in scope."""
         graph = MagicMock()
         scope = {"date": "2026-03-22"}
-        vault_path = Path("/tmp/test-vault")
+        home_path = Path("/tmp/test-vault")
 
         tools, config = bind_tools(
             tool_names=["read_days_notes", "read_recent_journals"],
             scope=scope,
             graph=graph,
             agent_name="test-agent",
-            vault_path=vault_path,
+            home_path=home_path,
         )
 
         assert len(tools) == 2
@@ -74,14 +74,14 @@ class TestBindTools:
         """Note-scoped tools bind successfully with entry_id in scope."""
         graph = MagicMock()
         scope = {"entry_id": "abc123"}
-        vault_path = Path("/tmp/test-vault")
+        home_path = Path("/tmp/test-vault")
 
         tools, config = bind_tools(
             tool_names=["read_this_note", "update_this_note"],
             scope=scope,
             graph=graph,
             agent_name="test-agent",
-            vault_path=vault_path,
+            home_path=home_path,
         )
 
         assert len(tools) == 2
@@ -90,14 +90,14 @@ class TestBindTools:
         """An agent can use both day and note tools if scope has both keys."""
         graph = MagicMock()
         scope = {"date": "2026-03-22", "entry_id": "abc123"}
-        vault_path = Path("/tmp/test-vault")
+        home_path = Path("/tmp/test-vault")
 
         tools, config = bind_tools(
             tool_names=["read_days_notes", "read_this_note"],
             scope=scope,
             graph=graph,
             agent_name="test-agent",
-            vault_path=vault_path,
+            home_path=home_path,
         )
 
         assert len(tools) == 2
@@ -106,7 +106,7 @@ class TestBindTools:
         """bind_tools raises ValueError when scope is missing required keys."""
         graph = MagicMock()
         scope = {"date": "2026-03-22"}  # No entry_id
-        vault_path = Path("/tmp/test-vault")
+        home_path = Path("/tmp/test-vault")
 
         with pytest.raises(ValueError, match="missing"):
             bind_tools(
@@ -114,14 +114,14 @@ class TestBindTools:
                 scope=scope,
                 graph=graph,
                 agent_name="test-agent",
-                vault_path=vault_path,
+                home_path=home_path,
             )
 
     def test_bind_fails_unknown_tool(self):
         """bind_tools raises KeyError for unregistered tool names."""
         graph = MagicMock()
         scope = {"date": "2026-03-22"}
-        vault_path = Path("/tmp/test-vault")
+        home_path = Path("/tmp/test-vault")
 
         with pytest.raises(KeyError, match="nonexistent_tool"):
             bind_tools(
@@ -129,21 +129,21 @@ class TestBindTools:
                 scope=scope,
                 graph=graph,
                 agent_name="test-agent",
-                vault_path=vault_path,
+                home_path=home_path,
             )
 
     def test_bind_empty_tools_list(self):
         """bind_tools with empty list returns empty tools."""
         graph = MagicMock()
         scope = {"date": "2026-03-22"}
-        vault_path = Path("/tmp/test-vault")
+        home_path = Path("/tmp/test-vault")
 
         tools, config = bind_tools(
             tool_names=[],
             scope=scope,
             graph=graph,
             agent_name="test-agent",
-            vault_path=vault_path,
+            home_path=home_path,
         )
 
         assert len(tools) == 0
@@ -152,14 +152,14 @@ class TestBindTools:
         """Legacy tool names (read_journal, read_entry) still work."""
         graph = MagicMock()
         scope = {"date": "2026-03-22", "entry_id": "abc123"}
-        vault_path = Path("/tmp/test-vault")
+        home_path = Path("/tmp/test-vault")
 
         tools, config = bind_tools(
             tool_names=["read_journal", "read_entry"],
             scope=scope,
             graph=graph,
             agent_name="test-agent",
-            vault_path=vault_path,
+            home_path=home_path,
         )
 
         assert len(tools) == 2
@@ -168,14 +168,14 @@ class TestBindTools:
         """Tools with no required scope keys bind with any scope."""
         graph = MagicMock()
         scope = {}  # Empty scope
-        vault_path = Path("/tmp/test-vault")
+        home_path = Path("/tmp/test-vault")
 
         tools, config = bind_tools(
             tool_names=["read_recent_journals", "read_recent_sessions"],
             scope=scope,
             graph=graph,
             agent_name="test-agent",
-            vault_path=vault_path,
+            home_path=home_path,
         )
 
         assert len(tools) == 2

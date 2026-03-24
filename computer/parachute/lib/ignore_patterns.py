@@ -63,20 +63,20 @@ class IgnorePatterns:
     from .parachuteignore files.
     """
 
-    def __init__(self, vault_path: Optional[Path] = None):
+    def __init__(self, home_path: Optional[Path] = None):
         """
         Initialize with optional vault path.
 
         Args:
-            vault_path: Path to the vault root. If provided, loads
+            home_path: Path to the vault root. If provided, loads
                        .parachuteignore from the vault.
         """
-        self.vault_path = vault_path
+        self.home_path = home_path
         self.patterns: list[str] = list(BUILTIN_DENY_PATTERNS)
         self._loaded = False
 
-        if vault_path:
-            self._load_ignore_file(vault_path / ".parachuteignore")
+        if home_path:
+            self._load_ignore_file(home_path / ".parachuteignore")
 
     def _load_ignore_file(self, path: Path) -> None:
         """Load patterns from a .parachuteignore file."""
@@ -248,8 +248,8 @@ def get_ignore_patterns() -> IgnorePatterns:
     return _ignore_patterns
 
 
-def init_ignore_patterns(vault_path: Path) -> IgnorePatterns:
+def init_ignore_patterns(home_path: Path) -> IgnorePatterns:
     """Initialize the global ignore patterns instance."""
     global _ignore_patterns
-    _ignore_patterns = IgnorePatterns(vault_path)
+    _ignore_patterns = IgnorePatterns(home_path)
     return _ignore_patterns
