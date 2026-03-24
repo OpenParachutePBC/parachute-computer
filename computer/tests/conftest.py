@@ -3,6 +3,7 @@ Pytest configuration and fixtures.
 """
 
 import os
+import tempfile
 from pathlib import Path
 from typing import AsyncGenerator
 
@@ -14,6 +15,76 @@ from httpx import AsyncClient
 # Set test environment
 os.environ["LOG_LEVEL"] = "WARNING"
 
+
+# ---------------------------------------------------------------------------
+# LadybugDB platform compatibility check
+# ---------------------------------------------------------------------------
+# The real_ladybug native layer has a known "ANY type" bug on some Linux
+# builds. Detect it once at import time and expose a flag for fixtures.
+
+def _check_ladybugdb_compat() -> bool:
+    """Return True if LadybugDB parameterized writes work on this platform."""
+    import asyncio
+    from parachute.db.brain import BrainService
+    from parachute.db.brain_chat_store import BrainChatStore
+    from parachute.models.session import SessionCreate
+
+    async def _probe():
+        with tempfile.TemporaryDirectory() as d:
+            svc = BrainService(Path(d) / "probe.kz")
+            await svc.connect()
+            store = BrainChatStore(svc)
+            await store.ensure_schema()
+            # Test 1: simple session create
+            await store.create_session(
+                SessionCreate(id="__probe__", title="probe", module="test")
+            )
+            # Test 2: complex parameterized MERGE (like daily module does)
+            # This catches the "ANY type" bug on Linux with many params
+            await svc.execute_cypher(
+                """MERGE (e:Note {entry_id: $entry_id})
+                ON CREATE SET e.created_at = $created_at,
+                    e.note_type = $note_type,
+                    e.content = $content,
+                    e.title = $title,
+                    e.entry_type = $entry_type,
+                    e.audio_path = $audio_path,
+                    e.metadata_json = $metadata_json,
+                    e.brain_links_json = $brain_links_json
+                """,
+                {
+                    "entry_id": "__probe__",
+                    "created_at": "2000-01-01T00:00:00",
+                    "note_type": "journal",
+                    "content": "probe",
+                    "title": "probe",
+                    "entry_type": "text",
+                    "audio_path": "",
+                    "metadata_json": "{}",
+                    "brain_links_json": "[]",
+                },
+            )
+        return True
+
+    try:
+        return asyncio.run(_probe())
+    except RuntimeError as e:
+        if "ANY type" in str(e):
+            return False
+        raise
+
+
+LADYBUGDB_WORKS = _check_ladybugdb_compat()
+
+requires_ladybugdb = pytest.mark.skipif(
+    not LADYBUGDB_WORKS,
+    reason="LadybugDB native layer has ANY type bug on this platform",
+)
+
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
 
 @pytest.fixture
 def test_vault(tmp_path: Path) -> Path:
@@ -56,30 +127,18 @@ def test_home_path(test_vault: Path) -> str:
 
 @pytest_asyncio.fixture
 async def test_database(tmp_path: Path):
-    """Create a test graph chat store.
+    """Create a test graph chat store. Skips if LadybugDB is broken."""
+    if not LADYBUGDB_WORKS:
+        pytest.skip("LadybugDB native layer has ANY type bug on this platform")
 
-    Skips on platforms where LadybugDB's native layer has the 'ANY type' bug
-    (observed on Linux CI with certain real_ladybug wheel builds).
-    """
     from parachute.db.brain import BrainService
     from parachute.db.brain_chat_store import BrainChatStore
-    from parachute.models.session import SessionCreate
 
     db_path = tmp_path / "test-graph" / "parachute.kz"
     graph = BrainService(db_path=db_path)
     await graph.connect()
     store = BrainChatStore(graph)
-    try:
-        await store.ensure_schema()
-        # Smoke-test a parameterized write — the ANY type bug can surface here
-        await store.create_session(
-            SessionCreate(id="__smoke__", title="smoke", module="test")
-        )
-        await store.delete_session("__smoke__")
-    except RuntimeError as e:
-        if "ANY type" in str(e):
-            pytest.skip(f"LadybugDB native bug on this platform: {e}")
-        raise
+    await store.ensure_schema()
 
     yield store
 
@@ -158,5 +217,3 @@ def sample_session_data() -> dict:
         "source": "parachute",
         "message_count": 0,
     }
-
-
