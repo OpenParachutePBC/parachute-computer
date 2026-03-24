@@ -32,6 +32,7 @@ CONFIG_KEYS = {
     "cors_origins", "auth_mode", "debug",
     "docker_runtime", "docker_auto_start",
     "credential_broker_secret",
+    "api_provider", "api_providers",
     # Legacy keys (backward compat — auto-migrated to credential_providers)
     "github_app_id", "github_broker_secret",
 }
@@ -270,6 +271,16 @@ class Settings(BaseSettings):
         description="Optional model override. If not set, uses Claude Code default.",
     )
 
+    # API providers (bring your own backend)
+    api_provider: Optional[str] = Field(
+        default=None,
+        description="Active API provider name. None = Anthropic default (OAuth token).",
+    )
+    api_providers: dict[str, dict] = Field(
+        default_factory=dict,
+        description="Named API provider configs: {name: {base_url, api_key, default_model?, label?}}",
+    )
+
     # Credential broker
     credential_providers: dict[str, dict] = Field(
         default_factory=dict,
@@ -386,6 +397,20 @@ class Settings(BaseSettings):
     def sandbox_dir(self) -> Path:
         """Path to Docker sandbox env homes."""
         return PARACHUTE_DIR / "sandbox"
+
+    @property
+    def active_provider_config(self) -> dict[str, str] | None:
+        """Resolve the active API provider config, or None for Anthropic default."""
+        if not self.api_provider:
+            return None
+        cfg = self.api_providers.get(self.api_provider)
+        if not cfg or "base_url" not in cfg or "api_key" not in cfg:
+            logger.warning(
+                f"API provider '{self.api_provider}' not found or missing base_url/api_key, "
+                "falling back to Anthropic default"
+            )
+            return None
+        return cfg
 
     @property
     def cors_origins_list(self) -> list[str] | None:

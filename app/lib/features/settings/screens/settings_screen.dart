@@ -20,6 +20,7 @@ import '../widgets/credentials_section.dart';
 import '../widgets/migration_section.dart';
 import '../widgets/transcription_settings_section.dart';
 import '../widgets/model_picker_dropdown.dart';
+import '../widgets/provider_section.dart';
 import '../widgets/server_control_section.dart';
 import '../widgets/about_section.dart';
 import '../widgets/settings_card.dart';
@@ -138,6 +139,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             SettingsCard(
               isDark: isDark,
               child: _buildModelSection(),
+            ),
+            SizedBox(height: Spacing.xl),
+          ],
+
+          // API Provider Selection (requires server)
+          if (showFullModeSettings) ...[
+            SettingsCard(
+              isDark: isDark,
+              child: const ProviderSection(),
             ),
             SizedBox(height: Spacing.xl),
           ],

@@ -1068,9 +1068,25 @@ class Orchestrator:
         initial_user_echo_seen = False
         end_reason = "unknown"
 
+        # Resolve active API provider (if any)
+        provider_cfg = self.settings.active_provider_config
+        provider_base_url: str | None = None
+        provider_api_key: str | None = None
+        if provider_cfg:
+            provider_base_url = provider_cfg["base_url"]
+            provider_api_key = provider_cfg["api_key"]
+            # Provider's default_model is lowest-priority override
+            provider_model = provider_cfg.get("default_model")
+        else:
+            provider_model = None
+
+        # Model precedence: per-request > provider default > server default
+        effective_model = model or provider_model or self.settings.default_model
+
         logger.info(
             f"SDK launch: cwd={effective_cwd}, resume={resume_id}, "
             f"is_new={is_new}, session={session.id[:8] if session.id else None}"
+            f"{f', provider={self.settings.api_provider}' if provider_base_url else ''}"
         )
 
         try:
@@ -1089,9 +1105,11 @@ class Orchestrator:
                 claude_token=claude_token,
                 message_queue=message_queue,
                 event_timeout=self.settings.trusted_event_timeout,
+                provider_base_url=provider_base_url,
+                provider_api_key=provider_api_key,
                 **(
-                    {"model": model or self.settings.default_model}
-                    if (model or self.settings.default_model)
+                    {"model": effective_model}
+                    if effective_model
                     else {}
                 ),
             ):

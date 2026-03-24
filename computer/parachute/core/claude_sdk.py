@@ -157,6 +157,8 @@ async def query_streaming(
     message_queue: asyncio.Queue[str] | None = None,
     output_format: Optional[dict[str, Any]] = None,
     event_timeout: int = 300,
+    provider_base_url: Optional[str] = None,
+    provider_api_key: Optional[str] = None,
 ) -> AsyncGenerator[dict[str, Any], None]:
     """
     Run a Claude SDK query with streaming response.
@@ -250,7 +252,14 @@ async def query_streaming(
     # Clear CLAUDECODE to prevent "nested session" detection when the server
     # itself runs inside Claude Code (e.g. during development).
     sdk_env["CLAUDECODE"] = ""
-    if claude_token:
+    if provider_base_url and provider_api_key:
+        # Custom API provider: inject base URL + API key, clear OAuth token
+        # so the CLI authenticates with the third-party endpoint instead.
+        sdk_env["ANTHROPIC_BASE_URL"] = provider_base_url
+        sdk_env["ANTHROPIC_API_KEY"] = provider_api_key
+        sdk_env.pop("CLAUDE_CODE_OAUTH_TOKEN", None)
+        logger.info(f"SDK using custom API provider: {provider_base_url}")
+    elif claude_token:
         sdk_env["CLAUDE_CODE_OAUTH_TOKEN"] = claude_token
     options_kwargs["env"] = sdk_env
 
