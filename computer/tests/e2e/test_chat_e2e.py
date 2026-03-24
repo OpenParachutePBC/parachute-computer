@@ -1,5 +1,5 @@
 """
-E2E test: send a message through the server and get a response via SSE.
+E2E test: boot the server, send a message, get a response via SSE.
 
 Requires:
   - CLAUDE_CODE_OAUTH_TOKEN env var (Claude SDK auth)
@@ -8,53 +8,89 @@ Requires:
 Skipped automatically if token is not set.
 """
 
+import asyncio
 import json
 import os
+import signal
+import subprocess
+import sys
+import tempfile
 
+import httpx
 import pytest
-import pytest_asyncio
-from httpx import ASGITransport, AsyncClient
 
 pytestmark = pytest.mark.skipif(
     "CLAUDE_CODE_OAUTH_TOKEN" not in os.environ,
     reason="CLAUDE_CODE_OAUTH_TOKEN not set — skip E2E tests",
 )
 
+E2E_PORT = 3399
 
-@pytest_asyncio.fixture
-async def client(tmp_path):
-    """Test client with an isolated home path so we don't touch real data."""
-    # Set up minimal home structure
-    home = tmp_path / "home"
-    home.mkdir()
-    (home / "graph").mkdir()
-    (home / "modules").mkdir()
-    (home / "logs").mkdir()
 
-    os.environ["PARACHUTE_HOME"] = str(home)
-    os.environ.setdefault("DEFAULT_MODEL", "haiku")
+@pytest.fixture(scope="module")
+def server():
+    """Boot the Parachute server on a test port with an isolated home dir."""
+    home = tempfile.mkdtemp(prefix="parachute-e2e-")
+    os.makedirs(f"{home}/graph", exist_ok=True)
+    os.makedirs(f"{home}/modules", exist_ok=True)
+    os.makedirs(f"{home}/logs", exist_ok=True)
 
-    from parachute.server import app
+    env = {
+        **os.environ,
+        "PARACHUTE_HOME": home,
+        "PORT": str(E2E_PORT),
+        "HOST": "127.0.0.1",
+        "LOG_LEVEL": "WARNING",
+        "DEFAULT_MODEL": os.environ.get("DEFAULT_MODEL", "haiku"),
+    }
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app),
-        base_url="http://test",
-        timeout=120.0,
-    ) as c:
-        yield c
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "uvicorn", "parachute.server:app",
+         "--port", str(E2E_PORT), "--host", "127.0.0.1"],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
 
-    os.environ.pop("PARACHUTE_HOME", None)
+    # Wait for server to be ready
+    url = f"http://127.0.0.1:{E2E_PORT}/api/health"
+    for _ in range(30):
+        try:
+            r = httpx.get(url, timeout=2)
+            if r.status_code == 200:
+                break
+        except (httpx.ConnectError, httpx.TimeoutException):
+            pass
+        import time
+        time.sleep(1)
+    else:
+        proc.kill()
+        stdout, stderr = proc.communicate(timeout=5)
+        pytest.fail(
+            f"Server failed to start on port {E2E_PORT}.\n"
+            f"stdout: {stdout.decode()[-500:]}\n"
+            f"stderr: {stderr.decode()[-500:]}"
+        )
+
+    yield f"http://127.0.0.1:{E2E_PORT}"
+
+    proc.send_signal(signal.SIGTERM)
+    try:
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        proc.kill()
 
 
 @pytest.mark.timeout(90)
-async def test_chat_roundtrip(client):
+def test_chat_roundtrip(server):
     """Send a simple message and verify we get text back via SSE."""
-    response = await client.post(
-        "/api/chat",
+    response = httpx.post(
+        f"{server}/api/chat",
         json={
             "message": "Reply with exactly: PONG",
             "module": "chat",
         },
+        timeout=90.0,
     )
     assert response.status_code == 200
 

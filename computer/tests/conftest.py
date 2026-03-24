@@ -56,9 +56,14 @@ def test_home_path(test_vault: Path) -> str:
 
 @pytest_asyncio.fixture
 async def test_database(tmp_path: Path):
-    """Create a test graph chat store."""
+    """Create a test graph chat store.
+
+    Skips on platforms where LadybugDB's native layer has the 'ANY type' bug
+    (observed on Linux CI with certain real_ladybug wheel builds).
+    """
     from parachute.db.brain import BrainService
     from parachute.db.brain_chat_store import BrainChatStore
+    from parachute.models.session import SessionCreate
 
     db_path = tmp_path / "test-graph" / "parachute.kz"
     graph = BrainService(db_path=db_path)
@@ -66,9 +71,14 @@ async def test_database(tmp_path: Path):
     store = BrainChatStore(graph)
     try:
         await store.ensure_schema()
+        # Smoke-test a parameterized write — the ANY type bug can surface here
+        await store.create_session(
+            SessionCreate(id="__smoke__", title="smoke", module="test")
+        )
+        await store.delete_session("__smoke__")
     except RuntimeError as e:
         if "ANY type" in str(e):
-            pytest.skip(f"LadybugDB schema bug on this platform: {e}")
+            pytest.skip(f"LadybugDB native bug on this platform: {e}")
         raise
 
     yield store
