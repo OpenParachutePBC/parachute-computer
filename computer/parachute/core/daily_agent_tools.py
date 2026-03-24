@@ -174,11 +174,12 @@ def _make_write_card(graph: Any, scope: dict, agent_name: str, home_path: Path) 
     @tool(
         "write_card",
         "Write the agent's output. Saves as a Card in the graph.",
-        {"date": str, "content": str},
+        {"date": str, "content": str, "card_type": str},
     )
     async def write_card(args: dict[str, Any]) -> dict[str, Any]:
         date_str = args.get("date", "").strip()
         content = args.get("content", "").strip()
+        card_type = args.get("card_type", "default").strip() or "default"
 
         if not date_str:
             return {"content": [{"type": "text", "text": "Error: date is required"}], "is_error": True}
@@ -189,21 +190,24 @@ def _make_write_card(graph: Any, scope: dict, agent_name: str, home_path: Path) 
 
         # Use display_name from scope if available (set by runner from config)
         display_name = scope.get("display_name", agent_name.replace("-", " ").title())
-        card_id = f"{agent_name}:{date_str}"
+        card_id = f"{agent_name}:{card_type}:{date_str}"
         generated_at = datetime.now(timezone.utc).isoformat()
 
         try:
             await graph.execute_cypher(
                 "MERGE (c:Card {card_id: $card_id}) "
                 "SET c.agent_name = $agent_name, "
+                "    c.card_type = $card_type, "
                 "    c.display_name = $display_name, "
                 "    c.content = $content, "
                 "    c.generated_at = $generated_at, "
                 "    c.status = 'done', "
-                "    c.date = $date",
+                "    c.date = $date, "
+                "    c.read_at = ''",
                 {
                     "card_id": card_id,
                     "agent_name": agent_name,
+                    "card_type": card_type,
                     "display_name": display_name,
                     "content": content,
                     "generated_at": generated_at,
