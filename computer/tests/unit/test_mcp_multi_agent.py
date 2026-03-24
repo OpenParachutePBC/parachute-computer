@@ -21,6 +21,13 @@ from parachute.db.brain_chat_store import BrainChatStore
 from parachute.models.session import SessionCreate, SessionSource
 from parachute.mcp_server import SessionContext
 
+from tests.conftest import LADYBUGDB_WORKS
+
+pytestmark = pytest.mark.skipif(
+    not LADYBUGDB_WORKS,
+    reason="LadybugDB native layer has ANY type bug on this platform",
+)
+
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -36,6 +43,17 @@ async def db(tmp_path):
     await graph.connect()
     store = BrainChatStore(graph)
     await store.ensure_schema()
+
+    # Probe: test parameterized session create to detect "ANY type" bug
+    try:
+        await store.create_session(
+            SessionCreate(id="__probe__", title="probe", module="test")
+        )
+    except RuntimeError as e:
+        if "ANY type" in str(e):
+            pytest.skip(f"LadybugDB parameterized writes broken: {e}")
+        raise
+
     yield store
 
 
