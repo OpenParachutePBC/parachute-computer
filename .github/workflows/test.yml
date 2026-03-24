@@ -30,7 +30,7 @@ jobs:
           .venv/bin/pip install -e ".[dev]" -q
 
       - name: Run unit tests
-        run: .venv/bin/python -m pytest tests/unit/ tests/core/ -x -q
+        run: .venv/bin/python -m pytest tests/unit/ tests/core/ -q
 
   integration:
     name: Integration tests
