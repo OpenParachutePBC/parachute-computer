@@ -52,12 +52,11 @@ class SessionManager:
         Resolve a working_directory to an absolute path.
 
         Args:
-            working_directory: Real absolute path, /vault/... legacy path,
-                              or relative path. None or empty means user home dir.
+            working_directory: Absolute path or relative path.
+                              None or empty means user home dir.
 
         Returns:
             Absolute Path for use with SDK (which requires absolute paths).
-            Falls back to home dir if the path doesn't exist.
         """
         home = Path.home()
         if not working_directory:
@@ -65,30 +64,18 @@ class SessionManager:
 
         wd_path = Path(working_directory)
         if wd_path.is_absolute():
-            if str(wd_path).startswith("/vault/"):
-                # COMPAT: /vault/... paths from pre-v0.2.0 sessions stored in DB.
-                # Safe to remove once no sessions have /vault/ working directories
-                # (likely 6+ months after the vault→home migration, ~Sep 2026).
-                relative = str(wd_path)[len("/vault/"):]
-                resolved = home / relative
-            else:
-                # Real absolute path — use as-is
-                resolved = wd_path
+            return wd_path
         else:
-            # Relative path — prepend home dir
-            resolved = home / wd_path
-
-        return resolved
+            return home / wd_path
 
     def normalize_working_directory(self, working_directory: Optional[str]) -> Optional[str]:
         """
         Normalize a working_directory for storage.
 
-        After the vault→home migration, working directories are stored as real
-        absolute paths. Legacy /vault/... paths are converted to home-relative paths.
+        Working directories are stored as real absolute paths.
 
         Returns:
-            Real absolute path string, or None if it's the home root.
+            Absolute path string, or None if it's the home root.
         """
         if not working_directory:
             return None
@@ -100,14 +87,6 @@ class SessionManager:
             # Relative path — make absolute relative to home
             abs_path = home / wd_path
             return str(abs_path) if str(abs_path) != str(home) else None
-
-        # COMPAT: /vault/... → absolute path (see resolve_working_directory above)
-        if working_directory.startswith("/vault/"):
-            relative = working_directory[len("/vault/"):]
-            abs_path = home / relative
-            return str(abs_path)
-        if working_directory == "/vault":
-            return None
 
         # Already a real absolute path
         return working_directory if working_directory != str(home) else None

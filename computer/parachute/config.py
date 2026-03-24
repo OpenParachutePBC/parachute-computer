@@ -8,7 +8,6 @@ Token file:  ~/.parachute/.token (separate for security)
 
 System directory: ~/.parachute/
   - All server internals live here (graph DB, sessions, modules, etc.)
-  - No more ~/Parachute vault — the user's home dir is the filesystem root
 """
 
 import logging
@@ -42,21 +41,14 @@ def _load_yaml_config(parachute_dir: Path) -> dict[str, Any]:
     """Load config.yaml from ~/.parachute/config.yaml."""
     config_file = parachute_dir / "config.yaml"
     if not config_file.exists():
-        # COMPAT: pre-v0.2.0 stored config under ~/Parachute/.parachute/.
-        # Safe to remove once all users have re-run install.sh.
-        legacy = Path.home() / "Parachute" / ".parachute" / "config.yaml"
-        if legacy.exists():
-            config_file = legacy
-        else:
-            return {}
+        return {}
     try:
         with open(config_file) as f:
             data = yaml.safe_load(f) or {}
         if not isinstance(data, dict):
             logger.warning(f"config.yaml is not a dict, ignoring: {config_file}")
             return {}
-        # COMPAT: vault_path was a pre-v0.2.0 config key. Drop silently
-        # so old config files don't cause Pydantic validation errors.
+        # Drop legacy keys that would cause Pydantic validation errors.
         data.pop("vault_path", None)
         return data
     except Exception as e:
@@ -68,10 +60,7 @@ def _load_token(parachute_dir: Path) -> Optional[str]:
     """Load Claude token from ~/.parachute/.token."""
     token_file = parachute_dir / ".token"
     if not token_file.exists():
-        # COMPAT: pre-v0.2.0 token location (see config.yaml fallback above)
-        token_file = Path.home() / "Parachute" / ".parachute" / ".token"
-        if not token_file.exists():
-            return None
+        return None
     try:
         token = token_file.read_text().strip()
         return token if token else None
@@ -138,7 +127,7 @@ def save_yaml_config_atomic(parachute_dir: Path, updates: dict[str, Any]) -> Pat
                 with open(config_file) as f:
                     current = yaml.safe_load(f) or {}
 
-            # Drop vault_path if present (legacy)
+            # Drop legacy keys
             updates.pop("vault_path", None)
             current.pop("vault_path", None)
 

@@ -1,6 +1,6 @@
 # Parachute Computer
 
-AI orchestration server with modular architecture. The unified Parachute app requires this running for Chat, Daily, Brain, and Vault features.
+AI orchestration server with modular architecture. The unified Parachute app requires this running for Chat, Daily, and Brain features.
 
 **Related**: [App (Flutter Client)](../app/CLAUDE.md) | [Monorepo Root](../CLAUDE.md)
 
@@ -13,7 +13,7 @@ Router → Orchestrator → Claude Agent SDK → AI
               ↓                    ↑
          BrainChatStore       ModuleLoader
               ↓                    ↓
-         BrainService         vault/.modules/
+         BrainService       ~/.parachute/modules/
        (Kuzu/LadybugDB)            ↓
                               chat | daily
 ```
@@ -31,16 +31,16 @@ Router → Orchestrator → Claude Agent SDK → AI
 **Connectors:**
 - `parachute/connectors/telegram.py` - Telegram bot connector
 - `parachute/connectors/discord_bot.py` - Discord bot connector
-- `parachute/connectors/config.py` - Bot config from `vault/.parachute/bots.yaml`
+- `parachute/connectors/config.py` - Bot config from `~/.parachute/bots.yaml`
 
 **Data storage:**
 - All session metadata + journal entries: Kuzu graph DB at `~/.parachute/graph/parachute.kz`
 - Message transcripts: JSONL files (Claude SDK managed)
-- Module hashes: `vault/.parachute/module_hashes.json`
-- Bot config: `vault/.parachute/bots.yaml`
-- Server config: `vault/.parachute/config.yaml`
-- Claude token: `vault/.parachute/.token`
-- Daemon logs: `vault/.parachute/logs/`
+- Module hashes: `~/.parachute/module_hashes.json`
+- Bot config: `~/.parachute/bots.yaml`
+- Server config: `~/.parachute/config.yaml`
+- Claude token: `~/.parachute/.token`
+- Daemon logs: `~/.parachute/logs/`
 
 **Brain (the extended mind):**
 - `parachute/db/brain.py` — `BrainService`: Kuzu/LadybugDB connection, schema management, Cypher
@@ -52,7 +52,7 @@ Router → Orchestrator → Claude Agent SDK → AI
 
 ## Module System
 
-Modules live in `modules/` (bundled, version-controlled). On first startup, `ModuleLoader` copies them to `vault/.modules/`. Each module has:
+Modules live in `modules/` (bundled, version-controlled). On first startup, `ModuleLoader` copies them to `~/.parachute/modules/`. Each module has:
 - `manifest.yaml` — name, version, provides, dependencies
 - `module.py` — Module class with `setup()` and optional `get_router()`
 
@@ -70,13 +70,13 @@ Five SDK-native primitives — Parachute manages files, the SDK discovers them a
 
 | Primitive | Location | Format |
 |-----------|----------|--------|
-| **Agents** | `vault/.claude/agents/*.md` | Markdown with YAML frontmatter |
-| **Skills** | `vault/.skills/*.md` or `vault/.skills/*/SKILL.md` | Markdown with frontmatter |
-| **MCPs** | `vault/.mcp.json` | JSON `{ "mcpServers": { ... } }` |
-| **Hooks** | `vault/.claude/settings.json` | SDK hook config |
+| **Agents** | `~/.claude/agents/*.md` | Markdown with YAML frontmatter |
+| **Skills** | `~/.claude/skills/*.md` or `~/.claude/skills/*/SKILL.md` | Markdown with frontmatter |
+| **MCPs** | `~/.mcp.json` | JSON `{ "mcpServers": { ... } }` |
+| **Hooks** | `~/.claude/settings.json` | SDK hook config |
 | **Plugins** | Installed via API → copies to above locations | Git repos with SDK-layout |
 
-**Plugin install flow:** Clone repo → scan for `.claude/agents/`, `skills/`, `.mcp.json` → copy to vault standard locations with `plugin-{slug}-` prefix → write manifest to `vault/.parachute/plugin-manifests/{slug}.json`.
+**Plugin install flow:** Clone repo → scan for `.claude/agents/`, `skills/`, `.mcp.json` → copy to standard locations with `plugin-{slug}-` prefix → write manifest to `~/.parachute/plugin-manifests/{slug}.json`.
 
 **HookRunner** (`core/hooks/runner.py`) is an internal event bus for bot connector events only. Not user-facing.
 
@@ -86,9 +86,8 @@ Five SDK-native primitives — Parachute manages files, the SDK discovers them a
 
 | Level | Behavior | Use Case |
 |-------|----------|----------|
-| `full` | Unrestricted tool access | Local development |
-| `vault` | Restricted to vault directory | Standard usage |
-| `sandboxed` | Docker container execution | Untrusted sessions, bot DMs |
+| `direct` | Unrestricted tool access on host machine | Local trusted usage |
+| `sandboxed` | Docker container execution | Default, bot DMs, untrusted sessions |
 
 Trust level is stored per-session in the database and persists across messages.
 
@@ -125,7 +124,7 @@ modules/           # Bundled modules (chat, daily)
 - **Pydantic models** everywhere for validation
 - **SSE streaming** via async generators in orchestrator
 - **Logging**: module-level `logger = logging.getLogger(__name__)`
-- **Config**: `config.py` loads env vars > `.env` > `vault/.parachute/config.yaml` > defaults
+- **Config**: `config.py` loads env vars > `.env` > `~/.parachute/config.yaml` > defaults
 - **Daemon**: `daemon.py` manages launchd (macOS), systemd (Linux), or PID file fallback
 
 ---
@@ -143,7 +142,7 @@ parachute update --local  # Reinstall + restart (no git pull)
 Or directly:
 ```bash
 source .venv/bin/activate
-VAULT_PATH=./vault uvicorn parachute.server:app --port 3333
+uvicorn parachute.server:app --port 3333
 ```
 
 ---
@@ -164,11 +163,10 @@ API key authentication for multi-device access:
 
 ## Configuration
 
-Config precedence: env vars > `.env` file > `vault/.parachute/config.yaml` > defaults.
+Config precedence: env vars > `.env` file > `~/.parachute/config.yaml` > defaults.
 
 | Setting | Env var | Default | Description |
 |---------|---------|---------|-------------|
-| `vault_path` | `VAULT_PATH` | `./sample-vault` | Path to vault directory |
 | `port` | `PORT` | `3333` | Server port |
 | `host` | `HOST` | `0.0.0.0` | Server bind address |
 | `claude_code_oauth_token` | `CLAUDE_CODE_OAUTH_TOKEN` | — | OAuth token (also read from `.token` file) |
@@ -176,7 +174,7 @@ Config precedence: env vars > `.env` file > `vault/.parachute/config.yaml` > def
 | `auth_mode` | `AUTH_MODE` | `remote` | Auth mode: remote / always / disabled |
 | `log_level` | `LOG_LEVEL` | `INFO` | Log level |
 
-Token is stored separately at `vault/.parachute/.token` (0600 permissions).
+Token is stored separately at `~/.parachute/.token` (0600 permissions).
 
 Manage config via CLI: `parachute config show/set/get`.
 
@@ -204,18 +202,15 @@ cd computer
 
 **Test the interface, not the internals.** Focus on: what does this function return given X input? Does the MCP tool return the right shape? Does the API endpoint respond correctly?
 
-**Known state (Feb 2026):** ~37 tests currently failing due to `TrustLevel` API rename (FULL→DIRECT, VAULT removed) and workspace model changes. These need to be updated — do not add more tests on top of broken ones without fixing the underlying drift first. Track via GitHub issue.
-
 ---
 
 ## Gotchas
 
-- SDK session IDs are in SQLite, but transcripts are SDK-managed JSONL files
-- The pointer architecture means sessions.db is metadata only
-- `VAULT_PATH` defaults to `./sample-vault` (set to `~/Parachute` in prod)
+- SDK session IDs are in the graph DB, but transcripts are SDK-managed JSONL files
+- The pointer architecture means the graph DB is metadata only
 - `config.py` has `env_prefix: ""` — env var names match field names exactly
-- Config lives in `vault/.parachute/config.yaml`, token in `vault/.parachute/.token`
+- Config lives at `~/.parachute/config.yaml`, token at `~/.parachute/.token`
 - Modules must be approved (hash verified) before the server loads them
 - Bot connectors use per-platform trust levels configured in `bots.yaml`
-- Docker must be running for sandboxed sessions (falls back to vault trust)
+- Docker must be running for sandboxed sessions (falls back to direct trust)
 - Daemon plist/service is at `io.openparachute.server` — shared label with app

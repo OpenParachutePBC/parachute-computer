@@ -206,16 +206,14 @@ def test_resolve_working_directory_relative(session_manager, test_vault):
     assert result == Path.home() / "Projects" / "my-repo"
 
 
-def test_resolve_working_directory_vault_prefix(session_manager, test_vault):
-    """/vault/... paths are translated to home dir."""
-    result = session_manager.resolve_working_directory("/vault/Projects/my-repo")
-    assert result == Path.home() / "Projects" / "my-repo"
-
-
 def test_resolve_working_directory_absolute(session_manager, test_vault):
-    """Absolute paths (non /vault/) are used as-is."""
+    """All absolute paths are used as-is (no /vault/ translation)."""
     result = session_manager.resolve_working_directory(str(test_vault / "Chat"))
     assert result == test_vault / "Chat"
+
+    # Legacy /vault/ paths are also absolute — no special handling
+    result = session_manager.resolve_working_directory("/vault/Projects/my-repo")
+    assert result == Path("/vault/Projects/my-repo")
 
 
 def test_resolve_working_directory_escapes_vault(session_manager, test_vault):

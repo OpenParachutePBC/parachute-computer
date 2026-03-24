@@ -217,7 +217,13 @@ class DockerSandbox:
         return False
 
     def _build_mounts(self, config: AgentSandboxConfig) -> list[str]:
-        """Build Docker volume mount flags based on config."""
+        """Build Docker volume mount flags based on config.
+
+        Maps host paths to container paths under /home/sandbox/:
+        - ~/X → /home/sandbox/X (preserves home-relative structure)
+        - /abs/path → /home/sandbox/abs/path (absolute outside home)
+        - relative → /home/sandbox/relative (relative to home)
+        """
         mounts = []
 
         home = Path.home()
@@ -227,21 +233,15 @@ class DockerSandbox:
             clean = re.sub(r'(/\*\*?)*$', '', path_pattern)
             if not clean:
                 continue
-            # Paths may be real absolute or legacy /vault/...
-            if clean.startswith("/vault/"):
-                # Legacy /vault/ path — map to home dir
-                relative = clean[len("/vault/"):]
-                full_path = home / relative
-                container_path = f"/home/sandbox/Parachute/{relative}"
-            elif clean.startswith(str(home)):
-                # Real absolute path under home dir
+            if clean.startswith(str(home)):
+                # Absolute path under home dir → preserve relative structure
                 relative = clean[len(str(home)):].lstrip("/")
                 full_path = Path(clean)
-                container_path = f"/home/sandbox/Parachute/{relative}"
+                container_path = f"/home/sandbox/{relative}" if relative else "/home/sandbox"
             elif not Path(clean).is_absolute():
                 # Relative path — treat as relative to home
                 full_path = home / clean
-                container_path = f"/home/sandbox/Parachute/{clean}"
+                container_path = f"/home/sandbox/{clean}"
             else:
                 # Absolute path outside home — validate before mounting
                 full_path = Path(clean)
@@ -595,12 +595,12 @@ class DockerSandbox:
             if config.network_enabled:
                 await self._ensure_sandbox_network()
 
-            # No wholesale home dir mount — container has its own persistent home.
-            # Only capability mounts (plugins) from the host.
-            vault_mounts = self._build_capability_mounts(config)
+            # Only capability mounts (plugins) from the host — no wholesale
+            # home dir overlay. Each container has its own persistent home.
+            cap_mounts = self._build_capability_mounts(config)
 
             args = self._build_persistent_container_args(
-                container_name, slug, config, labels, home_dir, vault_mounts
+                container_name, slug, config, labels, home_dir, cap_mounts
             )
 
             proc = await asyncio.create_subprocess_exec(
@@ -622,7 +622,7 @@ class DockerSandbox:
         """Ensure a container env is running.
 
         Container: parachute-env-<slug>
-        Home dir: vault/.parachute/sandbox/envs/<slug>/home/ → /home/sandbox/
+        Home dir: ~/.parachute/sandbox/envs/<slug>/home/ → /home/sandbox/
         Creates if absent, starts if stopped. Idempotent.
         """
         container_name = f"parachute-env-{slug}"
@@ -733,7 +733,7 @@ class DockerSandbox:
         config: AgentSandboxConfig,
         labels: dict[str, str],
         home_dir: Path,
-        vault_mounts: list[str],
+        capability_mounts: list[str],
     ) -> list[str]:
         """Build docker run arguments for a persistent container.
 
@@ -744,7 +744,7 @@ class DockerSandbox:
             labels: Docker labels for discovery
             home_dir: Host directory bind-mounted to /home/sandbox/ for portability.
                       .claude/ lives inside here, so SDK state survives Docker restarts.
-            vault_mounts: Vault volume mount arguments (nested inside /home/sandbox/)
+            capability_mounts: Additional volume mount arguments (plugins, etc.)
 
         Returns:
             Complete docker run command arguments
@@ -780,14 +780,13 @@ class DockerSandbox:
                 "--add-host", "host.docker.internal:host-gateway",
             ])
 
-        # Home dir bind-mount: vault-backed for portability and SDK resume.
-        # .claude/ lives inside here, so transcripts survive Docker restarts and
-        # the vault can be moved to another machine and sessions will resume.
+        # Home dir bind-mount: persistent across container restarts.
+        # .claude/ lives inside here, so SDK transcripts survive Docker restarts.
         home_dir.mkdir(parents=True, exist_ok=True)
         args.extend(["-v", f"{home_dir}:/home/sandbox:rw"])
 
-        # Vault mounts (nested inside /home/sandbox/Parachute/ — read-only overlay)
-        args.extend(vault_mounts)
+        # Capability mounts (plugins, etc.)
+        args.extend(capability_mounts)
 
         # Shared tools volume (read-only) — bin/ in PATH, python/ in PYTHONPATH
         args.extend([

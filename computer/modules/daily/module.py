@@ -56,7 +56,7 @@ logger = logging.getLogger(__name__)
 
 # Agent templates are defined in core (brain_chat_store.py) and imported here
 # for use in GET /agents/templates and agent creation endpoints.
-from parachute.db.brain_chat_store import AGENT_TEMPLATES, POST_PROCESS_SYSTEM_PROMPT
+from parachute.db.brain_chat_store import AGENT_TEMPLATES, AgentTemplateDict, POST_PROCESS_SYSTEM_PROMPT
 
 
 def _read_transcript_file(sid: str, limit: int) -> dict:

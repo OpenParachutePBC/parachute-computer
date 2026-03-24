@@ -20,9 +20,8 @@ The install script will:
 1. Check your Python version
 2. Create a virtual environment and install dependencies
 3. Add a `parachute` command to `~/.local/bin`
-4. Ask for your **vault path** (default: `~/Parachute`)
-5. Ask for your **Claude token** (get one with `claude setup-token`)
-6. Install and start the background daemon
+4. Ask for your **Claude token** (get one with `claude setup-token`)
+5. Install and start the background daemon
 
 After install, the server is running. Verify with `parachute server status`.
 
@@ -50,7 +49,7 @@ parachute logs --no-follow # Print recent logs and exit
 
 ### Configuration
 
-Config lives in your vault at `~/Parachute/.parachute/config.yaml`.
+Config lives at `~/.parachute/config.yaml`.
 
 ```bash
 parachute config show           # Show current config
@@ -58,14 +57,14 @@ parachute config set port 4444  # Change a value
 parachute config get port       # Read a value
 ```
 
-Available keys: `vault_path`, `port`, `host`, `default_model`, `log_level`, `cors_origins`, `auth_mode`, `debug`.
+Available keys: `port`, `host`, `default_model`, `log_level`, `cors_origins`, `auth_mode`, `debug`.
 
 Environment variables override config.yaml (e.g., `PORT=4444 parachute server -f`).
 
 ### Diagnostics
 
 ```bash
-parachute doctor    # Check python, vault, token, docker, port, server, disk
+parachute doctor    # Check python, token, docker, port, server, disk
 parachute status    # System overview with server + module info
 ```
 
@@ -86,9 +85,9 @@ parachute module test           # Test module endpoints
 |----------|--------|-------------|
 | macOS | launchd | `~/Library/LaunchAgents/io.openparachute.server.plist` |
 | Linux | systemd | `~/.config/systemd/user/parachute.service` |
-| Other | PID file | `~/Parachute/.parachute/server.pid` |
+| Other | PID file | `~/.parachute/server.pid` |
 
-The daemon starts on login and restarts on crash. Logs go to `~/Parachute/.parachute/logs/`.
+The daemon starts on login and restarts on crash. Logs go to `~/.parachute/logs/`.
 
 ## Authentication
 
@@ -99,7 +98,7 @@ claude setup-token    # Get token from Claude Code CLI
 parachute install     # Paste it during setup
 ```
 
-Token is stored at `~/Parachute/.parachute/.token` (0600 permissions).
+Token is stored at `~/.parachute/.token` (0600 permissions).
 
 For multi-device access, API keys can be managed through the app's Settings screen.
 

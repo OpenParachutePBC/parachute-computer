@@ -1627,19 +1627,18 @@ class Orchestrator:
         # to try resuming a nonexistent session
         sandbox_sid = session.id if session.id != "pending" else str(uuid.uuid4())
 
-        # Convert working directory to container path (/home/sandbox/Parachute/...)
+        # Convert host working directory to container path.
+        # ~/X → /home/sandbox/X (preserves home-relative structure)
         sandbox_wd = None
         if effective_working_dir:
             wd = str(effective_working_dir)
-            if wd.startswith("/home/sandbox/Parachute/"):
-                sandbox_wd = wd
-            elif wd.startswith("/vault/"):
-                sandbox_wd = f"/home/sandbox/Parachute/{wd[len('/vault/') :]}"
-            elif wd.startswith(str(Path.home())):
-                relative = wd[len(str(Path.home())) :].lstrip("/")
-                sandbox_wd = f"/home/sandbox/Parachute/{relative}"
+            home_str = str(Path.home())
+            if wd.startswith(home_str):
+                relative = wd[len(home_str):].lstrip("/")
+                sandbox_wd = f"/home/sandbox/{relative}" if relative else "/home/sandbox"
             else:
-                sandbox_wd = f"/home/sandbox/Parachute/{wd.lstrip('/')}"
+                # Absolute path outside home — mount at /home/sandbox/<path>
+                sandbox_wd = f"/home/sandbox{wd}"
 
         sandbox_paths = list(session.permissions.allowed_paths)
         if sandbox_wd and sandbox_wd not in sandbox_paths:

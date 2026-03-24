@@ -171,13 +171,13 @@ def handle_read_journal(args: dict) -> list[dict]:
 
 
 def handle_read_chat_log(args: dict) -> list[dict]:
-    """Read chat logs for a date from the mounted vault."""
+    """Read chat logs for a date from the container filesystem."""
     date_str = args.get("date", "").strip()
     if not date_str:
         return [{"type": "text", "text": "Error: date is required (YYYY-MM-DD format)"}]
 
-    # Read from mounted vault path inside container
-    chat_log_file = Path("/home/sandbox/Parachute/Daily/chat-log") / f"{date_str}.md"
+    # Read from container home — host paths are mounted at /home/sandbox/
+    chat_log_file = Path("/home/sandbox/Daily/chat-log") / f"{date_str}.md"
     if not chat_log_file.exists():
         return [{"type": "text", "text": f"No chat log found for {date_str}"}]
 
@@ -218,10 +218,10 @@ def handle_read_recent_journals(args: dict) -> list[dict]:
 
 
 def handle_read_recent_sessions(args: dict) -> list[dict]:
-    """Read recent chat sessions from the mounted vault."""
+    """Read recent chat sessions from the container filesystem."""
     days_back = min(int(args.get("days", 7)), 30)
     today = datetime.now().date()
-    chat_log_dir = Path("/home/sandbox/Parachute/Daily/chat-log")
+    chat_log_dir = Path("/home/sandbox/Daily/chat-log")
     logs_found = []
 
     for i in range(1, days_back + 1):
