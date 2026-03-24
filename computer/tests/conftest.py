@@ -15,6 +15,19 @@ from httpx import AsyncClient
 # Set test environment
 os.environ["LOG_LEVEL"] = "WARNING"
 
+# ---------------------------------------------------------------------------
+# LadybugDB __del__ deadlock/segfault workaround
+# ---------------------------------------------------------------------------
+# AsyncConnection.__del__ calls close() → executor.shutdown(wait=True), which
+# deadlocks when Kuzu threads are stuck mid-query and segfaults when the temp
+# database directory is already cleaned up. Neutralize it process-wide for
+# tests — all test databases use temp dirs so __del__ is never safe to run.
+try:
+    import real_ladybug
+    real_ladybug.AsyncConnection.__del__ = lambda self: None  # noqa: E731
+except ImportError:
+    pass
+
 
 # ---------------------------------------------------------------------------
 # LadybugDB platform compatibility check
@@ -73,8 +86,13 @@ def _check_ladybugdb_compat() -> bool:
     try:
         return asyncio.run(_probe())
     except RuntimeError as e:
-        if "ANY type" in str(e):
+        msg = str(e)
+        if "ANY type" in msg:
             return False
+        if "already running" in msg:
+            # conftest called from inside a running loop — assume compat OK
+            # and let in-fixture probes catch the real bug
+            return True
         raise
 
 

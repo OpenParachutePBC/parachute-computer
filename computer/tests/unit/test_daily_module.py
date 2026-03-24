@@ -11,6 +11,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
+import pytest_asyncio
 
 from modules.daily.module import DailyModule
 from parachute.db.brain import BrainService
@@ -28,7 +29,7 @@ pytestmark = pytest.mark.skipif(
 # Fixtures
 # ---------------------------------------------------------------------------
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def tmp_vault(tmp_path):
     """Temporary vault directory with Daily/entries/ subdirectory."""
     vault = tmp_path / "vault"
@@ -36,7 +37,7 @@ async def tmp_vault(tmp_path):
     return vault
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def graph(tmp_path):
     """Live temporary Kuzu database for testing.
 
@@ -91,12 +92,10 @@ async def graph(tmp_path):
         raise
 
     yield svc
-    # Neutralize the AsyncConnection to prevent __del__ from calling close()
-    # which deadlocks on executor.shutdown(wait=True) when Kuzu threads are
-    # stuck. Disable __del__, then abandon — tmp_path cleanup handles files.
+    # Clean up connection state. The __del__ deadlock/segfault is handled
+    # globally in conftest.py (neutralized process-wide for all tests).
     if svc._conn:
         conn = svc._conn
-        conn.__class__.__del__ = lambda self: None  # noqa: E731
         if hasattr(conn, "executor") and conn.executor:
             conn.executor.shutdown(wait=False, cancel_futures=True)
     svc._connected = False
@@ -104,7 +103,7 @@ async def graph(tmp_path):
     svc._db = None
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def module(tmp_vault, graph, monkeypatch):
     """DailyModule wired to the temporary graph.
 

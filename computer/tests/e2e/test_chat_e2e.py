@@ -8,13 +8,11 @@ Requires:
 Skipped automatically if token is not set.
 """
 
-import asyncio
 import json
 import os
 import signal
 import subprocess
 import sys
-import tempfile
 
 import httpx
 import pytest
@@ -36,9 +34,9 @@ E2E_PORT = 3399
 
 
 @pytest.fixture(scope="module")
-def server():
+def server(tmp_path_factory):
     """Boot the Parachute server on a test port with an isolated home dir."""
-    home = tempfile.mkdtemp(prefix="parachute-e2e-")
+    home = str(tmp_path_factory.mktemp("parachute-e2e"))
     os.makedirs(f"{home}/graph", exist_ok=True)
     os.makedirs(f"{home}/modules", exist_ok=True)
     os.makedirs(f"{home}/logs", exist_ok=True)
