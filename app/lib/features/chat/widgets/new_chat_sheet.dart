@@ -156,7 +156,48 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
 
                 const SizedBox(height: Spacing.lg),
 
-                // ── Project Folder (primary section) ──
+                // ── Trust Level (first — drives UI below) ──
+                Text(
+                  'Trust Level',
+                  style: TextStyle(
+                    fontSize: TypographyTokens.labelMedium,
+                    fontWeight: FontWeight.w600,
+                    color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+                  ),
+                ),
+                const SizedBox(height: Spacing.sm),
+                Wrap(
+                  spacing: Spacing.sm,
+                  children: [
+                    _buildTrustChip(null, 'Default', Icons.settings, isDark),
+                    ...TrustLevel.values.map((tl) =>
+                      _buildTrustChip(tl, tl.displayName, tl.icon, isDark),
+                    ),
+                  ],
+                ),
+
+                const SizedBox(height: Spacing.lg),
+
+                // ── Agent Type ──
+                Text(
+                  'Agent',
+                  style: TextStyle(
+                    fontSize: TypographyTokens.labelMedium,
+                    fontWeight: FontWeight.w600,
+                    color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+                  ),
+                ),
+                const SizedBox(height: Spacing.sm),
+
+                // Agent selector chips (dynamic from server)
+                _buildAgentSelector(isDark),
+
+                // ── Project Folder (direct trust only) ──
+                // Sandboxed sessions use the container's own workspace;
+                // host directory selection only makes sense for direct trust.
+                if (_selectedTrustLevel == TrustLevel.direct) ...[
+                const SizedBox(height: Spacing.lg),
+
                 Text(
                   'Project Folder',
                   style: TextStyle(
@@ -167,7 +208,7 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
                 ),
                 const SizedBox(height: Spacing.xs),
                 Text(
-                  'Where the AI reads and writes files',
+                  'Directory on this machine for file operations',
                   style: TextStyle(
                     fontSize: TypographyTokens.bodySmall,
                     color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
@@ -175,7 +216,6 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
                 ),
                 const SizedBox(height: Spacing.sm),
 
-                // Directory selector (prominent)
                 InkWell(
                   onTap: _selectWorkingDirectory,
                   borderRadius: BorderRadius.circular(Radii.md),
@@ -197,7 +237,7 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
                     child: Row(
                       children: [
                         Icon(
-                          hasDirectory ? Icons.folder_open : Icons.auto_awesome,
+                          hasDirectory ? Icons.folder_open : Icons.home_outlined,
                           size: 22,
                           color: hasDirectory
                               ? (isDark ? BrandColors.nightForest : BrandColors.forest)
@@ -211,17 +251,16 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
                               Text(
                                 hasDirectory
                                     ? _displayPath(_workingDirectory!)
-                                    : 'Auto',
+                                    : 'Home directory',
                                 style: TextStyle(
                                   fontSize: TypographyTokens.bodyMedium,
                                   fontWeight: hasDirectory ? FontWeight.w500 : FontWeight.w400,
                                   color: isDark ? BrandColors.nightText : BrandColors.charcoal,
                                 ),
                               ),
+                              if (hasDirectory)
                               Text(
-                                hasDirectory
-                                    ? _workingDirectory!
-                                    : 'Each chat gets its own container',
+                                _workingDirectory!,
                                 style: TextStyle(
                                   fontSize: TypographyTokens.bodySmall,
                                   color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
@@ -252,44 +291,7 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
                     ),
                   ),
                 ),
-
-                const SizedBox(height: Spacing.lg),
-
-                // ── Agent Type ──
-                Text(
-                  'Agent',
-                  style: TextStyle(
-                    fontSize: TypographyTokens.labelMedium,
-                    fontWeight: FontWeight.w600,
-                    color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
-                  ),
-                ),
-                const SizedBox(height: Spacing.sm),
-
-                // Agent selector chips (dynamic from server)
-                _buildAgentSelector(isDark),
-
-                const SizedBox(height: Spacing.lg),
-
-                // ── Trust Level (always visible) ──
-                Text(
-                  'Trust Level',
-                  style: TextStyle(
-                    fontSize: TypographyTokens.labelMedium,
-                    fontWeight: FontWeight.w600,
-                    color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
-                  ),
-                ),
-                const SizedBox(height: Spacing.sm),
-                Wrap(
-                  spacing: Spacing.sm,
-                  children: [
-                    _buildTrustChip(null, 'Default', Icons.settings, isDark),
-                    ...TrustLevel.values.map((tl) =>
-                      _buildTrustChip(tl, tl.displayName, tl.icon, isDark),
-                    ),
-                  ],
-                ),
+                ],
               ],
             ),
           ),
@@ -310,11 +312,15 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
                     final selected = _selectedAgentId != null
                         ? agents.where((a) => a.name == _selectedAgentId).firstOrNull
                         : null;
+                    // Only pass working directory for direct trust sessions
+                    final effectiveWd = _selectedTrustLevel == TrustLevel.direct
+                        ? _workingDirectory
+                        : null;
                     Navigator.pop(
                       context,
                       NewChatConfig(
                         containerId: _selectedContainerId,
-                        workingDirectory: _workingDirectory,
+                        workingDirectory: effectiveWd,
                         agentType: selected?.isBuiltin == true ? null : selected?.name,
                         agentPath: selected?.path,
                         trustLevel: _selectedTrustLevel,
@@ -486,6 +492,10 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
     return GestureDetector(
       onTap: () => setState(() {
         _selectedTrustLevel = level;
+        // Clear host directory when switching away from direct trust
+        if (level != TrustLevel.direct) {
+          _workingDirectory = null;
+        }
       }),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -611,7 +621,7 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
 
     if (selected != null && mounted) {
       setState(() {
-        // Empty string means vault root, which we treat as "no custom directory"
+        // Empty string means home root, which we treat as "no custom directory"
         _workingDirectory = selected.isEmpty ? null : selected;
       });
     }

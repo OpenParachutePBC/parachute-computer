@@ -3,7 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/vault_entry.dart';
 import '../providers/chat_providers.dart';
 
-/// A dialog for picking a working directory from the vault
+/// A dialog for picking a working directory from the host filesystem
 class DirectoryPickerDialog extends ConsumerStatefulWidget {
   final String? initialPath;
 
@@ -65,7 +65,7 @@ class _DirectoryPickerDialogState extends ConsumerState<DirectoryPickerDialog> {
                   ),
                   Expanded(
                     child: Text(
-                      _currentPath.isEmpty ? 'Vault Root' : _currentPath,
+                      _currentPath.isEmpty ? 'Home' : _currentPath,
                       style: Theme.of(context).textTheme.titleMedium,
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -81,7 +81,7 @@ class _DirectoryPickerDialogState extends ConsumerState<DirectoryPickerDialog> {
               // Current directory selection
               ListTile(
                 leading: const Icon(Icons.check_circle_outline),
-                title: Text(_currentPath.isEmpty ? 'Use vault root' : 'Use this directory'),
+                title: Text(_currentPath.isEmpty ? 'Use home directory' : 'Use this directory'),
                 subtitle: _currentPath.isNotEmpty
                     ? Text(_currentPath, style: Theme.of(context).textTheme.bodySmall)
                     : null,
@@ -188,7 +188,7 @@ class _DirectoryTile extends StatelessWidget {
 
 /// Shows a directory picker dialog and returns the selected path
 ///
-/// Returns null if canceled, empty string for vault root, or a relative path
+/// Returns null if canceled, empty string for home root, or a relative path
 Future<String?> showDirectoryPicker(BuildContext context, {String? initialPath}) {
   return showDialog<String?>(
     context: context,

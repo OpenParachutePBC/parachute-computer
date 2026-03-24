@@ -194,29 +194,24 @@ class TestDockerSandbox:
         assert info["docker_available"] is None
         assert info["sandbox_image"] == SANDBOX_IMAGE
 
-    def test_build_mounts_no_paths(self, home_path):
+    def test_build_mounts_no_host_paths(self, home_path):
+        """Sandbox containers are self-contained — no host paths are mounted."""
         sandbox = DockerSandbox(parachute_dir=home_path)
         config = AgentSandboxConfig(session_id="test")
         mounts = sandbox._build_mounts(config)
-        # Should mount entire home dir read-only when no allowed_paths
-        assert "-v" in mounts
-        assert f"{Path.home()}:/home/sandbox/Parachute:ro" in mounts
+        assert mounts == []
 
-    def test_build_mounts_with_paths(self, home_path, tmp_path):
+    def test_build_mounts_ignores_allowed_paths(self, home_path, tmp_path):
+        """allowed_paths are not mounted — containers use their own workspace."""
         blogs_dir = tmp_path / "Blogs"
         blogs_dir.mkdir()
         sandbox = DockerSandbox(parachute_dir=home_path)
         config = AgentSandboxConfig(
             session_id="test", allowed_paths=[str(blogs_dir)]
         )
-        # Patch Path.home so tmp_path is treated as home (safety check passes)
-        with patch("parachute.core.sandbox.Path") as mock_path_cls:
-            mock_path_cls.home.return_value = tmp_path.resolve()
-            mounts = sandbox._build_mounts(config)
-        # Should mount specific path read-write
+        mounts = sandbox._build_mounts(config)
         mount_str = " ".join(mounts)
-        assert "Blogs" in mount_str
-        assert ":rw" in mount_str
+        assert "Blogs" not in mount_str
 
     def test_build_run_args_network_disabled(self, home_path):
         sandbox = DockerSandbox(parachute_dir=home_path)

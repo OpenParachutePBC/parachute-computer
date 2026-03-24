@@ -1627,26 +1627,14 @@ class Orchestrator:
         # to try resuming a nonexistent session
         sandbox_sid = session.id if session.id != "pending" else str(uuid.uuid4())
 
-        # Convert host working directory to container path.
-        # ~/X → /home/sandbox/X (preserves home-relative structure)
-        sandbox_wd = None
-        if effective_working_dir:
-            wd = str(effective_working_dir)
-            home_str = str(Path.home())
-            if wd.startswith(home_str):
-                relative = wd[len(home_str):].lstrip("/")
-                sandbox_wd = f"/home/sandbox/{relative}" if relative else "/home/sandbox"
-            else:
-                # Absolute path outside home — mount at /home/sandbox/<path>
-                sandbox_wd = f"/home/sandbox{wd}"
-
+        # Sandbox containers use their own /home/sandbox/ workspace.
+        # No host working directory is mounted — the container is self-contained.
+        # The entrypoint defaults to /home/sandbox when PARACHUTE_CWD is unset.
         sandbox_paths = list(session.permissions.allowed_paths)
-        if sandbox_wd and sandbox_wd not in sandbox_paths:
-            sandbox_paths.append(sandbox_wd)
 
         logger.info(
             f"Running sandboxed execution for session {sandbox_sid[:8]} "
-            f"wd={sandbox_wd} paths={sandbox_paths}"
+            f"paths={sandbox_paths}"
         )
 
         sandbox_model = model or self.settings.default_model
@@ -1706,7 +1694,7 @@ class Orchestrator:
             mcp_servers=sandbox_mcps,
             plugin_dirs=caps.plugin_dirs,
             agents=caps.agents_dict,
-            working_directory=sandbox_wd,
+            working_directory=None,  # Container uses /home/sandbox/
             model=sandbox_model,
             system_prompt=effective_prompt,
             use_preset=False,

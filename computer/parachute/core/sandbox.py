@@ -217,52 +217,20 @@ class DockerSandbox:
         return False
 
     def _build_mounts(self, config: AgentSandboxConfig) -> list[str]:
-        """Build Docker volume mount flags based on config.
+        """Build Docker volume mount flags.
 
-        Maps host paths to container paths under /home/sandbox/:
-        - ~/X → /home/sandbox/X (preserves home-relative structure)
-        - /abs/path → /home/sandbox/abs/path (absolute outside home)
-        - relative → /home/sandbox/relative (relative to home)
+        Sandbox containers are self-contained — no host paths are mounted
+        by default. The container's /home/sandbox/ is its own persistent
+        volume (stored at ~/.parachute/sandbox/envs/{slug}/home/).
+
+        Only capability mounts (plugins) are bind-mounted from the host.
         """
         mounts = []
 
-        home = Path.home()
-        # Mount allowed paths
-        for path_pattern in config.allowed_paths:
-            # Strip glob suffixes to get directory path
-            clean = re.sub(r'(/\*\*?)*$', '', path_pattern)
-            if not clean:
-                continue
-            if clean.startswith(str(home)):
-                # Absolute path under home dir → preserve relative structure
-                relative = clean[len(str(home)):].lstrip("/")
-                full_path = Path(clean)
-                container_path = f"/home/sandbox/{relative}" if relative else "/home/sandbox"
-            elif not Path(clean).is_absolute():
-                # Relative path — treat as relative to home
-                full_path = home / clean
-                container_path = f"/home/sandbox/{clean}"
-            else:
-                # Absolute path outside home — validate before mounting
-                full_path = Path(clean)
-                if not self._is_safe_mount_path(full_path):
-                    logger.warning(f"Rejecting mount outside home: {full_path}")
-                    continue
-                container_path = f"/home/sandbox{clean}"
-            if full_path.exists():
-                mounts.extend(["-v", f"{full_path}:{container_path}:rw"])
-                logger.debug(f"Mounting {full_path} -> {container_path}:rw")
-            else:
-                logger.warning(f"Skipping non-existent path: {full_path}")
-
-        # No wholesale home dir mount — the container's /home/sandbox/ is its own
-        # persistent volume (stored at ~/.parachute/sandbox/envs/{slug}/home/).
-        # Only allowed_paths get mounted as individual bind mounts above.
-
-        # Mount capability files/dirs
+        # Capability mounts (plugins — read-only from host)
         mounts.extend(self._build_capability_mounts(config))
 
-        logger.info(f"Docker mounts: {len(mounts) // 2} volumes, wd={config.working_directory}")
+        logger.info(f"Docker mounts: {len(mounts) // 2} volumes")
         return mounts
 
     def _build_capability_mounts(self, config: AgentSandboxConfig) -> list[str]:

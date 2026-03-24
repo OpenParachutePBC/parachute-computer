@@ -4,13 +4,13 @@ import '../services/chat_service.dart';
 import 'chat_session_providers.dart';
 
 // ============================================================
-// Vault Browsing
+// Directory Browsing
 // ============================================================
 
-/// Provider for browsing vault directories
+/// Provider for browsing host directories (for direct trust sessions)
 ///
 /// Use with .family to specify the path:
-/// - ref.watch(vaultDirectoryProvider('')) - vault root
+/// - ref.watch(vaultDirectoryProvider('')) - home root
 /// - ref.watch(vaultDirectoryProvider('Projects')) - Projects folder
 /// - ref.watch(vaultDirectoryProvider('Projects/myapp')) - specific project
 final vaultDirectoryProvider = FutureProvider.autoDispose.family<List<VaultEntry>, String>((ref, path) async {

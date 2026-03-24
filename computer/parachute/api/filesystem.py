@@ -1,5 +1,5 @@
 """
-Filesystem API endpoints for vault browsing.
+Filesystem API endpoints for browsing the host directory tree.
 """
 
 import logging
@@ -23,38 +23,38 @@ class WriteFileRequest(BaseModel):
 
 
 def get_home_path(request: Request) -> Path:
-    """Get vault path from app state."""
+    """Get the home directory root for filesystem browsing."""
     return Path.home()
 
 
 def _check_home_path(home_path: Path, target: Path) -> Path:
-    """Verify target is within vault. Returns normalized path.
+    """Verify target is within the home directory. Returns normalized path.
 
-    Uses normpath instead of resolve() so intentional symlinks inside the vault
-    (e.g. ~/Parachute → /Volumes/ExternalSSD/Parachute) are permitted while
-    still blocking path traversal attacks via '..' components.
+    Uses normpath instead of resolve() so intentional symlinks inside home
+    are permitted while still blocking path traversal attacks via '..'
+    components.
     """
-    vault_norm = Path(os.path.normpath(home_path))
+    home_norm = Path(os.path.normpath(home_path))
     target_norm = Path(os.path.normpath(target))
     try:
-        target_norm.relative_to(vault_norm)
+        target_norm.relative_to(home_norm)
     except ValueError:
-        raise HTTPException(status_code=403, detail="Access denied: path outside vault")
+        raise HTTPException(status_code=403, detail="Access denied: path outside home directory")
     return target_norm
 
 
 @router.get("/ls")
 async def list_directory(
     request: Request,
-    path: Optional[str] = Query(None, description="Relative path within vault"),
+    path: Optional[str] = Query(None, description="Relative path within home directory"),
     includeHidden: bool = Query(False, description="Include hidden files/folders"),
 ) -> dict[str, Any]:
     """
-    List directory contents in the vault.
+    List directory contents under the home directory.
 
     Returns entries with metadata including:
     - name: Filename
-    - relativePath: Path relative to vault
+    - relativePath: Path relative to home
     - isDirectory: Whether it's a directory
     - size: File size in bytes
     - lastModified: ISO timestamp
@@ -154,7 +154,7 @@ async def read_file(
     path: str = Query(..., description="Relative path to file"),
 ) -> dict[str, Any]:
     """
-    Read a file from the vault.
+    Read a file from the home directory.
 
     Returns:
     - path: The file path
@@ -193,7 +193,7 @@ async def write_file(
     body: WriteFileRequest,
 ) -> dict[str, Any]:
     """
-    Write a file to the vault.
+    Write a file to the home directory.
 
     Creates parent directories if needed.
     """
