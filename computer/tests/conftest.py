@@ -39,27 +39,31 @@ def _check_ladybugdb_compat() -> bool:
             await store.create_session(
                 SessionCreate(id="__probe__", title="probe", module="test")
             )
-            # Test 2: complex parameterized MERGE (like daily module does)
+            # Test 2: complex parameterized MERGE (exact shape from daily module)
             # This catches the "ANY type" bug on Linux with many params
             await svc.execute_cypher(
-                """MERGE (e:Note {entry_id: $entry_id})
-                ON CREATE SET e.created_at = $created_at,
-                    e.note_type = $note_type,
-                    e.content = $content,
-                    e.title = $title,
-                    e.entry_type = $entry_type,
-                    e.audio_path = $audio_path,
-                    e.metadata_json = $metadata_json,
-                    e.brain_links_json = $brain_links_json
-                """,
+                "MERGE (e:Note {entry_id: $entry_id}) "
+                "ON CREATE SET e.created_at = $created_at, "
+                "    e.note_type = $note_type, e.aliases = $aliases, "
+                "    e.status = $status, e.created_by = $created_by "
+                "SET e.date = $date, e.content = $content, e.snippet = $snippet, "
+                "    e.title = $title, e.entry_type = $entry_type, "
+                "    e.audio_path = $audio_path, "
+                "    e.metadata_json = $metadata_json, "
+                "    e.brain_links_json = $brain_links_json",
                 {
                     "entry_id": "__probe__",
-                    "created_at": "2000-01-01T00:00:00",
-                    "note_type": "journal",
+                    "date": "2000-01-01",
                     "content": "probe",
+                    "snippet": "probe",
+                    "created_at": "2000-01-01T00:00:00",
                     "title": "probe",
                     "entry_type": "text",
                     "audio_path": "",
+                    "note_type": "journal",
+                    "aliases": "[]",
+                    "status": "active",
+                    "created_by": "user",
                     "metadata_json": "{}",
                     "brain_links_json": "[]",
                 },
