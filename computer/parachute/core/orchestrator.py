@@ -141,8 +141,9 @@ or claim to remember things not in the vault. The vault is the source of truth.
 continue without vault context rather than retrying repeatedly.
 
 **Updating context:** When the user says "remember" something about themselves
-(preferences, location, current focus), use write_note with note_type='context'
-to save it. Context notes are automatically loaded into every session.
+(preferences, location, current focus), use the write_note tool (if available)
+with note_type='context' to save it. Context notes are automatically loaded
+into every session.
 
 ## Tool Usage
 
@@ -622,7 +623,19 @@ class Orchestrator:
 
         try:
             # Phase 2: Capability discovery
-            caps = await self._discover_capabilities(agent, session, trust_level)
+            # For sandboxed sessions, pass the MCP tool profile so tool guidance
+            # only documents tools the session can actually call (not all
+            # trust-compatible tools). Direct sessions see everything.
+            sandbox_tool_profile: frozenset[str] | None = None
+            if trust_level == "sandboxed" or (
+                session.trust_level and session.trust_level == "sandboxed"
+            ):
+                from parachute.api.mcp_tools import CHAT_TOOLS
+                sandbox_tool_profile = CHAT_TOOLS
+
+            caps = await self._discover_capabilities(
+                agent, session, trust_level, allowed_tools=sandbox_tool_profile
+            )
 
             # Inject trust-filtered tool guidance into the prompt
             # (skipped for custom/agent prompts — those manage their own tool docs)
@@ -898,6 +911,7 @@ class Orchestrator:
         agent: Any,
         session: Any,
         trust_level: Optional[str],
+        allowed_tools: frozenset[str] | None = None,
     ) -> CapabilityBundle:
         """Discover and filter all capabilities (MCPs, skills, plugins, trust level).
 
@@ -1020,7 +1034,7 @@ class Orchestrator:
             plugin_dirs=plugin_dirs,
             agents_dict=agents_dict,
             effective_trust=effective_trust,
-            tool_guidance=build_tool_guidance(effective_trust),
+            tool_guidance=build_tool_guidance(effective_trust, allowed_tools=allowed_tools),
             warnings=warnings,
         )
 

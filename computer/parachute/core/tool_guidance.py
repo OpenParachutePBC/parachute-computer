@@ -172,15 +172,23 @@ TOOL_GROUPS: list[ToolGroup] = [
 ]
 
 
-def build_tool_guidance(trust_level: str) -> str:
-    """Build a markdown section documenting available MCP tools for the given trust level.
+def build_tool_guidance(
+    trust_level: str,
+    allowed_tools: frozenset[str] | None = None,
+) -> str:
+    """Build a markdown section documenting available MCP tools.
 
-    Filters TOOL_GROUPS to include only groups whose trust level is compatible
-    with the session's trust level, then formats them as a readable markdown
-    section with usage guidance.
+    Applies two filters:
+    1. Trust level — groups whose trust level is compatible with the session's.
+    2. Allowed tools — if provided (sandbox sessions), only tools in this set
+       are included. This aligns prompt guidance with the actual MCP bridge
+       filtering (CHAT_TOOLS, DAILY_TOOLS, etc.) so the model doesn't
+       hallucinate access to tools it can't call.
 
     Args:
         trust_level: The session's effective trust level ("direct" or "sandboxed").
+        allowed_tools: Optional frozenset of tool names the session can actually
+            call. None means all trust-compatible tools are shown (direct sessions).
 
     Returns:
         Formatted markdown string, or empty string if no tools match.
@@ -195,10 +203,21 @@ def build_tool_guidance(trust_level: str) -> str:
         # Same logic as capability_filter: group is available if its trust level
         # is at least as restrictive as the session's trust level
         if group_order >= session_order:
+            # Filter individual tools by allowed set (sandbox profiles)
+            if allowed_tools is not None:
+                visible_tools = [
+                    t for t in group["tools"] if t["name"] in allowed_tools
+                ]
+            else:
+                visible_tools = group["tools"]
+
+            if not visible_tools:
+                continue  # Skip group entirely if no tools survive filtering
+
             lines = [f"### {group['name']}"]
             lines.append(group["guidance"])
             lines.append("")
-            for tool in group["tools"]:
+            for tool in visible_tools:
                 lines.append(f"- **mcp__parachute__{tool['name']}** — {tool['description']}")
             sections.append("\n".join(lines))
 
