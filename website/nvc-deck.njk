@@ -1,0 +1,621 @@
+---
+permalink: /nvc/deck/
+---
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Parachute — NVC Pitch Deck</title>
+    <meta name="robots" content="noindex">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;1,9..40,400&family=JetBrains+Mono:wght@400&display=swap">
+    <style>
+        :root {
+            --bg:           #faf8f4;
+            --bg-soft:      #f3f0ea;
+            --fg:           #2c2a26;
+            --fg-muted:     #6b6860;
+            --fg-dim:       #9a9690;
+            --accent:       #4a7c59;
+            --accent-soft:  rgba(74, 124, 89, 0.08);
+            --accent-light: #6a9b77;
+            --border:       #e4e0d8;
+            --serif: 'Instrument Serif', Georgia, serif;
+            --sans:  'DM Sans', system-ui, sans-serif;
+            --mono:  'JetBrains Mono', monospace;
+        }
+
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+        html { scroll-behavior: smooth; scroll-snap-type: y mandatory; }
+
+        body {
+            background: var(--bg);
+            font-family: var(--sans);
+            color: var(--fg);
+            -webkit-font-smoothing: antialiased;
+            line-height: 1.6;
+        }
+
+        /* ── Slide structure ── */
+        .slide {
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            padding: 4rem 6rem;
+            border-bottom: 1px solid var(--border);
+            scroll-snap-align: start;
+            position: relative;
+        }
+        .slide:last-child { border-bottom: none; }
+
+        .slide-label {
+            font-size: 0.65rem;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: var(--accent);
+            font-weight: 500;
+            margin-bottom: 1.5rem;
+        }
+
+        .slide-headline {
+            font-family: var(--serif);
+            font-size: clamp(2.5rem, 5vw, 4rem);
+            font-weight: 400;
+            letter-spacing: -0.02em;
+            line-height: 1.08;
+            color: var(--fg);
+            margin-bottom: 2rem;
+        }
+        .slide-headline em {
+            font-style: italic;
+            color: var(--fg-muted);
+        }
+
+        .slide-body {
+            color: var(--fg-muted);
+            max-width: 720px;
+        }
+        .slide-body p {
+            font-size: 1.15rem;
+            line-height: 1.7;
+            margin-bottom: 1rem;
+        }
+        .slide-body p:last-child { margin-bottom: 0; }
+        .slide-body strong { color: var(--fg); font-weight: 500; }
+
+        /* ── Opening slide ── */
+        .slide-opening .eyebrow {
+            font-family: var(--mono);
+            font-size: 0.7rem;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: var(--fg-dim);
+            margin-bottom: 2rem;
+        }
+        .slide-opening h1 {
+            font-family: var(--serif);
+            font-size: clamp(2.2rem, 4.5vw, 3.4rem);
+            font-weight: 400;
+            letter-spacing: -0.02em;
+            line-height: 1.15;
+            color: var(--fg);
+            margin-bottom: 2.5rem;
+            max-width: 700px;
+        }
+        .slide-opening .subtitle {
+            font-size: 1.2rem;
+            color: var(--fg-muted);
+            line-height: 1.65;
+            max-width: 600px;
+            margin-bottom: 2rem;
+        }
+        .slide-opening .contact {
+            font-size: 0.85rem;
+            color: var(--fg-dim);
+        }
+
+        /* ── Stat row ── */
+        .stat-row {
+            display: flex;
+            gap: 0;
+            margin: 1.5rem 0;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            overflow: hidden;
+            background: #fff;
+            max-width: 600px;
+        }
+        .stat {
+            flex: 1;
+            padding: 1.5rem;
+            border-right: 1px solid var(--border);
+            text-align: center;
+        }
+        .stat:last-child { border-right: none; }
+        .stat-num {
+            font-family: var(--serif);
+            font-size: 2.5rem;
+            color: var(--accent);
+            line-height: 1;
+            letter-spacing: -0.03em;
+            margin-bottom: 0.4rem;
+        }
+        .stat-label {
+            font-size: 0.75rem;
+            color: var(--fg-muted);
+            line-height: 1.4;
+        }
+
+        /* ── People list ── */
+        .people {
+            font-family: var(--serif);
+            font-size: 1.3rem;
+            line-height: 2.2;
+            color: var(--fg-muted);
+            max-width: 600px;
+        }
+        .people em { font-style: italic; color: var(--fg); }
+
+        /* ── Flywheel ── */
+        .flywheel {
+            display: flex;
+            flex-direction: column;
+            max-width: 500px;
+            margin: 1rem 0;
+        }
+        .fw-step {
+            font-family: var(--serif);
+            font-size: 1.35rem;
+            color: var(--fg);
+            padding: 0.85rem 0;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+        .fw-step:first-child { border-top: 1px solid var(--border); }
+        .fw-step.final { color: var(--accent); }
+        .fw-num {
+            font-family: var(--mono);
+            font-size: 0.65rem;
+            color: var(--fg-dim);
+            letter-spacing: 0.06em;
+            flex-shrink: 0;
+            width: 1.5rem;
+        }
+
+        /* ── Item list (trust slide, etc) ── */
+        .item-list {
+            display: flex;
+            flex-direction: column;
+            gap: 0;
+            margin: 1rem 0;
+            max-width: 700px;
+        }
+        .item-row {
+            display: flex;
+            gap: 1.5rem;
+            padding: 1rem 0;
+            border-bottom: 1px solid var(--border);
+            align-items: baseline;
+        }
+        .item-row:first-child { border-top: 1px solid var(--border); }
+        .item-title {
+            font-weight: 500;
+            color: var(--fg);
+            font-size: 1rem;
+            min-width: 220px;
+            flex-shrink: 0;
+        }
+        .item-desc {
+            font-size: 0.95rem;
+            color: var(--fg-muted);
+            line-height: 1.5;
+        }
+
+        /* ── Tier table ── */
+        .tier-table {
+            margin: 1rem 0;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            overflow: hidden;
+            background: #fff;
+            max-width: 600px;
+        }
+        .tier-row {
+            display: flex;
+            align-items: baseline;
+            gap: 1.25rem;
+            padding: 1rem 1.25rem;
+            border-bottom: 1px solid var(--border);
+        }
+        .tier-row:last-child { border-bottom: none; }
+        .tier-price {
+            font-family: var(--serif);
+            font-size: 1.5rem;
+            color: var(--accent);
+            min-width: 5rem;
+            flex-shrink: 0;
+        }
+        .tier-price span { font-family: var(--sans); font-size: 0.75rem; color: var(--fg-dim); }
+        .tier-body { font-size: 0.9rem; color: var(--fg-muted); }
+        .tier-body strong { color: var(--fg); font-weight: 500; }
+        .tier-highlight { background: var(--accent-soft); }
+        .tier-power { background: var(--bg-soft); }
+        .tier-power .tier-price { color: var(--fg); }
+
+        /* ── Pendant callout ── */
+        .pendant-callout {
+            background: var(--bg-soft);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 1.75rem;
+            max-width: 340px;
+            position: absolute;
+            right: 6rem;
+            top: 50%;
+            transform: translateY(-50%);
+        }
+        .pendant-callout .label {
+            font-size: 0.65rem;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: var(--accent);
+            font-weight: 500;
+            margin-bottom: 0.75rem;
+        }
+        .pendant-callout p {
+            font-size: 0.95rem;
+            color: var(--fg-muted);
+            line-height: 1.6;
+        }
+
+        /* ── Financial table ── */
+        .fin-table {
+            margin: 1rem 0;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            overflow: hidden;
+            background: #fff;
+            max-width: 700px;
+        }
+        .fin-table table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .fin-table th {
+            font-size: 0.7rem;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            color: var(--fg-dim);
+            font-weight: 500;
+            text-align: center;
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid var(--border);
+            background: var(--bg-soft);
+        }
+        .fin-table th:first-child { text-align: left; }
+        .fin-table td {
+            font-size: 0.9rem;
+            color: var(--fg-muted);
+            padding: 0.65rem 1rem;
+            border-bottom: 1px solid var(--border);
+            text-align: center;
+        }
+        .fin-table td:first-child {
+            font-weight: 500;
+            color: var(--fg);
+            text-align: left;
+            font-size: 0.85rem;
+        }
+        .fin-table tr:last-child td { border-bottom: none; }
+        .fin-table .highlight { color: var(--accent); font-weight: 500; }
+
+        /* ── Ask box ── */
+        .ask-box {
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            overflow: hidden;
+            background: #fff;
+            margin: 1rem 0;
+            max-width: 500px;
+        }
+        .ask-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            padding: 0.9rem 1.25rem;
+            border-bottom: 1px solid var(--border);
+        }
+        .ask-row:last-child { border-bottom: none; }
+        .ask-row .lbl { font-size: 0.85rem; color: var(--fg-muted); }
+        .ask-row .val { font-family: var(--serif); font-size: 1.1rem; color: var(--fg); }
+
+        .close-quote {
+            font-family: var(--serif);
+            font-size: clamp(1.5rem, 3vw, 2rem);
+            color: var(--fg);
+            margin-top: 2.5rem;
+            line-height: 1.3;
+            max-width: 550px;
+        }
+        .close-links {
+            margin-top: 1.5rem;
+            font-size: 0.85rem;
+            color: var(--fg-dim);
+        }
+        .close-links a {
+            color: var(--accent);
+            text-decoration: none;
+        }
+        .close-links a:hover { text-decoration: underline; }
+
+        /* ── Mobile ── */
+        @media (max-width: 768px) {
+            .slide { padding: 3rem 1.5rem; }
+            .pendant-callout {
+                position: static;
+                transform: none;
+                margin-top: 1.5rem;
+                max-width: 100%;
+            }
+            .stat-row { flex-direction: column; }
+            .stat { border-right: none; border-bottom: 1px solid var(--border); }
+            .stat:last-child { border-bottom: none; }
+            .item-row { flex-direction: column; gap: 0.25rem; }
+            .item-title { min-width: unset; }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- SLIDE 1: The Mountain Dream -->
+    <section class="slide slide-opening">
+        <div class="eyebrow">Open Parachute, PBC</div>
+        <h1>I want to hike up a mountain, share my ideas as I walk, and come back down to a working app.</h1>
+        <p class="subtitle">That dream is closer to real than it's ever been. But I also want to hold my nephew. Be outside. Live a full life. Parachute exists because we shouldn't have to choose.</p>
+        <div class="contact">Aaron Gabriel Neyer &middot; aaron@parachute.computer &middot; Boulder, CO</div>
+    </section>
+
+    <!-- SLIDE 2: The Landscape -->
+    <section class="slide">
+        <div class="slide-label">The Landscape</div>
+        <h2 class="slide-headline">Everyone is building<br>personal AI computers.</h2>
+        <div class="slide-body">
+            <p>OpenClaw &mdash; 300K+ GitHub stars in 3 months. Claude Cowork &mdash; recurring agents, messaging via Telegram. ZoComputer. Perplexity Computer. Manus. The race is on.</p>
+        </div>
+        <div class="stat-row">
+            <div class="stat">
+                <div class="stat-num">$16B</div>
+                <div class="stat-label">Market today</div>
+            </div>
+            <div class="stat">
+                <div class="stat-num">$268B</div>
+                <div class="stat-label">Projected 2035</div>
+            </div>
+            <div class="stat">
+                <div class="stat-num">41%</div>
+                <div class="stat-label">CAGR</div>
+            </div>
+        </div>
+        <div class="slide-body">
+            <p style="margin-top: 1rem; font-family: var(--serif); font-size: 1.3rem; color: var(--fg);">But they're all building for the 5% who are already bought in.</p>
+        </div>
+    </section>
+
+    <!-- SLIDE 3: The 95% Gap -->
+    <section class="slide">
+        <div class="slide-label">The Problem</div>
+        <h2 class="slide-headline">The other 95%<br>have no way in.</h2>
+        <div class="people">
+            The <em>artist</em> who wants to organize creative ideas.<br>
+            The <em>small business owner</em> tracking their days.<br>
+            The <em>parent</em> who wants a better way to remember and reflect.<br><br>
+        </div>
+        <div class="slide-body">
+            <p>They're not going to adopt a full agentic computer cold. They need a bridge.</p>
+        </div>
+    </section>
+
+    <!-- SLIDE 4: Parachute Daily -->
+    <section class="slide">
+        <div class="slide-label">The Solution</div>
+        <h2 class="slide-headline">Parachute Daily.<br>Just talk.</h2>
+        <div class="slide-body">
+            <p>A voice-first journal. Speak into a wearable pendant or your phone &mdash; on a walk, in the car, wherever thinking happens.</p>
+            <p>AI weaves through gently: daily reflections on your entries, pattern recognition over time, weekly synthesis of your thinking.</p>
+            <p>No learning curve. No technical sophistication required.</p>
+        </div>
+        <div class="pendant-callout">
+            <div class="label">The Pendant</div>
+            <p>Wearable voice capture device. Go for a walk. Talk. Your thoughts become structured knowledge by the time you're home.</p>
+            <p style="margin-top: 0.75rem;"><strong style="color: var(--fg);">Working prototype on stage today.</strong></p>
+        </div>
+    </section>
+
+    <!-- SLIDE 5: Context Compounds -->
+    <section class="slide">
+        <div class="slide-label">The Insight</div>
+        <h2 class="slide-headline">Context compounds.</h2>
+        <div class="slide-body">
+            <p>Every day you use Parachute, your AI gets meaningfully better. No competitor can shortcut months of accumulated personal context.</p>
+        </div>
+        <div class="flywheel">
+            <div class="fw-step"><span class="fw-num">01</span> Start journaling in Daily</div>
+            <div class="fw-step"><span class="fw-num">02</span> Build months of personal context</div>
+            <div class="fw-step"><span class="fw-num">03</span> Upgrade to Parachute Computer</div>
+            <div class="fw-step"><span class="fw-num">04</span> Brain ingests your history instantly</div>
+            <div class="fw-step final"><span class="fw-num">&rarr;</span> System already knows you</div>
+        </div>
+    </section>
+
+    <!-- SLIDE 6: Trust as Foundation -->
+    <section class="slide">
+        <div class="slide-label">Why Us</div>
+        <h2 class="slide-headline">Open source is<br>the trust foundation.</h2>
+        <div class="item-list">
+            <div class="item-row">
+                <div class="item-title">AGPL-3.0 licensed</div>
+                <div class="item-desc">Fully transparent. Proprietary forks must share changes.</div>
+            </div>
+            <div class="item-row">
+                <div class="item-title">Local-first</div>
+                <div class="item-desc">Your data on your device. Portable. Exportable. Yours.</div>
+            </div>
+            <div class="item-row">
+                <div class="item-title">Public Benefit Corporation</div>
+                <div class="item-desc">Legal mandate to serve users, not just shareholders.</div>
+            </div>
+            <div class="item-row">
+                <div class="item-title">Software is no longer a moat</div>
+                <div class="item-desc">Ideas get cloned in a day. Trust and context cannot.</div>
+            </div>
+            <div class="item-row">
+                <div class="item-title">Community as growth engine</div>
+                <div class="item-desc">We're building a learning community around AI tools &mdash; users who learn together become power users who build for others.</div>
+            </div>
+        </div>
+    </section>
+
+    <!-- SLIDE 7: Business Model -->
+    <section class="slide">
+        <div class="slide-label">Business Model</div>
+        <h2 class="slide-headline">Start free.<br>Grow with every user.</h2>
+        <div class="tier-table">
+            <div class="tier-row">
+                <div class="tier-price">Free</div>
+                <div class="tier-body"><strong>Offline journal</strong> &mdash; local transcription, no sync, zero hosting cost</div>
+            </div>
+            <div class="tier-row">
+                <div class="tier-price">$1-2<span>/mo</span></div>
+                <div class="tier-body"><strong>Sync + transcription</strong> &mdash; cloud sync, AI starts here</div>
+            </div>
+            <div class="tier-row tier-highlight">
+                <div class="tier-price">$5<span>/mo</span></div>
+                <div class="tier-body"><strong>Daily AI</strong> &mdash; reflections, synthesis, pattern surfacing. The sweet spot.</div>
+            </div>
+            <div class="tier-row tier-power">
+                <div class="tier-price">$20<span>/mo</span></div>
+                <div class="tier-body"><strong>Hosted Computer</strong> &mdash; full agentic platform, no self-hosting required</div>
+            </div>
+        </div>
+        <div class="slide-body">
+            <p style="font-size: 0.95rem;">Free tier has zero hosting cost &mdash; no subsidizing free users. AI inference at $2-5 tiers uses cost-efficient models (Nvidia Nemotron). Margins are real.</p>
+        </div>
+    </section>
+
+    <!-- SLIDE 8: Team + Traction -->
+    <section class="slide">
+        <div class="slide-label">Team & Traction</div>
+        <h2 class="slide-headline">Small, capable, committed.</h2>
+        <div class="people" style="font-size: 1.1rem; line-height: 2;">
+            <em>Aaron Gabriel Neyer</em> &mdash; Founder, product &amp; architecture, CU ATLAS<br>
+            <em>Jon Bo</em> &mdash; Daily co-lead, founding engineer at multiple startups<br>
+            <em>Lucian Hymer</em> &mdash; Computer co-lead, founding engineer at multiple startups<br>
+            <em>Marvin Melzer</em> &mdash; Hardware, pendant prototype<br>
+            <em>Neil Yarnal</em> &mdash; Brand &amp; design
+        </div>
+        <div class="stat-row" style="margin-top: 2rem;">
+            <div class="stat">
+                <div class="stat-num">200+</div>
+                <div class="stat-label">PRs merged since January</div>
+            </div>
+            <div class="stat">
+                <div class="stat-num">300+</div>
+                <div class="stat-label">Community members</div>
+            </div>
+            <div class="stat">
+                <div class="stat-num">13</div>
+                <div class="stat-label">LVB cohort builders</div>
+            </div>
+        </div>
+    </section>
+
+    <!-- SLIDE 9: Financial Projections -->
+    <section class="slide">
+        <div class="slide-label">Financial Projections</div>
+        <h2 class="slide-headline">Profitable by year three.</h2>
+        <div class="fin-table">
+            <table>
+                <thead>
+                    <tr>
+                        <th></th>
+                        <th>2026</th>
+                        <th>2027</th>
+                        <th>2028</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>Free + sync users</td>
+                        <td>5,000</td>
+                        <td>50,000</td>
+                        <td>250,000</td>
+                    </tr>
+                    <tr>
+                        <td>Paid subscribers ($2-20/mo)</td>
+                        <td>500</td>
+                        <td>5,000</td>
+                        <td>25,000</td>
+                    </tr>
+                    <tr>
+                        <td>Avg rev / paid subscriber</td>
+                        <td>~$5/mo</td>
+                        <td>~$7/mo</td>
+                        <td>~$8/mo</td>
+                    </tr>
+                    <tr>
+                        <td>MRR (end of year)</td>
+                        <td>~$2,500</td>
+                        <td class="highlight">~$35,000</td>
+                        <td class="highlight">~$200,000</td>
+                    </tr>
+                    <tr>
+                        <td>ARR (end of year)</td>
+                        <td>~$30K</td>
+                        <td class="highlight">~$420K</td>
+                        <td class="highlight">~$2.4M</td>
+                    </tr>
+                    <tr>
+                        <td>Team (salaried)</td>
+                        <td>3</td>
+                        <td>5-6</td>
+                        <td>9-10</td>
+                    </tr>
+                    <tr>
+                        <td>Operating costs</td>
+                        <td>~$170K</td>
+                        <td>~$550K</td>
+                        <td>~$900K</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        <div class="slide-body">
+            <p style="font-size: 0.95rem;">Funded to date: $0. Entire product built by founder with no outside funding.</p>
+        </div>
+    </section>
+
+    <!-- SLIDE 10: The Ask -->
+    <section class="slide">
+        <div class="slide-label">The Ask</div>
+        <h2 class="slide-headline">$300K to reach revenue.<br>Then scale.</h2>
+        <div class="ask-box">
+            <div class="ask-row"><span class="lbl">Instrument</span><span class="val">SAFE (YC standard)</span></div>
+            <div class="ask-row"><span class="lbl">Valuation cap</span><span class="val">$5,000,000</span></div>
+            <div class="ask-row"><span class="lbl">Giving away</span><span class="val">&lt; 10%</span></div>
+            <div class="ask-row"><span class="lbl">Use of funds</span><span class="val">Core team full-time &rarr; launch June 2026</span></div>
+        </div>
+        <p class="close-quote">I want everyone to be able to hike up that mountain.</p>
+        <div class="close-links">
+            <a href="https://parachute.computer">parachute.computer</a> &middot;
+            <a href="https://github.com/OpenParachutePBC">github.com/OpenParachutePBC</a> &middot;
+            aaron@parachute.computer
+        </div>
+    </section>
+
+</body>
+</html>
