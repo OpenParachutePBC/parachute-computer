@@ -102,9 +102,17 @@ def test_chat_roundtrip(server):
             except json.JSONDecodeError:
                 continue
 
-    # Should have at least session_id and some text
     event_types = [e.get("type") for e in events]
-    assert "session_id" in event_types, f"No session_id event. Got: {event_types}"
+
+    # Check for errors first — surface them clearly
+    error_events = [e for e in events if e.get("type") in ("error", "typed_error")]
+    if error_events:
+        error_detail = json.dumps(error_events, indent=2)[:500]
+        # typed_error with auth/model issues means the SDK couldn't start
+        pytest.fail(f"Server returned error events:\n{error_detail}")
+
+    # Should have a session event (confirms orchestrator is running)
+    assert "session" in event_types, f"No session event. Got: {event_types}"
 
     # Should have text content
     text_events = [e for e in events if e.get("type") == "text"]
