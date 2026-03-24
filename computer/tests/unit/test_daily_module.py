@@ -42,7 +42,17 @@ async def graph(tmp_path):
     store = BrainChatStore(svc)
     await store.ensure_schema()
     yield svc
-    await svc.close()
+    # Neutralize the AsyncConnection to prevent __del__ from calling close()
+    # which deadlocks on executor.shutdown(wait=True) when Kuzu threads are
+    # stuck. Disable __del__, then abandon — tmp_path cleanup handles files.
+    if svc._conn:
+        conn = svc._conn
+        conn.__class__.__del__ = lambda self: None  # noqa: E731
+        if hasattr(conn, "executor") and conn.executor:
+            conn.executor.shutdown(wait=False, cancel_futures=True)
+    svc._connected = False
+    svc._conn = None
+    svc._db = None
 
 
 @pytest.fixture

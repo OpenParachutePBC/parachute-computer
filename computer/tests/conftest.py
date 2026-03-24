@@ -2,10 +2,9 @@
 Pytest configuration and fixtures.
 """
 
-import asyncio
 import os
 from pathlib import Path
-from typing import AsyncGenerator, Generator
+from typing import AsyncGenerator
 
 import pytest
 import pytest_asyncio
@@ -14,14 +13,6 @@ from httpx import AsyncClient
 
 # Set test environment
 os.environ["LOG_LEVEL"] = "WARNING"
-
-
-@pytest.fixture(scope="session")
-def event_loop() -> Generator[asyncio.AbstractEventLoop, None, None]:
-    """Create an event loop for the test session."""
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
 
 
 @pytest.fixture
@@ -154,37 +145,3 @@ def sample_session_data() -> dict:
     }
 
 
-@pytest.fixture
-def minimal_bot_connector():
-    """Minimal BotConnector subclass for unit testing base functionality.
-
-    Returns a BotConnector class (not instance) that can be instantiated
-    with test-specific configuration.
-
-    Usage:
-        def test_something(minimal_bot_connector):
-            connector = minimal_bot_connector(
-                bot_token="test",
-                server=None,
-                allowed_users=[123, 456],
-            )
-            assert connector.is_user_allowed(123)
-    """
-    from parachute.connectors.base import BotConnector
-
-    class TestConnector(BotConnector):
-        platform = "test"
-
-        async def start(self):
-            pass
-
-        async def stop(self):
-            pass
-
-        async def on_text_message(self, update, context):
-            pass
-
-        async def _run_loop(self):
-            pass
-
-    return TestConnector
