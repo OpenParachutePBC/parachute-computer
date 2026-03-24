@@ -130,3 +130,64 @@ class TestBuildToolGuidance:
             if group["trust"] == "direct":
                 assert group["name"] in direct
                 assert group["name"] not in sandboxed
+
+
+class TestAllowedToolsFiltering:
+    """Tests for allowed_tools parameter (sandbox tool profiles)."""
+
+    def test_allowed_tools_filters_individual_tools(self):
+        """When allowed_tools is set, only those tools appear in guidance."""
+        from parachute.api.mcp_tools import CHAT_TOOLS
+
+        result = build_tool_guidance("sandboxed", allowed_tools=CHAT_TOOLS)
+        # CHAT_TOOLS should be present
+        assert "search_memory" in result
+        assert "list_chats" in result
+        assert "get_chat" in result
+        assert "get_exchange" in result
+        assert "list_notes" in result
+        assert "search_chats" in result
+
+    def test_allowed_tools_excludes_non_chat_tools(self):
+        """Sandbox chat sessions should not see write_note, get_session, etc."""
+        from parachute.api.mcp_tools import CHAT_TOOLS
+
+        result = build_tool_guidance("sandboxed", allowed_tools=CHAT_TOOLS)
+        assert "write_note" not in result
+        assert "brain_schema" not in result
+        assert "get_session" not in result
+        assert "create_session" not in result
+        assert "search_by_tag" not in result
+        assert "list_tags" not in result
+        assert "add_session_tag" not in result
+        assert "remove_session_tag" not in result
+
+    def test_allowed_tools_drops_empty_groups(self):
+        """Groups with no surviving tools should not appear at all."""
+        from parachute.api.mcp_tools import CHAT_TOOLS
+
+        result = build_tool_guidance("sandboxed", allowed_tools=CHAT_TOOLS)
+        # Sessions & Tags group has no tools in CHAT_TOOLS
+        assert "Sessions & Tags" not in result
+        # Multi-Agent group has no tools in CHAT_TOOLS
+        assert "Multi-Agent" not in result
+
+    def test_none_allowed_tools_shows_all(self):
+        """None means no filtering (backwards compatible, direct sessions)."""
+        full = build_tool_guidance("sandboxed")
+        explicit_none = build_tool_guidance("sandboxed", allowed_tools=None)
+        assert full == explicit_none
+
+    def test_daily_tools_profile(self):
+        """DAILY_TOOLS should show its specific tool set."""
+        from parachute.api.mcp_tools import DAILY_TOOLS
+
+        result = build_tool_guidance("sandboxed", allowed_tools=DAILY_TOOLS)
+        assert "search_memory" in result
+        assert "list_notes" in result
+        assert "get_exchange" in result
+        # Daily-specific tools are in DAILY_TOOLS but not in TOOL_GROUPS
+        # (read_brain_entity, write_card are bridge-only, not in guidance)
+        # write_note should NOT be present
+        assert "write_note" not in result
+        assert "create_session" not in result
