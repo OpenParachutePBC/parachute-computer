@@ -11,31 +11,56 @@ import 'agent_output_header.dart';
 /// Accepts [AgentCard] objects from the graph. Routes each card to the
 /// appropriate widget based on status: running → shimmer, failed → retry,
 /// done → expandable [AgentOutputHeader].
+///
+/// When [showFloatedUnread] is true (default for today's page), also shows
+/// unread cards from past days that have floated forward.
 class JournalAgentOutputsSection extends ConsumerWidget {
   final List<AgentCard> cards;
 
-  const JournalAgentOutputsSection({super.key, required this.cards});
+  /// When true, fetches and displays unread cards from past days above
+  /// today's cards. Only enable on the today journal page.
+  final bool showFloatedUnread;
+
+  /// The date string (YYYY-MM-DD) of the current journal page.
+  /// Used to filter floated unread cards (exclude today's cards from the
+  /// floated section since they already appear in [cards]).
+  final String? currentDate;
+
+  const JournalAgentOutputsSection({
+    super.key,
+    required this.cards,
+    this.showFloatedUnread = false,
+    this.currentDate,
+  });
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final doneCards = cards.where((c) => c.isDone).toList();
 
     return Column(
-      children: cards.map((card) {
-        if (card.isRunning) {
-          return _AgentRunningCard(card: card);
-        }
-        if (card.isFailed) {
-          return _AgentFailedCard(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Floated unread cards from past days
+        if (showFloatedUnread) _FloatedUnreadSection(currentDate: currentDate),
+
+        // Today's cards
+        ...cards.map((card) {
+          if (card.isRunning) {
+            return _AgentRunningCard(card: card);
+          }
+          if (card.isFailed) {
+            return _AgentFailedCard(
+              card: card,
+              onRetry: () => _retryAgent(ref, card),
+            );
+          }
+          return AgentOutputHeader(
             card: card,
-            onRetry: () => _retryAgent(ref, card),
+            initiallyExpanded: doneCards.length == 1 && card == doneCards.first,
+            onMarkRead: (cardId) => _markRead(ref, cardId),
           );
-        }
-        return AgentOutputHeader(
-          card: card,
-          initiallyExpanded: doneCards.length == 1 && card == doneCards.first,
-        );
-      }).toList(),
+        }),
+      ],
     );
   }
 
@@ -50,6 +75,123 @@ class JournalAgentOutputsSection extends ConsumerWidget {
       debugPrint('Retry failed for ${card.agentName}: $e');
     }
     ref.read(journalRefreshTriggerProvider.notifier).state++;
+  }
+
+  void _markRead(WidgetRef ref, String cardId) {
+    final api = ref.read(dailyApiServiceProvider);
+    // Fire and forget — optimistic. Refresh triggers UI update.
+    api.markCardRead(cardId).then((_) {
+      ref.read(journalRefreshTriggerProvider.notifier).state++;
+    });
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Floated Unread Section — unread cards from past days
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _FloatedUnreadSection extends ConsumerWidget {
+  final String? currentDate;
+
+  const _FloatedUnreadSection({this.currentDate});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final unreadAsync = ref.watch(unreadCardsProvider);
+
+    return unreadAsync.when(
+      loading: () => const SizedBox.shrink(),
+      error: (_, __) => const SizedBox.shrink(),
+      data: (allUnread) {
+        // Filter to past-day cards only (today's cards are already in the main list)
+        final floated = currentDate != null
+            ? allUnread.where((c) => c.date != currentDate && c.isDone).toList()
+            : allUnread.where((c) => c.isDone).toList();
+
+        if (floated.isEmpty) return const SizedBox.shrink();
+
+        final theme = Theme.of(context);
+        final isDark = theme.brightness == Brightness.dark;
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: EdgeInsets.symmetric(
+                horizontal: Spacing.lg,
+                vertical: Spacing.sm,
+              ),
+              child: Text(
+                'Earlier',
+                style: theme.textTheme.labelMedium?.copyWith(
+                  color: BrandColors.driftwood,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 0.5,
+                ),
+              ),
+            ),
+            ...floated.map((card) => _FloatedCardWrapper(
+                  card: card,
+                  isDark: isDark,
+                  onMarkRead: (cardId) {
+                    final api = ref.read(dailyApiServiceProvider);
+                    api.markCardRead(cardId).then((_) {
+                      ref.read(journalRefreshTriggerProvider.notifier).state++;
+                    });
+                  },
+                )),
+            SizedBox(height: Spacing.md),
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// Wraps an [AgentOutputHeader] for a floated card, adding the source date.
+class _FloatedCardWrapper extends StatelessWidget {
+  final AgentCard card;
+  final bool isDark;
+  final void Function(String cardId) onMarkRead;
+
+  const _FloatedCardWrapper({
+    required this.card,
+    required this.isDark,
+    required this.onMarkRead,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    // Format the source date nicely (e.g., "Mar 22")
+    String dateLabel = card.date;
+    try {
+      final parsed = DateTime.parse(card.date);
+      const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                       'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      dateLabel = '${months[parsed.month - 1]} ${parsed.day}';
+    } catch (_) {}
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: EdgeInsets.only(left: Spacing.lg + 4, bottom: 2),
+          child: Text(
+            dateLabel,
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: BrandColors.driftwood,
+              fontSize: 11,
+            ),
+          ),
+        ),
+        AgentOutputHeader(
+          card: card,
+          onMarkRead: onMarkRead,
+        ),
+      ],
+    );
   }
 }
 

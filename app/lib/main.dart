@@ -284,6 +284,23 @@ class _TabShellState extends ConsumerState<_TabShell> with WidgetsBindingObserve
     return icon;
   }
 
+  Widget _buildDailyTabIcon(bool isDark, bool selected) {
+    final unreadCount = ref.watch(unreadCardsProvider).valueOrNull?.length ?? 0;
+    final icon = Icon(
+      selected ? Icons.today : Icons.today_outlined,
+      color: selected
+          ? (isDark ? BrandColors.nightForest : BrandColors.forest)
+          : (isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood),
+    );
+    if (unreadCount > 0) {
+      return Badge(
+        label: Text('$unreadCount'),
+        child: icon,
+      );
+    }
+    return icon;
+  }
+
   /// Handle a pending chat prompt by navigating to ChatScreen
   void _handlePendingChatPrompt(PendingChatPrompt prompt) {
     // Security: Only log message preview (first 50 chars) to avoid leaking sensitive content
@@ -614,14 +631,8 @@ class _TabShellState extends ConsumerState<_TabShell> with WidgetsBindingObserve
           label: 'Chat',
         ),
       NavigationDestination(
-        icon: Icon(
-          Icons.today_outlined,
-          color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
-        ),
-        selectedIcon: Icon(
-          Icons.today,
-          color: isDark ? BrandColors.nightForest : BrandColors.forest,
-        ),
+        icon: _buildDailyTabIcon(isDark, false),
+        selectedIcon: _buildDailyTabIcon(isDark, true),
         label: 'Daily',
       ),
       if (showAllTabs)

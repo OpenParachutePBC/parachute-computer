@@ -320,6 +320,21 @@ final cardsProvider = FutureProvider.autoDispose
       return api.fetchCards(dateStr);
     });
 
+/// Fetch all unread Card nodes (cross-date, 7-day window).
+///
+/// Used for the "Unread from past days" section on today's journal page
+/// and the unread badge on the Daily nav tab.
+final unreadCardsProvider =
+    FutureProvider.autoDispose<List<AgentCard>>((ref) async {
+      ref.watch(journalRefreshTriggerProvider);
+
+      final isAvailable = ref.watch(isServerAvailableProvider);
+      if (!isAvailable) return [];
+
+      final api = ref.watch(dailyApiServiceProvider);
+      return api.fetchUnreadCards();
+    });
+
 /// Fetch registered Agent (agent definition) nodes from the server.
 ///
 /// Used by [AgentTriggerCard] to enumerate agents without local file reads.
