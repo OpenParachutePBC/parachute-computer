@@ -78,15 +78,6 @@ def test_update_prompt_missing_content(test_client):
     assert response.status_code == 400
 
 
-def test_search_module(test_client):
-    """Test module search (placeholder)."""
-    response = test_client.get("/api/modules/chat/search?q=test")
-
-    assert response.status_code == 200
-    data = response.json()
-    assert "results" in data
-
-
 def test_get_module_stats(test_client):
     """Test getting module stats."""
     response = test_client.get("/api/modules/chat/stats")

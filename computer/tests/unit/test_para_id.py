@@ -16,9 +16,14 @@ def test_generate_para_id_format():
 
 
 def test_generate_para_id_uniqueness():
-    """Test that generated para IDs are unique."""
+    """Test that generated para IDs are reasonably unique.
+
+    Note: generate_para_id has ~21 bits of random entropy, so collisions
+    are expected at scale (~30% chance in 1000 calls). Testing 100 is
+    enough to verify the function works without being flaky in CI.
+    """
     ids = set()
-    for _ in range(1000):
+    for _ in range(100):
         para_id = generate_para_id()
         assert para_id not in ids
         ids.add(para_id)

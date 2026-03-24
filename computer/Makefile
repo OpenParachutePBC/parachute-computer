@@ -1,6 +1,6 @@
 # Dev shortcuts. For first-time install, use ./install.sh
 
-.PHONY: run test clean help
+.PHONY: run test test-fast test-integration clean help
 
 VENV := .venv
 BIN := $(VENV)/bin
@@ -11,9 +11,15 @@ help:                                 ## Show this help
 run: $(VENV)                          ## Start server in foreground
 	$(BIN)/parachute server --foreground
 
-test: $(VENV)                         ## Run tests
+test-fast: $(VENV)                    ## Run unit tests only (fast)
+	$(BIN)/python -m pytest tests/unit/ tests/core/ -x -q
+
+test: $(VENV)                         ## Run all tests
 	$(BIN)/pip install -e ".[dev]" -q
 	$(BIN)/python -m pytest tests/ -v
+
+test-integration: $(VENV)             ## Run integration tests (needs server)
+	$(BIN)/python -m pytest tests/integration/ -v
 
 clean:                                ## Remove venv and caches
 	rm -rf $(VENV)

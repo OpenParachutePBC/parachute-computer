@@ -183,24 +183,26 @@ Manage config via CLI: `parachute config show/set/get`.
 ## Testing
 
 ```bash
-# Run all unit tests (fast, no server needed)
-cd computer
-.venv/bin/python -m pytest tests/unit/ -x -q
-
-# Run a specific file
-.venv/bin/python -m pytest tests/unit/test_session_manager.py -q
-
-# Run with output on failure
-.venv/bin/python -m pytest tests/unit/ -x -s
+make test-fast          # Unit tests only (~5s, no server needed)
+make test               # All tests (unit + integration)
+make test-integration   # Integration tests only (needs server stopped)
 ```
 
-**Always run tests before declaring work done.** If tests fail, fix them — don't skip.
+Or directly:
+```bash
+.venv/bin/python -m pytest tests/unit/ -x -q
+.venv/bin/python -m pytest tests/unit/test_session_manager.py -q
+```
 
-**When adding new code, add tests.** Test files mirror the source structure:
-- `parachute/core/foo.py` → `tests/unit/test_foo.py`
-- `modules/brain/bar.py` → `tests/unit/test_brain_bar.py`
+**Philosophy: fast feedback, catch regressions, test boundaries.**
 
-**Test the interface, not the internals.** Focus on: what does this function return given X input? Does the MCP tool return the right shape? Does the API endpoint respond correctly?
+- All tests have a **30s timeout** (pytest-timeout). If a test hits it, it's testing too much.
+- **Test the interface, not the internals.** API response shapes, MCP tool outputs, data contracts — not helper function logic.
+- **Don't write tests for punted features.** If the feature isn't shipping, the tests are dead weight.
+- **Don't over-test stdlib behavior.** If you're testing that `hmac.compare_digest` works, stop.
+- Test files mirror source structure: `parachute/core/foo.py` → `tests/unit/test_foo.py`
+
+**Always run `make test-fast` before declaring work done.** If tests fail, fix them.
 
 ---
 
