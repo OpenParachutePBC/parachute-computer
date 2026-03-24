@@ -1068,8 +1068,12 @@ class Orchestrator:
         initial_user_echo_seen = False
         end_reason = "unknown"
 
-        # Resolve active API provider (if any)
-        provider_cfg = self.settings.active_provider_config
+        # Resolve active API provider (if any).
+        # Re-read settings at query time so provider switches take effect
+        # without restarting the server (reload_settings() creates a new
+        # global instance that self.settings wouldn't see).
+        current_settings = get_settings()
+        provider_cfg = current_settings.active_provider_config
         provider_base_url: str | None = None
         provider_api_key: str | None = None
         if provider_cfg:
@@ -1081,12 +1085,12 @@ class Orchestrator:
             provider_model = None
 
         # Model precedence: per-request > provider default > server default
-        effective_model = model or provider_model or self.settings.default_model
+        effective_model = model or provider_model or current_settings.default_model
 
         logger.info(
             f"SDK launch: cwd={effective_cwd}, resume={resume_id}, "
             f"is_new={is_new}, session={session.id[:8] if session.id else None}"
-            f"{f', provider={self.settings.api_provider}' if provider_base_url else ''}"
+            f"{f', provider={current_settings.api_provider}' if provider_base_url else ''}"
         )
 
         try:
