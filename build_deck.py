@@ -170,13 +170,38 @@ add_text_box(s, Inches(1.2), Inches(6.5), Inches(10), Inches(0.6),
 
 
 # ═══════════════════════════════════════════════
-# SLIDE 3 — The 95% Gap
+# SLIDE 3 — Parachute Computer (Trust)
 # ═══════════════════════════════════════════════
 s = prs.slides.add_slide(blank_layout)
 set_slide_bg(s)
 
-section_label(s, "The Problem")
-slide_headline(s, "The other 95% have\nno way in.")
+section_label(s, "Our Answer")
+slide_headline(s, "Parachute Computer.\nThe personal AI you can trust.")
+
+add_text_box(s, Inches(1.2), Inches(3.5), Inches(10), Inches(1.5),
+             "A full agentic computing platform — open source, local-first, self-hostable.\n"
+             "Your data stays on your device. Use your own AI models.\n"
+             "Knowledge graph that connects your journals, conversations, and thinking.",
+             font_size=20, color=FG_MUTED, line_spacing=1.6)
+
+add_text_box(s, Inches(1.2), Inches(5.5), Inches(10), Inches(1.5),
+             "A lot of people don't want to trust big corporations with their most personal data.\n"
+             "Open source gives them a choice. AGPL-3.0 licensed. Fully transparent.",
+             font_size=18, color=FG_MUTED, line_spacing=1.5)
+
+add_text_box(s, Inches(1.2), Inches(6.5), Inches(10), Inches(0.6),
+             "But most people don't want to self-host a server.",
+             font_size=22, color=FG, font_name="Georgia")
+
+
+# ═══════════════════════════════════════════════
+# SLIDE 4 — The 95% Gap
+# ═══════════════════════════════════════════════
+s = prs.slides.add_slide(blank_layout)
+set_slide_bg(s)
+
+section_label(s, "The Opportunity")
+slide_headline(s, "The other 95% just want\nsomething that works.")
 
 add_text_box(s, Inches(1.2), Inches(3.5), Inches(10), Inches(1.5),
              "The artist who wants to organize creative ideas.\n"
@@ -191,7 +216,7 @@ add_text_box(s, Inches(1.2), Inches(5.7), Inches(10), Inches(1.0),
 
 
 # ═══════════════════════════════════════════════
-# SLIDE 4 — Parachute Daily (The Bridge)
+# SLIDE 5 — Parachute Daily (The Bridge)
 # ═══════════════════════════════════════════════
 s = prs.slides.add_slide(blank_layout)
 set_slide_bg(s)
