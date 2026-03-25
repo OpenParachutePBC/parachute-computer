@@ -124,14 +124,18 @@ add_text_box(s, Inches(1.2), Inches(2.0), Inches(10), Inches(2.5),
              "Technology should help us\nlive fully — not demand\nwe stop living to use it.",
              font_size=48, color=FG, font_name="Georgia", line_spacing=1.12)
 
-add_text_box(s, Inches(1.2), Inches(5.0), Inches(8), Inches(1.2),
+add_text_box(s, Inches(1.2), Inches(4.8), Inches(8), Inches(1.0),
              "I want to hike up a mountain, share my ideas as I walk,\n"
              "and come back down to a working app.\n"
              "But I also want to hold my nephew. Be outside. Live a full life.\n"
              "We shouldn't have to choose.",
              font_size=20, color=FG_MUTED, line_spacing=1.5)
 
-add_text_box(s, Inches(1.2), Inches(6.6), Inches(6), Inches(0.4),
+add_text_box(s, Inches(1.2), Inches(6.2), Inches(10), Inches(0.5),
+             "MA Ecopsychology · MS Creative Technology & Design (CU ATLAS) · Founding engineer ×2 · Ex-Google · 10+ years full stack",
+             font_size=13, color=FG_DIM)
+
+add_text_box(s, Inches(1.2), Inches(6.7), Inches(6), Inches(0.4),
              "Aaron Gabriel Neyer  ·  aaron@parachute.computer  ·  Boulder, CO",
              font_size=12, color=FG_DIM)
 
@@ -181,9 +185,9 @@ add_text_box(s, Inches(1.2), Inches(3.5), Inches(10), Inches(1.5),
              font_size=22, color=FG_MUTED, line_spacing=1.6, font_name="Georgia")
 
 add_text_box(s, Inches(1.2), Inches(5.7), Inches(10), Inches(1.0),
-             "They're not going to adopt a full agentic computer cold.\n"
-             "They need a bridge.",
-             font_size=20, color=FG, line_spacing=1.5)
+             "They need a system that learns them —\n"
+             "not one that demands they learn it.",
+             font_size=22, color=FG, line_spacing=1.5, font_name="Georgia")
 
 
 # ═══════════════════════════════════════════════

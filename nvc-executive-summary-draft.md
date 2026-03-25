@@ -51,7 +51,7 @@ Parachute is open source under the AGPL-3.0 license. This is a deliberate strate
 
 ## Management Team
 
-- **Aaron Gabriel Neyer** (Founder) — Product vision and system architecture. Graduate of CU Boulder ATLAS Institute (Creative Technology & Design). Built the entire system solo with zero funding. Boulder Human Relations Commission Chair. Founder of Woven Web (501(c)(3) nonprofit).
+- **Aaron Gabriel Neyer** (Founder) — Product vision and system architecture. MA in Ecopsychology, MS in Creative Technology & Design (CU Boulder ATLAS). Founding engineer at two startups. Former Google. 10+ years full stack development. Built the entire Parachute system solo with zero funding. Boulder Human Relations Commission Chair. Founder of Woven Web (501(c)(3) nonprofit).
 - **Jon Bo** — Daily co-lead. Founding engineer at multiple startups. Leading product direction for Parachute Daily.
 - **Lucian Hymer** — Computer co-lead. Founding engineer at multiple startups. Leading architecture for the full agentic platform.
 - **Marvin Melzer** — Hardware lead. Developing the wearable pendant prototype. Experienced hardware designer and engineer.
