@@ -123,13 +123,13 @@ async def get_session_stats(request: Request) -> dict[str, Any]:
 
 @router.get("/chat/tags")
 async def list_tags(request: Request) -> dict[str, Any]:
-    """List all tags with usage counts."""
+    """List all tags with usage counts. Deprecated: use GET /api/tags instead."""
     db = request.app.state.session_store
     if not db:
         raise HTTPException(status_code=503, detail="Database not ready")
 
     tags = await db.list_all_tags()
-    return {"tags": [{"tag": tag, "count": count} for tag, count in tags]}
+    return {"tags": tags}
 
 
 @router.get("/chat/tags/{tag}")
@@ -138,7 +138,7 @@ async def search_by_tag(
     tag: str,
     limit: int = Query(20, ge=1, le=100),
 ) -> dict[str, Any]:
-    """Find all sessions with a specific tag."""
+    """Find all sessions with a specific tag. Deprecated: use GET /api/tags/{tag}?type=chat instead."""
     db = request.app.state.session_store
     if not db:
         raise HTTPException(status_code=503, detail="Database not ready")
@@ -510,14 +510,10 @@ async def abort_session(request: Request, session_id: str) -> dict[str, Any]:
 
 @router.get("/chat/{session_id}/tags")
 async def get_session_tags(request: Request, session_id: str) -> dict[str, Any]:
-    """Get tags for a session."""
+    """Get tags for a session. Deprecated: use GET /api/tags/chat/{session_id} instead."""
     db = request.app.state.session_store
     if not db:
         raise HTTPException(status_code=503, detail="Database not ready")
-
-    session = await db.get_session(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
 
     tags = await db.get_session_tags(session_id)
     return {"session_id": session_id, "tags": tags}
@@ -525,7 +521,7 @@ async def get_session_tags(request: Request, session_id: str) -> dict[str, Any]:
 
 @router.post("/chat/{session_id}/tags")
 async def add_session_tag(request: Request, session_id: str, body: dict[str, Any]) -> dict[str, Any]:
-    """Add a tag to a session."""
+    """Add a tag to a session. Deprecated: use POST /api/tags/chat/{session_id} instead."""
     db = request.app.state.session_store
     if not db:
         raise HTTPException(status_code=503, detail="Database not ready")
@@ -534,26 +530,18 @@ async def add_session_tag(request: Request, session_id: str, body: dict[str, Any
     if not tag or not isinstance(tag, str) or not tag.strip():
         raise HTTPException(status_code=400, detail="Tag is required")
 
-    session = await db.get_session(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
-
-    await db.add_tag(session_id, tag.strip())
+    await db.add_session_tag(session_id, tag.strip())
     return {"success": True, "session_id": session_id, "tag": tag.strip()}
 
 
 @router.delete("/chat/{session_id}/tags/{tag}")
 async def remove_session_tag(request: Request, session_id: str, tag: str) -> dict[str, Any]:
-    """Remove a tag from a session."""
+    """Remove a tag from a session. Deprecated: use DELETE /api/tags/chat/{session_id}/{tag} instead."""
     db = request.app.state.session_store
     if not db:
         raise HTTPException(status_code=503, detail="Database not ready")
 
-    session = await db.get_session(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
-
-    await db.remove_tag(session_id, tag)
+    await db.remove_session_tag(session_id, tag)
     return {"success": True, "session_id": session_id, "tag": tag, "removed": True}
 
 
