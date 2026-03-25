@@ -98,6 +98,10 @@ TOOLS = [
                     "type": "string",
                     "description": "Date for the card in YYYY-MM-DD format",
                 },
+                "card_type": {
+                    "type": "string",
+                    "description": "Type of card (e.g. 'reflection', 'weekly-review'). Defaults to 'default'.",
+                },
             },
             "required": ["content", "date"],
         },
@@ -149,11 +153,14 @@ async def _handle_write_card(arguments: dict[str, Any]) -> str:
 
     content = arguments.get("content", "").strip()
     date_str = arguments.get("date", "").strip()
+    card_type = arguments.get("card_type", "default").strip() or "default"
 
     if not content:
         return json.dumps({"error": "Content cannot be empty"})
     if len(content) > 512 * 1024:
         return json.dumps({"error": "Content exceeds maximum size (512 KB)"})
+    if not re.fullmatch(r"[a-z0-9][a-z0-9\-]{0,31}", card_type):
+        return json.dumps({"error": "Invalid card_type — use lowercase alphanumeric with hyphens, max 32 chars"})
     if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_str):
         return json.dumps({"error": "Invalid date format. Use YYYY-MM-DD"})
 
@@ -173,21 +180,24 @@ async def _handle_write_card(arguments: dict[str, Any]) -> str:
     if not agent_rows:
         return json.dumps({"error": f"Unknown agent: {agent_name}"})
 
-    card_id = f"{agent_name}:{date_str}"
+    card_id = f"{agent_name}:{card_type}:{date_str}"
     display_name = agent_name.replace("-", " ").title()
     generated_at = datetime.now(timezone.utc).isoformat()
 
     await graph.execute_cypher(
         "MERGE (c:Card {card_id: $card_id}) "
         "SET c.agent_name = $agent_name, "
+        "    c.card_type = $card_type, "
         "    c.display_name = $display_name, "
         "    c.content = $content, "
         "    c.generated_at = $generated_at, "
         "    c.status = 'done', "
-        "    c.date = $date",
+        "    c.date = $date, "
+        "    c.read_at = ''",
         {
             "card_id": card_id,
             "agent_name": agent_name,
+            "card_type": card_type,
             "display_name": display_name,
             "content": content,
             "generated_at": generated_at,

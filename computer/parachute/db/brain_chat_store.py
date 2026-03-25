@@ -253,11 +253,13 @@ class BrainChatStore:
             {
                 "card_id": "STRING",
                 "agent_name": "STRING",
+                "card_type": "STRING",
                 "display_name": "STRING",
                 "content": "STRING",
                 "generated_at": "STRING",
                 "status": "STRING",
                 "date": "STRING",
+                "read_at": "STRING",
             },
             primary_key="card_id",
         )

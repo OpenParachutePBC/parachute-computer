@@ -79,7 +79,11 @@ class JournalContentView extends ConsumerWidget {
             // These are shown at the top, each in their own expandable header
             if (hasAgentOutputs)
               SliverToBoxAdapter(
-                child: JournalAgentOutputsSection(cards: agentCards),
+                child: JournalAgentOutputsSection(
+                  cards: agentCards,
+                  showFloatedUnread: isToday,
+                  currentDate: _dateStr(selectedDate),
+                ),
               )
             else if (isToday)
               const SliverToBoxAdapter(

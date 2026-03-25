@@ -15,10 +15,15 @@ class AgentOutputHeader extends StatefulWidget {
   final AgentCard card;
   final bool initiallyExpanded;
 
+  /// Called when an unread card is collapsed (expanded → collapsed).
+  /// The parent should fire the mark-read API and update local state.
+  final void Function(String cardId)? onMarkRead;
+
   const AgentOutputHeader({
     super.key,
     required this.card,
     this.initiallyExpanded = false,
+    this.onMarkRead,
   });
 
   @override
@@ -65,6 +70,7 @@ class _AgentOutputHeaderState extends State<AgentOutputHeader>
   }
 
   void _toggle() {
+    final wasExpanded = _isExpanded;
     setState(() {
       _isExpanded = !_isExpanded;
       if (_isExpanded) {
@@ -73,6 +79,10 @@ class _AgentOutputHeaderState extends State<AgentOutputHeader>
         _controller.reverse();
       }
     });
+    // Mark read on collapse (not expand) — handles accidental taps
+    if (wasExpanded && widget.card.isUnread) {
+      widget.onMarkRead?.call(widget.card.cardId);
+    }
   }
 
   @override
@@ -84,6 +94,8 @@ class _AgentOutputHeaderState extends State<AgentOutputHeader>
     final agentTheme = AgentTheme.forAgent(widget.card.agentName);
     final icon = agentTheme.icon;
     final color = agentTheme.color;
+
+    final isUnread = widget.card.isUnread;
 
     return Container(
       margin: EdgeInsets.symmetric(
@@ -99,16 +111,21 @@ class _AgentOutputHeaderState extends State<AgentOutputHeader>
                   BrandColors.nightSurfaceElevated,
                   BrandColors.nightSurface,
                 ]
-              : [
-                  color.withValues(alpha: 0.1),
-                  BrandColors.softWhite,
-                ],
+              : isUnread
+                  ? [
+                      color.withValues(alpha: 0.14),
+                      color.withValues(alpha: 0.04),
+                    ]
+                  : [
+                      color.withValues(alpha: 0.1),
+                      BrandColors.softWhite,
+                    ],
         ),
         borderRadius: Radii.card,
         border: Border.all(
           color: isDark
-              ? color.withValues(alpha: 0.3)
-              : color.withValues(alpha: 0.2),
+              ? color.withValues(alpha: isUnread ? 0.45 : 0.3)
+              : color.withValues(alpha: isUnread ? 0.35 : 0.2),
         ),
         boxShadow: isDark ? null : Elevation.cardShadow,
       ),
@@ -139,12 +156,29 @@ class _AgentOutputHeaderState extends State<AgentOutputHeader>
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          widget.card.displayName,
-                          style: theme.textTheme.titleMedium?.copyWith(
-                            color: isDark ? BrandColors.softWhite : BrandColors.ink,
-                            fontWeight: FontWeight.w600,
-                          ),
+                        Row(
+                          children: [
+                            if (isUnread) ...[
+                              Container(
+                                width: 8,
+                                height: 8,
+                                decoration: BoxDecoration(
+                                  color: color,
+                                  shape: BoxShape.circle,
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                            ],
+                            Expanded(
+                              child: Text(
+                                widget.card.displayName,
+                                style: theme.textTheme.titleMedium?.copyWith(
+                                  color: isDark ? BrandColors.softWhite : BrandColors.ink,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                         const SizedBox(height: 2),
                         Text(

@@ -371,22 +371,27 @@ def _get_sandbox() -> Any | None:
         return None
 
 
-async def _write_initial_card(graph, agent_name: str, display_name: str, output_date: str) -> str:
+async def _write_initial_card(
+    graph, agent_name: str, display_name: str, output_date: str, card_type: str = "default",
+) -> str:
     """Write an initial 'running' Card to the graph. Returns card_id."""
-    card_id = f"{agent_name}:{output_date}"
+    card_id = f"{agent_name}:{card_type}:{output_date}"
     if graph is not None:
         try:
             await graph.execute_cypher(
                 "MERGE (c:Card {card_id: $card_id}) "
                 "SET c.agent_name = $agent_name, "
+                "    c.card_type = $card_type, "
                 "    c.display_name = $display_name, "
                 "    c.content = '', "
                 "    c.generated_at = $generated_at, "
                 "    c.status = 'running', "
-                "    c.date = $date",
+                "    c.date = $date, "
+                "    c.read_at = ''",
                 {
                     "card_id": card_id,
                     "agent_name": agent_name,
+                    "card_type": card_type,
                     "display_name": display_name,
                     "generated_at": datetime.now(timezone.utc).isoformat(),
                     "date": output_date,

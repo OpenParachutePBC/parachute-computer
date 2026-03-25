@@ -494,6 +494,48 @@ class DailyApiService {
     }
   }
 
+  /// Fetch all unread Card nodes within a 7-day window.
+  ///
+  /// Returns an empty list on error or if the server is unreachable.
+  Future<List<AgentCard>> fetchUnreadCards() async {
+    final uri = Uri.parse('$baseUrl/api/daily/cards/unread');
+    debugPrint('[DailyApiService] GET $uri');
+    try {
+      final response = await _client
+          .get(uri, headers: _headers)
+          .timeout(_timeout);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        debugPrint('[DailyApiService] fetchUnreadCards ${response.statusCode}');
+        return [];
+      }
+      final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+      final List<dynamic> data = decoded['cards'] as List<dynamic>? ?? [];
+      return data
+          .map((j) => AgentCard.fromJson(j as Map<String, dynamic>))
+          .toList();
+    } catch (e) {
+      debugPrint('[DailyApiService] fetchUnreadCards error: $e');
+      return [];
+    }
+  }
+
+  /// Mark a card as read by setting its read_at timestamp.
+  ///
+  /// Returns true on success, false on error.
+  Future<bool> markCardRead(String cardId) async {
+    final uri = Uri.parse('$baseUrl/api/daily/cards/$cardId/read');
+    debugPrint('[DailyApiService] POST $uri');
+    try {
+      final response = await _client
+          .post(uri, headers: _headers)
+          .timeout(_timeout);
+      return response.statusCode >= 200 && response.statusCode < 300;
+    } catch (e) {
+      debugPrint('[DailyApiService] markCardRead error: $e');
+      return false;
+    }
+  }
+
   /// Fetch all configured Agent nodes from the server.
   ///
   /// Returns an empty list on error or if the server is unreachable.

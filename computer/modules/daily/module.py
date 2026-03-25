@@ -1895,6 +1895,40 @@ class DailyModule:
                 )
             return {"cards": rows, "count": len(rows)}
 
+        @router.get("/cards/unread")
+        async def list_unread_cards():
+            """Fetch all unread cards within a 7-day window."""
+            graph = self._get_graph()
+            if graph is None:
+                return JSONResponse(status_code=503, content={"error": "BrainDB not available"})
+            cutoff = (_date.today() - timedelta(days=7)).isoformat()
+            rows = await graph.execute_cypher(
+                "MATCH (c:Card) "
+                "WHERE (c.read_at IS NULL OR c.read_at = '') "
+                "AND c.status = 'done' "
+                "AND c.date >= $cutoff "
+                "RETURN c ORDER BY c.date DESC, c.generated_at DESC",
+                {"cutoff": cutoff},
+            )
+            return {"cards": rows, "count": len(rows)}
+
+        @router.post("/cards/{card_id:path}/read")
+        async def mark_card_read(card_id: str):
+            """Set read_at timestamp on a card."""
+            graph = self._get_graph()
+            if graph is None:
+                return JSONResponse(status_code=503, content={"error": "BrainDB not available"})
+            now = datetime.now(timezone.utc).isoformat()
+            rows = await graph.execute_cypher(
+                "MATCH (c:Card {card_id: $card_id}) "
+                "SET c.read_at = $now "
+                "RETURN c.card_id AS card_id",
+                {"card_id": card_id, "now": now},
+            )
+            if not rows:
+                return JSONResponse(status_code=404, content={"error": "card not found"})
+            return {"card_id": card_id, "read_at": now}
+
         @router.get("/cards/{agent_name}")
         async def get_card(agent_name: str, date: str | None = Query(None)):
             """Get a specific agent's card, optionally filtered to a specific date."""
@@ -1917,6 +1951,62 @@ class DailyModule:
             if not rows:
                 return JSONResponse(status_code=404, content={"error": "not found"})
             return rows[0] if date else {"cards": rows, "count": len(rows)}
+
+        @router.post("/cards/write", status_code=201)
+        async def write_card(body: dict):
+            """Write a Card to the graph (used by container-side daily tools MCP).
+
+            Body: { agent_name, date, content, display_name?, card_type? }
+            """
+            graph = self._get_graph()
+            if graph is None:
+                return JSONResponse(status_code=503, content={"error": "BrainDB not available"})
+            agent_name = body.get("agent_name", "").strip()
+            date_str = body.get("date", "").strip()
+            content = body.get("content", "").strip()
+            card_type = (body.get("card_type") or "default").strip()
+            if not agent_name or not date_str or not content:
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": "agent_name, date, and content are required"},
+                )
+            if not re.fullmatch(r"[a-z0-9][a-z0-9\-]{0,63}", agent_name):
+                return JSONResponse(status_code=400, content={"error": "invalid agent_name format"})
+            if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_str):
+                return JSONResponse(status_code=400, content={"error": "invalid date format"})
+            if not re.fullmatch(r"[a-z0-9][a-z0-9\-]{0,31}", card_type):
+                return JSONResponse(status_code=400, content={"error": "invalid card_type format"})
+            # Verify agent_name corresponds to a known Agent
+            agent_rows = await graph.execute_cypher(
+                "MATCH (a:Agent {name: $name}) RETURN a.name",
+                {"name": agent_name},
+            )
+            if not agent_rows:
+                return JSONResponse(status_code=403, content={"error": "unknown agent"})
+            card_id = f"{agent_name}:{card_type}:{date_str}"
+            display_name = body.get("display_name") or agent_name.replace("-", " ").title()
+            generated_at = datetime.now(timezone.utc).isoformat()
+            await graph.execute_cypher(
+                "MERGE (c:Card {card_id: $card_id}) "
+                "SET c.agent_name = $agent_name, "
+                "    c.card_type = $card_type, "
+                "    c.display_name = $display_name, "
+                "    c.content = $content, "
+                "    c.generated_at = $generated_at, "
+                "    c.status = 'done', "
+                "    c.date = $date, "
+                "    c.read_at = ''",
+                {
+                    "card_id": card_id,
+                    "agent_name": agent_name,
+                    "card_type": card_type,
+                    "display_name": display_name,
+                    "content": content,
+                    "generated_at": generated_at,
+                    "date": date_str,
+                },
+            )
+            return {"card_id": card_id, "status": "done", "date": date_str}
 
         @router.post("/cards/{agent_name}/run", status_code=202)
         async def run_card(
@@ -1957,56 +2047,6 @@ class DailyModule:
             except Exception as e:
                 logger.warning(f"Failed to get latest run for {agent_name}: {e}")
                 return JSONResponse(status_code=500, content={"error": str(e)})
-
-        @router.post("/cards/write", status_code=201)
-        async def write_card(body: dict):
-            """Write a Card to the graph (used by container-side daily tools MCP).
-
-            Body: { agent_name, date, content, display_name? }
-            """
-            graph = self._get_graph()
-            if graph is None:
-                return JSONResponse(status_code=503, content={"error": "BrainDB not available"})
-            agent_name = body.get("agent_name", "").strip()
-            date_str = body.get("date", "").strip()
-            content = body.get("content", "").strip()
-            if not agent_name or not date_str or not content:
-                return JSONResponse(
-                    status_code=400,
-                    content={"error": "agent_name, date, and content are required"},
-                )
-            if not re.fullmatch(r"[a-z0-9][a-z0-9\-]{0,63}", agent_name):
-                return JSONResponse(status_code=400, content={"error": "invalid agent_name format"})
-            if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_str):
-                return JSONResponse(status_code=400, content={"error": "invalid date format"})
-            # Verify agent_name corresponds to a known Agent
-            agent_rows = await graph.execute_cypher(
-                "MATCH (a:Agent {name: $name}) RETURN a.name",
-                {"name": agent_name},
-            )
-            if not agent_rows:
-                return JSONResponse(status_code=403, content={"error": "unknown agent"})
-            card_id = f"{agent_name}:{date_str}"
-            display_name = body.get("display_name") or agent_name.replace("-", " ").title()
-            generated_at = datetime.now(timezone.utc).isoformat()
-            await graph.execute_cypher(
-                "MERGE (c:Card {card_id: $card_id}) "
-                "SET c.agent_name = $agent_name, "
-                "    c.display_name = $display_name, "
-                "    c.content = $content, "
-                "    c.generated_at = $generated_at, "
-                "    c.status = 'done', "
-                "    c.date = $date",
-                {
-                    "card_id": card_id,
-                    "agent_name": agent_name,
-                    "display_name": display_name,
-                    "content": content,
-                    "generated_at": generated_at,
-                    "date": date_str,
-                },
-            )
-            return {"card_id": card_id, "status": "done", "date": date_str}
 
         # ── Agents (autonomous agent definitions) ─────────────────────────────
         # IMPORTANT: /agents/templates must be registered before /agents/{name}
