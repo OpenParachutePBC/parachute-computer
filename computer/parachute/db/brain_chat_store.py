@@ -10,12 +10,13 @@ Schema:
   - Parachute_PairingRequest: bot pairing requests
   - Parachute_KV: key-value metadata store
 
-Tags and context folders are stored as JSON arrays on the session node
-(simpler than separate rel tables for a personal-scale tool).
+Tags are graph-native: Tag nodes with TAGGED_WITH edges to any entity type.
+Context folders are stored as JSON arrays on the session node.
 """
 
 import json
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional, TypedDict, Union
 
@@ -137,6 +138,15 @@ class BrainChatStore:
     Drop-in replacement for Database (SQLite/aiosqlite). Uses BrainService for
     all Kuzu access. The BrainService write_lock serializes writes.
     """
+
+    # Mapping from API entity_type string to (graph table name, primary key column)
+    TAG_ENTITY_TYPES: dict[str, tuple[str, str]] = {
+        "chat": ("Chat", "session_id"),
+        "note": ("Note", "entry_id"),
+        "card": ("Card", "card_id"),
+        "entity": ("Brain_Entity", "name"),
+        "agent": ("Agent", "name"),
+    }
 
     def __init__(self, graph: BrainService):
         self.graph = graph
@@ -335,10 +345,63 @@ class BrainChatStore:
         )
         await self.graph.ensure_rel_table("HAS_MESSAGE", "Chat", "Message")
 
+        # ── Brain entities (open ontology — created here so Tag edges work) ───
+        await self.graph.ensure_node_table(
+            "Brain_Entity",
+            {
+                "name": "STRING",
+                "entity_type": "STRING",
+                "description": "STRING",
+                "created_at": "STRING",
+                "updated_at": "STRING",
+            },
+            primary_key="name",
+        )
+
+        # ── Tags ──────────────────────────────────────────────────────────────
+        await self.graph.ensure_node_table(
+            "Tag",
+            {
+                "name": "STRING",
+                "description": "STRING",
+                "created_at": "STRING",
+            },
+            primary_key="name",
+        )
+        await self._ensure_tagged_with_rel_table()
+
         # ── Column migrations ────────────────────────────────────────────────
         await self._ensure_column_migrations()
 
         logger.info("BrainChatStore: schema ready")
+
+    async def _ensure_tagged_with_rel_table(self) -> None:
+        """Create the TAGGED_WITH relationship table with multiple source types.
+
+        Kuzu 0.8.0+ supports multiple FROM/TO pairs in a single rel table.
+        Falls back to separate per-type tables if multi-source DDL fails.
+        """
+        source_tables = ["Chat", "Note", "Card", "Brain_Entity", "Agent"]
+        try:
+            from_clauses = ", ".join(f"FROM {t} TO Tag" for t in source_tables)
+            ddl = (
+                f"CREATE REL TABLE IF NOT EXISTS TAGGED_WITH "
+                f"({from_clauses}, tagged_at STRING, tagged_by STRING)"
+            )
+            async with self.graph.write_lock:
+                await self.graph._execute(ddl)
+            logger.debug("BrainChatStore: ensured TAGGED_WITH rel table (multi-source)")
+        except Exception as e:
+            logger.warning(f"Multi-source TAGGED_WITH failed ({e}), falling back to per-type tables")
+            for table in source_tables:
+                try:
+                    await self.graph.ensure_rel_table(
+                        f"{table}_TAGGED_WITH", table, "Tag",
+                        {"tagged_at": "STRING", "tagged_by": "STRING"},
+                    )
+                except Exception as e2:
+                    # Brain_Entity may not exist yet — that's fine
+                    logger.debug(f"Skipped {table}_TAGGED_WITH: {e2}")
 
     async def _ensure_column_migrations(self) -> None:
         """Add columns introduced after initial table creation.
@@ -1079,83 +1142,180 @@ class BrainChatStore:
                     params,
                 )
 
-    # ── Session Tags ──────────────────────────────────────────────────────────
+    # ── Tags (graph-native) ─────────────────────────────────────────────────
 
-    async def add_tag(self, session_id: str, tag: str) -> None:
-        """Add a tag to a session."""
+    _TAG_VALIDATE_RE = re.compile(r"[a-z0-9][a-z0-9\-]{0,47}")
+
+    def _resolve_entity(self, entity_type: str) -> tuple[str, str]:
+        """Return (table_name, pk_column) for an entity_type string."""
+        entry = self.TAG_ENTITY_TYPES.get(entity_type)
+        if not entry:
+            raise ValueError(f"Unknown entity type: {entity_type}")
+        return entry
+
+    async def add_tag(
+        self,
+        entity_type: str,
+        entity_id: str,
+        tag: str,
+        tagged_by: str = "user",
+    ) -> None:
+        """Add a tag to any entity via a TAGGED_WITH graph edge."""
         tag = tag.lower().strip()
-        rows = await self.graph.execute_cypher(
-            "MATCH (s:Chat {session_id: $session_id}) RETURN s.tags_json",
-            {"session_id": session_id},
-        )
-        if not rows:
-            return
-        tags: list[str] = json.loads(rows[0].get("s.tags_json") or "[]")
-        if tag not in tags:
-            tags.append(tag)
-            async with self.graph.write_lock:
+        if not tag or not self._TAG_VALIDATE_RE.fullmatch(tag):
+            raise ValueError(f"Invalid tag: {tag!r}")
+        table, pk_col = self._resolve_entity(entity_type)
+        now = _now()
+
+        async with self.graph.write_lock:
+            # Ensure Tag node exists
+            await self.graph._execute(
+                "MERGE (t:Tag {name: $tag}) "
+                "ON CREATE SET t.created_at = $now, t.description = ''",
+                {"tag": tag, "now": now},
+            )
+            # Check if edge already exists
+            rows = await self.graph._execute(
+                f"MATCH (e:{table} {{{pk_col}: $eid}})-[:TAGGED_WITH]->(t:Tag {{name: $tag}}) "
+                "RETURN t.name",
+                {"eid": entity_id, "tag": tag},
+            )
+            if not rows:
                 await self.graph._execute(
-                    "MATCH (s:Chat {session_id: $session_id}) "
-                    "SET s.tags_json = $tags_json",
-                    {"session_id": session_id, "tags_json": json.dumps(tags)},
+                    f"MATCH (e:{table} {{{pk_col}: $eid}}), (t:Tag {{name: $tag}}) "
+                    "CREATE (e)-[:TAGGED_WITH {tagged_at: $now, tagged_by: $by}]->(t)",
+                    {"eid": entity_id, "tag": tag, "now": now, "by": tagged_by},
                 )
 
-    async def remove_tag(self, session_id: str, tag: str) -> None:
-        """Remove a tag from a session."""
+    async def remove_tag(
+        self, entity_type: str, entity_id: str, tag: str
+    ) -> None:
+        """Remove a tag edge from an entity. Cleans up orphan Tag nodes."""
         tag = tag.lower().strip()
-        rows = await self.graph.execute_cypher(
-            "MATCH (s:Chat {session_id: $session_id}) RETURN s.tags_json",
-            {"session_id": session_id},
-        )
-        if not rows:
-            return
-        tags: list[str] = json.loads(rows[0].get("s.tags_json") or "[]")
-        tags = [t for t in tags if t != tag]
+        table, pk_col = self._resolve_entity(entity_type)
+
         async with self.graph.write_lock:
             await self.graph._execute(
-                "MATCH (s:Chat {session_id: $session_id}) "
-                "SET s.tags_json = $tags_json",
-                {"session_id": session_id, "tags_json": json.dumps(tags)},
+                f"MATCH (e:{table} {{{pk_col}: $eid}})-[r:TAGGED_WITH]->(t:Tag {{name: $tag}}) "
+                "DELETE r",
+                {"eid": entity_id, "tag": tag},
             )
+        # Clean up orphan tag (no remaining edges)
+        await self._delete_orphan_tag(tag)
+
+    async def get_entity_tags(
+        self, entity_type: str, entity_id: str
+    ) -> list[str]:
+        """Get all tags for an entity, sorted alphabetically."""
+        table, pk_col = self._resolve_entity(entity_type)
+        rows = await self.graph.execute_cypher(
+            f"MATCH (e:{table} {{{pk_col}: $eid}})-[:TAGGED_WITH]->(t:Tag) "
+            "RETURN t.name AS name ORDER BY t.name",
+            {"eid": entity_id},
+        )
+        return [r["name"] for r in rows]
+
+    async def get_entities_by_tag(
+        self,
+        tag: str,
+        entity_type: str | None = None,
+        limit: int = 100,
+    ) -> list[dict]:
+        """Get all entities with a given tag. Optionally filter by type."""
+        tag = tag.lower().strip()
+        if entity_type:
+            table, pk_col = self._resolve_entity(entity_type)
+            rows = await self.graph.execute_cypher(
+                f"MATCH (e:{table})-[r:TAGGED_WITH]->(t:Tag {{name: $tag}}) "
+                f"RETURN e, r.tagged_at AS tagged_at LIMIT $limit",
+                {"tag": tag, "limit": limit},
+            )
+            return [
+                {**r, "entity_type": entity_type}
+                for r in rows
+            ]
+        # Cross-entity: query each type and merge
+        results: list[dict] = []
+        for etype, (table, pk_col) in self.TAG_ENTITY_TYPES.items():
+            try:
+                rows = await self.graph.execute_cypher(
+                    f"MATCH (e:{table})-[r:TAGGED_WITH]->(t:Tag {{name: $tag}}) "
+                    f"RETURN e, r.tagged_at AS tagged_at",
+                    {"tag": tag},
+                )
+                for r in rows:
+                    results.append({**r, "entity_type": etype})
+            except Exception:
+                # Table may not exist yet (e.g. Brain_Entity)
+                continue
+            if len(results) >= limit:
+                break
+        return results[:limit]
+
+    async def list_all_tags(self) -> list[dict]:
+        """List all tags with usage counts, sorted by frequency."""
+        rows = await self.graph.execute_cypher(
+            "MATCH (t:Tag)<-[r:TAGGED_WITH]-() "
+            "RETURN t.name AS name, t.description AS description, COUNT(r) AS count "
+            "ORDER BY count DESC, name ASC"
+        )
+        return [{"tag": r["name"], "description": r.get("description", ""), "count": r["count"]} for r in rows]
+
+    async def _delete_orphan_tag(self, tag: str) -> None:
+        """Delete a Tag node if it has no remaining TAGGED_WITH edges."""
+        rows = await self.graph.execute_cypher(
+            "MATCH (t:Tag {name: $tag})<-[:TAGGED_WITH]-() RETURN COUNT(*) AS cnt",
+            {"tag": tag},
+        )
+        if rows and rows[0].get("cnt", 0) == 0:
+            async with self.graph.write_lock:
+                await self.graph._execute(
+                    "MATCH (t:Tag {name: $tag}) DELETE t",
+                    {"tag": tag},
+                )
+
+    async def delete_orphan_tags(self) -> int:
+        """Delete all Tag nodes with zero TAGGED_WITH edges. Returns count deleted."""
+        rows = await self.graph.execute_cypher(
+            "MATCH (t:Tag) WHERE NOT EXISTS { MATCH (t)<-[:TAGGED_WITH]-() } "
+            "RETURN t.name AS name"
+        )
+        count = 0
+        for r in rows:
+            async with self.graph.write_lock:
+                await self.graph._execute(
+                    "MATCH (t:Tag {name: $name}) DELETE t",
+                    {"name": r["name"]},
+                )
+                count += 1
+        return count
+
+    # ── Backward-compatible session tag helpers ──────────────────────────────
+    # These wrap the generic tag methods for the existing Chat-specific API.
+
+    async def add_session_tag(self, session_id: str, tag: str) -> None:
+        """Add a tag to a chat session (backward compat)."""
+        await self.add_tag("chat", session_id, tag)
+
+    async def remove_session_tag(self, session_id: str, tag: str) -> None:
+        """Remove a tag from a chat session (backward compat)."""
+        await self.remove_tag("chat", session_id, tag)
 
     async def get_session_tags(self, session_id: str) -> list[str]:
-        """Get all tags for a session."""
-        rows = await self.graph.execute_cypher(
-            "MATCH (s:Chat {session_id: $session_id}) RETURN s.tags_json",
-            {"session_id": session_id},
-        )
-        if not rows:
-            return []
-        return sorted(json.loads(rows[0].get("s.tags_json") or "[]"))
+        """Get tags for a chat session (backward compat)."""
+        return await self.get_entity_tags("chat", session_id)
 
     async def get_sessions_by_tag(
         self, tag: str, limit: int = 100
     ) -> list[Session]:
-        """Get all sessions with a specific tag."""
+        """Get sessions with a specific tag (backward compat)."""
         tag = tag.lower().strip()
-        all_sessions = await self.graph.execute_cypher(
-            "MATCH (s:Chat) RETURN s ORDER BY s.last_accessed DESC"
+        rows = await self.graph.execute_cypher(
+            "MATCH (s:Chat)-[:TAGGED_WITH]->(t:Tag {name: $tag}) "
+            "RETURN s ORDER BY s.last_accessed DESC LIMIT $limit",
+            {"tag": tag, "limit": limit},
         )
-        result = []
-        for row in all_sessions:
-            tags = json.loads(row.get("tags_json") or "[]")
-            if tag in tags:
-                result.append(self._node_to_session(row))
-                if len(result) >= limit:
-                    break
-        return result
-
-    async def list_all_tags(self) -> list[tuple[str, int]]:
-        """List all tags with their usage counts."""
-        all_sessions = await self.graph.execute_cypher(
-            "MATCH (s:Chat) RETURN s.tags_json"
-        )
-        counts: dict[str, int] = {}
-        for row in all_sessions:
-            tags = json.loads(row.get("s.tags_json") or "[]")
-            for tag in tags:
-                counts[tag] = counts.get(tag, 0) + 1
-        return sorted(counts.items(), key=lambda x: (-x[1], x[0]))
+        return [self._node_to_session(r) for r in rows]
 
     # ── Session Context Folders ───────────────────────────────────────────────
 
