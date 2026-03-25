@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
+import 'package:parachute/core/widgets/tag_input.dart';
 import '../models/journal_entry.dart';
 import 'journal_entry_row.dart' show EntrySaveState;
 
@@ -35,7 +36,6 @@ class _EntryEditModalState extends State<EntryEditModal>
     with WidgetsBindingObserver {
   late TextEditingController _contentController;
   late TextEditingController _titleController;
-  late TextEditingController _tagInputController;
   final FocusNode _contentFocusNode = FocusNode();
   late List<String> _tags;
 
@@ -51,7 +51,6 @@ class _EntryEditModalState extends State<EntryEditModal>
     WidgetsBinding.instance.addObserver(this);
     _contentController = TextEditingController(text: widget.entry.content);
     _titleController = TextEditingController(text: widget.entry.title);
-    _tagInputController = TextEditingController();
     _tags = List<String>.from(widget.entry.tags ?? []);
 
     _contentController.addListener(_onContentChanged);
@@ -69,7 +68,6 @@ class _EntryEditModalState extends State<EntryEditModal>
     _draftSaveTimer?.cancel();
     _contentController.dispose();
     _titleController.dispose();
-    _tagInputController.dispose();
     _contentFocusNode.dispose();
     super.dispose();
   }
@@ -591,122 +589,16 @@ class _EntryEditModalState extends State<EntryEditModal>
   }
 
   Widget _buildTagPicker(ThemeData theme, bool isDark) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // Display current tags as chips
-        if (_tags.isNotEmpty)
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              for (final tag in _tags)
-                Chip(
-                  label: Text(tag),
-                  onDeleted: () {
-                    setState(() {
-                      _tags.remove(tag);
-                      _hasChanges = true;
-                    });
-                  },
-                  backgroundColor: isDark
-                      ? BrandColors.charcoal.withValues(alpha: 0.5)
-                      : BrandColors.stone.withValues(alpha: 0.3),
-                  labelStyle: theme.textTheme.bodySmall?.copyWith(
-                    color: isDark ? BrandColors.softWhite : BrandColors.ink,
-                  ),
-                  deleteIconColor:
-                      isDark ? BrandColors.softWhite : BrandColors.ink,
-                ),
-            ],
-          ),
-        if (_tags.isNotEmpty) const SizedBox(height: 12),
-        // Tag input field
-        Row(
-          children: [
-            Expanded(
-              child: TextField(
-                controller: _tagInputController,
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: isDark ? BrandColors.softWhite : BrandColors.ink,
-                ),
-                decoration: InputDecoration(
-                  hintText: 'Add a tag (e.g., "recipe", "work")...',
-                  hintStyle: TextStyle(
-                    color: BrandColors.driftwood,
-                  ),
-                  isDense: true,
-                  contentPadding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                    borderSide: BorderSide(
-                      color: isDark ? BrandColors.charcoal : BrandColors.stone,
-                    ),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                    borderSide: BorderSide(
-                      color: isDark ? BrandColors.charcoal : BrandColors.stone,
-                    ),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                    borderSide: BorderSide(
-                      color: BrandColors.turquoise,
-                      width: 2,
-                    ),
-                  ),
-                ),
-                onSubmitted: (value) {
-                  _addTag(value.trim());
-                },
-              ),
-            ),
-            const SizedBox(width: 8),
-            SizedBox(
-              height: 40,
-              child: ElevatedButton(
-                onPressed: () {
-                  _addTag(_tagInputController.text.trim());
-                },
-                style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  backgroundColor: BrandColors.turquoise,
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                ),
-                child: const Text('Add'),
-              ),
-            ),
-          ],
-        ),
-      ],
+    return TagInput(
+      tags: _tags,
+      onChanged: (updated) {
+        setState(() {
+          _tags = updated;
+          _hasChanges = true;
+        });
+      },
+      hintText: 'Add a tag (e.g., "recipe", "work")...',
     );
   }
 
-  void _addTag(String tag) {
-    if (tag.isEmpty) return;
-
-    // Normalize tag: lowercase, no spaces, hyphenated
-    final normalizedTag = tag.toLowerCase().replaceAll(' ', '-');
-
-    if (!_tags.contains(normalizedTag)) {
-      setState(() {
-        _tags.add(normalizedTag);
-        _tagInputController.clear();
-        _hasChanges = true;
-      });
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Tag "$normalizedTag" already added'),
-          duration: const Duration(seconds: 2),
-          backgroundColor: BrandColors.warning.withValues(alpha: 0.8),
-        ),
-      );
-    }
-  }
 }
