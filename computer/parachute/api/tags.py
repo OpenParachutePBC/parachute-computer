@@ -14,7 +14,8 @@ from parachute.db.brain_chat_store import BrainChatStore
 
 router = APIRouter(prefix="/tags")
 
-_TAG_RE = re.compile(r"[a-z0-9][a-z0-9\-]{0,47}")
+_TAG_RE = re.compile(r"[a-z0-9](?:[a-z0-9\-]{0,46}[a-z0-9])?")
+_VALID_TAGGED_BY = {"user", "agent", "api"}
 
 
 def _get_store(request: Request) -> BrainChatStore:
@@ -98,6 +99,11 @@ async def add_entity_tag(
             detail="Invalid tag format — lowercase alphanumeric with hyphens, max 48 chars",
         )
     tagged_by = body.get("tagged_by", "user")
+    if tagged_by not in _VALID_TAGGED_BY:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid tagged_by: {tagged_by!r}. Valid: {', '.join(sorted(_VALID_TAGGED_BY))}",
+        )
     try:
         await db.add_tag(entity_type, entity_id, tag, tagged_by=tagged_by)
     except ValueError as e:

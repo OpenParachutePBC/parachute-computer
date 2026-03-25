@@ -1228,7 +1228,8 @@ class BrainChatStore:
 
     # ── Tags (graph-native) ─────────────────────────────────────────────────
 
-    _TAG_VALIDATE_RE = re.compile(r"[a-z0-9][a-z0-9\-]{0,47}")
+    _TAG_VALIDATE_RE = re.compile(r"[a-z0-9](?:[a-z0-9\-]{0,46}[a-z0-9])?")
+    _VALID_TAGGED_BY = {"user", "agent", "migration", "api"}
 
     def _resolve_entity(self, entity_type: str) -> tuple[str, str]:
         """Return (table_name, pk_column) for an entity_type string."""
@@ -1248,6 +1249,8 @@ class BrainChatStore:
         tag = tag.lower().strip()
         if not tag or not self._TAG_VALIDATE_RE.fullmatch(tag):
             raise ValueError(f"Invalid tag: {tag!r}")
+        if tagged_by not in self._VALID_TAGGED_BY:
+            raise ValueError(f"Invalid tagged_by: {tagged_by!r}. Valid: {self._VALID_TAGGED_BY}")
         table, pk_col = self._resolve_entity(entity_type)
         now = _now()
 
@@ -1258,13 +1261,13 @@ class BrainChatStore:
                 "ON CREATE SET t.created_at = $now, t.description = ''",
                 {"tag": tag, "now": now},
             )
-            # Check if edge already exists
-            rows = await self.graph._execute(
+            # Check if edge already exists (execute_cypher returns list[dict])
+            existing = await self.graph.execute_cypher(
                 f"MATCH (e:{table} {{{pk_col}: $eid}})-[:TAGGED_WITH]->(t:Tag {{name: $tag}}) "
                 "RETURN t.name",
                 {"eid": entity_id, "tag": tag},
             )
-            if not rows:
+            if not existing:
                 await self.graph._execute(
                     f"MATCH (e:{table} {{{pk_col}: $eid}}), (t:Tag {{name: $tag}}) "
                     "CREATE (e)-[:TAGGED_WITH {tagged_at: $now, tagged_by: $by}]->(t)",
@@ -1347,32 +1350,16 @@ class BrainChatStore:
 
     async def _delete_orphan_tag(self, tag: str) -> None:
         """Delete a Tag node if it has no remaining TAGGED_WITH edges."""
-        rows = await self.graph.execute_cypher(
-            "MATCH (t:Tag {name: $tag})<-[:TAGGED_WITH]-() RETURN COUNT(*) AS cnt",
-            {"tag": tag},
-        )
-        if rows and rows[0].get("cnt", 0) == 0:
-            async with self.graph.write_lock:
+        async with self.graph.write_lock:
+            rows = await self.graph.execute_cypher(
+                "MATCH (t:Tag {name: $tag})<-[:TAGGED_WITH]-() RETURN COUNT(*) AS cnt",
+                {"tag": tag},
+            )
+            if rows and rows[0].get("cnt", 0) == 0:
                 await self.graph._execute(
-                    "MATCH (t:Tag {name: $tag}) DELETE t",
+                    "MATCH (t:Tag {name: $tag}) DETACH DELETE t",
                     {"tag": tag},
                 )
-
-    async def delete_orphan_tags(self) -> int:
-        """Delete all Tag nodes with zero TAGGED_WITH edges. Returns count deleted."""
-        rows = await self.graph.execute_cypher(
-            "MATCH (t:Tag) WHERE NOT EXISTS { MATCH (t)<-[:TAGGED_WITH]-() } "
-            "RETURN t.name AS name"
-        )
-        count = 0
-        for r in rows:
-            async with self.graph.write_lock:
-                await self.graph._execute(
-                    "MATCH (t:Tag {name: $name}) DELETE t",
-                    {"name": r["name"]},
-                )
-                count += 1
-        return count
 
     # ── Backward-compatible session tag helpers ──────────────────────────────
     # These wrap the generic tag methods for the existing Chat-specific API.

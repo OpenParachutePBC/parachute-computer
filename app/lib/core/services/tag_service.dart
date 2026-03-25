@@ -1,6 +1,24 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
+import 'package:parachute/core/config/app_config.dart';
+import 'package:parachute/core/providers/app_state_provider.dart'
+    show apiKeyProvider;
+import 'package:parachute/core/providers/feature_flags_provider.dart'
+    show aiServerUrlProvider;
+
+/// Riverpod provider for [TagService] — mirrors dailyApiServiceProvider pattern.
+final tagServiceProvider = Provider<TagService>((ref) {
+  final urlAsync = ref.watch(aiServerUrlProvider);
+  final baseUrl = urlAsync.valueOrNull ?? AppConfig.defaultServerUrl;
+  final apiKeyAsync = ref.watch(apiKeyProvider);
+  final apiKey = apiKeyAsync.valueOrNull;
+
+  final service = TagService(baseUrl: baseUrl, apiKey: apiKey);
+  ref.onDispose(() => service.dispose());
+  return service;
+});
 
 /// Client for the universal tag API at /api/tags/.
 ///
@@ -14,6 +32,9 @@ class TagService {
 
   TagService({required this.baseUrl, this.apiKey})
       : _client = http.Client();
+
+  /// Close the underlying HTTP client.
+  void dispose() => _client.close();
 
   Map<String, String> get _headers => {
         'Content-Type': 'application/json',

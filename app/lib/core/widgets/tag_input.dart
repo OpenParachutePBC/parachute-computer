@@ -49,7 +49,7 @@ class _TagInputState extends State<TagInput> {
     if (raw.isEmpty) return;
     final tag = raw.toLowerCase().replaceAll(' ', '-');
     // Validate: alphanumeric + hyphens, max 48 chars
-    if (!RegExp(r'^[a-z0-9][a-z0-9\-]{0,47}$').hasMatch(tag)) {
+    if (!RegExp(r'^[a-z0-9](?:[a-z0-9\-]{0,46}[a-z0-9])?$').hasMatch(tag)) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Tags must be lowercase letters, numbers, and hyphens'),
