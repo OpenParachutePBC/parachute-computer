@@ -9,6 +9,7 @@ the old monolithic tool creation pattern.
 """
 
 import logging
+import re
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
@@ -185,6 +186,8 @@ def _make_write_card(graph: Any, scope: dict, agent_name: str, home_path: Path) 
             return {"content": [{"type": "text", "text": "Error: date is required"}], "is_error": True}
         if not content:
             return {"content": [{"type": "text", "text": "Error: content is required"}], "is_error": True}
+        if not re.fullmatch(r"[a-z0-9][a-z0-9\-]{0,31}", card_type):
+            return {"content": [{"type": "text", "text": "Error: invalid card_type — use lowercase alphanumeric with hyphens, max 32 chars"}], "is_error": True}
         if graph is None:
             return {"content": [{"type": "text", "text": "Error: graph unavailable — cannot write output"}], "is_error": True}
 

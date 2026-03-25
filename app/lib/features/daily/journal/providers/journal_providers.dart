@@ -325,7 +325,7 @@ final cardsProvider = FutureProvider.autoDispose
 /// Used for the "Unread from past days" section on today's journal page
 /// and the unread badge on the Daily nav tab.
 final unreadCardsProvider =
-    FutureProvider.autoDispose<List<AgentCard>>((ref) async {
+    FutureProvider<List<AgentCard>>((ref) async {
       ref.watch(journalRefreshTriggerProvider);
 
       final isAvailable = ref.watch(isServerAvailableProvider);

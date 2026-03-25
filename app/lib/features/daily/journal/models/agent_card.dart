@@ -64,16 +64,4 @@ class AgentCard {
   /// Whether the card is unread (read_at is null or empty).
   bool get isUnread => !isRead;
 
-  /// Return a copy with read_at set (for optimistic local updates).
-  AgentCard copyWithRead(String readAtTimestamp) => AgentCard(
-        cardId: cardId,
-        agentName: agentName,
-        displayName: displayName,
-        cardType: cardType,
-        content: content,
-        status: status,
-        generatedAt: generatedAt,
-        date: date,
-        readAt: readAtTimestamp,
-      );
 }

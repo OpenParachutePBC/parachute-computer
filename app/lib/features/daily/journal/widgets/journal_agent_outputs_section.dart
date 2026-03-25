@@ -111,7 +111,6 @@ class _FloatedUnreadSection extends ConsumerWidget {
         if (floated.isEmpty) return const SizedBox.shrink();
 
         final theme = Theme.of(context);
-        final isDark = theme.brightness == Brightness.dark;
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -132,13 +131,7 @@ class _FloatedUnreadSection extends ConsumerWidget {
             ),
             ...floated.map((card) => _FloatedCardWrapper(
                   card: card,
-                  isDark: isDark,
-                  onMarkRead: (cardId) {
-                    final api = ref.read(dailyApiServiceProvider);
-                    api.markCardRead(cardId).then((_) {
-                      ref.read(journalRefreshTriggerProvider.notifier).state++;
-                    });
-                  },
+                  onMarkRead: (cardId) => _markRead(ref, cardId),
                 )),
             SizedBox(height: Spacing.md),
           ],
@@ -146,17 +139,22 @@ class _FloatedUnreadSection extends ConsumerWidget {
       },
     );
   }
+
+  void _markRead(WidgetRef ref, String cardId) {
+    final api = ref.read(dailyApiServiceProvider);
+    api.markCardRead(cardId).then((_) {
+      ref.read(journalRefreshTriggerProvider.notifier).state++;
+    });
+  }
 }
 
 /// Wraps an [AgentOutputHeader] for a floated card, adding the source date.
 class _FloatedCardWrapper extends StatelessWidget {
   final AgentCard card;
-  final bool isDark;
   final void Function(String cardId) onMarkRead;
 
   const _FloatedCardWrapper({
     required this.card,
-    required this.isDark,
     required this.onMarkRead,
   });
 

@@ -159,6 +159,8 @@ async def _handle_write_card(arguments: dict[str, Any]) -> str:
         return json.dumps({"error": "Content cannot be empty"})
     if len(content) > 512 * 1024:
         return json.dumps({"error": "Content exceeds maximum size (512 KB)"})
+    if not re.fullmatch(r"[a-z0-9][a-z0-9\-]{0,31}", card_type):
+        return json.dumps({"error": "Invalid card_type — use lowercase alphanumeric with hyphens, max 32 chars"})
     if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_str):
         return json.dumps({"error": "Invalid date format. Use YYYY-MM-DD"})
 
