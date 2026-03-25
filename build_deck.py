@@ -112,7 +112,7 @@ def slide_body_start(slide, top=Inches(3.4)):
 
 
 # ═══════════════════════════════════════════════
-# SLIDE 1 — Title / The Mountain Dream
+# SLIDE 1 — We Shouldn't Have to Choose
 # ═══════════════════════════════════════════════
 s = prs.slides.add_slide(blank_layout)
 set_slide_bg(s)
@@ -121,11 +121,14 @@ add_text_box(s, Inches(1.2), Inches(0.8), Inches(4), Inches(0.4),
              "OPEN PARACHUTE, PBC", font_size=11, color=ACCENT, bold=True)
 
 add_text_box(s, Inches(1.2), Inches(2.0), Inches(10), Inches(2.5),
-             "I want to hike up a mountain,\nshare my ideas as I walk,\nand come back down\nto a working app.",
-             font_size=44, color=FG, font_name="Georgia", line_spacing=1.15)
+             "Technology should help us\nlive fully — not demand\nwe stop living to use it.",
+             font_size=48, color=FG, font_name="Georgia", line_spacing=1.12)
 
-add_text_box(s, Inches(1.2), Inches(5.2), Inches(8), Inches(1.0),
-             "That dream is closer to real than it's ever been.\nBut I also want to hold my nephew. Be outside. Live a full life.\nParachute exists because we shouldn't have to choose.",
+add_text_box(s, Inches(1.2), Inches(5.0), Inches(8), Inches(1.2),
+             "I want to hike up a mountain, share my ideas as I walk,\n"
+             "and come back down to a working app.\n"
+             "But I also want to hold my nephew. Be outside. Live a full life.\n"
+             "We shouldn't have to choose.",
              font_size=20, color=FG_MUTED, line_spacing=1.5)
 
 add_text_box(s, Inches(1.2), Inches(6.6), Inches(6), Inches(0.4),
@@ -145,19 +148,20 @@ slide_headline(s, "Everyone is building\npersonal AI computers.")
 # Body content
 left, top = Inches(1.2), Inches(3.5)
 add_text_box(s, left, top, Inches(10), Inches(1.0),
-             "OpenClaw — 300K+ GitHub stars in 3 months. Claude Cowork — recurring agents, messaging via Telegram.\nZoComputer. Perplexity Computer. Manus. The race is on.",
+             "Hundreds of millions of people already pay $20-200/month for AI tools.\n"
+             "OpenClaw — 300K+ stars in 3 months. Claude Cowork. ZoComputer. Perplexity Computer. Manus.",
              font_size=18, color=FG_MUTED, line_spacing=1.5)
 
 # Market stat
 add_text_box(s, Inches(1.2), Inches(5.2), Inches(3), Inches(1.2),
-             "$16B", font_size=64, color=ACCENT, font_name="Georgia")
-add_text_box(s, Inches(4.2), Inches(5.45), Inches(3), Inches(0.8),
-             "market today\n$268B by 2035 · 41% CAGR",
+             "$50B+", font_size=64, color=ACCENT, font_name="Georgia")
+add_text_box(s, Inches(4.5), Inches(5.45), Inches(5), Inches(0.8),
+             "agentic AI market by 2030 · 44% CAGR\nOpenAI alone projects $200B revenue by 2030",
              font_size=16, color=FG_MUTED, line_spacing=1.4)
 
 # The turn
 add_text_box(s, Inches(1.2), Inches(6.5), Inches(10), Inches(0.6),
-             "But they're all building for the 5% who are already bought in.",
+             "The question isn't whether this market exists — it's who they'll trust.",
              font_size=22, color=FG, bold=False, font_name="Georgia")
 
 
@@ -191,34 +195,37 @@ set_slide_bg(s)
 section_label(s, "The Solution")
 slide_headline(s, "Parachute Daily.\nJust talk.")
 
-add_text_box(s, Inches(1.2), Inches(3.5), Inches(5.5), Inches(3.5),
+add_text_box(s, Inches(1.2), Inches(3.5), Inches(5.5), Inches(2.8),
              "A voice-first journal.\n\n"
              "Speak into a wearable pendant or your phone —\n"
              "on a walk, in the car, wherever thinking happens.\n\n"
              "AI weaves through gently:\n"
              "  ·  Daily reflections on your entries\n"
              "  ·  Pattern recognition over time\n"
-             "  ·  Weekly synthesis of your thinking\n\n"
-             "No learning curve. No technical sophistication required.",
-             font_size=18, color=FG_MUTED, line_spacing=1.55)
+             "  ·  Weekly synthesis of your thinking",
+             font_size=18, color=FG_MUTED, line_spacing=1.5)
 
-# Pendant callout on the right
+add_text_box(s, Inches(1.2), Inches(6.5), Inches(5.5), Inches(0.5),
+             "No learning curve. No technical sophistication required.",
+             font_size=18, color=FG, line_spacing=1.2)
+
+# Pendant callout on the right — positioned to not overlap left text
 shape = s.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE,
-                           Inches(7.8), Inches(3.0), Inches(4.5), Inches(3.8))
+                           Inches(7.8), Inches(3.5), Inches(4.5), Inches(3.0))
 shape.fill.solid()
 shape.fill.fore_color.rgb = BG_SOFT
 shape.line.color.rgb = RGBColor(0xE4, 0xE0, 0xD8)
 shape.line.width = Pt(1)
 
-add_text_box(s, Inches(8.2), Inches(3.4), Inches(3.7), Inches(0.4),
+add_text_box(s, Inches(8.2), Inches(3.8), Inches(3.7), Inches(0.4),
              "THE PENDANT", font_size=11, color=ACCENT, bold=True)
-add_text_box(s, Inches(8.2), Inches(3.9), Inches(3.7), Inches(2.5),
+add_text_box(s, Inches(8.2), Inches(4.3), Inches(3.7), Inches(2.0),
              "Wearable voice capture device.\n\n"
              "Go for a walk. Talk.\n"
              "Your thoughts become structured\n"
              "knowledge by the time you're home.\n\n"
              "Working prototype on stage today.",
-             font_size=16, color=FG_MUTED, line_spacing=1.5)
+             font_size=16, color=FG_MUTED, line_spacing=1.45)
 
 
 # ═══════════════════════════════════════════════
@@ -294,9 +301,9 @@ section_label(s, "Business Model")
 slide_headline(s, "Start free.\nGrow with every user.")
 
 tiers = [
-    ("Free", "Offline journal, local transcription, no sync", FG_DIM),
-    ("$1-2/mo", "Cloud sync + transcription. AI starts here.", FG_MUTED),
-    ("$5/mo", "Daily reflections, synthesis, pattern surfacing — the sweet spot", ACCENT),
+    ("Free", "Offline journal + on-device transcription. Zero hosting cost.", FG_DIM),
+    ("$1-2/mo", "Cloud sync across devices. Your notes everywhere.", FG_MUTED),
+    ("$5/mo", "Cloud transcription + AI reflections, synthesis, pattern surfacing", ACCENT),
     ("$20/mo", "Hosted Parachute Computer — full agentic platform", FG),
 ]
 
@@ -319,7 +326,7 @@ for price, desc, col in tiers:
 
 add_text_box(s, Inches(1.2), Inches(6.3), Inches(10), Inches(0.8),
              "Free tier has zero hosting cost — no subsidizing free users.\n"
-             "AI inference at $2-5 tiers uses cost-efficient models (Nvidia Nemotron). Margins are real.",
+             "AI at $5/mo uses cost-efficient models. Margins are real and improve as model costs drop.",
              font_size=15, color=FG_DIM, line_spacing=1.5)
 
 
@@ -330,41 +337,39 @@ s = prs.slides.add_slide(blank_layout)
 set_slide_bg(s)
 
 section_label(s, "Team & Traction")
-slide_headline(s, "Small, capable, committed.")
+slide_headline(s, "Built from zero.\nSolo. No funding.")
 
-# Team
+# What exists
+add_text_box(s, Inches(1.2), Inches(3.5), Inches(5.5), Inches(3.0),
+             "What exists today:\n\n"
+             "  ·  Working server, app, and graph-native memory\n"
+             "  ·  Local voice transcription (fully offline)\n"
+             "  ·  Multi-agent system with trust tiers\n"
+             "  ·  Telegram, Discord, Matrix connectors\n"
+             "  ·  Functional pendant prototype\n"
+             "  ·  Beta launching next month\n"
+             "  ·  PBC incorporated in Colorado",
+             font_size=16, color=FG_MUTED, line_spacing=1.55)
+
+# Team on the right
+add_text_box(s, Inches(7.8), Inches(3.3), Inches(4), Inches(0.35),
+             "THE TEAM", font_size=11, color=ACCENT, bold=True)
+
 team = [
-    ("Aaron Gabriel Neyer", "Founder · Product & architecture · CU ATLAS"),
-    ("Jon Bo", "Daily co-lead · Founding engineer, multiple startups"),
-    ("Lucian Hymer", "Computer co-lead · Founding engineer, multiple startups"),
-    ("Marvin Melzer", "Hardware · Pendant prototype · ATLAS"),
+    ("Aaron Gabriel Neyer", "Founder · Product & architecture"),
+    ("Jon Bo", "Daily co-lead · Founding engineer"),
+    ("Lucian Hymer", "Computer co-lead · Founding engineer"),
+    ("Marvin Melzer", "Hardware · Pendant prototype"),
     ("Neil Yarnal", "Brand & design"),
 ]
 
-y = Inches(3.3)
+y = Inches(3.9)
 for name, role in team:
-    add_text_box(s, Inches(1.2), y, Inches(3.0), Inches(0.35),
-                 name, font_size=16, color=FG, bold=True)
-    add_text_box(s, Inches(4.2), y, Inches(5), Inches(0.35),
-                 role, font_size=14, color=FG_MUTED)
-    y += Inches(0.45)
-
-# Traction stats on the right
-stats = [
-    ("200+", "PRs merged\nsince January"),
-    ("300+", "Community\nmembers"),
-    ("13", "LVB cohort\nbuilders"),
-]
-
-x = Inches(8.5)
-for num, label in stats:
-    add_text_box(s, x, Inches(3.3), Inches(1.5), Inches(0.7),
-                 num, font_size=36, color=ACCENT, font_name="Georgia",
-                 alignment=PP_ALIGN.CENTER)
-    add_text_box(s, x, Inches(4.0), Inches(1.5), Inches(0.7),
-                 label, font_size=11, color=FG_DIM,
-                 alignment=PP_ALIGN.CENTER, line_spacing=1.3)
-    x += Inches(1.6)
+    add_text_box(s, Inches(7.8), y, Inches(4.5), Inches(0.3),
+                 name, font_size=14, color=FG, bold=True)
+    add_text_box(s, Inches(7.8), y + Inches(0.28), Inches(4.5), Inches(0.3),
+                 role, font_size=12, color=FG_MUTED)
+    y += Inches(0.6)
 
 
 # ═══════════════════════════════════════════════

@@ -9,7 +9,7 @@
 
 ## Opportunity Summary
 
-Personal agentic computing is the defining shift in how people interact with technology. In the last six months, tools like OpenClaw (300,000+ GitHub stars in three months), Claude Cowork, ZoComputer, and Perplexity Computer have validated that people want an AI that works for them — not just answering questions but taking action, managing tools, and learning who they are over time. This is a $16B market today, projected to reach $268B by 2035 at a 41% CAGR.
+Personal agentic computing is the defining shift in how people interact with technology. In the last six months, tools like OpenClaw (300,000+ GitHub stars in three months), Claude Cowork, ZoComputer, and Perplexity Computer have validated that people want an AI that works for them — not just answering questions but taking action, managing tools, and learning who they are over time. Hundreds of millions of people already pay $20-200/month for AI tools. The agentic AI market is projected to exceed $50B by 2030 at a 44% CAGR, and OpenAI alone projects $200B in annual revenue by that year.
 
 But nearly every player is building for the power user — the person already paying $20-200/month and comfortable handing an AI agent full access to their digital life. That's roughly 5% of the addressable market. The other 95% — artists, small business owners, everyday people who know AI could help but don't know where to start — have no accessible entry point into this future. Parachute bridges that gap with two products that form one journey: **Parachute Daily**, a voice-first journaling app that gently introduces AI into daily life, and **Parachute Computer**, a full open-source agentic platform. Daily builds the context that makes Computer powerful, creating a natural upgrade path and a compounding moat that no competitor can shortcut.
 
@@ -35,7 +35,7 @@ The personal AI space is crowded and accelerating. Key players include OpenClaw 
 
 ## Market and Customer Analysis
 
-The personal AI and productivity AI market is growing at 41% CAGR, from $16B today to $268B by 2035. Adjacent comparables demonstrate strong investor interest and viable business models: TwinMind ($5.7M raised at $60M valuation), Obsidian (~$25M ARR as a note-taking tool), Day One (~$4.8M ARR as a journaling app), and Mem.ai ($28.6M raised for AI-powered knowledge management).
+The personal AI and productivity AI market is growing at 44% CAGR, from projected to exceed $50B by 2030. Adjacent comparables demonstrate strong investor interest and viable business models: TwinMind ($5.7M raised at $60M valuation), Obsidian (~$25M ARR as a note-taking tool), Day One (~$4.8M ARR as a journaling app), and Mem.ai ($28.6M raised for AI-powered knowledge management).
 
 We target two customer segments through one funnel:
 
