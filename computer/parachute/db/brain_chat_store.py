@@ -373,6 +373,9 @@ class BrainChatStore:
         # ── Column migrations ────────────────────────────────────────────────
         await self._ensure_column_migrations()
 
+        # ── Tag migration (JSON arrays → graph edges) ────────────────────────
+        await self._migrate_tags_to_graph()
+
         logger.info("BrainChatStore: schema ready")
 
     async def _ensure_tagged_with_rel_table(self) -> None:
@@ -402,6 +405,87 @@ class BrainChatStore:
                 except Exception as e2:
                     # Brain_Entity may not exist yet — that's fine
                     logger.debug(f"Skipped {table}_TAGGED_WITH: {e2}")
+
+    async def _migrate_tags_to_graph(self) -> None:
+        """Migrate tags from JSON arrays to graph edges. Idempotent.
+
+        Reads Chat.tags_json and Note.metadata_json['tags'], creates Tag
+        nodes and TAGGED_WITH edges, then clears the JSON fields.
+        """
+        migrated = 0
+
+        # ── Chat tags_json → TAGGED_WITH edges ───────────────────────────
+        try:
+            rows = await self.graph.execute_cypher(
+                "MATCH (s:Chat) WHERE s.tags_json IS NOT NULL AND s.tags_json <> '' "
+                "AND s.tags_json <> '[]' RETURN s.session_id AS sid, s.tags_json AS tj"
+            )
+            for row in rows:
+                sid = row.get("sid", "")
+                tags_raw = row.get("tj", "[]")
+                try:
+                    tags = json.loads(tags_raw)
+                except (json.JSONDecodeError, TypeError):
+                    continue
+                if not isinstance(tags, list) or not tags:
+                    continue
+                for tag in tags:
+                    if not isinstance(tag, str) or not tag.strip():
+                        continue
+                    tag = tag.lower().strip()
+                    try:
+                        await self.add_tag("chat", sid, tag, tagged_by="migration")
+                        migrated += 1
+                    except (ValueError, Exception) as e:
+                        logger.debug(f"Tag migration skip {tag!r} on {sid}: {e}")
+                # Clear the JSON field after migrating
+                async with self.graph.write_lock:
+                    await self.graph._execute(
+                        "MATCH (s:Chat {session_id: $sid}) SET s.tags_json = '[]'",
+                        {"sid": sid},
+                    )
+        except Exception as e:
+            logger.warning(f"Chat tag migration error: {e}")
+
+        # ── Note metadata_json.tags → TAGGED_WITH edges ──────────────────
+        try:
+            rows = await self.graph.execute_cypher(
+                "MATCH (n:Note) WHERE n.metadata_json IS NOT NULL AND n.metadata_json <> '' "
+                "RETURN n.entry_id AS eid, n.metadata_json AS mj"
+            )
+            for row in rows:
+                eid = row.get("eid", "")
+                mj_raw = row.get("mj", "")
+                try:
+                    meta = json.loads(mj_raw)
+                except (json.JSONDecodeError, TypeError):
+                    continue
+                if not isinstance(meta, dict):
+                    continue
+                tags = meta.get("tags")
+                if not isinstance(tags, list) or not tags:
+                    continue
+                for tag in tags:
+                    if not isinstance(tag, str) or not tag.strip():
+                        continue
+                    tag = tag.lower().strip()
+                    try:
+                        await self.add_tag("note", eid, tag, tagged_by="migration")
+                        migrated += 1
+                    except (ValueError, Exception) as e:
+                        logger.debug(f"Tag migration skip {tag!r} on {eid}: {e}")
+                # Remove tags from metadata_json
+                del meta["tags"]
+                async with self.graph.write_lock:
+                    await self.graph._execute(
+                        "MATCH (n:Note {entry_id: $eid}) SET n.metadata_json = $mj",
+                        {"eid": eid, "mj": json.dumps(meta)},
+                    )
+        except Exception as e:
+            logger.warning(f"Note tag migration error: {e}")
+
+        if migrated:
+            logger.info(f"BrainChatStore: migrated {migrated} tag(s) to graph edges")
 
     async def _ensure_column_migrations(self) -> None:
         """Add columns introduced after initial table creation.
