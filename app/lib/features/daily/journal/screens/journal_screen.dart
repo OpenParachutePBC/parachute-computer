@@ -13,6 +13,7 @@ import 'package:parachute/core/providers/app_state_provider.dart' show apiKeyPro
 import 'package:parachute/core/providers/feature_flags_provider.dart' show aiServerUrlProvider;
 import 'package:parachute/core/providers/sync_provider.dart';
 import 'package:parachute/core/providers/connectivity_provider.dart' show isServerAvailableProvider;
+import 'package:parachute/core/services/tag_service.dart' show tagServiceProvider;
 import '../../recorder/providers/service_providers.dart';
 import '../models/entry_metadata.dart' show TranscriptionStatus;
 import '../models/journal_day.dart';
@@ -1439,7 +1440,7 @@ ref.read(journalScreenStateProvider.notifier).completeTranscription(entry.id);
 
   // ========== Entry Detail and Actions ==========
 
-  void _showEntryDetail(BuildContext context, JournalEntry entry) {
+  Future<void> _showEntryDetail(BuildContext context, JournalEntry entry) async {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final canEdit = entry.id != 'preamble' && !entry.id.startsWith('plain_');
 
@@ -1449,14 +1450,41 @@ ref.read(journalScreenStateProvider.notifier).completeTranscription(entry.id);
       return;
     }
 
+    // Fetch tags from graph and system-wide tag list when online
+    var displayEntry = entry;
+    var allTags = <String>[];
+    final isOnline = ref.read(isServerAvailableProvider);
+    if (isOnline) {
+      final tagService = ref.read(tagServiceProvider);
+      try {
+        final results = await Future.wait([
+          tagService.getEntityTags('note', entry.id),
+          tagService.listTags(),
+        ]);
+        final graphTags = results[0] as List<String>;
+        final tagInfos = results[1] as List;
+        // Use graph tags as source of truth when online; keep metadata
+        // tags if graph has no record yet (entry not yet migrated).
+        if (graphTags.isNotEmpty) {
+          displayEntry = entry.copyWith(tags: graphTags);
+        }
+        allTags = tagInfos.map((t) => (t as dynamic).tag as String).toList();
+      } catch (_) {
+        // Fall back to metadata tags on error
+      }
+    }
+
+    if (!context.mounted) return;
+
     // Voice/photo/handwriting entries use the existing modal
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (sheetContext) => EntryEditModal(
-        entry: entry,
+        entry: displayEntry,
         canEdit: canEdit,
+        allTags: allTags,
         audioPlayer: entry.hasAudio ? _buildAudioPlayer(context, entry, isDark) : null,
         onSave: (updatedEntry) async {
           final api = ref.read(dailyApiServiceProvider);
@@ -1470,15 +1498,36 @@ ref.read(journalScreenStateProvider.notifier).completeTranscription(entry.id);
             content: updatedEntry.content,
             metadata: metadata,
           );
+          if (!mounted) return;
           if (serverUpdated == null) {
             // Server unreachable — queue the edit for retry.
             final cache = await ref.read(journalLocalCacheProvider.future);
+            if (!mounted) return;
             cache.markForEdit(
               updatedEntry.id,
               content: updatedEntry.content,
               title: updatedEntry.title,
             );
           }
+
+          // Sync tag changes to graph — best-effort alongside metadata.
+          // Metadata is the durable path; backend migration catches gaps.
+          final oldTags = Set<String>.from(displayEntry.tags ?? []);
+          final newTags = Set<String>.from(updatedEntry.tags ?? []);
+          if (oldTags != newTags) {
+            final tagService = ref.read(tagServiceProvider);
+            for (final t in newTags.difference(oldTags)) {
+              tagService.addTag('note', updatedEntry.id, t).then((ok) {
+                if (!ok) debugPrint('[JournalScreen] Tag sync failed: add "$t" to ${updatedEntry.id}');
+              });
+            }
+            for (final t in oldTags.difference(newTags)) {
+              tagService.removeTag('note', updatedEntry.id, t).then((ok) {
+                if (!ok) debugPrint('[JournalScreen] Tag sync failed: remove "$t" from ${updatedEntry.id}');
+              });
+            }
+          }
+
           ref.invalidate(selectedJournalProvider);
         },
       ),

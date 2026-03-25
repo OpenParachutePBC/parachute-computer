@@ -18,6 +18,9 @@ class EntryEditModal extends StatefulWidget {
   final Future<void> Function(String audioPath)? onPlayAudio;
   final Widget? audioPlayer;
 
+  /// System-wide tags for autocomplete suggestions.
+  final List<String> allTags;
+
   const EntryEditModal({
     super.key,
     required this.entry,
@@ -26,6 +29,7 @@ class EntryEditModal extends StatefulWidget {
     this.onSave,
     this.onPlayAudio,
     this.audioPlayer,
+    this.allTags = const [],
   });
 
   @override
@@ -597,6 +601,7 @@ class _EntryEditModalState extends State<EntryEditModal>
           _hasChanges = true;
         });
       },
+      suggestions: widget.allTags,
       hintText: 'Add a tag (e.g., "recipe", "work")...',
     );
   }
