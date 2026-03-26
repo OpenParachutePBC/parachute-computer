@@ -1,0 +1,46 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "parachute-daily",
+  "main": "src/server.ts",
+  "compatibility_date": "2026-03-25",
+  "compatibility_flags": ["nodejs_compat"],
+  "account_id": "8f2a7eb9d5e21ffa902a76cf62975c82",
+
+  // Workers AI binding for transcription (whisper) and fallback LLM
+  "ai": { "binding": "AI" },
+
+  // Static assets — worker handles /api/* and /auth/*, assets handle the rest
+  "assets": {
+    "directory": "./public",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/auth/*", "/agents/*"]
+  },
+
+  // Durable Objects — one DailyVault per user
+  "durable_objects": {
+    "bindings": [
+      {
+        "class_name": "DailyVault",
+        "name": "DAILY_VAULT"
+      }
+    ]
+  },
+
+  // SQLite-backed storage for DailyVault
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["DailyVault"]
+    }
+  ],
+
+  // KV for auth tokens and sessions
+  "kv_namespaces": [
+    { "binding": "AUTH_KV", "id": "9e5becdbcf4549e187a298bb835027c1" }
+  ],
+
+  // R2 for audio file storage
+  "r2_buckets": [
+    { "binding": "AUDIO_BUCKET", "bucket_name": "parachute-daily-audio" }
+  ]
+}
