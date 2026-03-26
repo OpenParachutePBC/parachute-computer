@@ -112,11 +112,10 @@ ERROR_DEFINITIONS: dict[ErrorCode, dict[str, Any]] = {
         "can_retry": False,
     },
     ErrorCode.EXPIRED_TOKEN: {
-        "title": "Session Expired",
-        "message": "Your authentication session has expired.",
+        "title": "Token Expired or Invalid",
+        "message": "Your Claude token has expired or is invalid. Run `claude setup-token` in your terminal and update it in Settings.",
         "actions": [
-            RecoveryAction(key="r", label="Re-authenticate", action="reauth"),
-            RecoveryAction(key="s", label="Check settings", action="settings"),
+            RecoveryAction(key="s", label="Open Settings", action="settings"),
         ],
         "can_retry": False,
     },

@@ -1747,7 +1747,11 @@ def cmd_doctor(args: argparse.Namespace) -> None:
         token = _load_token(parachute_dir) or os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
         if token:
             return True, f"{token[:12]}..."
-        return False, "no token found (run: parachute install)"
+        return False, (
+            "no token found\n"
+            "      Fix: Run `claude setup-token` then `parachute config set token <value>`\n"
+            "      Or: Paste in Settings > Claude Authentication"
+        )
 
     check("Claude token", check_token)
 
@@ -1887,8 +1891,12 @@ def _config_show() -> None:
 def _config_set(key: str, value: str) -> None:
     """Set a config value."""
     if key in ("token", "claude_code_oauth_token"):
-        print("Error: Use 'parachute install' to set the token, or write to .token directly.")
-        sys.exit(1)
+        parachute_dir = _get_parachute_dir()
+        save_token(parachute_dir, value)
+        masked = value[:12] + "..." if len(value) > 12 else "***"
+        print(f"Token saved to {parachute_dir / '.token'} ({masked})")
+        print("Note: Restart the server for the new token to take effect.")
+        return
 
     if key not in CONFIG_KEYS:
         print(f"Unknown key: {key}")
