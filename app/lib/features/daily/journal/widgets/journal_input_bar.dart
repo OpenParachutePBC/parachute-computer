@@ -6,8 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/core/providers/model_download_provider.dart';
 import '../../recorder/providers/service_providers.dart';
-import '../screens/compose_screen.dart';
-import '../providers/compose_draft_provider.dart';
+import '../screens/entry_detail_screen.dart';
 import '../providers/journal_screen_state_provider.dart';
 import '../../recorder/providers/transcription_progress_provider.dart';
 import '../../recorder/providers/daily_recording_provider.dart';
@@ -46,7 +45,6 @@ class _JournalInputBarState extends ConsumerState<JournalInputBar>
   final FocusNode _focusNode = FocusNode();
   bool _isSubmitting = false;
   bool _isProcessing = false;
-  bool _hasPendingDraft = false;
 
   /// Breathing animation for the stop button during recording
   late final AnimationController _breathingController;
@@ -68,14 +66,6 @@ class _JournalInputBarState extends ConsumerState<JournalInputBar>
     // so it's ready when user wants to record
     _initializeTranscriptionModel();
 
-    // Check for pending compose draft — show indicator if draft exists
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      final draft = ref.read(composeDraftProvider);
-      if (draft.isNotEmpty) {
-        setState(() => _hasPendingDraft = true);
-      }
-    });
   }
 
   /// Initialize transcription model in background so it's ready for recording
@@ -777,37 +767,19 @@ class _JournalInputBarState extends ConsumerState<JournalInputBar>
     return SizedBox(
       width: 44,
       height: 44,
-      child: Stack(
-        children: [
-          IconButton(
-            onPressed: ref.watch(dailyRecordingProvider.select((s) => s.isRecording)) || _isProcessing ? null : _openComposeScreen,
-            icon: Icon(
-              Icons.open_in_full,
-              color: isDark ? BrandColors.stone : BrandColors.charcoal,
-              size: 20,
-            ),
-            tooltip: 'Expand to full editor',
-          ),
-          // Draft indicator dot
-          if (_hasPendingDraft)
-            Positioned(
-              top: 8,
-              right: 8,
-              child: Container(
-                width: 8,
-                height: 8,
-                decoration: BoxDecoration(
-                  color: BrandColors.forest,
-                  shape: BoxShape.circle,
-                ),
-              ),
-            ),
-        ],
+      child: IconButton(
+        onPressed: ref.watch(dailyRecordingProvider.select((s) => s.isRecording)) || _isProcessing ? null : _openComposeScreen,
+        icon: Icon(
+          Icons.open_in_full,
+          color: isDark ? BrandColors.stone : BrandColors.charcoal,
+          size: 20,
+        ),
+        tooltip: 'Expand to full editor',
       ),
     );
   }
 
-  /// Open full-screen markdown compose editor
+  /// Open full-screen compose editor for new entries
   Future<void> _openComposeScreen() async {
     // Transfer any text from the quick-capture bar to the compose screen
     final currentText = _controller.text;
@@ -817,14 +789,16 @@ class _JournalInputBarState extends ConsumerState<JournalInputBar>
     final result = await Navigator.push<ComposeResult>(
       context,
       MaterialPageRoute(
-        builder: (context) => ComposeScreen(
+        builder: (context) => EntryDetailScreen(
+          entry: null,
+          startInEditMode: true,
+          allTags: const [],
           initialContent: currentText.isNotEmpty ? currentText : null,
         ),
       ),
     );
 
     if (result != null && mounted) {
-      // Compose returned content — submit it
       final title = result.title;
       final content = result.content;
 
@@ -835,13 +809,6 @@ class _JournalInputBarState extends ConsumerState<JournalInputBar>
         final fullContent = title.isNotEmpty ? '# $title\n\n$content' : content;
         await widget.onTextSubmitted(fullContent);
       }
-
-      // Clear draft indicator
-      setState(() => _hasPendingDraft = false);
-    } else if (mounted) {
-      // User discarded — check if draft was left behind
-      final draft = ref.read(composeDraftProvider);
-      setState(() => _hasPendingDraft = draft.isNotEmpty);
     }
   }
 

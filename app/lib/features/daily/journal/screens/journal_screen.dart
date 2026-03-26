@@ -25,10 +25,9 @@ import '../widgets/journal_content_view.dart';
 import '../widgets/journal_empty_state.dart';
 import '../widgets/journal_input_bar.dart';
 import '../widgets/mini_audio_player.dart';
-import '../widgets/entry_edit_modal.dart';
 import '../widgets/send_to_chat_sheet.dart';
 import '../widgets/pending_sync_banner.dart';
-import 'compose_screen.dart';
+import 'entry_detail_screen.dart';
 import '../widgets/journal_entry_row.dart';
 import '../../recorder/widgets/playback_controls.dart';
 import '../utils/journal_helpers.dart';
@@ -1440,15 +1439,8 @@ ref.read(journalScreenStateProvider.notifier).completeTranscription(entry.id);
 
   // ========== Entry Detail and Actions ==========
 
-  Future<void> _showEntryDetail(BuildContext context, JournalEntry entry) async {
+  Future<void> _showEntryDetail(BuildContext context, JournalEntry entry, {bool startInEditMode = false}) async {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final canEdit = entry.id != 'preamble' && !entry.id.startsWith('plain_');
-
-    // Route text entries to full-screen ComposeScreen for editing
-    if (entry.type == JournalEntryType.text && canEdit) {
-      _openComposeForEdit(context, entry);
-      return;
-    }
 
     // Fetch tags from graph and system-wide tag list when online
     var displayEntry = entry;
@@ -1476,119 +1468,62 @@ ref.read(journalScreenStateProvider.notifier).completeTranscription(entry.id);
 
     if (!context.mounted) return;
 
-    // Voice/photo/handwriting entries use the existing modal
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (sheetContext) => EntryEditModal(
-        entry: displayEntry,
-        canEdit: canEdit,
-        allTags: allTags,
-        audioPlayer: entry.hasAudio ? _buildAudioPlayer(context, entry, isDark) : null,
-        onSave: (updatedEntry) async {
-          final api = ref.read(dailyApiServiceProvider);
-          final metadata = {
-            'title': updatedEntry.title,
-            if (updatedEntry.tags != null && updatedEntry.tags!.isNotEmpty)
-              'tags': updatedEntry.tags,
-          };
-          final serverUpdated = await api.updateEntry(
-            updatedEntry.id,
-            content: updatedEntry.content,
-            metadata: metadata,
-          );
-          if (!mounted) return;
-          if (serverUpdated == null) {
-            // Server unreachable — queue the edit for retry.
-            final cache = await ref.read(journalLocalCacheProvider.future);
-            if (!mounted) return;
-            cache.markForEdit(
-              updatedEntry.id,
-              content: updatedEntry.content,
-              title: updatedEntry.title,
-            );
-          }
-
-          // Sync tag changes to graph — best-effort alongside metadata.
-          // Metadata is the durable path; backend migration catches gaps.
-          final oldTags = Set<String>.from(displayEntry.tags ?? []);
-          final newTags = Set<String>.from(updatedEntry.tags ?? []);
-          if (oldTags != newTags) {
-            final tagService = ref.read(tagServiceProvider);
-            for (final t in newTags.difference(oldTags)) {
-              tagService.addTag('note', updatedEntry.id, t).then((ok) {
-                if (!ok) debugPrint('[JournalScreen] Tag sync failed: add "$t" to ${updatedEntry.id}');
-              });
-            }
-            for (final t in oldTags.difference(newTags)) {
-              tagService.removeTag('note', updatedEntry.id, t).then((ok) {
-                if (!ok) debugPrint('[JournalScreen] Tag sync failed: remove "$t" from ${updatedEntry.id}');
-              });
-            }
-          }
-
-          ref.invalidate(selectedJournalProvider);
-        },
-      ),
-    );
-  }
-
-  /// Open ComposeScreen for editing an existing text entry
-  Future<void> _openComposeForEdit(BuildContext context, JournalEntry entry) async {
-    // Parse title from content if it starts with a markdown heading
-    String? initialTitle;
-    String initialContent = entry.content;
-
-    // Extract title if content starts with "# Title\n\n"
-    final headingMatch = RegExp(r'^# (.+)\n\n').firstMatch(entry.content);
-    if (headingMatch != null) {
-      initialTitle = headingMatch.group(1);
-      initialContent = entry.content.substring(headingMatch.end);
-    } else {
-      initialTitle = entry.title;
-    }
-
-    final result = await Navigator.push<ComposeResult>(
+    // All entry types use the unified detail screen
+    await Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => ComposeScreen(
-          initialTitle: initialTitle,
-          initialContent: initialContent,
-          isEditing: true,
+        builder: (_) => EntryDetailScreen(
+          entry: displayEntry,
+          startInEditMode: startInEditMode,
+          allTags: allTags,
+          audioPlayer: entry.hasAudio ? _buildAudioPlayer(context, entry, isDark) : null,
+          onSave: (updatedEntry) async {
+            final api = ref.read(dailyApiServiceProvider);
+            final metadata = {
+              'title': updatedEntry.title,
+              if (updatedEntry.tags != null && updatedEntry.tags!.isNotEmpty)
+                'tags': updatedEntry.tags,
+            };
+            final serverUpdated = await api.updateEntry(
+              updatedEntry.id,
+              content: updatedEntry.content,
+              metadata: metadata,
+            );
+            if (!mounted) return;
+            if (serverUpdated == null) {
+              // Server unreachable — queue the edit for retry.
+              final cache = await ref.read(journalLocalCacheProvider.future);
+              if (!mounted) return;
+              cache.markForEdit(
+                updatedEntry.id,
+                content: updatedEntry.content,
+                title: updatedEntry.title,
+              );
+            }
+
+            // Sync tag changes to graph — best-effort alongside metadata.
+            // Metadata is the durable path; backend migration catches gaps.
+            final oldTags = Set<String>.from(displayEntry.tags ?? []);
+            final newTags = Set<String>.from(updatedEntry.tags ?? []);
+            if (oldTags != newTags) {
+              final tagService = ref.read(tagServiceProvider);
+              for (final t in newTags.difference(oldTags)) {
+                tagService.addTag('note', updatedEntry.id, t).then((ok) {
+                  if (!ok) debugPrint('[JournalScreen] Tag sync failed: add "$t" to ${updatedEntry.id}');
+                });
+              }
+              for (final t in oldTags.difference(newTags)) {
+                tagService.removeTag('note', updatedEntry.id, t).then((ok) {
+                  if (!ok) debugPrint('[JournalScreen] Tag sync failed: remove "$t" from ${updatedEntry.id}');
+                });
+              }
+            }
+
+            ref.invalidate(selectedJournalProvider);
+          },
         ),
       ),
     );
-
-    if (result != null && mounted) {
-      // Reconstruct content with title as heading
-      final fullContent = result.title.isNotEmpty
-          ? '# ${result.title}\n\n${result.content}'
-          : result.content;
-
-      final updatedEntry = entry.copyWith(
-        content: fullContent,
-        title: result.title,
-      );
-
-      final api = ref.read(dailyApiServiceProvider);
-      final serverUpdated = await api.updateEntry(
-        updatedEntry.id,
-        content: updatedEntry.content,
-        metadata: {'title': updatedEntry.title},
-      );
-      if (!mounted) return;
-      if (serverUpdated == null) {
-        final cache = await ref.read(journalLocalCacheProvider.future);
-        if (!mounted) return;
-        cache.markForEdit(
-          updatedEntry.id,
-          content: updatedEntry.content,
-          title: updatedEntry.title,
-        );
-      }
-      ref.invalidate(selectedJournalProvider);
-    }
   }
 
   Widget _buildAudioPlayer(BuildContext context, JournalEntry entry, bool isDark) {
@@ -1663,7 +1598,7 @@ ref.read(journalScreenStateProvider.notifier).completeTranscription(entry.id);
               title: const Text('Edit'),
               onTap: () {
                 Navigator.pop(context);
-                _startEditing(entry);
+                _showEntryDetail(context, entry, startInEditMode: true);
               },
             ),
             if (entry.type == JournalEntryType.voice && entry.hasAudio)
