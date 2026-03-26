@@ -22,8 +22,6 @@ PODS:
   - just_audio (0.0.1):
     - Flutter
     - FlutterMacOS
-  - macos_secure_bookmarks (0.0.3):
-    - FlutterMacOS
   - nordic_dfu (1.0.0):
     - FlutterMacOS
     - iOSDFULibrary (~> 4.15.3)
@@ -83,7 +81,6 @@ DEPENDENCIES:
   - flutter_secure_storage_macos (from `Flutter/ephemeral/.symlinks/plugins/flutter_secure_storage_macos/macos`)
   - FlutterMacOS (from `Flutter/ephemeral`)
   - just_audio (from `Flutter/ephemeral/.symlinks/plugins/just_audio/darwin`)
-  - macos_secure_bookmarks (from `Flutter/ephemeral/.symlinks/plugins/macos_secure_bookmarks/macos`)
   - nordic_dfu (from `Flutter/ephemeral/.symlinks/plugins/nordic_dfu/macos`)
   - package_info_plus (from `Flutter/ephemeral/.symlinks/plugins/package_info_plus/macos`)
   - path_provider_foundation (from `Flutter/ephemeral/.symlinks/plugins/path_provider_foundation/darwin`)
@@ -122,8 +119,6 @@ EXTERNAL SOURCES:
     :path: Flutter/ephemeral
   just_audio:
     :path: Flutter/ephemeral/.symlinks/plugins/just_audio/darwin
-  macos_secure_bookmarks:
-    :path: Flutter/ephemeral/.symlinks/plugins/macos_secure_bookmarks/macos
   nordic_dfu:
     :path: Flutter/ephemeral/.symlinks/plugins/nordic_dfu/macos
   package_info_plus:
@@ -157,7 +152,6 @@ SPEC CHECKSUMS:
   FlutterMacOS: d0db08ddef1a9af05a5ec4b724367152bb0500b1
   iOSDFULibrary: 198c36ebe5a31bf2ca04ee8fb40837176a423e85
   just_audio: 4e391f57b79cad2b0674030a00453ca5ce817eed
-  macos_secure_bookmarks: e096d8ec49de2d25ea47e1061b85e5f2f1520fef
   nordic_dfu: 668c41ac004163e2ce4c67200ae59ca224217a1b
   package_info_plus: f0052d280d17aa382b932f399edf32507174e870
   path_provider_foundation: bb55f6dbba17d0dccd6737fe6f7f34fbd0376880
