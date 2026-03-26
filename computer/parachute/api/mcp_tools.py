@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 
 # ── Default tool profiles per session type ────────────────────────────────────
 # None = all tools visible (backwards-compatible).
-# Agents can override defaults via resolve_sandbox_tools() (#319 Phase 1).
+# Agents can narrow the default by declaring bridge tool names in config.tools (#319).
 # Future: declarative default/available tiers (#319 Phase 2).
 
 CHAT_TOOLS = frozenset({
@@ -113,30 +113,6 @@ TOOLS = [
 ALL_BRIDGE_TOOLS = frozenset(t.name for t in TOOLS)
 assert CHAT_TOOLS <= ALL_BRIDGE_TOOLS, f"CHAT_TOOLS has unknown tools: {CHAT_TOOLS - ALL_BRIDGE_TOOLS}"
 assert DAILY_TOOLS <= ALL_BRIDGE_TOOLS, f"DAILY_TOOLS has unknown tools: {DAILY_TOOLS - ALL_BRIDGE_TOOLS}"
-
-
-def resolve_sandbox_tools(
-    agent_tools: list[str] | None,
-    fallback: frozenset[str],
-) -> frozenset[str]:
-    """Resolve which bridge tools a sandboxed agent should see.
-
-    Examines the agent's declared tools for any that match bridge tool names.
-    If found, uses those (agent declares what it needs).
-    If none overlap, falls back to the session-type default profile.
-
-    Args:
-        agent_tools: The agent's declared tool list (may mix domain + bridge names).
-        fallback: Default profile to use when no bridge tools are declared
-                  (e.g., DAILY_TOOLS, CHAT_TOOLS).
-
-    Returns:
-        Frozenset of bridge tool names for allowed_tools.
-    """
-    if not agent_tools:
-        return fallback
-    bridge_declared = frozenset(agent_tools) & ALL_BRIDGE_TOOLS
-    return bridge_declared if bridge_declared else fallback
 
 
 # ── Tool Handlers ─────────────────────────────────────────────────────────────

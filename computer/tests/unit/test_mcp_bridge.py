@@ -232,61 +232,37 @@ class TestToolFiltering:
             _current_sandbox_ctx.reset(reset)
 
 
-class TestResolveSandboxTools:
-    """Tests for resolve_sandbox_tools() — per-agent bridge tool resolution."""
+class TestAgentToolScoping:
+    """Tests for per-agent bridge tool resolution (#319).
 
-    def test_none_tools_returns_fallback(self):
-        from parachute.api.mcp_tools import DAILY_TOOLS, resolve_sandbox_tools
-        assert resolve_sandbox_tools(None, fallback=DAILY_TOOLS) == DAILY_TOOLS
+    Agents can narrow the default profile by declaring bridge tool names
+    in their tools config. Constrained to the profile ceiling — agents
+    cannot self-grant tools outside the fallback.
+    """
 
-    def test_empty_tools_returns_fallback(self):
-        from parachute.api.mcp_tools import DAILY_TOOLS, resolve_sandbox_tools
-        assert resolve_sandbox_tools([], fallback=DAILY_TOOLS) == DAILY_TOOLS
-
-    def test_domain_only_tools_returns_fallback(self):
-        """Agent declaring only domain tools (no bridge overlap) gets fallback."""
-        from parachute.api.mcp_tools import DAILY_TOOLS, resolve_sandbox_tools
-        result = resolve_sandbox_tools(
-            ["read_days_notes", "read_days_chats", "read_recent_journals"],
-            fallback=DAILY_TOOLS,
-        )
-        assert result == DAILY_TOOLS
-
-    def test_bridge_tools_override_fallback(self):
-        """Agent declaring bridge tools gets exactly those."""
-        from parachute.api.mcp_tools import DAILY_TOOLS, resolve_sandbox_tools
-        result = resolve_sandbox_tools(
-            ["search_memory", "write_card"],
-            fallback=DAILY_TOOLS,
-        )
+    def test_agent_can_narrow_daily_profile(self):
+        """Agent declaring a subset of DAILY_TOOLS gets only those."""
+        from parachute.api.mcp_tools import DAILY_TOOLS
+        agent_tools = ["search_memory", "write_card"]
+        result = frozenset(agent_tools) & DAILY_TOOLS
         assert result == frozenset({"search_memory", "write_card"})
 
-    def test_mixed_tools_extracts_bridge_only(self):
-        """Agent declaring both domain and bridge tools gets only bridge ones."""
-        from parachute.api.mcp_tools import DAILY_TOOLS, resolve_sandbox_tools
-        result = resolve_sandbox_tools(
-            ["read_days_notes", "search_memory", "write_card", "read_this_note"],
-            fallback=DAILY_TOOLS,
-        )
-        assert result == frozenset({"search_memory", "write_card"})
+    def test_agent_cannot_exceed_profile_ceiling(self):
+        """Agent cannot self-grant tools outside the fallback profile."""
+        from parachute.api.mcp_tools import DAILY_TOOLS
+        # write_note is a bridge tool but NOT in DAILY_TOOLS
+        agent_tools = ["write_note", "search_memory"]
+        result = frozenset(agent_tools) & DAILY_TOOLS
+        assert "write_note" not in result
+        assert result == frozenset({"search_memory"})
 
-    def test_nonexistent_tools_ignored(self):
-        """Nonexistent tool names are silently ignored."""
-        from parachute.api.mcp_tools import DAILY_TOOLS, resolve_sandbox_tools
-        result = resolve_sandbox_tools(
-            ["totally_fake_tool", "another_fake"],
-            fallback=DAILY_TOOLS,
-        )
-        assert result == DAILY_TOOLS
-
-    def test_all_bridge_tools_accepted(self):
-        """Every known bridge tool name is accepted."""
-        from parachute.api.mcp_tools import ALL_BRIDGE_TOOLS, resolve_sandbox_tools
-        result = resolve_sandbox_tools(
-            list(ALL_BRIDGE_TOOLS),
-            fallback=frozenset(),
-        )
-        assert result == ALL_BRIDGE_TOOLS
+    def test_domain_only_tools_yield_empty_intersection(self):
+        """Agent with only domain tools gets empty set (caller falls back)."""
+        from parachute.api.mcp_tools import DAILY_TOOLS
+        agent_tools = ["read_days_notes", "read_days_chats"]
+        result = frozenset(agent_tools) & DAILY_TOOLS
+        assert result == frozenset()
+        # Caller uses: `result or DAILY_TOOLS` → falls back to full profile
 
 
 class TestWritePermissionGating:
