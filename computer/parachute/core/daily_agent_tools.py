@@ -8,7 +8,9 @@ Also provides create_daily_agent_tools() for backwards compatibility with
 the old monolithic tool creation pattern.
 """
 
+import asyncio
 import logging
+import os
 import re
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -124,6 +126,16 @@ def _make_read_days_chats(graph: Any, scope: dict, agent_name: str, home_path: P
     return read_days_chats
 
 
+def _parse_ts(s: str) -> datetime | None:
+    """Parse an ISO 8601 timestamp string, returning None on failure."""
+    if not s:
+        return None
+    try:
+        return datetime.fromisoformat(s)
+    except (ValueError, TypeError):
+        return None
+
+
 SUMMARIZER_SYSTEM_PROMPT = (
     "You are a conversation summarizer. Given a full chat transcript, produce "
     "two clearly separated sections:\n\n"
@@ -160,38 +172,31 @@ def _make_summarize_chat(graph: Any, scope: dict, agent_name: str, home_path: Pa
             return {"content": [{"type": "text", "text": "Error: graph unavailable"}], "is_error": True}
 
         try:
-            # Check if summary is fresh (no new messages since last summarization)
+            # Parse date for filtering
+            date_obj = datetime.strptime(date_str, "%Y-%m-%d").date()
+            date_start_dt = datetime(date_obj.year, date_obj.month, date_obj.day, tzinfo=timezone.utc)
+            date_end_dt = date_start_dt + timedelta(days=1)
+            date_start = f"{date_obj.isoformat()}T00:00:00"
+            date_end = f"{(date_obj + timedelta(days=1)).isoformat()}T00:00:00"
+
+            # Check if summary is fresh — compare summary_updated_at against
+            # the most recent message timestamp (not last_accessed, which
+            # reflects user views rather than new content).
             cache_rows = await graph.execute_cypher(
                 "MATCH (s:Chat {session_id: $sid}) "
+                "OPTIONAL MATCH (s)-[:HAS_MESSAGE]->(m:Message) "
                 "RETURN s.summary AS summary, s.summary_updated_at AS summary_updated_at, "
-                "       s.last_accessed AS last_accessed",
+                "       max(m.created_at) AS latest_message",
                 {"sid": session_id},
             )
             if cache_rows:
                 cached = cache_rows[0]
-                summary_updated = cached.get("summary_updated_at") or ""
-                last_accessed = cached.get("last_accessed") or ""
                 existing_summary = cached.get("summary") or ""
-                # If summary exists and was updated after last access, skip re-summarization
-                if existing_summary and summary_updated and last_accessed and summary_updated >= last_accessed:
+                summary_ts = _parse_ts(cached.get("summary_updated_at") or "")
+                latest_msg_ts = _parse_ts(cached.get("latest_message") or "")
+                if existing_summary and summary_ts and latest_msg_ts and summary_ts >= latest_msg_ts:
                     logger.info(f"Summary for {session_id} is fresh, skipping re-summarization")
                     return {"content": [{"type": "text", "text": f"(cached) {existing_summary}"}]}
-
-            # Parse date for filtering
-            date_obj = datetime.strptime(date_str, "%Y-%m-%d").date()
-            date_start = f"{date_obj.isoformat()}T00:00:00"
-            date_end = f"{(date_obj + timedelta(days=1)).isoformat()}T00:00:00"
-
-            # Check if session has messages on target date
-            count_rows = await graph.execute_cypher(
-                "MATCH (s:Chat {session_id: $sid})-[:HAS_MESSAGE]->(m:Message) "
-                "WHERE m.created_at >= $date_start AND m.created_at < $date_end "
-                "RETURN count(m) AS today_count",
-                {"sid": session_id, "date_start": date_start, "date_end": date_end},
-            )
-            today_count = count_rows[0]["today_count"] if count_rows else 0
-            if today_count == 0:
-                return {"content": [{"type": "text", "text": f"No messages on {date_str} for this session"}]}
 
             # Read all messages for the session, ordered by sequence
             msg_rows = await graph.execute_cypher(
@@ -205,17 +210,24 @@ def _make_summarize_chat(graph: Any, scope: dict, agent_name: str, home_path: Pa
             if not msg_rows:
                 return {"content": [{"type": "text", "text": f"No messages found for session {session_id}"}]}
 
-            # Build transcript with [TODAY] markers
+            # Build transcript with [TODAY] markers, track if any today messages exist
             transcript_lines = []
+            has_today = False
             for msg in msg_rows:
                 role = msg.get("role", "unknown")
                 content = msg.get("content", "")
                 created_at = msg.get("created_at", "")
-                is_today = created_at >= date_start and created_at < date_end if created_at else False
+                msg_ts = _parse_ts(created_at)
+                is_today = (msg_ts is not None and date_start_dt <= msg_ts < date_end_dt)
+                if is_today:
+                    has_today = True
 
                 role_label = "User" if role == "human" else "Assistant"
                 marker = " [TODAY]" if is_today else ""
                 transcript_lines.append(f"**{role_label}**{marker}: {content}")
+
+            if not has_today:
+                return {"content": [{"type": "text", "text": f"No messages on {date_str} for this session"}]}
 
             transcript_text = "\n\n".join(transcript_lines)
 
@@ -261,13 +273,13 @@ def _make_summarize_chat(graph: Any, scope: dict, agent_name: str, home_path: Pa
 
 async def _call_summarizer_subagent(system_prompt: str, transcript_text: str) -> str:
     """Call a Haiku sub-agent to summarize a chat transcript."""
-    import asyncio
-    import os
-
     from claude_agent_sdk import ClaudeAgentOptions, query as sdk_query
 
     done_event = asyncio.Event()
 
+    # Single yield — with max_turns=1 this is sufficient. If the SDK
+    # requests a second turn (shouldn't happen), stdin closes and the
+    # agent terminates.
     async def prompt_gen():
         yield {"type": "user", "message": {"role": "user", "content": transcript_text}}
         await done_event.wait()
@@ -320,6 +332,7 @@ def _parse_summarizer_response(response: str) -> tuple[str, str]:
             session_summary = session_part.strip()
     else:
         # Fallback: treat entire response as both summary and activity
+        logger.warning("Summarizer response missing structured headers, using fallback parse")
         session_summary = response.strip()
         todays_activity = response.strip()
 
@@ -423,25 +436,20 @@ def _make_read_recent_cards(graph: Any, scope: dict, agent_name: str, home_path:
         start_date = (today - timedelta(days=days_back)).isoformat()
 
         try:
+            where_clause = "c.date >= $start_date"
+            params: dict[str, Any] = {"start_date": start_date}
             if card_type:
-                rows = await graph.execute_cypher(
-                    "MATCH (c:Card) WHERE c.date >= $start_date "
-                    "AND c.card_type = $card_type "
-                    "RETURN c.card_id AS card_id, c.date AS date, c.card_type AS card_type, "
-                    "       c.display_name AS display_name, c.content AS content, "
-                    "       c.generated_at AS generated_at "
-                    "ORDER BY c.date DESC",
-                    {"start_date": start_date, "card_type": card_type},
-                )
-            else:
-                rows = await graph.execute_cypher(
-                    "MATCH (c:Card) WHERE c.date >= $start_date "
-                    "RETURN c.card_id AS card_id, c.date AS date, c.card_type AS card_type, "
-                    "       c.display_name AS display_name, c.content AS content, "
-                    "       c.generated_at AS generated_at "
-                    "ORDER BY c.date DESC",
-                    {"start_date": start_date},
-                )
+                where_clause += " AND c.card_type = $card_type"
+                params["card_type"] = card_type
+
+            rows = await graph.execute_cypher(
+                f"MATCH (c:Card) WHERE {where_clause} "
+                "RETURN c.card_id AS card_id, c.date AS date, c.card_type AS card_type, "
+                "       c.display_name AS display_name, c.content AS content, "
+                "       c.generated_at AS generated_at "
+                "ORDER BY c.date DESC",
+                params,
+            )
 
             if not rows:
                 type_note = f" of type '{card_type}'" if card_type else ""

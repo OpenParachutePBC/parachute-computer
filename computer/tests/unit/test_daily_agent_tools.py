@@ -7,6 +7,7 @@ The summarize_chat sub-agent call is mocked (no real SDK invocation).
 
 import asyncio
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -221,22 +222,31 @@ class TestSummarizeChat:
 
     @pytest.mark.asyncio
     async def test_skips_session_with_no_today_messages(self, graph_with_chat_data):
-        """Sessions with 0 messages on target date should be skipped."""
-        # test-session-old has no messages on 2026-03-25
+        """Session with messages only on other dates returns early."""
+        # test-session-1 has messages on 2026-03-24 and 2026-03-25.
+        # Ask for a date where it has messages but not on this specific date.
+        tool = _make_tool("summarize_chat", graph_with_chat_data, scope={"date": "2026-03-20"})
+        result = await tool({"session_id": "test-session-1"})
+        text = result["content"][0]["text"]
+        assert "No messages on 2026-03-20" in text
+
+    @pytest.mark.asyncio
+    async def test_skips_session_with_no_messages_at_all(self, graph_with_chat_data):
+        """Session with zero messages returns early."""
         tool = _make_tool("summarize_chat", graph_with_chat_data, scope={"date": "2026-03-25"})
         result = await tool({"session_id": "test-session-old"})
         text = result["content"][0]["text"]
-        assert "No messages on 2026-03-25" in text
+        assert "No messages found" in text
 
     @pytest.mark.asyncio
     async def test_uses_cached_summary(self, graph_with_chat_data):
-        """If summary is fresh (updated after last_accessed), skip re-summarization."""
-        # Set a fresh summary
+        """If summary is fresh (updated after latest message), skip re-summarization."""
+        # Latest message in fixture is at 2026-03-25T14:30:00+00:00 (msg-4).
+        # Set summary_updated_at after that to trigger cache hit.
         await graph_with_chat_data.execute_cypher(
             "MATCH (s:Chat {session_id: 'test-session-1'}) "
             "SET s.summary = 'Cached summary', "
-            "    s.summary_updated_at = '2026-03-25T23:00:00+00:00', "
-            "    s.last_accessed = '2026-03-25T22:00:00+00:00'"
+            "    s.summary_updated_at = '2026-03-25T23:00:00+00:00'"
         )
 
         tool = _make_tool("summarize_chat", graph_with_chat_data, scope={"date": "2026-03-25"})
@@ -257,10 +267,18 @@ class TestSummarizeChat:
 # ---------------------------------------------------------------------------
 
 class TestReadRecentCards:
+    """Tests for read_recent_cards. Pins datetime.now to 2026-03-25 so
+    fixture dates (2026-03-22 through 2026-03-24) are always within range."""
+
+    FROZEN_NOW = datetime(2026, 3, 25, 12, 0, 0, tzinfo=timezone.utc)
+
     @pytest.mark.asyncio
     async def test_reads_all_cards(self, graph_with_cards):
         tool = _make_tool("read_recent_cards", graph_with_cards)
-        result = await tool({"days": 7})
+        with patch("parachute.core.daily_agent_tools.datetime") as mock_dt:
+            mock_dt.now.return_value = self.FROZEN_NOW
+            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            result = await tool({"days": 7})
         text = result["content"][0]["text"]
         assert "3 found" in text
         assert "Reflection for March 24" in text
@@ -269,7 +287,10 @@ class TestReadRecentCards:
     @pytest.mark.asyncio
     async def test_filters_by_card_type(self, graph_with_cards):
         tool = _make_tool("read_recent_cards", graph_with_cards)
-        result = await tool({"days": 7, "card_type": "reflection"})
+        with patch("parachute.core.daily_agent_tools.datetime") as mock_dt:
+            mock_dt.now.return_value = self.FROZEN_NOW
+            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            result = await tool({"days": 7, "card_type": "reflection"})
         text = result["content"][0]["text"]
         assert "2 found" in text
         assert "Reflection for March 24" in text
@@ -278,7 +299,10 @@ class TestReadRecentCards:
     @pytest.mark.asyncio
     async def test_no_cards_found(self, graph_with_cards):
         tool = _make_tool("read_recent_cards", graph_with_cards)
-        result = await tool({"days": 1, "card_type": "nonexistent"})
+        with patch("parachute.core.daily_agent_tools.datetime") as mock_dt:
+            mock_dt.now.return_value = self.FROZEN_NOW
+            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            result = await tool({"days": 1, "card_type": "nonexistent"})
         text = result["content"][0]["text"]
         assert "No cards" in text
 
