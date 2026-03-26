@@ -171,10 +171,12 @@ class TestConfigSetGet:
             with pytest.raises(SystemExit):
                 _config_set("unknown_key", "value")
 
-    def test_set_rejects_token(self, vault):
+    def test_set_saves_token(self, vault):
         with patch("parachute.cli._get_parachute_dir", return_value=vault):
-            with pytest.raises(SystemExit):
-                _config_set("token", "sk-secret")
+            _config_set("token", "sk-ant-test-token-value")
+        token_file = vault / ".token"
+        assert token_file.exists()
+        assert token_file.read_text().strip() == "sk-ant-test-token-value"
 
     def test_set_converts_port_to_int(self, vault):
         with patch("parachute.cli._get_parachute_dir", return_value=vault):
