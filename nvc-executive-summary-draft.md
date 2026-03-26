@@ -9,15 +9,15 @@
 
 ## Opportunity Summary
 
-Personal agentic computing is the defining shift in how people interact with technology. In the last six months, tools like OpenClaw (300,000+ GitHub stars in three months), Claude Cowork, ZoComputer, and Perplexity Computer have validated that people want an AI that works for them — not just answering questions but taking action, managing tools, and learning who they are over time. Hundreds of millions of people already pay $20-200/month for AI tools. The agentic AI market is projected to exceed $50B by 2030 at a 44% CAGR, and OpenAI alone projects $200B in annual revenue by that year.
+Personal agentic computing is the defining shift in how people interact with technology. In the last six months, tools like OpenClaw (300,000+ GitHub stars in three months), Claude Cowork, ZoComputer, and Perplexity Computer have validated that people want an AI that works for them — not just answering questions but taking action, managing tools, and learning who they are over time. Over 100 million people already pay $20+/month for AI — including 50M+ ChatGPT Pro subscribers. The agentic AI market is projected to exceed $50B by 2030 at a 44% CAGR, and OpenAI alone projects $200B in annual revenue by that year.
 
 But nearly every player is building for the power user — the person already paying $20-200/month and comfortable handing an AI agent full access to their digital life. That's roughly 5% of the addressable market. The other 95% — artists, small business owners, everyday people who know AI could help but don't know where to start — have no accessible entry point into this future. Parachute bridges that gap with two products that form one journey: **Parachute Daily**, a voice-first journaling app that gently introduces AI into daily life, and **Parachute Computer**, a full open-source agentic platform. Daily builds the context that makes Computer powerful, creating a natural upgrade path and a compounding moat that no competitor can shortcut.
 
 ## Product or Service
 
-**Parachute Daily** is a voice-first journal. Users speak into a wearable pendant or their phone — on a walk, in the car, wherever thinking happens. Entries are transcribed (offline-capable via on-device models), organized, and enhanced with AI-powered daily reflections, pattern recognition, and weekly synthesis. It works fully offline as a simple journal for free; cloud sync and AI features unlock at accessible price points ($1-5/month).
+**Parachute Daily** is a voice-first journal. Users speak into a wearable pendant or their phone — on a walk, in the car, wherever thinking happens. Entries are transcribed (offline-capable via on-device models), organized, and enhanced with AI-powered daily reflections, pattern recognition, and weekly synthesis. It works fully offline as a simple journal for free; cloud sync and AI features unlock at accessible price points ($2-10/month).
 
-**Parachute Computer** is a full personal agentic computing platform. It includes a knowledge graph (Brain) that connects journals, conversations, and structured data into a unified model of the user's thinking. It supports multi-agent teams, trust-tiered execution (from sandboxed to full system access), and connectors to Telegram, Discord, and other messaging platforms. Available as a hosted service at $20/month or fully self-hosted for free.
+**Parachute Computer** is a full personal agentic computing platform. It includes a knowledge graph (Brain) that connects journals, conversations, and structured data into a unified model of the user's thinking. It supports multi-agent teams, trust-tiered execution (from sandboxed to full system access), and connectors to Telegram, Discord, and other messaging platforms. Available as a hosted service at $40/month or fully self-hosted for free.
 
 The critical insight is that **context compounds**. Every journal entry, every conversation, every voice note builds a richer knowledge graph. After months of Daily use, a user's system already understands how they think, what they care about, and what they're working on. When they're ready for more, they upgrade to Parachute Computer and their brain comes with them. This compounding context is both the core user value and the primary switching cost — no competitor can replicate months of accumulated personal context.
 
@@ -39,9 +39,9 @@ The personal AI and productivity AI market is growing at 44% CAGR, from projecte
 
 We target two customer segments through one funnel:
 
-- **Daily users (mass market):** People who aren't yet bought into AI but will journal, capture thoughts, and gradually experience AI's value in their lives. This is the 95% — the artist who wants to organize creative ideas, the small business owner tracking their days, the parent who wants a better way to remember and reflect. Entry at free or $1-5/month.
+- **Daily users (mass market):** People who aren't yet bought into AI but will journal, capture thoughts, and gradually experience AI's value in their lives. This is the 95% — the artist who wants to organize creative ideas, the small business owner tracking their days, the parent who wants a better way to remember and reflect. Entry at free or $2-10/month.
 
-- **Computer users (power users):** Builders and professionals who want a full agentic AI platform they own and trust. $20/month hosted or free self-hosted. These users also create tools, integrations, and workflows that benefit the broader ecosystem.
+- **Computer users (power users):** Builders and professionals who want a full agentic AI platform they own and trust. $40/month hosted or free self-hosted. These users also create tools, integrations, and workflows that benefit the broader ecosystem.
 
 **Validation:** 300+ community members in our Boulder ecosystem ready to onboard. 13 builders completed our first Learn Vibe Build AI learning cohort. Active users in private beta providing ongoing feedback.
 
@@ -63,14 +63,14 @@ Parachute is open source under the AGPL-3.0 license. This is a deliberate strate
 |  | 2026 | 2027 | 2028 |
 |---|---|---|---|
 | Free + sync users | 5,000 | 50,000 | 250,000 |
-| Paid subscribers ($2-20/mo) | 500 | 5,000 | 25,000 |
-| Avg revenue per paid subscriber | ~$5/mo | ~$7/mo | ~$8/mo |
-| MRR (end of year) | ~$2,500 | ~$35,000 | ~$200,000 |
-| ARR (end of year) | ~$30K | ~$420K | ~$2.4M |
+| Paid subscribers ($2-40/mo) | 500 | 5,000 | 25,000 |
+| Avg revenue per paid subscriber | ~$10/mo | ~$12/mo | ~$14/mo |
+| MRR (end of year) | ~$5,000 | ~$60,000 | ~$350,000 |
+| ARR (end of year) | ~$60K | ~$720K | ~$4.2M |
 | Team (salaried) | 3 | 5-6 | 9-10 |
 | Annual operating costs | ~$170K | ~$550K | ~$900K |
 
-**Revenue model:** Tiered subscriptions. Free tier is fully offline with no hosting cost — paid users are not subsidizing free users, enabling healthy margins from the start. AI inference at the $2-5/month tiers is lightweight (daily reflections on 50-100K tokens using cost-efficient models like Nvidia Nemotron), keeping per-user costs minimal. As model inference costs continue to decline through 2026-2027, margins improve further.
+**Revenue model:** Tiered subscriptions. Free tier is fully offline with no hosting cost — paid users are not subsidizing free users, enabling healthy margins from the start. AI inference at the $10/month tier is lightweight (daily reflections on 50-100K tokens using cost-efficient models like Nvidia Nemotron), keeping per-user costs minimal. As model inference costs continue to decline through 2026-2027, margins improve further.
 
 **Path to profitability:** The company reaches profitability in 2028. Average revenue per subscriber increases over time as users' context compounds and they naturally upgrade to higher tiers — the product gets more valuable the longer you use it, which drives organic upselling.
 

@@ -120,15 +120,15 @@ set_slide_bg(s)
 add_text_box(s, Inches(1.2), Inches(0.8), Inches(4), Inches(0.4),
              "OPEN PARACHUTE, PBC", font_size=11, color=ACCENT, bold=True)
 
-add_text_box(s, Inches(1.2), Inches(2.0), Inches(10), Inches(2.5),
-             "Technology should help us\nlive fully — not demand\nwe stop living to use it.",
-             font_size=48, color=FG, font_name="Georgia", line_spacing=1.12)
+add_text_box(s, Inches(1.2), Inches(1.8), Inches(10), Inches(2.5),
+             "The most powerful technologies\nin a generation are emerging.\nBalance and choice should be\nbuilt in from the start.",
+             font_size=46, color=FG, font_name="Georgia", line_spacing=1.12)
 
 add_text_box(s, Inches(1.2), Inches(4.8), Inches(8), Inches(1.0),
              "I want to hike up a mountain, share my ideas as I walk,\n"
              "and come back down to a working app.\n"
              "But I also want to hold my nephew. Be outside. Live a full life.\n"
-             "We shouldn't have to choose.",
+             "Technology should support both.",
              font_size=20, color=FG_MUTED, line_spacing=1.5)
 
 add_text_box(s, Inches(1.2), Inches(6.2), Inches(10), Inches(0.5),
@@ -152,7 +152,7 @@ slide_headline(s, "Everyone is building\npersonal AI computers.")
 # Body content
 left, top = Inches(1.2), Inches(3.5)
 add_text_box(s, left, top, Inches(10), Inches(1.0),
-             "Hundreds of millions of people already pay $20-200/month for AI tools.\n"
+             "Over 100 million people already pay $20+/month for AI — including 50M+ ChatGPT Pro subscribers.\n"
              "OpenClaw — 300K+ stars in 3 months. Claude Cowork. ZoComputer. Perplexity Computer. Manus.",
              font_size=18, color=FG_MUTED, line_spacing=1.5)
 
@@ -331,14 +331,14 @@ slide_headline(s, "Start free.\nGrow with every user.")
 
 tiers = [
     ("Free", "Offline journal + on-device transcription. Zero hosting cost.", FG_DIM),
-    ("$1-2/mo", "Cloud sync across devices. Your notes everywhere.", FG_MUTED),
-    ("$5/mo", "Cloud transcription + AI reflections, synthesis, pattern surfacing", ACCENT),
-    ("$20/mo", "Hosted Parachute Computer — full agentic platform", FG),
+    ("$2/mo", "Cloud sync across devices. Your notes everywhere.", FG_MUTED),
+    ("$10/mo", "Cloud transcription + AI — reflections, synthesis, pattern surfacing", ACCENT),
+    ("$40/mo", "Hosted Parachute Computer — full agentic platform with bundled AI", FG),
 ]
 
 y = Inches(3.5)
 for price, desc, col in tiers:
-    is_highlight = price == "$5/mo"
+    is_highlight = price == "$10/mo"
     if is_highlight:
         shape = s.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE,
                                    Inches(1.0), y - Inches(0.15),
@@ -355,7 +355,7 @@ for price, desc, col in tiers:
 
 add_text_box(s, Inches(1.2), Inches(6.3), Inches(10), Inches(0.8),
              "Free tier has zero hosting cost — no subsidizing free users.\n"
-             "AI at $5/mo uses cost-efficient models. Margins are real and improve as model costs drop.",
+             "AI at $10/mo uses cost-efficient models. Margins are real and improve as model costs drop.",
              font_size=15, color=FG_DIM, line_spacing=1.5)
 
 
@@ -366,7 +366,7 @@ s = prs.slides.add_slide(blank_layout)
 set_slide_bg(s)
 
 section_label(s, "Team & Traction")
-slide_headline(s, "Built from zero.\nSolo. No funding.")
+slide_headline(s, "Bootstrapped.\nZero funding.")
 
 # What exists
 add_text_box(s, Inches(1.2), Inches(3.5), Inches(5.5), Inches(3.0),
@@ -415,9 +415,9 @@ headers = ["", "2026", "2027", "2028"]
 rows = [
     ["Free + sync users", "5,000", "50,000", "250,000"],
     ["Paid subscribers", "500", "5,000", "25,000"],
-    ["Avg rev / subscriber", "~$5/mo", "~$7/mo", "~$8/mo"],
-    ["MRR (end of year)", "~$2,500", "~$35,000", "~$200,000"],
-    ["ARR (end of year)", "~$30K", "~$420K", "~$2.4M"],
+    ["Avg rev / subscriber", "~$10/mo", "~$12/mo", "~$14/mo"],
+    ["MRR (end of year)", "~$5,000", "~$60,000", "~$350,000"],
+    ["ARR (end of year)", "~$60K", "~$720K", "~$4.2M"],
     ["Team (salaried)", "3", "5-6", "9-10"],
     ["Operating costs", "~$170K", "~$550K", "~$900K"],
 ]
@@ -497,10 +497,10 @@ for label, val in ask_items:
                  val, font_size=20, color=FG, font_name="Georgia")
     y += Inches(0.55)
 
-# Closing line — circle back to the mountain
+# Closing line
 add_text_box(s, Inches(1.2), Inches(5.8), Inches(10), Inches(1.2),
-             "I want everyone to be able to hike up that mountain.",
-             font_size=28, color=FG, font_name="Georgia")
+             "Open source. Local-first.\nBalance and choice — from the foundation.",
+             font_size=28, color=FG, font_name="Georgia", line_spacing=1.3)
 
 add_text_box(s, Inches(1.2), Inches(6.6), Inches(10), Inches(0.5),
              "parachute.computer  ·  github.com/OpenParachutePBC  ·  aaron@parachute.computer",
