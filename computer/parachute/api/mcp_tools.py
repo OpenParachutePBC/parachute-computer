@@ -40,7 +40,8 @@ logger = logging.getLogger(__name__)
 
 # ── Default tool profiles per session type ────────────────────────────────────
 # None = all tools visible (backwards-compatible).
-# Agents can override via config later (#319).
+# Agents can override defaults via resolve_sandbox_tools() (#319 Phase 1).
+# Future: declarative default/available tiers (#319 Phase 2).
 
 CHAT_TOOLS = frozenset({
     "search_memory", "search_chats", "list_chats",
@@ -109,9 +110,33 @@ TOOLS = [
 ] + VAULT_TOOLS  # Shared vault tools (search_memory, search_chats, list_chats, list_notes, get_chat, get_exchange)
 
 # Validate profiles reference real tool names (catches renames at import time)
-_ALL_TOOL_NAMES = frozenset(t.name for t in TOOLS)
-assert CHAT_TOOLS <= _ALL_TOOL_NAMES, f"CHAT_TOOLS has unknown tools: {CHAT_TOOLS - _ALL_TOOL_NAMES}"
-assert DAILY_TOOLS <= _ALL_TOOL_NAMES, f"DAILY_TOOLS has unknown tools: {DAILY_TOOLS - _ALL_TOOL_NAMES}"
+ALL_BRIDGE_TOOLS = frozenset(t.name for t in TOOLS)
+assert CHAT_TOOLS <= ALL_BRIDGE_TOOLS, f"CHAT_TOOLS has unknown tools: {CHAT_TOOLS - ALL_BRIDGE_TOOLS}"
+assert DAILY_TOOLS <= ALL_BRIDGE_TOOLS, f"DAILY_TOOLS has unknown tools: {DAILY_TOOLS - ALL_BRIDGE_TOOLS}"
+
+
+def resolve_sandbox_tools(
+    agent_tools: list[str] | None,
+    fallback: frozenset[str],
+) -> frozenset[str]:
+    """Resolve which bridge tools a sandboxed agent should see.
+
+    Examines the agent's declared tools for any that match bridge tool names.
+    If found, uses those (agent declares what it needs).
+    If none overlap, falls back to the session-type default profile.
+
+    Args:
+        agent_tools: The agent's declared tool list (may mix domain + bridge names).
+        fallback: Default profile to use when no bridge tools are declared
+                  (e.g., DAILY_TOOLS, CHAT_TOOLS).
+
+    Returns:
+        Frozenset of bridge tool names for allowed_tools.
+    """
+    if not agent_tools:
+        return fallback
+    bridge_declared = frozenset(agent_tools) & ALL_BRIDGE_TOOLS
+    return bridge_declared if bridge_declared else fallback
 
 
 # ── Tool Handlers ─────────────────────────────────────────────────────────────
