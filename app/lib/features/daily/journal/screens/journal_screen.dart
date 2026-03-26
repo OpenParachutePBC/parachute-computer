@@ -5,7 +5,6 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:parachute/core/config/app_config.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/core/providers/backend_health_provider.dart' show serverTranscriptionAvailableProvider;
@@ -13,7 +12,7 @@ import 'package:parachute/core/providers/app_state_provider.dart' show apiKeyPro
 import 'package:parachute/core/providers/feature_flags_provider.dart' show aiServerUrlProvider;
 import 'package:parachute/core/providers/sync_provider.dart';
 import 'package:parachute/core/providers/connectivity_provider.dart' show isServerAvailableProvider;
-import 'package:parachute/core/services/tag_service.dart' show tagServiceProvider;
+import 'package:parachute/core/services/tag_service.dart' show TagInfo, tagServiceProvider;
 import '../../recorder/providers/service_providers.dart';
 import '../models/entry_metadata.dart' show TranscriptionStatus;
 import '../models/journal_day.dart';
@@ -28,7 +27,6 @@ import '../widgets/mini_audio_player.dart';
 import '../widgets/send_to_chat_sheet.dart';
 import '../widgets/pending_sync_banner.dart';
 import 'entry_detail_screen.dart';
-import '../widgets/journal_entry_row.dart';
 import '../../recorder/widgets/playback_controls.dart';
 import '../utils/journal_helpers.dart';
 
@@ -46,11 +44,6 @@ class JournalScreen extends ConsumerStatefulWidget {
 class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindingObserver {
   final ScrollController _scrollController = ScrollController();
 
-  // Editing state
-  String? _editingEntryId;
-  String? _editingEntryContent;
-  String? _editingEntryTitle;
-
   // Guard to prevent multiple rapid audio plays
   bool _isPlayingAudio = false;
 
@@ -61,27 +54,12 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
   String? _currentlyPlayingAudioPath;
   String? _currentlyPlayingTitle;
 
-  // Draft caching
-  Timer? _draftSaveTimer;
-  static const _draftKeyPrefix = 'journal_draft_';
-
   // Server transcription polling
   final Set<String> _pollingEntryIds = {};
   final Map<String, Timer> _pollingTimeouts = {};
   Timer? _transcriptionPollTimer;
   static const _pollInterval = Duration(seconds: 5);
   static const _pollTimeout = Duration(minutes: 5);
-
-  // Save state tracking for UI feedback
-  bool _isSaving = false;
-  bool _hasDraftSaved = false;
-
-  /// Get current save state for UI indicator
-  EntrySaveState get _currentSaveState {
-    if (_isSaving) return EntrySaveState.saving;
-    if (_hasDraftSaved) return EntrySaveState.draftSaved;
-    return EntrySaveState.saved;
-  }
 
   // Local journal cache to avoid loading flash on updates
   JournalDay? _cachedJournal;
@@ -94,14 +72,11 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _checkForPendingDrafts();
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _flushPendingDraft();
-    _draftSaveTimer?.cancel();
     _transcriptionPollTimer?.cancel();
     for (final timer in _pollingTimeouts.values) {
       timer.cancel();
@@ -113,10 +88,6 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // Save draft when app goes to background
-    if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
-      _flushPendingDraft();
-    }
   }
 
   @override
@@ -263,18 +234,13 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
       journal: journal,
       selectedDate: selectedDate,
       isToday: isToday,
-      editingEntryId: _editingEntryId,
-      currentSaveState: _currentSaveState,
       scrollController: _scrollController,
       onRefresh: _refreshJournal,
-      onSaveCurrentEdit: _saveCurrentEdit,
       onEntryTap: _handleEntryTap,
       onShowEntryActions: _showEntryActions,
       onPlayAudio: _playAudio,
       onTranscribe: _handleTranscribe,
       onEnhance: _handleEnhance,
-      onContentChanged: _handleContentChanged,
-      onTitleChanged: _handleTitleChanged,
     );
   }
 
@@ -382,80 +348,6 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
         }
       });
     }
-  }
-
-  // ========== Draft Management ==========
-
-  void _flushPendingDraft() {
-    if (_editingEntryId != null && (_editingEntryContent != null || _editingEntryTitle != null)) {
-      _draftSaveTimer?.cancel();
-      _saveDraft(_editingEntryId!, _editingEntryContent, _editingEntryTitle);
-      debugPrint('[JournalScreen] Flushed pending draft for $_editingEntryId');
-    }
-  }
-
-  Future<void> _checkForPendingDrafts() async {
-    final prefs = await SharedPreferences.getInstance();
-    final keys = prefs.getKeys().where((k) => k.startsWith(_draftKeyPrefix));
-    if (keys.isNotEmpty) {
-      debugPrint('[JournalScreen] Found ${keys.length} pending draft(s)');
-    }
-  }
-
-  void _saveDraftDebounced(String entryId, String? content, String? title) {
-    _draftSaveTimer?.cancel();
-    if (mounted) {
-      setState(() {
-        _isSaving = true;
-        _hasDraftSaved = false;
-      });
-    }
-    _draftSaveTimer = Timer(const Duration(milliseconds: 500), () {
-      _saveDraft(entryId, content, title);
-    });
-  }
-
-  Future<void> _saveDraft(String entryId, String? content, String? title) async {
-    if (content == null && title == null) return;
-
-    final prefs = await SharedPreferences.getInstance();
-    final key = '$_draftKeyPrefix$entryId';
-    final draftValue = '${title ?? ''}|||${content ?? ''}';
-    await prefs.setString(key, draftValue);
-    debugPrint('[JournalScreen] Draft saved for entry $entryId');
-
-    if (mounted) {
-      setState(() {
-        _isSaving = false;
-        _hasDraftSaved = true;
-      });
-    }
-  }
-
-  Future<({String? title, String? content})?> _loadDraft(String entryId) async {
-    final prefs = await SharedPreferences.getInstance();
-    final key = '$_draftKeyPrefix$entryId';
-    final draftValue = prefs.getString(key);
-
-    if (draftValue == null) return null;
-
-    final parts = draftValue.split('|||');
-    if (parts.length != 2) return null;
-
-    final title = parts[0].isEmpty ? null : parts[0];
-    final content = parts[1].isEmpty ? null : parts[1];
-
-    if (title == null && content == null) return null;
-
-    debugPrint('[JournalScreen] Draft loaded for entry $entryId');
-    return (title: title, content: content);
-  }
-
-  Future<void> _clearDraft(String entryId) async {
-    final prefs = await SharedPreferences.getInstance();
-    final key = '$_draftKeyPrefix$entryId';
-    await prefs.remove(key);
-    debugPrint('[JournalScreen] Draft cleared for entry $entryId');
   }
 
   // ========== Error Feedback ==========
@@ -871,189 +763,7 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
   // ========== Entry Actions ==========
 
   void _handleEntryTap(JournalEntry entry) {
-    if (_editingEntryId == entry.id) return;
-
-    if (_editingEntryId != null) {
-      _saveCurrentEdit();
-    }
-
     _showEntryDetail(context, entry);
-  }
-
-  Future<void> _startEditing(JournalEntry entry) async {
-    if (entry.id == 'preamble' || entry.id.startsWith('plain_')) {
-      return;
-    }
-
-    if (_editingEntryId != null) {
-      await _saveCurrentEdit();
-    }
-
-    final draft = await _loadDraft(entry.id);
-    final hasUnsavedDraft = draft != null &&
-        ((draft.content != null && draft.content != entry.content) ||
-            (draft.title != null && draft.title != entry.title));
-
-    setState(() {
-      _editingEntryId = entry.id;
-      _isSaving = false;
-      _hasDraftSaved = hasUnsavedDraft;
-
-      if (hasUnsavedDraft) {
-        _editingEntryContent = draft.content ?? entry.content;
-        _editingEntryTitle = draft.title ?? entry.title;
-      } else {
-        _editingEntryContent = entry.content;
-        _editingEntryTitle = entry.title;
-      }
-    });
-
-    if (hasUnsavedDraft && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Row(
-            children: [
-              Icon(Icons.restore, color: Colors.white, size: 18),
-              const SizedBox(width: 8),
-              const Text('Draft restored'),
-            ],
-          ),
-          backgroundColor: BrandColors.forest,
-          duration: const Duration(seconds: 2),
-          behavior: SnackBarBehavior.floating,
-          margin: const EdgeInsets.all(16),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-        ),
-      );
-    }
-  }
-
-  Future<void> _saveCurrentEdit() async {
-    if (_editingEntryId == null) return;
-
-    _draftSaveTimer?.cancel();
-
-    final entryId = _editingEntryId!;
-    final newContent = _editingEntryContent;
-    final newTitle = _editingEntryTitle;
-
-    // Optimistically update provider state BEFORE clearing editing mode.
-    // When setState triggers build(), journalAsync.whenData will see the new
-    // content (not old), preventing it from overwriting our update. And
-    // journalAsync.when(data:...) will render the updated content immediately.
-    if ((newContent != null || newTitle != null) && _cachedJournal != null) {
-      final existingEntry = _cachedJournal!.getEntry(entryId);
-      if (existingEntry != null) {
-        final optimisticEntry = existingEntry.copyWith(
-          content: newContent ?? existingEntry.content,
-          title: newTitle ?? existingEntry.title,
-        );
-        ref.read(selectedJournalProvider.notifier).state =
-            AsyncData(_cachedJournal!.updateEntry(optimisticEntry));
-      }
-    }
-
-    setState(() {
-      _editingEntryId = null;
-      _editingEntryContent = null;
-      _editingEntryTitle = null;
-      _isSaving = false;
-      _hasDraftSaved = false;
-    });
-
-    if (newContent == null && newTitle == null) {
-      await _clearDraft(entryId);
-      return;
-    }
-
-    final date = ref.read(selectedJournalDateProvider);
-    final dateStr = '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
-    final cache = await ref.read(journalLocalCacheProvider.future);
-
-    // Persist the edit locally first (marks as pending_edit if server fails).
-    // This ensures the user always sees their edit, even if offline.
-    final api = ref.read(dailyApiServiceProvider);
-    final updated = await api.updateEntry(
-      entryId,
-      content: newContent,
-      metadata: newTitle != null ? {'title': newTitle} : null,
-    );
-
-    if (updated != null) {
-      // Server confirmed — cache the authoritative response and clear draft.
-      debugPrint('[JournalScreen] Saved edit for entry $entryId');
-      await _clearDraft(entryId);
-
-      if (mounted && _cachedJournal != null) {
-        setState(() {
-          _cachedJournal = _cachedJournal!.updateEntry(updated);
-        });
-      }
-      // Update SQLite with server's authoritative version (sync_state = synced).
-      final existing = cache.getEntries(dateStr);
-      cache.putEntries(dateStr, existing.map((e) => e.id == entryId ? updated : e).toList());
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Row(
-              children: [
-                Icon(Icons.check_circle, color: Colors.white, size: 18),
-                const SizedBox(width: 8),
-                const Text('Saved'),
-              ],
-            ),
-            backgroundColor: BrandColors.forest,
-            duration: const Duration(seconds: 1),
-            behavior: SnackBarBehavior.floating,
-            margin: const EdgeInsets.all(16),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-          ),
-        );
-        ref.invalidate(selectedJournalProvider);
-      }
-    } else {
-      // Server unreachable — queue the edit locally for retry on reconnect.
-      debugPrint('[JournalScreen] Edit queued for retry (offline or server error)');
-      cache.markForEdit(
-        entryId,
-        content: newContent ?? '',
-        title: newTitle ?? (_cachedJournal?.getEntry(entryId)?.title ?? ''),
-      );
-      // Keep the optimistic UI update already applied above — user sees their edit.
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Row(
-              children: [
-                Icon(Icons.cloud_upload_outlined, color: Colors.white, size: 18),
-                const SizedBox(width: 8),
-                const Text('Saved locally — will sync when online'),
-              ],
-            ),
-            backgroundColor: BrandColors.turquoise,
-            duration: const Duration(seconds: 2),
-            behavior: SnackBarBehavior.floating,
-            margin: const EdgeInsets.all(16),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-          ),
-        );
-      }
-    }
-  }
-
-  void _handleContentChanged(String entryId, String newContent) {
-    if (_editingEntryId == entryId) {
-      _editingEntryContent = newContent;
-      _saveDraftDebounced(entryId, newContent, _editingEntryTitle);
-    }
-  }
-
-  void _handleTitleChanged(String entryId, String newTitle) {
-    if (_editingEntryId == entryId) {
-      _editingEntryTitle = newTitle;
-      _saveDraftDebounced(entryId, _editingEntryContent, newTitle);
-    }
   }
 
   // ========== Transcription and Enhancement ==========
@@ -1454,13 +1164,13 @@ ref.read(journalScreenStateProvider.notifier).completeTranscription(entry.id);
           tagService.listTags(),
         ]);
         final graphTags = results[0] as List<String>;
-        final tagInfos = results[1] as List;
+        final tagInfos = results[1] as List<TagInfo>;
         // Use graph tags as source of truth when online; keep metadata
         // tags if graph has no record yet (entry not yet migrated).
         if (graphTags.isNotEmpty) {
           displayEntry = entry.copyWith(tags: graphTags);
         }
-        allTags = tagInfos.map((t) => (t as dynamic).tag as String).toList();
+        allTags = tagInfos.map((t) => t.tag).toList();
       } catch (_) {
         // Fall back to metadata tags on error
       }
@@ -1503,6 +1213,7 @@ ref.read(journalScreenStateProvider.notifier).completeTranscription(entry.id);
 
             // Sync tag changes to graph — best-effort alongside metadata.
             // Metadata is the durable path; backend migration catches gaps.
+            if (!mounted) return;
             final oldTags = Set<String>.from(displayEntry.tags ?? []);
             final newTags = Set<String>.from(updatedEntry.tags ?? []);
             if (oldTags != newTags) {
@@ -1519,6 +1230,7 @@ ref.read(journalScreenStateProvider.notifier).completeTranscription(entry.id);
               }
             }
 
+            if (!mounted) return;
             ref.invalidate(selectedJournalProvider);
           },
         ),

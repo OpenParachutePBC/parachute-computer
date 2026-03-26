@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -69,7 +70,7 @@ class _EntryDetailScreenState extends ConsumerState<EntryDetailScreen> {
   bool get _hasChanges {
     return _titleController.text != _originalTitle ||
         _contentController.text != _originalContent ||
-        !_listEquals(_tags, _originalTags);
+        !listEquals(_tags, _originalTags);
   }
 
   @override
@@ -158,8 +159,10 @@ class _EntryDetailScreenState extends ConsumerState<EntryDetailScreen> {
       try {
         await widget.onSave!(updatedEntry);
         if (mounted) {
+          // Capture messenger before pop — context's Scaffold is torn down after pop
+          final messenger = ScaffoldMessenger.of(context);
           Navigator.of(context).pop();
-          ScaffoldMessenger.of(context).showSnackBar(
+          messenger.showSnackBar(
             SnackBar(
               content: const Row(
                 children: [
@@ -559,14 +562,6 @@ class _EntryDetailScreenState extends ConsumerState<EntryDetailScreen> {
   }
 
   // ── Helpers ────────────────────────────────────────────────────────────
-
-  static bool _listEquals(List<String> a, List<String> b) {
-    if (a.length != b.length) return false;
-    for (int i = 0; i < a.length; i++) {
-      if (a[i] != b[i]) return false;
-    }
-    return true;
-  }
 
   IconData _getEntryIcon(JournalEntryType type) {
     switch (type) {
