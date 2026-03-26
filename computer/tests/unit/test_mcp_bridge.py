@@ -232,6 +232,39 @@ class TestToolFiltering:
             _current_sandbox_ctx.reset(reset)
 
 
+class TestAgentToolScoping:
+    """Tests for per-agent bridge tool resolution (#319).
+
+    Agents can narrow the default profile by declaring bridge tool names
+    in their tools config. Constrained to the profile ceiling — agents
+    cannot self-grant tools outside the fallback.
+    """
+
+    def test_agent_can_narrow_daily_profile(self):
+        """Agent declaring a subset of DAILY_TOOLS gets only those."""
+        from parachute.api.mcp_tools import DAILY_TOOLS
+        agent_tools = ["search_memory", "write_card"]
+        result = frozenset(agent_tools) & DAILY_TOOLS
+        assert result == frozenset({"search_memory", "write_card"})
+
+    def test_agent_cannot_exceed_profile_ceiling(self):
+        """Agent cannot self-grant tools outside the fallback profile."""
+        from parachute.api.mcp_tools import DAILY_TOOLS
+        # write_note is a bridge tool but NOT in DAILY_TOOLS
+        agent_tools = ["write_note", "search_memory"]
+        result = frozenset(agent_tools) & DAILY_TOOLS
+        assert "write_note" not in result
+        assert result == frozenset({"search_memory"})
+
+    def test_domain_only_tools_yield_empty_intersection(self):
+        """Agent with only domain tools gets empty set (caller falls back)."""
+        from parachute.api.mcp_tools import DAILY_TOOLS
+        agent_tools = ["read_days_notes", "read_days_chats"]
+        result = frozenset(agent_tools) & DAILY_TOOLS
+        assert result == frozenset()
+        # Caller uses: `result or DAILY_TOOLS` → falls back to full profile
+
+
 class TestWritePermissionGating:
     """Tests for write tool permission enforcement."""
 

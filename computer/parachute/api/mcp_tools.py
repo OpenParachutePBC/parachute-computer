@@ -40,7 +40,8 @@ logger = logging.getLogger(__name__)
 
 # ── Default tool profiles per session type ────────────────────────────────────
 # None = all tools visible (backwards-compatible).
-# Agents can override via config later (#319).
+# Agents can narrow the default by declaring bridge tool names in config.tools (#319).
+# Future: declarative default/available tiers (#319 Phase 2).
 
 CHAT_TOOLS = frozenset({
     "search_memory", "search_chats", "list_chats",
@@ -109,9 +110,9 @@ TOOLS = [
 ] + VAULT_TOOLS  # Shared vault tools (search_memory, search_chats, list_chats, list_notes, get_chat, get_exchange)
 
 # Validate profiles reference real tool names (catches renames at import time)
-_ALL_TOOL_NAMES = frozenset(t.name for t in TOOLS)
-assert CHAT_TOOLS <= _ALL_TOOL_NAMES, f"CHAT_TOOLS has unknown tools: {CHAT_TOOLS - _ALL_TOOL_NAMES}"
-assert DAILY_TOOLS <= _ALL_TOOL_NAMES, f"DAILY_TOOLS has unknown tools: {DAILY_TOOLS - _ALL_TOOL_NAMES}"
+ALL_BRIDGE_TOOLS = frozenset(t.name for t in TOOLS)
+assert CHAT_TOOLS <= ALL_BRIDGE_TOOLS, f"CHAT_TOOLS has unknown tools: {CHAT_TOOLS - ALL_BRIDGE_TOOLS}"
+assert DAILY_TOOLS <= ALL_BRIDGE_TOOLS, f"DAILY_TOOLS has unknown tools: {DAILY_TOOLS - ALL_BRIDGE_TOOLS}"
 
 
 # ── Tool Handlers ─────────────────────────────────────────────────────────────

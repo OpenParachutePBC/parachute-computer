@@ -456,12 +456,22 @@ async def _run_sandboxed(
 
     from parachute.api.mcp_tools import DAILY_TOOLS
 
+    # Resolve bridge tools: agent can narrow the default profile by declaring
+    # bridge tool names in config.tools. Constrained to the profile ceiling —
+    # agents cannot self-grant tools outside the fallback. (#319)
+    agent_bridge_tools = frozenset(config.tools or []) & DAILY_TOOLS
+    if config.tools and not agent_bridge_tools:
+        logger.debug(
+            f"Agent '{agent_name}' declares tools {config.tools} but none are "
+            f"bridge tools — using default DAILY_TOOLS profile"
+        )
+
     token_ctx = SandboxTokenContext(
         session_id=f"agent-{agent_name}",
         trust_level="sandboxed",
         agent_name=agent_name,
         allowed_writes=["write_output", "write_card"],
-        allowed_tools=DAILY_TOOLS,
+        allowed_tools=agent_bridge_tools or DAILY_TOOLS,
     )
     sandbox_token = token_store.create_token(token_ctx)
 
