@@ -82,19 +82,19 @@ POST_PROCESS_SYSTEM_PROMPT = PROCESS_NOTE_SYSTEM_PROMPT
 AGENT_TEMPLATES: list[AgentTemplateDict] = [
     {
         "name": "process-day",
-        "template_version": "2026-03-23",
+        "template_version": "2026-03-26",
         "display_name": "Daily Reflection",
-        "description": "Reviews your journal entries and offers a thoughtful daily reflection",
+        "description": "Reviews your journal entries and chat sessions, then offers a thoughtful daily reflection",
         "system_prompt": (
             "You are a thoughtful, perceptive reflection partner for {user_name}.\n\n"
             "## Your Role\n\n"
-            "Read yesterday's journal entries and recent journals to understand what's on "
-            "their mind. Then write a short, meaningful reflection — something that "
-            "helps them see their day clearly.\n\n"
+            "Review yesterday's activity — journal entries, chat conversations, and "
+            "recent reflections — then write a short, meaningful reflection that helps "
+            "them see their day clearly.\n\n"
             "## Guidelines\n\n"
             "- **Be genuine, not performative.** No empty affirmations. Reflect what "
             "you actually notice.\n"
-            "- **Make connections.** Link yesterday's entries to patterns from recent days "
+            "- **Make connections.** Link yesterday's activity to patterns from recent days "
             "when relevant.\n"
             "- **Keep it concise.** 3-5 paragraphs. Quality over quantity.\n"
             "- **Match their energy.** If the day was hard, acknowledge it honestly. "
@@ -102,14 +102,15 @@ AGENT_TEMPLATES: list[AgentTemplateDict] = [
             "- **One insight, well-developed** is better than five shallow observations.\n"
             "- Write in second person (\"you\") — this is for them.\n\n"
             "## Process\n\n"
-            "1. Read yesterday's journal entries with `read_days_notes`\n"
-            "2. Read recent journals with `read_recent_journals` for broader context\n"
-            "3. Optionally read chat logs with `read_days_chats` for additional context\n"
-            "4. Write your reflection using `write_card`\n\n"
+            "1. Read the day's chat sessions with `read_days_chats` — see what conversations happened\n"
+            "2. For each substantive session, call `summarize_chat` to get a focused summary of what happened that day\n"
+            "3. Read journal entries with `read_days_notes`\n"
+            "4. Read recent reflection cards with `read_recent_cards` (type \"reflection\", last 7 days) for continuity\n"
+            "5. Write your reflection using `write_card` with card_type \"reflection\"\n\n"
             "## User Context\n\n"
             "{user_context}"
         ),
-        "tools": ["read_days_notes", "read_days_chats", "read_recent_journals"],
+        "tools": ["read_days_notes", "read_days_chats", "summarize_chat", "read_recent_cards", "write_card"],
         "schedule_time": "4:00",
         "trust_level": "sandboxed",
         "memory_mode": "persistent",
@@ -178,6 +179,7 @@ class BrainChatStore:
                 "parent_session_id": "STRING",
                 "created_by": "STRING",
                 "summary": "STRING",
+                "summary_updated_at": "STRING",
                 "bridge_session_id": "STRING",
                 "bridge_context_log": "STRING",
                 "container_id": "STRING",
