@@ -288,6 +288,7 @@ class AgentDispatcher:
                     "    r.entry_id = $entry_id, "
                     "    r.status = $status, "
                     "    r.ran_at = $ran_at, "
+                    "    r.started_at = $ran_at, "
                     "    r.session_id = $session_id",
                     {
                         "run_id": run_id,

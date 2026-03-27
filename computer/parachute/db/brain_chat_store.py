@@ -298,7 +298,7 @@ TRIGGER_TEMPLATES: list[TriggerTemplateDict] = [
 # ── Derive AGENT_TEMPLATES from TOOL_TEMPLATES ──────────────────────────
 # TOOL_TEMPLATES is the source of truth.  AGENT_TEMPLATES is derived for
 # backward compatibility with the old Agent seeding/execution path.
-# Remove this once Phase 2 execution rewire is complete.
+# Remove this in Phase 4 cleanup (issue #355) once Agent table is dropped.
 
 # Kebab → underscore for tool names (old factories use underscores)
 _TOOL_NAME_ALIASES: dict[str, str] = {
@@ -692,7 +692,8 @@ class BrainChatStore:
         Kuzu 0.8.0+ supports multiple FROM/TO pairs in a single rel table.
         Falls back to separate per-type tables if multi-source DDL fails.
         """
-        source_tables = ["Chat", "Note", "Card", "Brain_Entity", "Agent"]
+        # Derive from TAG_ENTITY_TYPES so the list stays in sync automatically
+        source_tables = list(dict.fromkeys(table for table, _pk in self.TAG_ENTITY_TYPES.values()))
         try:
             from_clauses = ", ".join(f"FROM {t} TO Tag" for t in source_tables)
             ddl = (
