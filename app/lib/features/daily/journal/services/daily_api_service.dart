@@ -619,7 +619,10 @@ class DailyApiService {
               try {
                 final parsed = jsonDecode(rawCanCall);
                 if (parsed is List) {
-                  tools = parsed.cast<String>();
+                  tools = parsed
+                      .map((c) => (c is Map ? c['name'] as String? : c?.toString()) ?? '')
+                      .where((s) => s.isNotEmpty)
+                      .toList();
                 }
               } catch (_) {}
             } else if (rawCanCall is List) {
@@ -804,7 +807,7 @@ class DailyApiService {
   ///
   /// Returns true on success.
   Future<bool> resetAgent(String name) async {
-    final uri = Uri.parse('$baseUrl/api/daily/agents/$name/reset');
+    final uri = Uri.parse('$baseUrl/api/daily/tools/$name/reset');
     debugPrint('[DailyApiService] POST $uri');
     try {
       final response = await _client
@@ -821,7 +824,7 @@ class DailyApiService {
   ///
   /// Returns true on success.
   Future<bool> resetAgentToTemplate(String name) async {
-    final uri = Uri.parse('$baseUrl/api/daily/agents/$name/reset-to-template');
+    final uri = Uri.parse('$baseUrl/api/daily/tools/$name/reset-to-template');
     debugPrint('[DailyApiService] POST $uri');
     try {
       final response = await _client

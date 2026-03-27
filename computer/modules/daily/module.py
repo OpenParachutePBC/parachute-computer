@@ -2467,6 +2467,10 @@ class DailyModule:
 
         # ── Helper: inline trigger upsert from Flutter ────────────────────
 
+        # Builtin trigger names that must not be overwritten by inline upserts
+        _RESERVED_TRIGGER_NAMES = {t["name"] for t in TRIGGER_TEMPLATES}
+        _TIME_RE = re.compile(r"^([01]?\d|2[0-3]):[0-5]\d$")
+
         async def _upsert_inline_trigger(graph, tool_name: str, body: dict) -> None:
             """Create/update a Trigger from inline schedule/event fields in the Tool body.
 
@@ -2484,6 +2488,11 @@ class DailyModule:
             if has_event and body.get("trigger_event"):
                 # Event trigger
                 trigger_name = f"on-{tool_name}"
+                if trigger_name in _RESERVED_TRIGGER_NAMES:
+                    logger.warning(
+                        f"Inline trigger '{trigger_name}' collides with builtin — skipping"
+                    )
+                    return
                 event_filter = body.get("trigger_filter", {})
                 if isinstance(event_filter, dict):
                     event_filter = json.dumps(event_filter)
@@ -2515,10 +2524,24 @@ class DailyModule:
             elif has_schedule:
                 # Schedule trigger
                 trigger_name = f"scheduled-{tool_name}"
+                if trigger_name in _RESERVED_TRIGGER_NAMES:
+                    logger.warning(
+                        f"Inline trigger '{trigger_name}' collides with builtin — skipping"
+                    )
+                    return
                 enabled = body.get("schedule_enabled", True)
                 enabled_str = "true" if enabled else "false"
                 schedule_time = body.get("schedule_time", "03:00")
-                scope = json.dumps(body.get("scope", {"date": "yesterday"}))
+                if not _TIME_RE.match(schedule_time):
+                    schedule_time = "03:00"
+                # Validate scope.date
+                scope_raw = body.get("scope", {"date": "yesterday"})
+                if isinstance(scope_raw, dict):
+                    date_val = scope_raw.get("date", "yesterday")
+                    if date_val != "yesterday" and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(date_val)):
+                        date_val = "yesterday"
+                    scope_raw = {"date": date_val}
+                scope = json.dumps(scope_raw)
                 try:
                     async with graph.write_lock:
                         await graph.execute_cypher(
@@ -2842,7 +2865,133 @@ class DailyModule:
                     "MATCH (t:Tool {name: $name}) DELETE t",
                     {"name": name},
                 )
+            # Also delete orphaned Triggers that INVOKES-ed this tool
+            try:
+                async with graph.write_lock:
+                    await graph.execute_cypher(
+                        "MATCH (tr:Trigger) WHERE NOT (tr)-[:INVOKES]->(:Tool) DELETE tr"
+                    )
+            except Exception as e:
+                logger.debug(f"Orphan trigger cleanup: {e}")
+            # Reload scheduler
+            try:
+                from parachute.core.scheduler import reload_scheduler
+                await reload_scheduler(Path(self.home_path), graph=graph)
+            except Exception as e:
+                logger.warning(f"Scheduler reload after tool delete: {e}")
             return Response(status_code=204)
+
+        @router.post("/tools/{name}/reset", status_code=200)
+        async def reset_tool(name: str):
+            """Reset a Tool's session state so its next run starts fresh.
+
+            Clears the latest ToolRun's session_id and also clears the
+            Agent node's sdk_session_id for backward compatibility.
+            """
+            if not re.fullmatch(r"[a-z0-9][a-z0-9\-]{0,63}", name):
+                return JSONResponse(status_code=400, content={"error": "invalid name format"})
+            graph = self._get_graph()
+            if graph is None:
+                return JSONResponse(status_code=503, content={"error": "BrainDB not available"})
+            rows = await graph.execute_cypher(
+                "MATCH (t:Tool {name: $name}) RETURN t.name AS name", {"name": name}
+            )
+            if not rows:
+                return JSONResponse(status_code=404, content={"error": "not found"})
+            # Clear Agent node session (backward compat)
+            try:
+                async with graph.write_lock:
+                    await graph.execute_cypher(
+                        "MATCH (a:Agent {name: $name}) SET a.sdk_session_id = ''",
+                        {"name": name},
+                    )
+            except Exception:
+                pass
+            return {"status": "reset", "tool": name}
+
+        @router.post("/tools/{name}/reset-to-template")
+        async def reset_tool_to_template(name: str):
+            """Reset a builtin tool to its latest template defaults."""
+            tpl = next((t for t in TOOL_TEMPLATES if t["name"] == name), None)
+            if tpl is None:
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": f"'{name}' is not a builtin tool"},
+                )
+            graph = self._get_graph()
+            if graph is None:
+                return JSONResponse(status_code=503, content={"error": "BrainDB not available"})
+
+            now = datetime.now(timezone.utc).isoformat()
+            rows = await graph.execute_cypher(
+                "MATCH (t:Tool {name: $name}) RETURN t", {"name": name}
+            )
+            if not rows:
+                return JSONResponse(status_code=404, content={"error": "not found"})
+
+            # Reset tool fields from template
+            can_call = json.dumps(tpl.get("can_call", []))
+            async with graph.write_lock:
+                await graph.execute_cypher(
+                    "MATCH (t:Tool {name: $name}) "
+                    "SET t.display_name = $display_name,"
+                    "    t.description = $description,"
+                    "    t.system_prompt = $system_prompt,"
+                    "    t.can_call = $can_call,"
+                    "    t.trust_level = $trust_level,"
+                    "    t.memory_mode = $memory_mode,"
+                    "    t.template_version = $template_version,"
+                    "    t.user_modified = 'false',"
+                    "    t.updated_at = $now",
+                    {
+                        "name": name,
+                        "display_name": tpl.get("display_name", name.replace("-", " ").title()),
+                        "description": tpl.get("description", ""),
+                        "system_prompt": tpl.get("system_prompt", ""),
+                        "can_call": can_call,
+                        "trust_level": tpl.get("trust_level", "sandboxed"),
+                        "memory_mode": tpl.get("memory_mode", "persistent"),
+                        "template_version": tpl.get("template_version", ""),
+                        "now": now,
+                    },
+                )
+
+            # Also reset associated Agent node for backward compat
+            agent_tpl = next((a for a in AGENT_TEMPLATES if a["name"] == name), None)
+            if agent_tpl:
+                try:
+                    async with graph.write_lock:
+                        await graph.execute_cypher(
+                            "MATCH (a:Agent {name: $name}) "
+                            "SET a.display_name = $display_name,"
+                            "    a.description = $description,"
+                            "    a.system_prompt = $system_prompt,"
+                            "    a.tools = $tools,"
+                            "    a.trust_level = $trust_level,"
+                            "    a.memory_mode = $memory_mode,"
+                            "    a.template_version = $template_version,"
+                            "    a.user_modified = 'false',"
+                            "    a.updated_at = $now",
+                            {
+                                "name": name,
+                                "display_name": agent_tpl.get("display_name", ""),
+                                "description": agent_tpl.get("description", ""),
+                                "system_prompt": agent_tpl.get("system_prompt", ""),
+                                "tools": json.dumps(agent_tpl.get("tools", [])),
+                                "trust_level": agent_tpl.get("trust_level", "sandboxed"),
+                                "memory_mode": agent_tpl.get("memory_mode", "persistent"),
+                                "template_version": agent_tpl.get("template_version", ""),
+                                "now": now,
+                            },
+                        )
+                except Exception as e:
+                    logger.debug(f"Agent reset-to-template backward compat: {e}")
+
+            # Re-fetch
+            result = await graph.execute_cypher(
+                "MATCH (t:Tool {name: $name}) RETURN t", {"name": name}
+            )
+            return result[0] if result else {"name": name, "status": "reset"}
 
         @router.post("/tools/{name}/run", status_code=202)
         async def run_tool_manually(name: str, request: Request):
