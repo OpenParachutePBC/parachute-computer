@@ -576,7 +576,7 @@ class DailyApiService {
             triggersDecoded['triggers'] as List<dynamic>? ?? [];
         for (final raw in triggersData) {
           final t = raw as Map<String, dynamic>;
-          final invokes = t['invokes'] as String? ?? '';
+          final invokes = t['invokes_tool'] as String? ?? '';
           if (invokes.isNotEmpty) {
             triggerByTool[invokes] = t;
           }
