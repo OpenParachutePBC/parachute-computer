@@ -822,7 +822,13 @@ async def run_agent(
     graph = _get_graph()
 
     # ── Resolve date / output_date ────────────────────────────────────────
+    # Default to yesterday for day-scoped agents when no date is provided.
+    # Day-scoped tools (read_days_notes, read_days_chats, etc.) require a date
+    # in scope — if the caller didn't provide one, infer yesterday.
     date = scope.get("date", "")
+    if not date and not scope.get("entry_id"):
+        date = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
+        scope["date"] = date
     if date:
         try:
             journal_date_obj = datetime.strptime(date, "%Y-%m-%d")
