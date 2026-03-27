@@ -539,68 +539,130 @@ class DailyApiService {
   /// Fetch all configured Agent nodes from the server.
   ///
   /// Returns an empty list on error or if the server is unreachable.
+  /// Fetch all agents from Tool + Trigger graph (new universal primitive).
+  ///
+  /// Fetches Tools (mode=agent|transform) and Triggers in parallel, then
+  /// joins them into [DailyAgentInfo] objects for backward-compatible UI.
   Future<List<DailyAgentInfo>> fetchAgents() async {
-    final uri = Uri.parse('$baseUrl/api/daily/agents');
-    debugPrint('[DailyApiService] GET $uri');
+    final toolsUri = Uri.parse('$baseUrl/api/daily/tools');
+    final triggersUri = Uri.parse('$baseUrl/api/daily/triggers');
+    debugPrint('[DailyApiService] GET $toolsUri + $triggersUri');
     try {
-      final response = await _client
-          .get(uri, headers: _headers)
-          .timeout(_timeout);
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        debugPrint('[DailyApiService] fetchAgents ${response.statusCode}');
+      // Fetch tools and triggers in parallel
+      final results = await Future.wait([
+        _client.get(toolsUri, headers: _headers).timeout(_timeout),
+        _client.get(triggersUri, headers: _headers).timeout(_timeout),
+      ]);
+      final toolsResponse = results[0];
+      final triggersResponse = results[1];
+
+      if (toolsResponse.statusCode < 200 || toolsResponse.statusCode >= 300) {
+        debugPrint('[DailyApiService] fetchTools ${toolsResponse.statusCode}');
         return [];
       }
-      final decoded = jsonDecode(response.body) as Map<String, dynamic>;
-      final List<dynamic> data = decoded['agents'] as List<dynamic>? ?? [];
-      return data.map((raw) {
-        final j = raw as Map<String, dynamic>;
-        final scheduleEnabled =
-            j['schedule_enabled']?.toString().toLowerCase() == 'true';
-        // Parse tools from JSON string or list
-        List<String> tools = [];
-        final rawTools = j['tools'];
-        if (rawTools is String && rawTools.isNotEmpty) {
-          try {
-            final parsed = jsonDecode(rawTools);
-            if (parsed is List) {
-              tools = parsed.cast<String>();
-            }
-          } catch (e) {
-            debugPrint('[DailyApiService] Failed to parse tools JSON: $e');
+
+      final toolsDecoded =
+          jsonDecode(toolsResponse.body) as Map<String, dynamic>;
+      final List<dynamic> toolsData =
+          toolsDecoded['tools'] as List<dynamic>? ?? [];
+
+      // Build trigger lookup: tool_name → trigger data
+      final Map<String, Map<String, dynamic>> triggerByTool = {};
+      if (triggersResponse.statusCode >= 200 &&
+          triggersResponse.statusCode < 300) {
+        final triggersDecoded =
+            jsonDecode(triggersResponse.body) as Map<String, dynamic>;
+        final List<dynamic> triggersData =
+            triggersDecoded['triggers'] as List<dynamic>? ?? [];
+        for (final raw in triggersData) {
+          final t = raw as Map<String, dynamic>;
+          final invokes = t['invokes_tool'] as String? ?? '';
+          if (invokes.isNotEmpty) {
+            triggerByTool[invokes] = t;
           }
-        } else if (rawTools is List) {
-          tools = rawTools.cast<String>();
         }
-        return DailyAgentInfo(
-          name: j['name'] as String? ?? '',
-          displayName:
-              j['display_name'] as String? ?? j['name'] as String? ?? '',
-          description: j['description'] as String? ?? '',
-          systemPrompt: j['system_prompt'] as String? ?? '',
-          tools: tools,
-          trustLevel: j['trust_level'] as String? ?? 'sandboxed',
-          scheduleEnabled: scheduleEnabled,
-          scheduleTime: j['schedule_time'] as String? ?? '03:00',
-          triggerEvent: j['trigger_event'] as String? ?? '',
-          triggerFilter: parseTriggerFilter(j['trigger_filter']),
-          memoryMode: MemoryMode.fromString(j['memory_mode'] as String?),
-          templateVersion: j['template_version'] as String?,
-          userModified: j['user_modified'] == true ||
-              j['user_modified']?.toString().toLowerCase() == 'true',
-          updateAvailable: j['update_available'] == true,
-          isBuiltin: j['is_builtin'] == true,
-          containerSlug: j['container_slug'] as String? ?? '',
-        );
-      }).toList();
+      }
+
+      // Filter to agent/transform mode tools and build DailyAgentInfo
+      return toolsData
+          .where((raw) {
+            final mode = (raw as Map<String, dynamic>)['mode'] as String? ?? '';
+            return mode == 'agent' || mode == 'transform';
+          })
+          .map((raw) {
+            final j = raw as Map<String, dynamic>;
+            final trigger = triggerByTool[j['name'] as String? ?? ''];
+
+            // Derive schedule/trigger info from associated Trigger node
+            bool scheduleEnabled = false;
+            String scheduleTime = '03:00';
+            String triggerEvent = '';
+            Map<String, dynamic>? triggerFilter;
+
+            if (trigger != null) {
+              final triggerType = trigger['type'] as String? ?? '';
+              final triggerEnabled =
+                  trigger['enabled']?.toString().toLowerCase() == 'true';
+              if (triggerType == 'schedule') {
+                scheduleEnabled = triggerEnabled;
+                scheduleTime = trigger['schedule_time'] as String? ?? '03:00';
+              } else if (triggerType == 'event') {
+                triggerEvent = trigger['event'] as String? ?? '';
+                triggerFilter = parseTriggerFilter(trigger['event_filter']);
+              }
+            }
+
+            // Parse can_call / scope_keys for tool list
+            List<String> tools = [];
+            final rawCanCall = j['can_call'];
+            if (rawCanCall is String && rawCanCall.isNotEmpty) {
+              try {
+                final parsed = jsonDecode(rawCanCall);
+                if (parsed is List) {
+                  tools = parsed
+                      .map((c) => (c is Map ? c['name'] as String? : c?.toString()) ?? '')
+                      .where((s) => s.isNotEmpty)
+                      .toList();
+                }
+              } catch (_) {}
+            } else if (rawCanCall is List) {
+              tools = rawCanCall
+                  .map((c) => (c is Map ? c['name'] as String? : c?.toString()) ?? '')
+                  .where((s) => s.isNotEmpty)
+                  .toList();
+            }
+
+            return DailyAgentInfo(
+              name: j['name'] as String? ?? '',
+              displayName:
+                  j['display_name'] as String? ?? j['name'] as String? ?? '',
+              description: j['description'] as String? ?? '',
+              systemPrompt: j['system_prompt'] as String? ?? '',
+              tools: tools,
+              trustLevel: j['trust_level'] as String? ?? 'sandboxed',
+              scheduleEnabled: scheduleEnabled,
+              scheduleTime: scheduleTime,
+              triggerEvent: triggerEvent,
+              triggerFilter: triggerFilter,
+              memoryMode: MemoryMode.fromString(j['memory_mode'] as String?),
+              templateVersion: j['template_version'] as String?,
+              userModified: j['user_modified'] == true ||
+                  j['user_modified']?.toString().toLowerCase() == 'true',
+              updateAvailable: j['update_available'] == true,
+              isBuiltin: j['is_builtin'] == true,
+              containerSlug: j['container_slug'] as String? ?? '',
+            );
+          })
+          .toList();
     } catch (e) {
       debugPrint('[DailyApiService] fetchAgents error: $e');
       return [];
     }
   }
 
-  /// Fetch the latest run for an agent (used to detect recent failures).
+  /// Fetch the latest run for a tool/agent (used to detect recent failures).
   Future<AgentRunInfo?> fetchLatestAgentRun(String agentName) async {
-    final uri = Uri.parse('$baseUrl/api/daily/agents/$agentName/runs/latest');
+    final uri = Uri.parse('$baseUrl/api/daily/tools/$agentName/runs/latest');
     debugPrint('[DailyApiService] GET $uri');
     try {
       final response = await _client
@@ -623,7 +685,7 @@ class DailyApiService {
   ///
   /// Returns typed [AgentTemplate] objects parsed from the server response.
   Future<List<AgentTemplate>> fetchTemplates() async {
-    final uri = Uri.parse('$baseUrl/api/daily/agents/templates');
+    final uri = Uri.parse('$baseUrl/api/daily/tools/templates');
     debugPrint('[DailyApiService] GET $uri');
     try {
       final response = await _client
@@ -644,12 +706,12 @@ class DailyApiService {
     }
   }
 
-  /// Create a new Agent node on the server.
+  /// Create a new Tool node on the server.
   ///
-  /// [body] has the same shape as the Agent graph node fields.
-  /// Returns the created agent data on success, or null on error.
+  /// [body] has the same shape as the Tool graph node fields.
+  /// Returns the created tool data on success, or null on error.
   Future<Map<String, dynamic>?> createAgent(Map<String, dynamic> body) async {
-    final uri = Uri.parse('$baseUrl/api/daily/agents');
+    final uri = Uri.parse('$baseUrl/api/daily/tools');
     debugPrint('[DailyApiService] POST $uri');
     try {
       final response = await _client
@@ -667,9 +729,9 @@ class DailyApiService {
     }
   }
 
-  /// Delete an Agent node. Returns true on success.
+  /// Delete a Tool node. Returns true on success.
   Future<bool> deleteAgent(String name) async {
-    final uri = Uri.parse('$baseUrl/api/daily/agents/$name');
+    final uri = Uri.parse('$baseUrl/api/daily/tools/$name');
     debugPrint('[DailyApiService] DELETE $uri');
     try {
       final response = await _client
@@ -683,23 +745,23 @@ class DailyApiService {
     }
   }
 
-  /// Trigger an agent run for a date (202 Accepted — runs in background).
+  /// Trigger a tool run (202 Accepted — runs in background).
   ///
-  /// Returns an [AgentRunResult] with status "started" on success, or error on failure.
+  /// Returns an [AgentRunResult] with status "started"/"triggered" on success.
   Future<AgentRunResult> triggerAgentRun(
     String agentName, {
     String? date,
   }) async {
-    final queryParams = <String, String>{if (date != null) 'date': date};
-    final uri = Uri.parse(
-      '$baseUrl/api/daily/cards/$agentName/run',
-    ).replace(queryParameters: queryParams.isEmpty ? null : queryParams);
+    // Use /tools/{name}/run for agent/transform tools, fall back to cards endpoint
+    final scope = <String, dynamic>{};
+    if (date != null) scope['date'] = date;
+    final uri = Uri.parse('$baseUrl/api/daily/tools/$agentName/run');
     debugPrint('[DailyApiService] POST $uri');
     try {
       final response = await _client
-          .post(uri, headers: _headers)
+          .post(uri, headers: _headers, body: jsonEncode({'scope': scope}))
           .timeout(_timeout);
-      if (response.statusCode == 202) {
+      if (response.statusCode >= 200 && response.statusCode < 300) {
         return AgentRunResult(success: true, status: 'started');
       }
       debugPrint('[DailyApiService] triggerAgentRun ${response.statusCode}');
@@ -718,13 +780,13 @@ class DailyApiService {
     }
   }
 
-  /// Update fields on an existing Agent node.
+  /// Update fields on an existing Tool node.
   ///
   /// [fields] is a map of field names to new values, e.g.
-  /// `{'schedule_enabled': true, 'schedule_time': '08:00'}`.
+  /// `{'system_prompt': '...', 'memory_mode': 'fresh'}`.
   /// Returns true on success.
   Future<bool> updateAgent(String name, Map<String, dynamic> fields) async {
-    final uri = Uri.parse('$baseUrl/api/daily/agents/$name');
+    final uri = Uri.parse('$baseUrl/api/daily/tools/$name');
     debugPrint('[DailyApiService] PUT $uri $fields');
     try {
       final response = await _client
@@ -745,7 +807,7 @@ class DailyApiService {
   ///
   /// Returns true on success.
   Future<bool> resetAgent(String name) async {
-    final uri = Uri.parse('$baseUrl/api/daily/agents/$name/reset');
+    final uri = Uri.parse('$baseUrl/api/daily/tools/$name/reset');
     debugPrint('[DailyApiService] POST $uri');
     try {
       final response = await _client
@@ -762,7 +824,7 @@ class DailyApiService {
   ///
   /// Returns true on success.
   Future<bool> resetAgentToTemplate(String name) async {
-    final uri = Uri.parse('$baseUrl/api/daily/agents/$name/reset-to-template');
+    final uri = Uri.parse('$baseUrl/api/daily/tools/$name/reset-to-template');
     debugPrint('[DailyApiService] POST $uri');
     try {
       final response = await _client
@@ -792,18 +854,18 @@ class DailyApiService {
     }
   }
 
-  /// Trigger an Agent on a specific entry (for event-driven Agents).
+  /// Trigger a Tool on a specific entry (for event-driven tools).
   ///
   /// Returns the result from the server, or null on error.
   Future<Map<String, dynamic>?> triggerAgentOnEntry(
     String agentName,
     String entryId,
   ) async {
-    final uri = Uri.parse('$baseUrl/api/daily/agents/$agentName/trigger');
+    final uri = Uri.parse('$baseUrl/api/daily/tools/$agentName/run');
     debugPrint('[DailyApiService] POST $uri (entry_id=$entryId)');
     try {
       final response = await _client
-          .post(uri, headers: _headers, body: jsonEncode({'entry_id': entryId}))
+          .post(uri, headers: _headers, body: jsonEncode({'scope': {'entry_id': entryId}}))
           .timeout(_timeout);
       if (response.statusCode >= 200 && response.statusCode < 300) {
         return jsonDecode(response.body) as Map<String, dynamic>;

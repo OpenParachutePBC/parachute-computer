@@ -496,12 +496,12 @@ class _AgentEditScreenState extends ConsumerState<AgentEditScreen> {
     bool success;
 
     if (widget.isEditing) {
-      // Update existing agent — preserve trigger fields
+      // Update existing tool — preserve trigger fields
       final fields = <String, dynamic>{
         'display_name': displayName,
         'description': description,
         'system_prompt': prompt,
-        'tools': tools,
+        'can_call': tools,
         'memory_mode': _memoryMode.toJson(),
         'container_slug': _containerSlug,
       };
@@ -536,8 +536,9 @@ class _AgentEditScreenState extends ConsumerState<AgentEditScreen> {
         'name': name,
         'display_name': displayName,
         'description': description,
+        'mode': 'agent',
         'system_prompt': prompt,
-        'tools': tools,
+        'can_call': tools,
         'memory_mode': _memoryMode.toJson(),
         'container_slug': _containerSlug,
       };

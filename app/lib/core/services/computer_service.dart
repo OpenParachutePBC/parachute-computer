@@ -156,7 +156,7 @@ class ComputerService {
   }) async {
     try {
       final url =
-          '${await getServerUrl()}/api/daily/agents/$agentName/transcript?limit=$limit';
+          '${await getServerUrl()}/api/daily/tools/$agentName/transcript?limit=$limit';
       debugPrint('[ComputerService] Fetching agent transcript from: $url');
 
       final response = await http
@@ -405,10 +405,14 @@ class AgentTemplate {
   bool get isTriggered => triggerEvent.isNotEmpty;
 
   factory AgentTemplate.fromJson(Map<String, dynamic> json) {
-    final rawTools = json['tools'];
+    // Handle both Agent templates (tools field) and Tool templates (can_call field)
+    final rawTools = json['tools'] ?? json['can_call'];
     List<String> tools = [];
     if (rawTools is List) {
-      tools = rawTools.cast<String>();
+      tools = rawTools
+          .map((e) => e is Map ? (e['name'] as String? ?? '') : e.toString())
+          .where((s) => s.isNotEmpty)
+          .toList();
     }
     return AgentTemplate(
       name: json['name'] as String? ?? '',

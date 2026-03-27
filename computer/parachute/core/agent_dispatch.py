@@ -78,7 +78,40 @@ class AgentDispatcher:
         event: str,
         entry_meta: dict[str, Any],
     ) -> list[dict[str, Any]]:
-        """Query enabled Agents with matching trigger_event, then apply filter."""
+        """Query Trigger→Tool graph for matching event, with Agent fallback."""
+        matching = []
+
+        # ── Try Trigger→Tool graph first ──────────────────────────────────
+        try:
+            rows = await self.graph.execute_cypher(
+                "MATCH (tr:Trigger)-[:INVOKES]->(t:Tool) "
+                "WHERE tr.enabled = 'true' AND tr.event = $event "
+                "RETURN t.name AS name, t.display_name AS display_name, "
+                "       tr.event_filter AS event_filter "
+                "ORDER BY t.name",
+                {"event": event},
+            )
+            for row in rows:
+                filter_raw = row.get("event_filter") or "{}"
+                try:
+                    trigger_filter = json.loads(filter_raw) if isinstance(filter_raw, str) else filter_raw
+                except (json.JSONDecodeError, TypeError):
+                    trigger_filter = {}
+
+                if self._matches_filter(trigger_filter, entry_meta):
+                    matching.append(row)
+                else:
+                    logger.debug(
+                        f"AgentDispatcher: tool '{row.get('name')}' "
+                        f"filter {trigger_filter} doesn't match entry meta"
+                    )
+
+            if matching:
+                return matching
+        except Exception as e:
+            logger.debug(f"AgentDispatcher: Trigger→Tool query failed, trying Agent fallback: {e}")
+
+        # ── Fallback: legacy Agent.trigger_event ──────────────────────────
         try:
             rows = await self.graph.execute_cypher(
                 "MATCH (a:Agent) "
@@ -87,12 +120,10 @@ class AgentDispatcher:
                 {"event": event},
             )
         except Exception as e:
-            logger.error(f"AgentDispatcher: query failed: {e}")
+            logger.error(f"AgentDispatcher: Agent fallback query failed: {e}")
             return []
 
-        matching = []
         for row in rows:
-            # Parse trigger_filter JSON
             filter_raw = row.get("trigger_filter") or "{}"
             try:
                 trigger_filter = json.loads(filter_raw) if isinstance(filter_raw, str) else filter_raw
@@ -220,11 +251,36 @@ class AgentDispatcher:
         ran_at: str,
         session_id: str,
     ) -> None:
-        """Record that an Agent ran on a Note (for UI display)."""
+        """Record that a Tool/Agent ran on a Note (for UI display).
+
+        Writes both ToolRun and AgentRun for backward compatibility.
+        """
+        run_id = f"{agent_name}:{entry_id}:{ran_at}"
         try:
             async with self.graph.write_lock:
-                # Use full ISO timestamp (microsecond precision) to avoid collisions
-                run_id = f"{agent_name}:{entry_id}:{ran_at}"
+                # Write ToolRun (new primary record)
+                await self.graph.execute_cypher(
+                    "MERGE (r:ToolRun {run_id: $run_id}) "
+                    "SET r.tool_name = $tool_name, "
+                    "    r.display_name = $display_name, "
+                    "    r.entry_id = $entry_id, "
+                    "    r.status = $status, "
+                    "    r.started_at = $ran_at, "
+                    "    r.completed_at = $ran_at, "
+                    "    r.session_id = $session_id, "
+                    "    r.trigger_name = 'event', "
+                    "    r.created_at = $ran_at",
+                    {
+                        "run_id": run_id,
+                        "tool_name": agent_name,
+                        "display_name": display_name,
+                        "entry_id": entry_id,
+                        "status": status,
+                        "ran_at": ran_at,
+                        "session_id": session_id,
+                    },
+                )
+                # Write AgentRun (backward compat)
                 await self.graph.execute_cypher(
                     "MERGE (r:AgentRun {run_id: $run_id}) "
                     "SET r.agent_name = $agent_name, "
@@ -232,6 +288,7 @@ class AgentDispatcher:
                     "    r.entry_id = $entry_id, "
                     "    r.status = $status, "
                     "    r.ran_at = $ran_at, "
+                    "    r.started_at = $ran_at, "
                     "    r.session_id = $session_id",
                     {
                         "run_id": run_id,
