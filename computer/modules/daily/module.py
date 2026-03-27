@@ -54,11 +54,9 @@ _DEFAULT_REDO_LOG_PATH = Path.home() / ".parachute" / "daily" / "entries.jsonl"
 
 logger = logging.getLogger(__name__)
 
-# Agent templates are defined in core (brain_chat_store.py) and imported here
-# for use in GET /agents/templates and agent creation endpoints.
+# Tool/Trigger templates are defined in core (brain_chat_store.py) and imported here
+# for use in GET /tools/templates and tool creation endpoints.
 from parachute.db.brain_chat_store import (
-    AGENT_TEMPLATES,
-    AgentTemplateDict,
     POST_PROCESS_SYSTEM_PROMPT,
     TOOL_TEMPLATES,
     TRIGGER_TEMPLATES,
@@ -2027,13 +2025,13 @@ class DailyModule:
                 return JSONResponse(status_code=400, content={"error": "invalid date format"})
             if not re.fullmatch(r"[a-z0-9][a-z0-9\-]{0,31}", card_type):
                 return JSONResponse(status_code=400, content={"error": "invalid card_type format"})
-            # Verify agent_name corresponds to a known Agent
+            # Verify agent_name corresponds to a known Tool
             agent_rows = await graph.execute_cypher(
-                "MATCH (a:Agent {name: $name}) RETURN a.name",
+                "MATCH (t:Tool {name: $name}) RETURN t.name",
                 {"name": agent_name},
             )
             if not agent_rows:
-                return JSONResponse(status_code=403, content={"error": "unknown agent"})
+                return JSONResponse(status_code=403, content={"error": "unknown tool"})
             card_id = f"{agent_name}:{card_type}:{date_str}"
             display_name = body.get("display_name") or agent_name.replace("-", " ").title()
             generated_at = datetime.now(timezone.utc).isoformat()
@@ -2073,406 +2071,6 @@ class DailyModule:
             _background_tasks.add(task)
             task.add_done_callback(_log_task_exception)
             return {"status": "started", "agent": agent_name, "date": date}
-
-        @router.get("/agents/{agent_name}/runs/latest")
-        async def get_agent_latest_run(agent_name: str):
-            """Get the most recent run for an agent. Reads from ToolRun."""
-            graph = self._get_graph()
-            if graph is None:
-                return JSONResponse(status_code=503, content={"error": "BrainDB not available"})
-            try:
-                rows = await graph.execute_cypher(
-                    "MATCH (r:ToolRun) "
-                    "WHERE r.tool_name = $name "
-                    "RETURN r ORDER BY r.started_at DESC",
-                    {"name": agent_name},
-                )
-                if not rows:
-                    return JSONResponse(status_code=404, content={"error": "No runs found"})
-                row = rows[0]
-                return {
-                    "status": row.get("status", ""),
-                    "error": row.get("error", ""),
-                    "trigger": row.get("trigger", ""),
-                }
-            except Exception as e:
-                logger.warning(f"Failed to get latest run for {agent_name}: {e}")
-                return JSONResponse(status_code=500, content={"error": str(e)})
-
-        # ── Agents (autonomous agent definitions) ─────────────────────────────
-        # IMPORTANT: /agents/templates must be registered before /agents/{name}
-        # so FastAPI matches the literal path before the path parameter.
-
-        @router.get("/agents/templates")
-        def list_agent_templates() -> dict[str, list[AgentTemplateDict]]:
-            """Return starter Agent templates for onboarding.
-
-            Templates have the same shape as POST /agents bodies so the
-            client can create an agent directly from a template.
-            """
-            return {"templates": AGENT_TEMPLATES}
-
-        @router.get("/agents/events")
-        def list_agent_events():
-            """Return available trigger events for Agents."""
-            return {
-                "events": [
-                    {"event": "note.created", "description": "Fires when a new note is saved"},
-                    {"event": "note.transcription_complete", "description": "Fires when voice transcription finishes"},
-                ]
-            }
-
-        @router.get("/agents")
-        async def list_agents():
-            """List all Agent nodes from the graph, enriched with builtin status."""
-            graph = self._get_graph()
-            if graph is None:
-                return JSONResponse(status_code=503, content={"error": "BrainDB not available"})
-            rows = await graph.execute_cypher(
-                "MATCH (a:Agent) RETURN a ORDER BY a.name"
-            )
-            # Enrich each agent with builtin/update metadata
-            builtin_names = {t["name"]: t for t in AGENT_TEMPLATES}
-            for agent in rows:
-                name = agent.get("name", "")
-                tpl = builtin_names.get(name)
-                agent["is_builtin"] = tpl is not None
-                if tpl:
-                    tpl_v = tpl.get("template_version", "")
-                    agent_v = (agent.get("template_version") or "").strip()
-                    # NOTE: version comparison requires YYYY-MM-DD format for lexicographic ordering
-                    agent["update_available"] = bool(
-                        tpl_v and agent_v and agent_v < tpl_v
-                    )
-                    # Surface user_modified as bool for the client
-                    agent["user_modified"] = (agent.get("user_modified") or "").strip() == "true"
-                else:
-                    agent["update_available"] = False
-            return {"agents": rows, "count": len(rows)}
-
-        @router.get("/agents/{name}")
-        async def get_agent(name: str):
-            """Get a specific Agent node."""
-            graph = self._get_graph()
-            if graph is None:
-                return JSONResponse(status_code=503, content={"error": "BrainDB not available"})
-            rows = await graph.execute_cypher(
-                "MATCH (a:Agent {name: $name}) RETURN a",
-                {"name": name},
-            )
-            if not rows:
-                return JSONResponse(status_code=404, content={"error": "not found"})
-            return rows[0]
-
-        @router.get("/agents/{name}/transcript")
-        async def get_agent_transcript(name: str, limit: int = Query(50)):
-            """Get the SDK conversation transcript for an Agent's latest session.
-
-            Returns parsed JSONL events in the shape the Flutter AgentLogScreen
-            expects: ``{ hasTranscript, sessionId, totalMessages, messages }``.
-
-            Uses the Agent node's ``container_slug`` and ``trust_level`` to
-            resolve the transcript file location — sandboxed agents write
-            inside their container bind-mount, direct agents write to the
-            host's ``~/.claude/projects/``.
-            """
-            graph = self._get_graph()
-            if graph is None:
-                return {"hasTranscript": False, "message": "BrainDB not available"}
-
-            rows = await graph.execute_cypher(
-                "MATCH (a:Agent {name: $name}) "
-                "RETURN a.sdk_session_id AS sid, "
-                "       a.container_slug AS container_slug, "
-                "       a.trust_level AS trust_level",
-                {"name": name},
-            )
-            if not rows:
-                return {"hasTranscript": False, "message": "Agent not found."}
-
-            sid = (rows[0].get("sid") or "").strip()
-            if not sid:
-                return {"hasTranscript": False, "message": "This agent hasn't run yet."}
-
-            # Resolve container slug: explicit config, or default for sandboxed agents
-            container_slug = (rows[0].get("container_slug") or "").strip()
-            trust_level = (rows[0].get("trust_level") or "sandboxed").strip()
-            if not container_slug and trust_level == "sandboxed":
-                container_slug = f"agent-{name}"
-
-            parachute_dir = Path(self.home_path) / ".parachute"
-
-            # Search for the JSONL transcript file and parse it off the
-            # event loop (file I/O is blocking).
-            return await asyncio.to_thread(
-                _read_transcript_file, sid, limit,
-                container_slug, parachute_dir,
-            )
-
-        @router.post("/agents", status_code=201)
-        async def create_agent(body: dict):
-            """Create or update an Agent node (MERGE on name)."""
-            graph = self._get_graph()
-            if graph is None:
-                return JSONResponse(status_code=503, content={"error": "BrainDB not available"})
-            name = body.get("name", "").strip()
-            if not name:
-                return JSONResponse(status_code=400, content={"error": "name required"})
-            now = datetime.now(timezone.utc).isoformat()
-            trust_level = body.get("trust_level", "sandboxed")
-            if trust_level not in ("sandboxed", "direct"):
-                trust_level = "sandboxed"
-            # Normalize trigger_filter to JSON string
-            trigger_filter = body.get("trigger_filter") or {}
-            if isinstance(trigger_filter, dict):
-                trigger_filter = json.dumps(trigger_filter)
-
-            memory_mode = body.get("memory_mode", "persistent")
-            if memory_mode not in ("persistent", "fresh"):
-                memory_mode = "persistent"
-
-            await graph.execute_cypher(
-                "MERGE (a:Agent {name: $name}) "
-                "SET a.display_name = $display_name, a.description = $description, "
-                "    a.system_prompt = $system_prompt, a.tools = $tools, "
-                "    a.model = $model, a.schedule_enabled = $schedule_enabled, "
-                "    a.schedule_time = $schedule_time, a.enabled = $enabled, "
-                "    a.trust_level = $trust_level, "
-                "    a.trigger_event = $trigger_event, "
-                "    a.trigger_filter = $trigger_filter, "
-                "    a.memory_mode = $memory_mode, "
-                "    a.container_slug = $container_slug, "
-                "    a.updated_at = $now",
-                {
-                    "name": name,
-                    "display_name": body.get("display_name") or name.replace("-", " ").title(),
-                    "description": body.get("description") or "",
-                    "system_prompt": body.get("system_prompt") or "",
-                    "tools": json.dumps(body.get("tools") or ["read_journal", "read_chat_log", "read_recent_journals"]),
-                    "model": body.get("model") or "",
-                    "schedule_enabled": "true" if body.get("schedule_enabled", True) else "false",
-                    "schedule_time": body.get("schedule_time") or "3:00",
-                    "enabled": "true" if body.get("enabled", True) else "false",
-                    "trust_level": trust_level,
-                    "trigger_event": body.get("trigger_event") or "",
-                    "trigger_filter": trigger_filter,
-                    "memory_mode": memory_mode,
-                    "container_slug": body.get("container_slug") or "",
-                    "now": now,
-                },
-            )
-            rows = await graph.execute_cypher(
-                "MATCH (a:Agent {name: $name}) RETURN a", {"name": name}
-            )
-            return rows[0] if rows else {"name": name}
-
-        @router.put("/agents/{name}")
-        async def update_agent(name: str, body: dict):
-            """Update fields on an existing Agent node."""
-            graph = self._get_graph()
-            if graph is None:
-                return JSONResponse(status_code=503, content={"error": "BrainDB not available"})
-            now = datetime.now(timezone.utc).isoformat()
-            # Fetch existing
-            rows = await graph.execute_cypher(
-                "MATCH (a:Agent {name: $name}) RETURN a", {"name": name}
-            )
-            if not rows:
-                return JSONResponse(status_code=404, content={"error": "not found"})
-            existing = rows[0]
-            trust_level = body.get("trust_level", existing.get("trust_level") or "sandboxed")
-            if trust_level not in ("sandboxed", "direct"):
-                trust_level = "sandboxed"
-            # Normalize trigger_filter
-            trigger_filter = body.get("trigger_filter", existing.get("trigger_filter") or "{}")
-            if isinstance(trigger_filter, dict):
-                trigger_filter = json.dumps(trigger_filter)
-            # Normalize memory_mode
-            memory_mode = body.get("memory_mode", existing.get("memory_mode") or "persistent")
-            if memory_mode not in ("persistent", "fresh"):
-                memory_mode = "persistent"
-
-            await graph.execute_cypher(
-                "MATCH (a:Agent {name: $name}) "
-                "SET a.display_name = $display_name, a.description = $description, "
-                "    a.system_prompt = $system_prompt, a.tools = $tools, "
-                "    a.model = $model, a.schedule_enabled = $schedule_enabled, "
-                "    a.schedule_time = $schedule_time, a.enabled = $enabled, "
-                "    a.trust_level = $trust_level, "
-                "    a.trigger_event = $trigger_event, "
-                "    a.trigger_filter = $trigger_filter, "
-                "    a.memory_mode = $memory_mode, "
-                "    a.user_modified = 'true', "
-                "    a.updated_at = $now",
-                {
-                    "name": name,
-                    "display_name": body.get("display_name", existing.get("display_name") or name),
-                    "description": body.get("description", existing.get("description") or ""),
-                    "system_prompt": body.get("system_prompt", existing.get("system_prompt") or ""),
-                    "tools": json.dumps(body.get("tools")) if "tools" in body else existing.get("tools") or "[]",
-                    "model": body.get("model", existing.get("model") or ""),
-                    "schedule_enabled": "true" if body.get("schedule_enabled", existing.get("schedule_enabled") == "true") else "false",
-                    "schedule_time": body.get("schedule_time", existing.get("schedule_time") or "3:00"),
-                    "enabled": "true" if body.get("enabled", existing.get("enabled") == "true") else "false",
-                    "trust_level": trust_level,
-                    "trigger_event": body.get("trigger_event", existing.get("trigger_event") or ""),
-                    "trigger_filter": trigger_filter,
-                    "memory_mode": memory_mode,
-                    "now": now,
-                },
-            )
-            rows = await graph.execute_cypher(
-                "MATCH (a:Agent {name: $name}) RETURN a", {"name": name}
-            )
-            return rows[0] if rows else {"name": name}
-
-        @router.post("/agents/{name}/trigger")
-        async def trigger_agent(name: str, body: dict):
-            """Manually trigger an Agent on a specific entry (ignores filters).
-
-            Body: { "entry_id": "..." }
-            """
-            entry_id = body.get("entry_id", "").strip()
-            if not entry_id:
-                return JSONResponse(status_code=400, content={"error": "entry_id required"})
-
-            graph = self._get_graph()
-            if graph is None:
-                return JSONResponse(status_code=503, content={"error": "BrainDB not available"})
-
-            # Verify agent exists
-            rows = await graph.execute_cypher(
-                "MATCH (a:Agent {name: $name}) RETURN a.trigger_event AS trigger_event",
-                {"name": name},
-            )
-            if not rows:
-                return JSONResponse(status_code=404, content={"error": "Agent not found"})
-
-            event = rows[0].get("trigger_event") or "note.created"
-
-            from parachute.core.daily_agent import run_triggered_agent
-            task = asyncio.create_task(
-                run_triggered_agent(self.home_path, name, entry_id, event)
-            )
-            _background_tasks.add(task)
-            task.add_done_callback(_log_task_exception)
-
-            return {"status": "triggered", "agent": name, "entry_id": entry_id, "event": event}
-
-        @router.post("/agents/{name}/reset", status_code=200)
-        async def reset_agent(name: str):
-            """Reset an Agent's session state so its next run starts fresh."""
-            # Validate name to prevent path traversal
-            if not re.fullmatch(r"[a-z0-9][a-z0-9\-]{0,63}", name):
-                return JSONResponse(status_code=400, content={"error": "invalid agent name format"})
-            graph = self._get_graph()
-            if graph is None:
-                return JSONResponse(status_code=503, content={"error": "BrainDB not available"})
-            # Verify Agent exists
-            rows = await graph.execute_cypher(
-                "MATCH (a:Agent {name: $name}) RETURN a", {"name": name}
-            )
-            if not rows:
-                return JSONResponse(status_code=404, content={"error": "not found"})
-            # Clear the agent's SDK session so next run starts fresh
-            async with graph.write_lock:
-                await graph.execute_cypher(
-                    "MATCH (a:Agent {name: $name}) SET a.sdk_session_id = ''",
-                    {"name": name},
-                )
-            return {"status": "reset", "agent": name}
-
-        @router.post("/agents/{name}/reset-to-template")
-        async def reset_to_template(name: str):
-            """Reset a builtin agent to the latest template defaults.
-
-            Preserves runtime state (schedule_enabled, enabled, sdk_session_id,
-            last_run_at, run_count, last_processed_date).
-            """
-            tpl = next((t for t in AGENT_TEMPLATES if t["name"] == name), None)
-            if tpl is None:
-                return JSONResponse(
-                    status_code=400,
-                    content={"error": f"'{name}' is not a builtin agent"},
-                )
-
-            graph = self._get_graph()
-            if graph is None:
-                return JSONResponse(status_code=503, content={"error": "BrainDB not available"})
-
-            now = datetime.now(timezone.utc).isoformat()
-            is_triggered = bool(tpl.get("trigger_event", ""))
-
-            # Check existence and write atomically under the lock to avoid TOCTOU
-            async with graph.write_lock:
-                rows = await graph.execute_cypher(
-                    "MATCH (a:Agent {name: $name}) RETURN a", {"name": name}
-                )
-                if not rows:
-                    return JSONResponse(status_code=404, content={"error": "not found"})
-
-                await graph.execute_cypher(
-                    "MATCH (a:Agent {name: $name}) "
-                    "SET a.display_name = $display_name,"
-                    "    a.description = $description,"
-                    "    a.system_prompt = $system_prompt,"
-                    "    a.tools = $tools,"
-                    "    a.schedule_time = $schedule_time,"
-                    "    a.trust_level = $trust_level,"
-                    "    a.trigger_event = $trigger_event,"
-                    "    a.trigger_filter = $trigger_filter,"
-                    "    a.memory_mode = $memory_mode,"
-                    "    a.template_version = $template_version,"
-                    "    a.user_modified = 'false',"
-                    "    a.updated_at = $now",
-                    {
-                        "name": name,
-                        "display_name": tpl.get("display_name", name.replace("-", " ").title()),
-                        "description": tpl.get("description", ""),
-                        "system_prompt": tpl.get("system_prompt", ""),
-                        "tools": json.dumps(tpl.get("tools", [])),
-                        "schedule_time": tpl.get("schedule_time", "") if not is_triggered else "",
-                        "trust_level": tpl.get("trust_level", "sandboxed"),
-                        "trigger_event": tpl.get("trigger_event", ""),
-                        "trigger_filter": tpl.get("trigger_filter", "{}"),
-                        "memory_mode": tpl.get("memory_mode", "persistent"),
-                        "template_version": tpl.get("template_version", ""),
-                        "now": now,
-                    },
-                )
-
-            # Re-fetch and return
-            rows = await graph.execute_cypher(
-                "MATCH (a:Agent {name: $name}) RETURN a", {"name": name}
-            )
-            return rows[0] if rows else {"name": name, "status": "reset"}
-
-        @router.delete("/agents/{name}", status_code=204)
-        async def delete_agent(name: str):
-            """Delete an Agent node and reload the scheduler."""
-            graph = self._get_graph()
-            if graph is None:
-                return JSONResponse(status_code=503, content={"error": "BrainDB not available"})
-            async with graph.write_lock:
-                await graph.execute_cypher(
-                    "MATCH (a:Agent {name: $name}) DELETE a", {"name": name}
-                )
-            # Clean up orphan Triggers (no remaining INVOKES target)
-            try:
-                async with graph.write_lock:
-                    await graph.execute_cypher(
-                        "MATCH (tr:Trigger) WHERE NOT (tr)-[:INVOKES]->(:Tool) DELETE tr"
-                    )
-            except Exception as e:
-                logger.debug(f"Orphan trigger cleanup (legacy delete): {e}")
-            # Reload scheduler so deleted scheduled agents are removed
-            try:
-                from parachute.core.scheduler import reload_scheduler
-                home_path = Path(self.home_path)
-                await reload_scheduler(home_path, graph=graph)
-            except Exception as e:
-                logger.warning(f"Daily: scheduler reload after delete failed: {e}")
-            return Response(status_code=204)
 
         # ── Helper: validate and create CAN_CALL edges ─────────────────────
 
@@ -2714,6 +2312,30 @@ class DailyModule:
                     tool["user_modified"] = (tool.get("user_modified") or "").strip() == "true"
                 else:
                     tool["update_available"] = False
+
+            # Enrich with ToolRun stats (last_run_at, run_count)
+            try:
+                run_stats = await graph.execute_cypher(
+                    "MATCH (r:ToolRun) "
+                    "RETURN r.tool_name AS name, count(r) AS run_count, "
+                    "max(r.started_at) AS last_run_at, max(r.date) AS last_processed_date"
+                )
+                stats_by_name = {
+                    r["name"]: r for r in run_stats if r.get("name")
+                }
+                for tool in rows:
+                    stats = stats_by_name.get(tool.get("name", ""))
+                    if stats:
+                        tool["last_run_at"] = stats.get("last_run_at")
+                        tool["run_count"] = stats.get("run_count", 0)
+                        tool["last_processed_date"] = stats.get("last_processed_date")
+                    else:
+                        tool["last_run_at"] = None
+                        tool["run_count"] = 0
+                        tool["last_processed_date"] = None
+            except Exception as e:
+                logger.debug(f"ToolRun stats enrichment failed: {e}")
+
             return {"tools": rows, "count": len(rows)}
 
         @router.get("/tools/{name}")
@@ -2954,8 +2576,8 @@ class DailyModule:
         async def reset_tool(name: str):
             """Reset a Tool's session state so its next run starts fresh.
 
-            Clears the latest ToolRun's session_id and also clears the
-            Agent node's sdk_session_id for backward compatibility.
+            Clears the latest ToolRun's session_id so the next run
+            starts a new conversation rather than resuming.
             """
             if not re.fullmatch(r"[a-z0-9][a-z0-9\-]{0,63}", name):
                 return JSONResponse(status_code=400, content={"error": "invalid name format"})
@@ -3007,7 +2629,6 @@ class DailyModule:
                     "SET t.display_name = $display_name,"
                     "    t.description = $description,"
                     "    t.system_prompt = $system_prompt,"
-                    "    t.can_call = $can_call,"
                     "    t.trust_level = $trust_level,"
                     "    t.memory_mode = $memory_mode,"
                     "    t.template_version = $template_version,"
@@ -3018,7 +2639,6 @@ class DailyModule:
                         "display_name": tpl.get("display_name", name.replace("-", " ").title()),
                         "description": tpl.get("description", ""),
                         "system_prompt": tpl.get("system_prompt", ""),
-                        "can_call": json.dumps(can_call_names),
                         "trust_level": tpl.get("trust_level", "sandboxed"),
                         "memory_mode": tpl.get("memory_mode", "persistent"),
                         "template_version": tpl.get("template_version", ""),

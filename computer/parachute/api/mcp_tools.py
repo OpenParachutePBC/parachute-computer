@@ -173,13 +173,13 @@ async def _handle_write_card(arguments: dict[str, Any]) -> str:
     if graph is None:
         return json.dumps({"error": "BrainDB not available"})
 
-    # Verify agent exists
+    # Verify tool exists
     agent_rows = await graph.execute_cypher(
-        "MATCH (a:Agent {name: $name}) RETURN a.name",
+        "MATCH (t:Tool {name: $name}) RETURN t.name",
         {"name": agent_name},
     )
     if not agent_rows:
-        return json.dumps({"error": f"Unknown agent: {agent_name}"})
+        return json.dumps({"error": f"Unknown tool: {agent_name}"})
 
     card_id = f"{agent_name}:{card_type}:{date_str}"
     display_name = agent_name.replace("-", " ").title()

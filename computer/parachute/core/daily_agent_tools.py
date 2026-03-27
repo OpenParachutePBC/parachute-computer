@@ -64,11 +64,17 @@ def _make_read_days_notes(graph: Any, scope: dict, agent_name: str, home_path: P
 
 
 def _make_read_days_chats(graph: Any, scope: dict, agent_name: str, home_path: Path) -> SdkMcpTool:
-    """Read AI chat sessions active on a specific date from the graph."""
+    """Read AI chat sessions active on a specific date, with condensed message content."""
+
+    # Per-session limits to keep total output manageable
+    MAX_MSGS_PER_SESSION = 40
+    MAX_CHARS_PER_MSG = 500
 
     @tool(
         "read_days_chats",
-        "List chat sessions active on a specific date. Returns session IDs, titles, message counts, and time ranges — no raw messages. Use summarize_chat to get details on individual sessions.",
+        "Read chat sessions from a specific date with condensed message content. "
+        "Returns session titles, metadata, and user/assistant messages (truncated). "
+        "Gives you enough context to reflect on the day's conversations.",
         {"date": str},
     )
     async def read_days_chats(args: dict[str, Any]) -> dict[str, Any]:
@@ -85,7 +91,8 @@ def _make_read_days_chats(graph: Any, scope: dict, agent_name: str, home_path: P
             date_start = f"{date_obj.isoformat()}T00:00:00"
             date_end = f"{(date_obj + timedelta(days=1)).isoformat()}T00:00:00"
 
-            rows = await graph.execute_cypher(
+            # Get sessions with today's messages
+            session_rows = await graph.execute_cypher(
                 "MATCH (s:Chat)-[:HAS_MESSAGE]->(m:Message) "
                 "WHERE m.created_at >= $date_start AND m.created_at < $date_end "
                 "  AND s.module = 'chat' "
@@ -97,26 +104,56 @@ def _make_read_days_chats(graph: Any, scope: dict, agent_name: str, home_path: P
                 {"date_start": date_start, "date_end": date_end},
             )
 
-            if not rows:
+            if not session_rows:
                 return {"content": [{"type": "text", "text": f"No chat sessions found for {date_str}"}]}
 
             lines = [f"# Chat Sessions for {date_str}\n"]
-            for r in rows:
+
+            for r in session_rows:
                 title = r.get("title") or "(untitled)"
                 sid = r.get("session_id", "?")
                 count = r.get("msg_count", 0)
-                first = r.get("first_msg", "")
-                last = r.get("last_msg", "")
                 summary = r.get("summary") or ""
 
                 lines.append(f"## {title}")
-                lines.append(f"- **Session ID:** {sid}")
-                lines.append(f"- **Messages today:** {count}")
-                if first and last:
-                    lines.append(f"- **Time range:** {first} → {last}")
+                lines.append(f"Messages today: {count}\n")
                 if summary:
-                    lines.append(f"- **Summary:** {summary}")
-                lines.append("")
+                    lines.append(f"**Existing summary:** {summary}\n")
+
+                # Fetch today's messages for this session
+                try:
+                    msg_rows = await graph.execute_cypher(
+                        "MATCH (s:Chat {session_id: $sid})-[:HAS_MESSAGE]->(m:Message) "
+                        "WHERE m.created_at >= $date_start AND m.created_at < $date_end "
+                        "RETURN m.role AS role, m.content AS content "
+                        "ORDER BY m.sequence ASC",
+                        {"sid": sid, "date_start": date_start, "date_end": date_end},
+                    )
+
+                    if msg_rows:
+                        # Sample messages if too many
+                        msgs = msg_rows
+                        if len(msgs) > MAX_MSGS_PER_SESSION:
+                            # Keep first few, last few, and sample from middle
+                            first_n = 10
+                            last_n = 10
+                            msgs = msgs[:first_n] + [{"role": "system", "content": f"... ({len(msg_rows) - first_n - last_n} messages omitted) ..."}] + msgs[-last_n:]
+
+                        for msg in msgs:
+                            role = msg.get("role", "unknown")
+                            content = (msg.get("content") or "").strip()
+                            if not content:
+                                continue
+                            label = "User" if role == "human" else "Assistant" if role == "assistant" else role.title()
+                            # Truncate long messages
+                            if len(content) > MAX_CHARS_PER_MSG:
+                                content = content[:MAX_CHARS_PER_MSG] + "..."
+                            lines.append(f"**{label}:** {content}")
+
+                except Exception as e:
+                    lines.append(f"(could not load messages: {e})")
+
+                lines.append("")  # blank line between sessions
 
             return {"content": [{"type": "text", "text": "\n".join(lines)}]}
         except Exception as e:

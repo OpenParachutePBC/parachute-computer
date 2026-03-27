@@ -156,8 +156,9 @@ class TestReadDaysChats:
         text = result["content"][0]["text"]
 
         assert "Working on daily agent" in text
-        assert "test-session-1" in text
-        assert "Messages today:** 2" in text
+        assert "Messages today: 2" in text
+        # Enriched output includes message content
+        assert "User:" in text or "Machine:" in text
         # Old session should NOT appear (no messages on 2026-03-25)
         assert "Old session" not in text
 
