@@ -1,9 +1,9 @@
 """
 Generic Daily Agent Runner.
 
-Runs scheduled daily agents. Each Agent is a node in the graph database with
-configuration (system_prompt, tools, schedule) and runtime state
-(sdk_session_id, last_run_at, run_count). Output is written as Card nodes.
+Runs scheduled daily agents. Each Tool node in the graph holds configuration
+(system_prompt, mode, scope_keys) while runtime state (last_run_at, run_count,
+sdk_session_id) is derived from ToolRun records. Output is written as Card nodes.
 """
 
 import asyncio
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 # Tool state helpers — read/write runtime state via ToolRun graph nodes
 # ---------------------------------------------------------------------------
 
-async def _load_tool_state(graph, tool_name: str, memory_mode: str = "persistent") -> dict[str, Any]:
+async def _load_tool_state(graph: "BrainService | None", tool_name: str, memory_mode: str = "persistent") -> dict[str, Any]:
     """Derive runtime state from ToolRun queries."""
     state: dict[str, Any] = {
         "sdk_session_id": None,
@@ -67,8 +67,13 @@ async def _load_tool_state(graph, tool_name: str, memory_mode: str = "persistent
     return state
 
 
-async def _clear_stale_session(graph, tool_name: str) -> None:
-    """Clear session_id on the latest ToolRun so next run starts fresh."""
+async def _clear_stale_session(graph: "BrainService | None", tool_name: str) -> None:
+    """Clear session_id on the latest ToolRun so next run starts fresh.
+
+    Note: this mutates a historical ToolRun record. The session→transcript
+    link for that run is lost, but this is acceptable — the alternative
+    (a sentinel record) adds schema complexity for a rare edge case.
+    """
     try:
         async with graph.write_lock:
             await graph.execute_cypher(
@@ -206,7 +211,7 @@ class DailyAgentConfig:
         self.trigger_event = trigger_event
         self.trigger_filter = trigger_filter or {}
         self.container_slug = container_slug  # empty = use default agent-{name}
-        self.memory_mode = "persistent"  # overridable by from_row/from_tool_row
+        self.memory_mode = "persistent"  # overridable by from_tool_row
 
     @classmethod
     def from_tool_row(

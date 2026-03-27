@@ -2576,8 +2576,8 @@ class DailyModule:
         async def reset_tool(name: str):
             """Reset a Tool's session state so its next run starts fresh.
 
-            Clears the latest ToolRun's session_id and also clears the
-            Agent node's sdk_session_id for backward compatibility.
+            Clears the latest ToolRun's session_id so the next run
+            starts a new conversation rather than resuming.
             """
             if not re.fullmatch(r"[a-z0-9][a-z0-9\-]{0,63}", name):
                 return JSONResponse(status_code=400, content={"error": "invalid name format"})

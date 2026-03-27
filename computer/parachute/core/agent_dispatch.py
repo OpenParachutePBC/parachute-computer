@@ -1,9 +1,9 @@
 """
-Event-driven Agent dispatcher.
+Event-driven Tool dispatcher.
 
-Discovers triggered Agents matching a Note lifecycle event (e.g.,
-"note.transcription_complete") and invokes them sequentially on the
-triggering entry.
+Discovers triggered Tools matching a Note lifecycle event (e.g.,
+"note.transcription_complete") via Trigger→Tool graph edges and
+invokes them sequentially on the triggering entry.
 
 The dispatcher is event-agnostic — it finds, invokes, and records.
 Lifecycle bookkeeping (cleanup_status, transcription_status) belongs
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 class AgentDispatcher:
-    """Discovers triggered Agents and invokes them when events fire."""
+    """Discovers triggered Tools and invokes them when events fire."""
 
     def __init__(self, graph: Any, home_path: Path):
         self.graph = graph
@@ -33,10 +33,10 @@ class AgentDispatcher:
         entry_meta: dict[str, Any],
     ) -> list[dict[str, Any]]:
         """
-        Find Agents matching this event + filter, invoke them sequentially.
+        Find Tools matching this event + filter, invoke them sequentially.
 
-        Sequential execution ensures earlier Agents' mutations (e.g., cleanup)
-        are visible to later Agents (e.g., tagging) on the same Note.
+        Sequential execution ensures earlier Tools' mutations (e.g., cleanup)
+        are visible to later Tools (e.g., tagging) on the same Note.
 
         Args:
             event: The lifecycle event (e.g., "note.transcription_complete")
@@ -44,7 +44,7 @@ class AgentDispatcher:
             entry_meta: Note metadata for filter matching (entry_type, tags, date)
 
         Returns:
-            List of result dicts from each invoked Agent
+            List of result dicts from each invoked Tool
         """
         if self.graph is None:
             logger.warning("AgentDispatcher: graph unavailable, skipping dispatch")
