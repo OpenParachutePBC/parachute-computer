@@ -2629,7 +2629,6 @@ class DailyModule:
                     "SET t.display_name = $display_name,"
                     "    t.description = $description,"
                     "    t.system_prompt = $system_prompt,"
-                    "    t.can_call = $can_call,"
                     "    t.trust_level = $trust_level,"
                     "    t.memory_mode = $memory_mode,"
                     "    t.template_version = $template_version,"
@@ -2640,7 +2639,6 @@ class DailyModule:
                         "display_name": tpl.get("display_name", name.replace("-", " ").title()),
                         "description": tpl.get("description", ""),
                         "system_prompt": tpl.get("system_prompt", ""),
-                        "can_call": json.dumps(can_call_names),
                         "trust_level": tpl.get("trust_level", "sandboxed"),
                         "memory_mode": tpl.get("memory_mode", "persistent"),
                         "template_version": tpl.get("template_version", ""),

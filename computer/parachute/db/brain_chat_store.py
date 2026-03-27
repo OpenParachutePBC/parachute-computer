@@ -948,9 +948,17 @@ class BrainChatStore:
                     except Exception as e:
                         logger.warning(f"Failed to update Tool '{name}': {e}")
 
-            # Seed CAN_CALL edges
+            # Seed CAN_CALL edges — delete stale edges first, then re-add
             can_call = tpl.get("can_call", [])
             if can_call:
+                try:
+                    async with self.graph.write_lock:
+                        await self.graph.execute_cypher(
+                            "MATCH (t:Tool {name: $name})-[r:CAN_CALL]->() DELETE r",
+                            {"name": name},
+                        )
+                except Exception:
+                    pass  # No edges to delete, or tool doesn't exist yet
                 for child_name in can_call:
                     try:
                         async with self.graph.write_lock:
