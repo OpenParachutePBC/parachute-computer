@@ -108,14 +108,14 @@ PROCESS_DAY_SYSTEM_PROMPT = (
 # ── Tool templates ────────────────────────────────────────────────────────
 # Built-in Tool definitions seeded on startup.  Tool is the universal
 # primitive — everything callable is a Tool node in the graph.  The `mode`
-# field discriminates: "query", "transform", "agent", "mcp".
+# field discriminates: "function", "transform", "agent", "mcp".
 
 
 class ToolTemplateDict(TypedDict, total=False):
     name: str
     display_name: str
     description: str
-    mode: str  # "query" | "transform" | "agent" | "mcp"
+    mode: str  # "function" | "transform" | "agent" | "mcp"
     scope_keys: list[str]
     # mode=query
     query: str
@@ -154,7 +154,7 @@ TOOL_TEMPLATES: list[ToolTemplateDict] = [
         "name": "read-days-notes",
         "display_name": "Today's Notes",
         "description": "Read all notes for a specific date. Returns the full content of that day's entries.",
-        "mode": "query",
+        "mode": "function",
         "scope_keys": ["date"],
         "template_version": "2026-03-26",
     },
@@ -162,7 +162,7 @@ TOOL_TEMPLATES: list[ToolTemplateDict] = [
         "name": "read-days-chats",
         "display_name": "Today's Chats",
         "description": "List chat sessions active on a specific date. Returns session IDs, titles, message counts, and time ranges.",
-        "mode": "query",
+        "mode": "function",
         "scope_keys": ["date"],
         "template_version": "2026-03-26",
     },
@@ -170,7 +170,7 @@ TOOL_TEMPLATES: list[ToolTemplateDict] = [
         "name": "read-recent-journals",
         "display_name": "Recent Journals",
         "description": "Read journal entries from the past N days for context. Useful for noticing patterns across days.",
-        "mode": "query",
+        "mode": "function",
         "scope_keys": [],
         "template_version": "2026-03-26",
     },
@@ -178,7 +178,7 @@ TOOL_TEMPLATES: list[ToolTemplateDict] = [
         "name": "read-recent-sessions",
         "display_name": "Recent Sessions",
         "description": "Read recent AI chat sessions for context. Returns summaries of recent conversations.",
-        "mode": "query",
+        "mode": "function",
         "scope_keys": [],
         "template_version": "2026-03-26",
     },
@@ -186,7 +186,7 @@ TOOL_TEMPLATES: list[ToolTemplateDict] = [
         "name": "read-recent-cards",
         "display_name": "Recent Cards",
         "description": "Read cards from recent days. Filter by card_type (e.g. 'reflection') to see past outputs.",
-        "mode": "query",
+        "mode": "function",
         "scope_keys": [],
         "template_version": "2026-03-26",
     },
@@ -194,7 +194,7 @@ TOOL_TEMPLATES: list[ToolTemplateDict] = [
         "name": "write-card",
         "display_name": "Write Card",
         "description": "Write the agent's output. Saves as a Card in the graph.",
-        "mode": "query",
+        "mode": "function",
         "scope_keys": [],
         "template_version": "2026-03-26",
     },
@@ -203,7 +203,7 @@ TOOL_TEMPLATES: list[ToolTemplateDict] = [
         "name": "read-this-note",
         "display_name": "Read This Note",
         "description": "Read the note that triggered this agent. Returns the note's content, metadata, tags, and type.",
-        "mode": "query",
+        "mode": "function",
         "scope_keys": ["entry_id"],
         "template_version": "2026-03-26",
     },
@@ -211,7 +211,7 @@ TOOL_TEMPLATES: list[ToolTemplateDict] = [
         "name": "update-this-note",
         "display_name": "Update This Note",
         "description": "Replace the note's content with cleaned or processed text.",
-        "mode": "query",
+        "mode": "function",
         "scope_keys": ["entry_id"],
         "template_version": "2026-03-26",
     },
@@ -219,7 +219,7 @@ TOOL_TEMPLATES: list[ToolTemplateDict] = [
         "name": "update-note-tags",
         "display_name": "Update Note Tags",
         "description": "Set tags on the note. Pass a list of tag strings.",
-        "mode": "query",
+        "mode": "function",
         "scope_keys": ["entry_id"],
         "template_version": "2026-03-26",
     },
@@ -227,7 +227,7 @@ TOOL_TEMPLATES: list[ToolTemplateDict] = [
         "name": "update-note-metadata",
         "display_name": "Update Note Metadata",
         "description": "Update a metadata field on the note.",
-        "mode": "query",
+        "mode": "function",
         "scope_keys": ["entry_id"],
         "template_version": "2026-03-26",
     },
@@ -295,32 +295,63 @@ TRIGGER_TEMPLATES: list[TriggerTemplateDict] = [
 ]
 
 
+# ── Derive AGENT_TEMPLATES from TOOL_TEMPLATES ──────────────────────────
+# TOOL_TEMPLATES is the source of truth.  AGENT_TEMPLATES is derived for
+# backward compatibility with the old Agent seeding/execution path.
+# Remove this once Phase 2 execution rewire is complete.
+
+# Kebab → underscore for tool names (old factories use underscores)
+_TOOL_NAME_ALIASES: dict[str, str] = {
+    "read-days-notes": "read_days_notes",
+    "read-days-chats": "read_days_chats",
+    "summarize-chat": "summarize_chat",
+    "read-recent-journals": "read_recent_journals",
+    "read-recent-sessions": "read_recent_sessions",
+    "read-recent-cards": "read_recent_cards",
+    "write-card": "write_card",
+    "read-this-note": "read_this_note",
+    "update-this-note": "update_this_note",
+    "update-note-tags": "update_note_tags",
+    "update-note-metadata": "update_note_metadata",
+}
+
+# Build a trigger lookup: tool_name → trigger template
+_TRIGGER_BY_TOOL: dict[str, TriggerTemplateDict] = {
+    t["invokes"]: t for t in TRIGGER_TEMPLATES if "invokes" in t
+}
+
+
+def _tool_to_agent_template(tool: ToolTemplateDict) -> AgentTemplateDict:
+    """Derive a legacy Agent template from a Tool template + its Trigger."""
+    trigger = _TRIGGER_BY_TOOL.get(tool["name"])
+    # Convert can_call kebab names → underscore names for TOOL_FACTORIES
+    can_call = tool.get("can_call", [])
+    tools_underscore = [_TOOL_NAME_ALIASES.get(n, n.replace("-", "_")) for n in can_call]
+
+    result: AgentTemplateDict = {
+        "name": tool["name"],
+        "display_name": tool.get("display_name", ""),
+        "description": tool.get("description", ""),
+        "system_prompt": tool.get("system_prompt", ""),
+        "tools": tools_underscore,
+        "trust_level": tool.get("trust_level", "sandboxed"),
+        "memory_mode": tool.get("memory_mode", "persistent"),
+        "template_version": tool.get("template_version", ""),
+    }
+    if trigger:
+        if trigger.get("type") == "schedule":
+            result["schedule_time"] = trigger.get("schedule_time", "")
+        elif trigger.get("type") == "event":
+            result["trigger_event"] = trigger.get("event", "")
+            result["trigger_filter"] = trigger.get("event_filter", "")
+    return result
+
+
+# Only agent-mode and transform-mode tools (with system_prompt) become Agents
 AGENT_TEMPLATES: list[AgentTemplateDict] = [
-    {
-        "name": "process-day",
-        "template_version": "2026-03-26",
-        "display_name": "Daily Reflection",
-        "description": "Reviews your journal entries and chat sessions, then offers a thoughtful daily reflection",
-        "system_prompt": PROCESS_DAY_SYSTEM_PROMPT,
-        "tools": ["read_days_notes", "read_days_chats", "summarize_chat", "read_recent_cards", "write_card"],
-        "schedule_time": "4:00",
-        "trust_level": "sandboxed",
-        "memory_mode": "persistent",
-    },
-    {
-        "name": "process-note",
-        "template_version": "2026-03-23",
-        "display_name": "Process Note",
-        "description": (
-            "Runs after voice transcription completes. Cleans up filler "
-            "words, fixes grammar, adds punctuation."
-        ),
-        "system_prompt": PROCESS_NOTE_SYSTEM_PROMPT,
-        "tools": ["read_this_note", "update_this_note"],
-        "trigger_event": "note.transcription_complete",
-        "trust_level": "direct",
-        "memory_mode": "fresh",
-    },
+    _tool_to_agent_template(t)
+    for t in TOOL_TEMPLATES
+    if t.get("mode") in ("agent", "transform") and t.get("system_prompt")
 ]
 
 
@@ -547,7 +578,7 @@ class BrainChatStore:
                 "name": "STRING",            # PK: "read-days-notes", "process-day"
                 "display_name": "STRING",
                 "description": "STRING",
-                "mode": "STRING",            # "query" | "transform" | "agent" | "mcp"
+                "mode": "STRING",            # "function" | "transform" | "agent" | "mcp"
                 "scope_keys": "STRING",      # JSON array: ["date"], ["entry_id"]
                 "input_schema": "STRING",    # JSON schema for parameters
 
@@ -1181,7 +1212,7 @@ class BrainChatStore:
                 "name": name,
                 "display_name": tpl.get("display_name", name.replace("-", " ").title()),
                 "description": tpl.get("description", ""),
-                "mode": tpl.get("mode", "query"),
+                "mode": tpl.get("mode", "function"),
                 "scope_keys": json.dumps(tpl.get("scope_keys", [])),
                 "input_schema": "",
                 "query": tpl.get("query", ""),

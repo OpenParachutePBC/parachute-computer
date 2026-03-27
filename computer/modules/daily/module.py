@@ -56,7 +56,15 @@ logger = logging.getLogger(__name__)
 
 # Agent templates are defined in core (brain_chat_store.py) and imported here
 # for use in GET /agents/templates and agent creation endpoints.
-from parachute.db.brain_chat_store import AGENT_TEMPLATES, AgentTemplateDict, POST_PROCESS_SYSTEM_PROMPT
+from parachute.db.brain_chat_store import (
+    AGENT_TEMPLATES,
+    AgentTemplateDict,
+    POST_PROCESS_SYSTEM_PROMPT,
+    TOOL_TEMPLATES,
+    TRIGGER_TEMPLATES,
+    ToolTemplateDict,
+    TriggerTemplateDict,
+)
 
 
 def _find_transcript_file(
@@ -2455,6 +2463,649 @@ class DailyModule:
                 await reload_scheduler(home_path, graph=graph)
             except Exception as e:
                 logger.warning(f"Daily: scheduler reload after delete failed: {e}")
+            return Response(status_code=204)
+
+        # ── Tool + Trigger endpoints (universal primitive) ─────────────────
+
+        @router.get("/tools/templates")
+        def list_tool_templates() -> dict[str, list[ToolTemplateDict]]:
+            """Return TOOL_TEMPLATES for onboarding / reference."""
+            return {"templates": TOOL_TEMPLATES}
+
+        @router.get("/tools/events")
+        def list_tool_events():
+            """Return available trigger event types."""
+            return {
+                "events": [
+                    {"event": "note.created", "description": "Fires when a new note is saved"},
+                    {"event": "note.transcription_complete", "description": "Fires when voice transcription finishes"},
+                ]
+            }
+
+        @router.get("/tools")
+        async def list_tools():
+            """List all Tool nodes from the graph."""
+            graph = self._get_graph()
+            if graph is None:
+                return JSONResponse(status_code=503, content={"error": "BrainDB not available"})
+            rows = await graph.execute_cypher(
+                "MATCH (t:Tool) RETURN t ORDER BY t.name"
+            )
+            # Parse scope_keys from JSON string for client convenience
+            for tool in rows:
+                sk = tool.get("scope_keys", "[]")
+                try:
+                    tool["scope_keys_parsed"] = json.loads(sk) if sk else []
+                except (json.JSONDecodeError, TypeError):
+                    tool["scope_keys_parsed"] = []
+            # Enrich with builtin/update metadata
+            builtin_names = {t["name"]: t for t in TOOL_TEMPLATES}
+            for tool in rows:
+                name = tool.get("name", "")
+                tpl = builtin_names.get(name)
+                tool["is_builtin"] = tpl is not None
+                if tpl:
+                    tpl_v = tpl.get("template_version", "")
+                    tool_v = (tool.get("template_version") or "").strip()
+                    tool["update_available"] = bool(tpl_v and tool_v and tool_v < tpl_v)
+                    tool["user_modified"] = (tool.get("user_modified") or "").strip() == "true"
+                else:
+                    tool["update_available"] = False
+            return {"tools": rows, "count": len(rows)}
+
+        @router.get("/tools/{name}")
+        async def get_tool(name: str):
+            """Get a specific Tool node with its CAN_CALL children and triggers."""
+            graph = self._get_graph()
+            if graph is None:
+                return JSONResponse(status_code=503, content={"error": "BrainDB not available"})
+            rows = await graph.execute_cypher(
+                "MATCH (t:Tool {name: $name}) RETURN t",
+                {"name": name},
+            )
+            if not rows:
+                return JSONResponse(status_code=404, content={"error": f"Tool '{name}' not found"})
+            tool = rows[0]
+            # Fetch CAN_CALL children
+            try:
+                children = await graph.execute_cypher(
+                    "MATCH (t:Tool {name: $name})-[:CAN_CALL]->(child:Tool) "
+                    "RETURN child.name AS name, child.display_name AS display_name, "
+                    "child.mode AS mode ORDER BY child.name",
+                    {"name": name},
+                )
+            except Exception:
+                children = []
+            tool["can_call"] = children
+            # Fetch triggers that invoke this tool
+            try:
+                triggers = await graph.execute_cypher(
+                    "MATCH (trigger:Trigger)-[:INVOKES]->(t:Tool {name: $name}) "
+                    "RETURN trigger",
+                    {"name": name},
+                )
+            except Exception:
+                triggers = []
+            tool["triggers"] = triggers
+            return tool
+
+        @router.post("/tools", status_code=201)
+        async def create_tool(request: Request):
+            """Create or update a Tool node (MERGE on name)."""
+            graph = self._get_graph()
+            if graph is None:
+                return JSONResponse(status_code=503, content={"error": "BrainDB not available"})
+            body = await request.json()
+            name = (body.get("name") or "").strip()
+            if not name or not re.fullmatch(r"[a-z0-9][a-z0-9\-]{0,63}", name):
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": "name is required (lowercase alphanumeric + hyphens, max 64)"},
+                )
+            now = datetime.now(timezone.utc).isoformat()
+            mode = body.get("mode", "function")
+            if mode not in ("function", "transform", "agent", "mcp"):
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": f"Invalid mode '{mode}'. Must be function, transform, agent, or mcp"},
+                )
+            scope_keys = body.get("scope_keys", [])
+            if isinstance(scope_keys, list):
+                scope_keys = json.dumps(scope_keys)
+
+            data = {
+                "name": name,
+                "display_name": body.get("display_name", name.replace("-", " ").title()),
+                "description": body.get("description", ""),
+                "mode": mode,
+                "scope_keys": scope_keys,
+                "input_schema": body.get("input_schema", ""),
+                "query": body.get("query", ""),
+                "write_query": body.get("write_query", ""),
+                "transform_prompt": body.get("transform_prompt", ""),
+                "transform_model": body.get("transform_model", ""),
+                "system_prompt": body.get("system_prompt", ""),
+                "model": body.get("model", ""),
+                "memory_mode": body.get("memory_mode", ""),
+                "trust_level": body.get("trust_level", ""),
+                "container_slug": body.get("container_slug", ""),
+                "server_name": body.get("server_name", ""),
+                "builtin": body.get("builtin", "false"),
+                "enabled": "true" if body.get("enabled", True) else "false",
+                "template_version": body.get("template_version", ""),
+                "user_modified": "true",
+                "now": now,
+            }
+            async with graph.write_lock:
+                await graph.execute_cypher(
+                    "MERGE (t:Tool {name: $name}) "
+                    "ON CREATE SET t.created_at = $now "
+                    "SET t.display_name = $display_name,"
+                    "    t.description = $description,"
+                    "    t.mode = $mode,"
+                    "    t.scope_keys = $scope_keys,"
+                    "    t.input_schema = $input_schema,"
+                    "    t.query = $query,"
+                    "    t.write_query = $write_query,"
+                    "    t.transform_prompt = $transform_prompt,"
+                    "    t.transform_model = $transform_model,"
+                    "    t.system_prompt = $system_prompt,"
+                    "    t.model = $model,"
+                    "    t.memory_mode = $memory_mode,"
+                    "    t.trust_level = $trust_level,"
+                    "    t.container_slug = $container_slug,"
+                    "    t.server_name = $server_name,"
+                    "    t.builtin = $builtin,"
+                    "    t.enabled = $enabled,"
+                    "    t.template_version = $template_version,"
+                    "    t.user_modified = $user_modified,"
+                    "    t.updated_at = $now",
+                    data,
+                )
+            # Handle can_call edges
+            can_call = body.get("can_call", [])
+            if isinstance(can_call, list) and can_call:
+                # Clear existing CAN_CALL edges, then recreate
+                try:
+                    async with graph.write_lock:
+                        await graph.execute_cypher(
+                            "MATCH (t:Tool {name: $name})-[r:CAN_CALL]->() DELETE r",
+                            {"name": name},
+                        )
+                    for child_name in can_call:
+                        try:
+                            async with graph.write_lock:
+                                await graph.execute_cypher(
+                                    "MATCH (parent:Tool {name: $parent}), "
+                                    "(child:Tool {name: $child}) "
+                                    "CREATE (parent)-[:CAN_CALL]->(child)",
+                                    {"parent": name, "child": child_name},
+                                )
+                        except Exception as e:
+                            logger.debug(f"CAN_CALL {name} → {child_name}: {e}")
+                except Exception as e:
+                    logger.warning(f"Error managing CAN_CALL edges: {e}")
+            # Return the created tool
+            result = await graph.execute_cypher(
+                "MATCH (t:Tool {name: $name}) RETURN t", {"name": name}
+            )
+            return result[0] if result else {"name": name}
+
+        @router.put("/tools/{name}")
+        async def update_tool(name: str, request: Request):
+            """Update fields on an existing Tool node."""
+            graph = self._get_graph()
+            if graph is None:
+                return JSONResponse(status_code=503, content={"error": "BrainDB not available"})
+            rows = await graph.execute_cypher(
+                "MATCH (t:Tool {name: $name}) RETURN t", {"name": name}
+            )
+            if not rows:
+                return JSONResponse(status_code=404, content={"error": f"Tool '{name}' not found"})
+            existing = rows[0]
+            body = await request.json()
+            now = datetime.now(timezone.utc).isoformat()
+
+            # Merge with existing, body takes precedence
+            updatable = [
+                "display_name", "description", "mode", "scope_keys",
+                "input_schema", "query", "write_query",
+                "transform_prompt", "transform_model",
+                "system_prompt", "model", "memory_mode",
+                "trust_level", "container_slug", "server_name", "enabled",
+            ]
+            data: dict[str, Any] = {"name": name, "now": now}
+            set_clauses = ["t.user_modified = 'true'", "t.updated_at = $now"]
+            for field in updatable:
+                if field in body:
+                    val = body[field]
+                    if field == "scope_keys" and isinstance(val, list):
+                        val = json.dumps(val)
+                    elif field == "enabled":
+                        val = "true" if val else "false"
+                    data[field] = val
+                    set_clauses.append(f"t.{field} = ${field}")
+
+            if len(set_clauses) > 2:  # more than just user_modified + updated_at
+                async with graph.write_lock:
+                    await graph.execute_cypher(
+                        f"MATCH (t:Tool {{name: $name}}) SET {', '.join(set_clauses)}",
+                        data,
+                    )
+
+            # Handle can_call if provided
+            if "can_call" in body:
+                can_call = body["can_call"]
+                try:
+                    async with graph.write_lock:
+                        await graph.execute_cypher(
+                            "MATCH (t:Tool {name: $name})-[r:CAN_CALL]->() DELETE r",
+                            {"name": name},
+                        )
+                    if isinstance(can_call, list):
+                        for child_name in can_call:
+                            try:
+                                async with graph.write_lock:
+                                    await graph.execute_cypher(
+                                        "MATCH (parent:Tool {name: $parent}), "
+                                        "(child:Tool {name: $child}) "
+                                        "CREATE (parent)-[:CAN_CALL]->(child)",
+                                        {"parent": name, "child": child_name},
+                                    )
+                            except Exception as e:
+                                logger.debug(f"CAN_CALL {name} → {child_name}: {e}")
+                except Exception as e:
+                    logger.warning(f"Error managing CAN_CALL edges: {e}")
+
+            result = await graph.execute_cypher(
+                "MATCH (t:Tool {name: $name}) RETURN t", {"name": name}
+            )
+            return result[0] if result else {"name": name}
+
+        @router.delete("/tools/{name}", status_code=204)
+        async def delete_tool(name: str):
+            """Delete a Tool node and its edges."""
+            graph = self._get_graph()
+            if graph is None:
+                return JSONResponse(status_code=503, content={"error": "BrainDB not available"})
+            async with graph.write_lock:
+                # Delete edges first, then node
+                await graph.execute_cypher(
+                    "MATCH (t:Tool {name: $name})-[r:CAN_CALL]->() DELETE r",
+                    {"name": name},
+                )
+                await graph.execute_cypher(
+                    "MATCH ()-[r:CAN_CALL]->(t:Tool {name: $name}) DELETE r",
+                    {"name": name},
+                )
+                await graph.execute_cypher(
+                    "MATCH ()-[r:INVOKES]->(t:Tool {name: $name}) DELETE r",
+                    {"name": name},
+                )
+                await graph.execute_cypher(
+                    "MATCH (t:Tool {name: $name}) DELETE t",
+                    {"name": name},
+                )
+            return Response(status_code=204)
+
+        @router.post("/tools/{name}/run", status_code=202)
+        async def run_tool_manually(name: str, request: Request):
+            """Manually trigger a Tool. For agent/transform mode tools."""
+            graph = self._get_graph()
+            if graph is None:
+                return JSONResponse(status_code=503, content={"error": "BrainDB not available"})
+            rows = await graph.execute_cypher(
+                "MATCH (t:Tool {name: $name}) RETURN t.mode AS mode",
+                {"name": name},
+            )
+            if not rows:
+                return JSONResponse(status_code=404, content={"error": f"Tool '{name}' not found"})
+
+            body = await request.json()
+            scope = body.get("scope", {})
+            force = body.get("force", False)
+
+            # For now, delegate to the old agent runner for agent/transform mode
+            mode = rows[0].get("mode", "function")
+            if mode in ("agent", "transform"):
+                try:
+                    from parachute.core.daily_agent import run_agent
+                    home_path = Path(self.home_path)
+                    background_tasks = request.state._state.get("background_tasks")
+                    if background_tasks is None:
+                        from starlette.background import BackgroundTasks
+                        background_tasks = BackgroundTasks()
+
+                    async def _run():
+                        try:
+                            await run_agent(home_path, name, scope, force=force, trigger="manual")
+                        except Exception as e:
+                            logger.error(f"Manual tool run failed for '{name}': {e}")
+
+                    background_tasks.add(_run)
+                except Exception as e:
+                    return JSONResponse(status_code=500, content={"error": str(e)})
+            else:
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": f"Tool '{name}' (mode={mode}) cannot be manually triggered"},
+                )
+            return {"status": "triggered", "tool": name, "scope": scope}
+
+        @router.get("/tools/{name}/runs/latest")
+        async def get_tool_latest_run(name: str):
+            """Get the most recent ToolRun for a tool. Falls back to AgentRun."""
+            graph = self._get_graph()
+            if graph is None:
+                return JSONResponse(status_code=503, content={"error": "BrainDB not available"})
+            # Try ToolRun first
+            rows = await graph.execute_cypher(
+                "MATCH (r:ToolRun) WHERE r.tool_name = $name "
+                "RETURN r ORDER BY r.started_at DESC",
+                {"name": name},
+            )
+            if rows:
+                return rows[0]
+            # Fall back to AgentRun (transition period)
+            rows = await graph.execute_cypher(
+                "MATCH (r:AgentRun) WHERE r.agent_name = $name "
+                "RETURN r ORDER BY r.started_at DESC",
+                {"name": name},
+            )
+            if rows:
+                return rows[0]
+            return JSONResponse(status_code=404, content={"error": f"No runs found for tool '{name}'"})
+
+        @router.get("/tools/{name}/transcript")
+        async def get_tool_transcript(name: str, limit: int = 50):
+            """Get agent transcript using Tool node metadata for container resolution."""
+            graph = self._get_graph()
+            if graph is None:
+                return JSONResponse(status_code=503, content={"error": "BrainDB not available"})
+
+            # Try Tool node first for container_slug and trust_level
+            rows = await graph.execute_cypher(
+                "MATCH (t:Tool {name: $name}) "
+                "RETURN t.container_slug AS container_slug, t.trust_level AS trust_level",
+                {"name": name},
+            )
+            if not rows:
+                # Fall back to Agent node (transition period)
+                rows = await graph.execute_cypher(
+                    "MATCH (a:Agent {name: $name}) "
+                    "RETURN a.sdk_session_id AS sid, "
+                    "a.container_slug AS container_slug, a.trust_level AS trust_level",
+                    {"name": name},
+                )
+            if not rows:
+                return JSONResponse(status_code=404, content={"error": f"Tool '{name}' not found"})
+
+            # Get latest session_id from ToolRun, fall back to AgentRun, then Agent node
+            sid = None
+            run_rows = await graph.execute_cypher(
+                "MATCH (r:ToolRun {tool_name: $name}) WHERE r.session_id IS NOT NULL "
+                "AND r.session_id <> '' RETURN r.session_id AS sid "
+                "ORDER BY r.started_at DESC LIMIT 1",
+                {"name": name},
+            )
+            if run_rows:
+                sid = run_rows[0].get("sid")
+            if not sid:
+                # Fall back to AgentRun
+                run_rows = await graph.execute_cypher(
+                    "MATCH (r:AgentRun {agent_name: $name}) WHERE r.session_id IS NOT NULL "
+                    "AND r.session_id <> '' RETURN r.session_id AS sid "
+                    "ORDER BY r.started_at DESC LIMIT 1",
+                    {"name": name},
+                )
+                if run_rows:
+                    sid = run_rows[0].get("sid")
+            if not sid:
+                # Fall back to Agent.sdk_session_id
+                agent_rows = await graph.execute_cypher(
+                    "MATCH (a:Agent {name: $name}) RETURN a.sdk_session_id AS sid",
+                    {"name": name},
+                )
+                if agent_rows:
+                    sid = (agent_rows[0].get("sid") or "").strip()
+
+            if not sid:
+                return {"hasTranscript": False, "sessionId": None, "totalMessages": 0, "messages": []}
+
+            # Resolve container slug
+            container_slug = (rows[0].get("container_slug") or "").strip()
+            trust_level = (rows[0].get("trust_level") or "sandboxed").strip()
+            if not container_slug and trust_level == "sandboxed":
+                container_slug = f"agent-{name}"
+
+            parachute_dir = Path(self.home_path) / ".parachute"
+            transcript_path = await asyncio.to_thread(
+                _find_transcript_file, sid, container_slug, parachute_dir
+            )
+
+            if not transcript_path:
+                return {"hasTranscript": False, "sessionId": sid, "totalMessages": 0, "messages": []}
+
+            messages = await asyncio.to_thread(
+                _read_transcript_file, str(transcript_path), limit, container_slug, parachute_dir
+            )
+            return {
+                "hasTranscript": True,
+                "sessionId": sid,
+                "totalMessages": len(messages),
+                "messages": messages[-limit:] if len(messages) > limit else messages,
+            }
+
+        # ── Trigger endpoints ─────────────────────────────────────────────
+
+        @router.get("/triggers/templates")
+        def list_trigger_templates() -> dict[str, list[TriggerTemplateDict]]:
+            """Return TRIGGER_TEMPLATES for reference."""
+            return {"templates": TRIGGER_TEMPLATES}
+
+        @router.get("/triggers")
+        async def list_triggers():
+            """List all Trigger nodes with their target Tools."""
+            graph = self._get_graph()
+            if graph is None:
+                return JSONResponse(status_code=503, content={"error": "BrainDB not available"})
+            rows = await graph.execute_cypher(
+                "MATCH (t:Trigger) "
+                "OPTIONAL MATCH (t)-[:INVOKES]->(tool:Tool) "
+                "RETURN t, tool.name AS invokes_tool, tool.display_name AS invokes_display_name "
+                "ORDER BY t.name"
+            )
+            # Group: trigger props + invokes info
+            triggers = []
+            for row in rows:
+                trigger = {k: v for k, v in row.items() if k not in ("invokes_tool", "invokes_display_name")}
+                trigger["invokes_tool"] = row.get("invokes_tool")
+                trigger["invokes_display_name"] = row.get("invokes_display_name")
+                # Parse scope from JSON
+                scope_raw = trigger.get("scope", "{}")
+                try:
+                    trigger["scope_parsed"] = json.loads(scope_raw) if scope_raw else {}
+                except (json.JSONDecodeError, TypeError):
+                    trigger["scope_parsed"] = {}
+                triggers.append(trigger)
+            return {"triggers": triggers, "count": len(triggers)}
+
+        @router.get("/triggers/{name}")
+        async def get_trigger(name: str):
+            """Get a specific Trigger node with its target Tool."""
+            graph = self._get_graph()
+            if graph is None:
+                return JSONResponse(status_code=503, content={"error": "BrainDB not available"})
+            rows = await graph.execute_cypher(
+                "MATCH (t:Trigger {name: $name}) "
+                "OPTIONAL MATCH (t)-[:INVOKES]->(tool:Tool) "
+                "RETURN t, tool.name AS invokes_tool",
+                {"name": name},
+            )
+            if not rows:
+                return JSONResponse(status_code=404, content={"error": f"Trigger '{name}' not found"})
+            result = rows[0]
+            result["invokes_tool"] = result.get("invokes_tool")
+            return result
+
+        @router.post("/triggers", status_code=201)
+        async def create_trigger(request: Request):
+            """Create a Trigger node with INVOKES edge."""
+            graph = self._get_graph()
+            if graph is None:
+                return JSONResponse(status_code=503, content={"error": "BrainDB not available"})
+            body = await request.json()
+            name = (body.get("name") or "").strip()
+            if not name or not re.fullmatch(r"[a-z0-9][a-z0-9\-]{0,63}", name):
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": "name is required (lowercase alphanumeric + hyphens, max 64)"},
+                )
+            trigger_type = body.get("type", "schedule")
+            if trigger_type not in ("schedule", "event"):
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": f"Invalid type '{trigger_type}'. Must be schedule or event"},
+                )
+            invokes_tool = (body.get("invokes") or "").strip()
+            if not invokes_tool:
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": "invokes (tool name) is required"},
+                )
+            # Verify target tool exists
+            tool_rows = await graph.execute_cypher(
+                "MATCH (t:Tool {name: $name}) RETURN t.name",
+                {"name": invokes_tool},
+            )
+            if not tool_rows:
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": f"Target tool '{invokes_tool}' not found"},
+                )
+
+            now = datetime.now(timezone.utc).isoformat()
+            scope = body.get("scope", {})
+            if isinstance(scope, dict):
+                scope = json.dumps(scope)
+
+            data = {
+                "name": name,
+                "type": trigger_type,
+                "schedule_time": body.get("schedule_time", ""),
+                "event": body.get("event", ""),
+                "event_filter": body.get("event_filter", ""),
+                "scope": scope,
+                "enabled": "true" if body.get("enabled", True) else "false",
+                "template_version": "",
+                "user_modified": "true",
+                "now": now,
+            }
+            async with graph.write_lock:
+                await graph.execute_cypher(
+                    "MERGE (t:Trigger {name: $name}) "
+                    "ON CREATE SET t.created_at = $now "
+                    "SET t.type = $type,"
+                    "    t.schedule_time = $schedule_time,"
+                    "    t.event = $event,"
+                    "    t.event_filter = $event_filter,"
+                    "    t.scope = $scope,"
+                    "    t.enabled = $enabled,"
+                    "    t.template_version = $template_version,"
+                    "    t.user_modified = $user_modified,"
+                    "    t.updated_at = $now",
+                    data,
+                )
+                # Create INVOKES edge (clear old one first)
+                await graph.execute_cypher(
+                    "MATCH (t:Trigger {name: $name})-[r:INVOKES]->() DELETE r",
+                    {"name": name},
+                )
+                await graph.execute_cypher(
+                    "MATCH (trigger:Trigger {name: $trigger}), (tool:Tool {name: $tool}) "
+                    "CREATE (trigger)-[:INVOKES]->(tool)",
+                    {"trigger": name, "tool": invokes_tool},
+                )
+            result = await graph.execute_cypher(
+                "MATCH (t:Trigger {name: $name}) RETURN t", {"name": name}
+            )
+            return result[0] if result else {"name": name}
+
+        @router.put("/triggers/{name}")
+        async def update_trigger(name: str, request: Request):
+            """Update fields on an existing Trigger node."""
+            graph = self._get_graph()
+            if graph is None:
+                return JSONResponse(status_code=503, content={"error": "BrainDB not available"})
+            rows = await graph.execute_cypher(
+                "MATCH (t:Trigger {name: $name}) RETURN t", {"name": name}
+            )
+            if not rows:
+                return JSONResponse(status_code=404, content={"error": f"Trigger '{name}' not found"})
+            body = await request.json()
+            now = datetime.now(timezone.utc).isoformat()
+
+            updatable = ["type", "schedule_time", "event", "event_filter", "scope", "enabled"]
+            data: dict[str, Any] = {"name": name, "now": now}
+            set_clauses = ["t.user_modified = 'true'", "t.updated_at = $now"]
+            for field in updatable:
+                if field in body:
+                    val = body[field]
+                    if field == "scope" and isinstance(val, dict):
+                        val = json.dumps(val)
+                    elif field == "enabled":
+                        val = "true" if val else "false"
+                    data[field] = val
+                    set_clauses.append(f"t.{field} = ${field}")
+
+            if len(set_clauses) > 2:
+                async with graph.write_lock:
+                    await graph.execute_cypher(
+                        f"MATCH (t:Trigger {{name: $name}}) SET {', '.join(set_clauses)}",
+                        data,
+                    )
+
+            # Update INVOKES edge if target changed
+            if "invokes" in body:
+                invokes_tool = (body["invokes"] or "").strip()
+                if invokes_tool:
+                    tool_rows = await graph.execute_cypher(
+                        "MATCH (t:Tool {name: $name}) RETURN t.name",
+                        {"name": invokes_tool},
+                    )
+                    if tool_rows:
+                        async with graph.write_lock:
+                            await graph.execute_cypher(
+                                "MATCH (t:Trigger {name: $name})-[r:INVOKES]->() DELETE r",
+                                {"name": name},
+                            )
+                            await graph.execute_cypher(
+                                "MATCH (trigger:Trigger {name: $trigger}), "
+                                "(tool:Tool {name: $tool}) "
+                                "CREATE (trigger)-[:INVOKES]->(tool)",
+                                {"trigger": name, "tool": invokes_tool},
+                            )
+
+            result = await graph.execute_cypher(
+                "MATCH (t:Trigger {name: $name}) RETURN t", {"name": name}
+            )
+            return result[0] if result else {"name": name}
+
+        @router.delete("/triggers/{name}", status_code=204)
+        async def delete_trigger(name: str):
+            """Delete a Trigger node and its edges."""
+            graph = self._get_graph()
+            if graph is None:
+                return JSONResponse(status_code=503, content={"error": "BrainDB not available"})
+            async with graph.write_lock:
+                await graph.execute_cypher(
+                    "MATCH (t:Trigger {name: $name})-[r:INVOKES]->() DELETE r",
+                    {"name": name},
+                )
+                await graph.execute_cypher(
+                    "MATCH (t:Trigger {name: $name}) DELETE t",
+                    {"name": name},
+                )
             return Response(status_code=204)
 
         return router
