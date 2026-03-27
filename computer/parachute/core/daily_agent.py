@@ -85,6 +85,58 @@ async def _record_agent_run(graph, agent_name: str, date: str,
         )
 
 
+async def _load_tool_state(graph, tool_name: str, memory_mode: str = "persistent") -> dict[str, Any]:
+    """Derive runtime state from ToolRun queries (replaces _load_agent_state).
+
+    Falls back to Agent node state if no ToolRun data exists (transition period).
+    """
+    state: dict[str, Any] = {
+        "sdk_session_id": None,
+        "last_run_at": None,
+        "last_processed_date": None,
+        "run_count": 0,
+        "memory_mode": memory_mode,
+    }
+
+    try:
+        # Get run count + last run
+        count_rows = await graph.execute_cypher(
+            "MATCH (r:ToolRun {tool_name: $name}) "
+            "RETURN count(r) AS cnt, max(r.started_at) AS last_run, "
+            "max(r.date) AS last_date",
+            {"name": tool_name},
+        )
+        if count_rows and count_rows[0].get("cnt", 0) > 0:
+            state["run_count"] = count_rows[0].get("cnt", 0)
+            state["last_run_at"] = count_rows[0].get("last_run")
+            state["last_processed_date"] = count_rows[0].get("last_date")
+
+            # Get session_id for resume (persistent mode only)
+            if memory_mode == "persistent":
+                sid_rows = await graph.execute_cypher(
+                    "MATCH (r:ToolRun {tool_name: $name}) "
+                    "WHERE r.session_id IS NOT NULL AND r.session_id <> '' "
+                    "AND r.status = 'completed' "
+                    "RETURN r.session_id AS sid "
+                    "ORDER BY r.started_at DESC LIMIT 1",
+                    {"name": tool_name},
+                )
+                if sid_rows:
+                    state["sdk_session_id"] = sid_rows[0].get("sid")
+            return state
+
+        # Fall back to Agent node state (transition period)
+        return await _load_agent_state(graph, tool_name)
+
+    except Exception as e:
+        logger.warning(f"_load_tool_state failed for '{tool_name}': {e}")
+        # Fall back to Agent node
+        try:
+            return await _load_agent_state(graph, tool_name)
+        except Exception:
+            return state
+
+
 async def _clear_agent_session(graph, agent_name: str) -> None:
     """Clear sdk_session_id on resume failure so next run starts fresh."""
     async with graph.write_lock:
@@ -190,6 +242,107 @@ async def _complete_agent_run(
         logger.warning(f"Failed to complete AgentRun {run_id}: {e}")
 
 
+async def _create_tool_run(
+    graph: "BrainService | None",
+    run_id: str,
+    tool_name: str,
+    display_name: str,
+    trigger_name: str,
+    date: str,
+    container_slug: str,
+    entry_id: str = "",
+    started_at: str = "",
+    scope: dict[str, Any] | None = None,
+) -> None:
+    """Create a ToolRun node at the start of a tool invocation."""
+    if graph is None:
+        return
+    now = started_at or datetime.now(timezone.utc).isoformat()
+    scope_json = json.dumps(scope) if scope else "{}"
+    try:
+        async with graph.write_lock:
+            await graph.execute_cypher(
+                "MERGE (r:ToolRun {run_id: $run_id}) "
+                "SET r.tool_name = $tool_name, "
+                "    r.display_name = $display_name, "
+                "    r.trigger_name = $trigger_name, "
+                "    r.date = $date, "
+                "    r.entry_id = $entry_id, "
+                "    r.status = 'running', "
+                "    r.container_slug = $container_slug, "
+                "    r.scope = $scope, "
+                "    r.started_at = $now, "
+                "    r.created_at = $now",
+                {
+                    "run_id": run_id,
+                    "tool_name": tool_name,
+                    "display_name": display_name,
+                    "trigger_name": trigger_name,
+                    "date": date,
+                    "entry_id": entry_id,
+                    "container_slug": container_slug,
+                    "scope": scope_json,
+                    "now": now,
+                },
+            )
+    except Exception as e:
+        logger.warning(f"Failed to create ToolRun for '{tool_name}': {e}")
+
+    # Also write AgentRun for backward compat during transition
+    await _create_agent_run(
+        graph, run_id, tool_name, display_name, date, trigger_name,
+        container_slug, entry_id, started_at, scope,
+    )
+
+
+async def _complete_tool_run(
+    graph: "BrainService | None",
+    run_id: str,
+    status: str,
+    session_id: str = "",
+    card_id: str = "",
+    error: str = "",
+    started_at: str = "",
+) -> None:
+    """Update a ToolRun node when the tool finishes."""
+    if graph is None:
+        return
+    now = datetime.now(timezone.utc).isoformat()
+    duration = 0.0
+    if started_at:
+        try:
+            start = datetime.fromisoformat(started_at)
+            end = datetime.fromisoformat(now)
+            duration = (end - start).total_seconds()
+        except (ValueError, TypeError):
+            pass
+    try:
+        async with graph.write_lock:
+            await graph.execute_cypher(
+                "MATCH (r:ToolRun {run_id: $run_id}) "
+                "SET r.status = $status, "
+                "    r.session_id = $session_id, "
+                "    r.card_id = $card_id, "
+                "    r.error = $error, "
+                "    r.completed_at = $now, "
+                "    r.duration_seconds = $duration",
+                {
+                    "run_id": run_id,
+                    "status": status,
+                    "session_id": session_id,
+                    "card_id": card_id,
+                    "error": error,
+                    "now": now,
+                    "duration": duration,
+                },
+            )
+    except Exception as e:
+        logger.warning(f"Failed to complete ToolRun {run_id}: {e}")
+
+    # Also complete AgentRun for backward compat
+    await _complete_agent_run(graph, run_id, status, session_id, card_id, error, started_at)
+
+
 class DailyAgentConfig:
     """Configuration for a daily agent loaded from its markdown file."""
 
@@ -220,6 +373,7 @@ class DailyAgentConfig:
         self.trigger_event = trigger_event
         self.trigger_filter = trigger_filter or {}
         self.container_slug = container_slug  # empty = use default agent-{name}
+        self.memory_mode = "persistent"  # overridable by from_row/from_tool_row
 
     @classmethod
     def from_row(cls, row: dict) -> "DailyAgentConfig":
@@ -239,7 +393,7 @@ class DailyAgentConfig:
         except (json.JSONDecodeError, TypeError):
             trigger_filter = {}
 
-        return cls(
+        instance = cls(
             name=row["name"],
             display_name=row.get("display_name") or row["name"].replace("-", " ").title(),
             description=row.get("description") or "",
@@ -253,6 +407,61 @@ class DailyAgentConfig:
             trigger_filter=trigger_filter,
             container_slug=row.get("container_slug") or "",
         )
+        instance.memory_mode = row.get("memory_mode") or "persistent"
+        return instance
+
+    @classmethod
+    def from_tool_row(
+        cls,
+        tool_row: dict,
+        can_call_names: list[str],
+        trigger_row: dict | None = None,
+    ) -> "DailyAgentConfig":
+        """Build config from a Tool graph node + CAN_CALL names + optional Trigger.
+
+        This is the new Tool-as-universal-primitive path. The Tool node holds
+        the config; the Trigger holds schedule/event info; CAN_CALL edges hold
+        child tool names (converted to underscore for TOOL_FACTORIES compat).
+        """
+        from parachute.db.brain_chat_store import _TOOL_NAME_ALIASES
+
+        # Convert kebab tool names to underscore for TOOL_FACTORIES
+        tools = [_TOOL_NAME_ALIASES.get(n, n.replace("-", "_")) for n in can_call_names]
+
+        # Derive schedule/trigger info from Trigger node
+        schedule_enabled = False
+        schedule_time = "3:00"
+        trigger_event = ""
+        trigger_filter: dict[str, Any] = {}
+        if trigger_row:
+            trigger_type = trigger_row.get("type", "")
+            if trigger_type == "schedule":
+                schedule_enabled = True
+                schedule_time = trigger_row.get("schedule_time") or "3:00"
+            elif trigger_type == "event":
+                trigger_event = trigger_row.get("event") or ""
+                filter_raw = trigger_row.get("event_filter") or "{}"
+                try:
+                    trigger_filter = json.loads(filter_raw) if isinstance(filter_raw, str) else filter_raw
+                except (json.JSONDecodeError, TypeError):
+                    trigger_filter = {}
+
+        instance = cls(
+            name=tool_row.get("name", ""),
+            display_name=tool_row.get("display_name") or tool_row.get("name", "").replace("-", " ").title(),
+            description=tool_row.get("description") or "",
+            system_prompt=tool_row.get("system_prompt") or "",
+            schedule_enabled=schedule_enabled,
+            schedule_time=schedule_time,
+            tools=tools,
+            raw_metadata={"model": tool_row.get("model", "")},
+            trust_level=tool_row.get("trust_level") or "sandboxed",
+            trigger_event=trigger_event,
+            trigger_filter=trigger_filter,
+            container_slug=tool_row.get("container_slug") or "",
+        )
+        instance.memory_mode = tool_row.get("memory_mode") or "persistent"
+        return instance
 
     def get_schedule_hour_minute(self) -> tuple[int, int]:
         """Parse schedule time into (hour, minute)."""
@@ -276,21 +485,51 @@ def _get_graph() -> Any | None:
 
 
 async def discover_daily_agents(home_path: Path, graph=None) -> list[DailyAgentConfig]:
-    """Discover all enabled Agents from the graph database.
+    """Discover all schedulable tools from Trigger→Tool graph.
 
-    Returns a list of agent configurations sorted by name, or empty if graph
-    is unavailable.
+    Queries schedule-type Triggers with INVOKES edges to enabled Tools.
+    Falls back to Agent nodes if no Tool/Trigger data found (transition).
     """
     g = graph or _get_graph()
     if g is None:
         logger.warning("discover_daily_agents: graph unavailable, returning empty")
         return []
     try:
+        # Try Trigger→Tool graph first
+        rows = await g.execute_cypher(
+            "MATCH (trigger:Trigger {type: 'schedule', enabled: 'true'})"
+            "-[:INVOKES]->(tool:Tool {enabled: 'true'}) "
+            "RETURN tool, trigger ORDER BY tool.name"
+        )
+        if rows:
+            agents = []
+            for row in rows:
+                tool_row = row.get("tool") or row
+                trigger_row = row.get("trigger") or {}
+                tool_name = tool_row.get("name", "")
+                # Get CAN_CALL children for this tool
+                try:
+                    child_rows = await g.execute_cypher(
+                        "MATCH (t:Tool {name: $name})-[:CAN_CALL]->(child:Tool) "
+                        "RETURN child.name AS name",
+                        {"name": tool_name},
+                    )
+                    can_call = [r.get("name", "") for r in child_rows]
+                except Exception:
+                    can_call = []
+                agents.append(DailyAgentConfig.from_tool_row(tool_row, can_call, trigger_row))
+            logger.info(f"Discovered {len(agents)} scheduled tools from Trigger→Tool graph")
+            return agents
+    except Exception as e:
+        logger.debug(f"Trigger→Tool discovery failed, falling back to Agent: {e}")
+
+    # Fall back to Agent nodes (transition period)
+    try:
         rows = await g.execute_cypher(
             "MATCH (a:Agent) WHERE a.enabled = 'true' RETURN a ORDER BY a.name"
         )
         agents = [DailyAgentConfig.from_row(r) for r in rows]
-        logger.info(f"Discovered {len(agents)} agents from graph")
+        logger.info(f"Discovered {len(agents)} agents from graph (legacy)")
         return agents
     except Exception as e:
         logger.warning(f"Graph discovery failed: {e}")
@@ -298,10 +537,48 @@ async def discover_daily_agents(home_path: Path, graph=None) -> list[DailyAgentC
 
 
 async def get_daily_agent_config(home_path: Path, agent_name: str, graph=None) -> Optional[DailyAgentConfig]:
-    """Get configuration for a specific Agent from the graph database."""
+    """Get configuration for a tool/agent from the graph database.
+
+    Tries Tool node first (with CAN_CALL and Trigger), falls back to Agent node.
+    """
     g = graph or _get_graph()
     if g is None:
         return None
+    try:
+        # Try Tool node first
+        tool_rows = await g.execute_cypher(
+            "MATCH (t:Tool {name: $name}) RETURN t",
+            {"name": agent_name},
+        )
+        if tool_rows:
+            tool_row = tool_rows[0]
+            # Get CAN_CALL children
+            try:
+                child_rows = await g.execute_cypher(
+                    "MATCH (t:Tool {name: $name})-[:CAN_CALL]->(child:Tool) "
+                    "RETURN child.name AS name",
+                    {"name": agent_name},
+                )
+                can_call = [r.get("name", "") for r in child_rows]
+            except Exception:
+                can_call = []
+            # Get trigger
+            trigger_row = None
+            try:
+                trigger_rows = await g.execute_cypher(
+                    "MATCH (trigger:Trigger)-[:INVOKES]->(t:Tool {name: $name}) "
+                    "RETURN trigger LIMIT 1",
+                    {"name": agent_name},
+                )
+                if trigger_rows:
+                    trigger_row = trigger_rows[0]
+            except Exception:
+                pass
+            return DailyAgentConfig.from_tool_row(tool_row, can_call, trigger_row)
+    except Exception as e:
+        logger.debug(f"Tool lookup for '{agent_name}' failed, trying Agent: {e}")
+
+    # Fall back to Agent node
     try:
         rows = await g.execute_cypher(
             "MATCH (a:Agent {name: $name}) RETURN a",
@@ -310,7 +587,7 @@ async def get_daily_agent_config(home_path: Path, agent_name: str, graph=None) -
         if rows:
             return DailyAgentConfig.from_row(rows[0])
     except Exception as e:
-        logger.warning(f"Graph lookup for agent '{agent_name}' failed: {e}")
+        logger.warning(f"Graph lookup for '{agent_name}' failed: {e}")
     return None
 
 
@@ -792,11 +1069,11 @@ async def run_agent(
     else:
         output_date = ""
 
-    # ── Load runtime state ────────────────────────────────────────────────
+    # ── Load runtime state (from ToolRun, with Agent fallback) ───────────
     if graph is not None:
-        agent_state = await _load_agent_state(graph, agent_name)
+        agent_state = await _load_tool_state(graph, agent_name, config.memory_mode)
     else:
-        agent_state = {"sdk_session_id": None, "last_run_at": None, "last_processed_date": None, "run_count": 0}
+        agent_state = {"sdk_session_id": None, "last_run_at": None, "last_processed_date": None, "run_count": 0, "memory_mode": "persistent"}
 
     # ── Pre-checks (driven by scope keys) ─────────────────────────────────
 
@@ -883,14 +1160,16 @@ async def run_agent(
     if "write_card" in config.tools and output_date:
         card_id = await _write_initial_card(graph, agent_name, config.display_name, output_date)
 
-    # ── AgentRun record ───────────────────────────────────────────────────
+    # ── ToolRun record (also writes AgentRun for backward compat) ────────
     container_slug = config.container_slug or f"agent-{agent_name}"
     run_id = str(uuid.uuid4())
     started_at = datetime.now(timezone.utc).isoformat()
-    await _create_agent_run(
-        graph, run_id=run_id, agent_name=agent_name,
-        display_name=config.display_name, date=date or scope.get("entry_date", ""),
-        trigger=trigger, container_slug=container_slug,
+    await _create_tool_run(
+        graph, run_id=run_id, tool_name=agent_name,
+        display_name=config.display_name,
+        trigger_name=trigger,
+        date=date or scope.get("entry_date", ""),
+        container_slug=container_slug,
         entry_id=entry_id, started_at=started_at, scope=scope,
     )
 
@@ -942,11 +1221,11 @@ async def run_agent(
             )
     except Exception as exc:
         logger.error(f"Agent '{agent_name}' execution failed: {exc}", exc_info=True)
-        await _complete_agent_run(graph, run_id=run_id, status="failed", error=str(exc), started_at=started_at)
+        await _complete_tool_run(graph, run_id=run_id, status="failed", error=str(exc), started_at=started_at)
         raise
 
-    # ── Record result ─────────────────────────────────────────────────────
-    await _complete_agent_run(
+    # ── Record result (ToolRun + AgentRun for backward compat) ────────────
+    await _complete_tool_run(
         graph, run_id=run_id,
         status=result.get("status", "unknown"),
         session_id=result.get("sdk_session_id", ""),
