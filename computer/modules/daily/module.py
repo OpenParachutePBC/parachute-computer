@@ -1772,16 +1772,44 @@ class DailyModule:
                 return JSONResponse(status_code=503, content={"error": "BrainDB not available"})
 
             try:
-                rows = await graph.execute_cypher(
+                # Query ToolRun first (primary), fall back to AgentRun
+                seen_run_ids: set[str] = set()
+                activity = []
+
+                tool_rows = await graph.execute_cypher(
+                    "MATCH (r:ToolRun) "
+                    "WHERE r.entry_id = $entry_id "
+                    "RETURN r ORDER BY r.started_at DESC",
+                    {"entry_id": entry_id},
+                )
+                for row in tool_rows:
+                    run_id = row.get("run_id", "")
+                    seen_run_ids.add(run_id)
+                    tool_name = row.get("tool_name", "")
+                    display_name = (
+                        row.get("display_name")
+                        or tool_name.replace("-", " ").title()
+                    )
+                    activity.append({
+                        "agent_name": tool_name,
+                        "display_name": display_name,
+                        "status": row.get("status", ""),
+                        "ran_at": row.get("started_at", ""),
+                        "session_id": row.get("session_id", ""),
+                    })
+
+                # AgentRun fallback for runs that predate ToolRun dual-write
+                agent_rows = await graph.execute_cypher(
                     "MATCH (r:AgentRun) "
                     "WHERE r.entry_id = $entry_id "
                     "RETURN r ORDER BY r.ran_at DESC",
                     {"entry_id": entry_id},
                 )
-                activity = []
-                for row in rows:
+                for row in agent_rows:
+                    run_id = row.get("run_id", "")
+                    if run_id in seen_run_ids:
+                        continue  # Already captured from ToolRun
                     agent_name = row.get("agent_name", "")
-                    # display_name is stored on AgentRun at write time
                     display_name = (
                         row.get("display_name")
                         or agent_name.replace("-", " ").title()
@@ -1794,6 +1822,8 @@ class DailyModule:
                         "session_id": row.get("session_id", ""),
                     })
 
+                # Sort merged results by ran_at descending
+                activity.sort(key=lambda a: a.get("ran_at", ""), reverse=True)
                 return {"activity": activity, "count": len(activity)}
             except Exception as e:
                 logger.warning(f"Failed to get agent activity for {entry_id}: {e}")
@@ -2511,12 +2541,33 @@ class DailyModule:
 
             now = datetime.now(timezone.utc).isoformat()
 
-            if has_event and body.get("trigger_event"):
+            if has_event and not body.get("trigger_event"):
+                # Event trigger cleared — delete existing event trigger if any
+                existing = await _find_existing_trigger(graph, tool_name, "event")
+                if existing:
+                    try:
+                        async with graph.write_lock:
+                            await graph.execute_cypher(
+                                "MATCH (tr:Trigger {name: $tname}) DETACH DELETE tr",
+                                {"tname": existing},
+                            )
+                    except Exception as e:
+                        logger.warning(f"Inline trigger removal (event) for '{tool_name}': {e}")
+                return
+
+            elif has_event and body.get("trigger_event"):
                 # Event trigger — reuse existing or generate name
-                trigger_name = (
-                    await _find_existing_trigger(graph, tool_name, "event")
-                    or f"on-{tool_name}"
-                )
+                existing = await _find_existing_trigger(graph, tool_name, "event")
+                if existing:
+                    trigger_name = existing
+                else:
+                    trigger_name = f"on-{tool_name}"
+                    if trigger_name in _RESERVED_TRIGGER_NAMES:
+                        logger.warning(
+                            f"Inline trigger '{trigger_name}' collides with "
+                            f"builtin — skipping event trigger for '{tool_name}'"
+                        )
+                        return
                 event_filter = body.get("trigger_filter", {})
                 if isinstance(event_filter, dict):
                     event_filter = json.dumps(event_filter)
@@ -2547,10 +2598,17 @@ class DailyModule:
 
             elif has_schedule:
                 # Schedule trigger — reuse existing or generate name
-                trigger_name = (
-                    await _find_existing_trigger(graph, tool_name, "schedule")
-                    or f"scheduled-{tool_name}"
-                )
+                existing = await _find_existing_trigger(graph, tool_name, "schedule")
+                if existing:
+                    trigger_name = existing
+                else:
+                    trigger_name = f"scheduled-{tool_name}"
+                    if trigger_name in _RESERVED_TRIGGER_NAMES:
+                        logger.warning(
+                            f"Inline trigger '{trigger_name}' collides with "
+                            f"builtin — skipping schedule trigger for '{tool_name}'"
+                        )
+                        return
                 enabled = body.get("schedule_enabled", True)
                 enabled_str = "true" if enabled else "false"
                 schedule_time = body.get("schedule_time", "03:00")
@@ -2920,6 +2978,16 @@ class DailyModule:
             )
             if not rows:
                 return JSONResponse(status_code=404, content={"error": "not found"})
+            # Clear latest ToolRun session_id so next run starts fresh
+            try:
+                async with graph.write_lock:
+                    await graph.execute_cypher(
+                        "MATCH (r:ToolRun {tool_name: $name}) "
+                        "SET r.session_id = ''",
+                        {"name": name},
+                    )
+            except Exception:
+                pass
             # Clear Agent node session (backward compat)
             try:
                 async with graph.write_lock:
