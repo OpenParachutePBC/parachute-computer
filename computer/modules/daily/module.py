@@ -2587,7 +2587,7 @@ class DailyModule:
                 "system_prompt": body.get("system_prompt", ""),
                 "model": body.get("model", ""),
                 "memory_mode": body.get("memory_mode", ""),
-                "trust_level": body.get("trust_level", ""),
+                "trust_level": body.get("trust_level", "sandboxed") if body.get("trust_level") in ("sandboxed", "direct") else "sandboxed",
                 "container_slug": body.get("container_slug", ""),
                 "server_name": body.get("server_name", ""),
                 "builtin": body.get("builtin", "false"),
@@ -2683,6 +2683,8 @@ class DailyModule:
                         val = json.dumps(val)
                     elif field == "enabled":
                         val = "true" if val else "false"
+                    elif field == "trust_level":
+                        val = val if val in ("sandboxed", "direct") else "sandboxed"
                     data[field] = val
                     set_clauses.append(f"t.{field} = ${field}")
 
