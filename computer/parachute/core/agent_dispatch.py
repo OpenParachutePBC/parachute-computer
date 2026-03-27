@@ -78,10 +78,8 @@ class AgentDispatcher:
         event: str,
         entry_meta: dict[str, Any],
     ) -> list[dict[str, Any]]:
-        """Query Trigger→Tool graph for matching event, with Agent fallback."""
+        """Query Trigger→Tool graph for tools matching this event."""
         matching = []
-
-        # ── Try Trigger→Tool graph first ──────────────────────────────────
         try:
             rows = await self.graph.execute_cypher(
                 "MATCH (tr:Trigger)-[:INVOKES]->(t:Tool) "
@@ -105,38 +103,8 @@ class AgentDispatcher:
                         f"AgentDispatcher: tool '{row.get('name')}' "
                         f"filter {trigger_filter} doesn't match entry meta"
                     )
-
-            if matching:
-                return matching
         except Exception as e:
-            logger.debug(f"AgentDispatcher: Trigger→Tool query failed, trying Agent fallback: {e}")
-
-        # ── Fallback: legacy Agent.trigger_event ──────────────────────────
-        try:
-            rows = await self.graph.execute_cypher(
-                "MATCH (a:Agent) "
-                "WHERE a.enabled = 'true' AND a.trigger_event = $event "
-                "RETURN a ORDER BY a.name",
-                {"event": event},
-            )
-        except Exception as e:
-            logger.error(f"AgentDispatcher: Agent fallback query failed: {e}")
-            return []
-
-        for row in rows:
-            filter_raw = row.get("trigger_filter") or "{}"
-            try:
-                trigger_filter = json.loads(filter_raw) if isinstance(filter_raw, str) else filter_raw
-            except (json.JSONDecodeError, TypeError):
-                trigger_filter = {}
-
-            if self._matches_filter(trigger_filter, entry_meta):
-                matching.append(row)
-            else:
-                logger.debug(
-                    f"AgentDispatcher: agent '{row.get('name')}' "
-                    f"filter {trigger_filter} doesn't match entry meta"
-                )
+            logger.error(f"AgentDispatcher: Trigger→Tool query failed: {e}")
 
         return matching
 
@@ -251,14 +219,10 @@ class AgentDispatcher:
         ran_at: str,
         session_id: str,
     ) -> None:
-        """Record that a Tool/Agent ran on a Note (for UI display).
-
-        Writes both ToolRun and AgentRun for backward compatibility.
-        """
+        """Record that a Tool ran on a Note (for UI display)."""
         run_id = f"{agent_name}:{entry_id}:{ran_at}"
         try:
             async with self.graph.write_lock:
-                # Write ToolRun (new primary record)
                 await self.graph.execute_cypher(
                     "MERGE (r:ToolRun {run_id: $run_id}) "
                     "SET r.tool_name = $tool_name, "
@@ -273,26 +237,6 @@ class AgentDispatcher:
                     {
                         "run_id": run_id,
                         "tool_name": agent_name,
-                        "display_name": display_name,
-                        "entry_id": entry_id,
-                        "status": status,
-                        "ran_at": ran_at,
-                        "session_id": session_id,
-                    },
-                )
-                # Write AgentRun (backward compat)
-                await self.graph.execute_cypher(
-                    "MERGE (r:AgentRun {run_id: $run_id}) "
-                    "SET r.agent_name = $agent_name, "
-                    "    r.display_name = $display_name, "
-                    "    r.entry_id = $entry_id, "
-                    "    r.status = $status, "
-                    "    r.ran_at = $ran_at, "
-                    "    r.started_at = $ran_at, "
-                    "    r.session_id = $session_id",
-                    {
-                        "run_id": run_id,
-                        "agent_name": agent_name,
                         "display_name": display_name,
                         "entry_id": entry_id,
                         "status": status,

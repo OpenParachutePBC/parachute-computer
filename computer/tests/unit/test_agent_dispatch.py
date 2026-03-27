@@ -89,53 +89,60 @@ class TestFilterMatching:
 
 
 class TestDailyAgentConfigTriggerFields:
-    """Test that DailyAgentConfig parses trigger fields from graph rows."""
+    """Test that DailyAgentConfig parses trigger fields from Tool + Trigger rows."""
 
-    def test_from_row_with_trigger_fields(self):
+    def test_from_tool_row_with_event_trigger(self):
         from parachute.core.daily_agent import DailyAgentConfig
 
-        row = {
+        tool_row = {
             "name": "test-agent",
             "display_name": "Test Agent",
             "description": "A test agent",
             "system_prompt": "You are a test",
-            "tools": '["read_entry", "update_entry_content"]',
-            "schedule_enabled": "false",
-            "schedule_time": "",
             "trust_level": "direct",
-            "trigger_event": "note.transcription_complete",
-            "trigger_filter": '{"entry_type": "voice"}',
+        }
+        trigger_row = {
+            "type": "event",
+            "event": "note.transcription_complete",
+            "event_filter": '{"entry_type": "voice"}',
         }
 
-        config = DailyAgentConfig.from_row(row)
+        config = DailyAgentConfig.from_tool_row(
+            tool_row, can_call_names=["read-entry", "update-entry-content"],
+            trigger_row=trigger_row,
+        )
         assert config.trigger_event == "note.transcription_complete"
         assert config.trigger_filter == {"entry_type": "voice"}
         assert config.tools == ["read_entry", "update_entry_content"]
         assert config.trust_level == "direct"
         assert config.schedule_enabled is False
 
-    def test_from_row_without_trigger_fields(self):
-        """Existing rows without trigger fields should get defaults."""
+    def test_from_tool_row_without_trigger(self):
+        """Tool rows without a trigger should get defaults."""
         from parachute.core.daily_agent import DailyAgentConfig
 
-        row = {
+        tool_row = {
             "name": "legacy-agent",
             "display_name": "Legacy",
             "description": "",
             "system_prompt": "",
         }
 
-        config = DailyAgentConfig.from_row(row)
+        config = DailyAgentConfig.from_tool_row(tool_row, can_call_names=[])
         assert config.trigger_event == ""
         assert config.trigger_filter == {}
 
-    def test_from_row_with_invalid_trigger_filter(self):
+    def test_from_tool_row_with_invalid_trigger_filter(self):
         from parachute.core.daily_agent import DailyAgentConfig
 
-        row = {
-            "name": "bad-filter",
-            "trigger_filter": "not-valid-json",
+        tool_row = {"name": "bad-filter"}
+        trigger_row = {
+            "type": "event",
+            "event": "note.created",
+            "event_filter": "not-valid-json",
         }
 
-        config = DailyAgentConfig.from_row(row)
+        config = DailyAgentConfig.from_tool_row(
+            tool_row, can_call_names=[], trigger_row=trigger_row,
+        )
         assert config.trigger_filter == {}

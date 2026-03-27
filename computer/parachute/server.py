@@ -75,7 +75,6 @@ async def lifespan(app: FastAPI):
     # Initialize brain-backed session store and register schema
     session_store = BrainChatStore(brain)
     await session_store.ensure_schema()
-    await session_store.seed_builtin_agents()
     # Order matters: tools must exist before triggers (INVOKES edges need Tool nodes)
     await session_store.seed_builtin_tools()
     await session_store.seed_builtin_triggers()

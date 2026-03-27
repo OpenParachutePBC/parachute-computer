@@ -37,24 +37,7 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-# ── Agent templates ──────────────────────────────────────────────────────────
-# Built-in agent definitions seeded on startup.  Also returned by the daily
-# module's GET /agents/templates endpoint.
-
-
-class AgentTemplateDict(TypedDict, total=False):
-    name: str
-    display_name: str
-    description: str
-    system_prompt: str
-    tools: list[str]
-    schedule_time: str
-    trust_level: str
-    trigger_event: str
-    trigger_filter: str
-    memory_mode: str
-    template_version: str
-
+# ── System prompts ───────────────────────────────────────────────────────────
 
 PROCESS_NOTE_SYSTEM_PROMPT = (
     "You are a post-processing assistant for journal entries.\n\n"
@@ -294,66 +277,6 @@ TRIGGER_TEMPLATES: list[TriggerTemplateDict] = [
 ]
 
 
-# ── Derive AGENT_TEMPLATES from TOOL_TEMPLATES ──────────────────────────
-# TOOL_TEMPLATES is the source of truth.  AGENT_TEMPLATES is derived for
-# backward compatibility with the old Agent seeding/execution path.
-# Remove this in Phase 4 cleanup (issue #355) once Agent table is dropped.
-
-# Kebab → underscore for tool names (old factories use underscores)
-_TOOL_NAME_ALIASES: dict[str, str] = {
-    "read-days-notes": "read_days_notes",
-    "read-days-chats": "read_days_chats",
-    "summarize-chat": "summarize_chat",
-    "read-recent-journals": "read_recent_journals",
-    "read-recent-sessions": "read_recent_sessions",
-    "read-recent-cards": "read_recent_cards",
-    "write-card": "write_card",
-    "read-this-note": "read_this_note",
-    "update-this-note": "update_this_note",
-    "update-note-tags": "update_note_tags",
-    "update-note-metadata": "update_note_metadata",
-}
-
-# Build a trigger lookup: tool_name → trigger template
-_TRIGGER_BY_TOOL: dict[str, TriggerTemplateDict] = {
-    t["invokes"]: t for t in TRIGGER_TEMPLATES if "invokes" in t
-}
-
-
-def _tool_to_agent_template(tool: ToolTemplateDict) -> AgentTemplateDict:
-    """Derive a legacy Agent template from a Tool template + its Trigger."""
-    trigger = _TRIGGER_BY_TOOL.get(tool["name"])
-    # Convert can_call kebab names → underscore names for TOOL_FACTORIES
-    can_call = tool.get("can_call", [])
-    tools_underscore = [_TOOL_NAME_ALIASES.get(n, n.replace("-", "_")) for n in can_call]
-
-    result: AgentTemplateDict = {
-        "name": tool["name"],
-        "display_name": tool.get("display_name", ""),
-        "description": tool.get("description", ""),
-        "system_prompt": tool.get("system_prompt", ""),
-        "tools": tools_underscore,
-        "trust_level": tool.get("trust_level", "sandboxed"),
-        "memory_mode": tool.get("memory_mode", "persistent"),
-        "template_version": tool.get("template_version", ""),
-    }
-    if trigger:
-        if trigger.get("type") == "schedule":
-            result["schedule_time"] = trigger.get("schedule_time", "")
-        elif trigger.get("type") == "event":
-            result["trigger_event"] = trigger.get("event", "")
-            result["trigger_filter"] = trigger.get("event_filter", "")
-    return result
-
-
-# Only agent-mode and transform-mode tools (with system_prompt) become Agents
-AGENT_TEMPLATES: list[AgentTemplateDict] = [
-    _tool_to_agent_template(t)
-    for t in TOOL_TEMPLATES
-    if t.get("mode") in ("agent", "transform") and t.get("system_prompt")
-]
-
-
 class BrainChatStore:
     """
     Kuzu-backed chat metadata store.
@@ -368,7 +291,6 @@ class BrainChatStore:
         "note": ("Note", "entry_id"),
         "card": ("Card", "card_id"),
         "entity": ("Brain_Entity", "name"),
-        "agent": ("Agent", "name"),
         "tool": ("Tool", "name"),
     }
 
@@ -497,57 +419,6 @@ class BrainChatStore:
                 "read_at": "STRING",
             },
             primary_key="card_id",
-        )
-        await self.graph.ensure_node_table(
-            "Agent",
-            {
-                "name": "STRING",
-                "display_name": "STRING",
-                "description": "STRING",
-                "system_prompt": "STRING",
-                "tools": "STRING",
-                "model": "STRING",
-                "schedule_enabled": "STRING",
-                "schedule_time": "STRING",
-                "enabled": "STRING",
-                "trust_level": "STRING",
-                "created_at": "STRING",
-                "updated_at": "STRING",
-                "sdk_session_id": "STRING",
-                "last_run_at": "STRING",
-                "last_processed_date": "STRING",
-                "run_count": "INT64",
-                "memory_mode": "STRING",
-                # Columns added post-launch (migrations keep old DBs in sync):
-                "trigger_event": "STRING",
-                "trigger_filter": "STRING",
-                "template_version": "STRING",
-                "user_modified": "STRING",
-                "container_slug": "STRING",
-            },
-            primary_key="name",
-        )
-        await self.graph.ensure_node_table(
-            "AgentRun",
-            {
-                "run_id": "STRING",
-                "agent_name": "STRING",
-                "display_name": "STRING",
-                "entry_id": "STRING",
-                "date": "STRING",
-                "trigger": "STRING",
-                "status": "STRING",
-                "error": "STRING",
-                "container_slug": "STRING",
-                "card_id": "STRING",
-                "started_at": "STRING",
-                "completed_at": "STRING",
-                "duration_seconds": "DOUBLE",
-                "ran_at": "STRING",
-                "session_id": "STRING",
-                "scope": "STRING",
-            },
-            primary_key="run_id",
         )
         await self.graph.ensure_node_table(
             "Message",
@@ -824,61 +695,6 @@ class BrainChatStore:
                     )
                     logger.info(f"Schema migration: added Note.{col}")
 
-        # ── Agent migrations ──
-        try:
-            agent_cols = await self.graph.get_table_columns("Agent")
-        except Exception as e:
-            logger.warning(f"Schema migration: could not inspect Agent columns: {e}")
-            agent_cols = {}
-
-        agent_new = {
-            "trust_level": ("STRING", "'sandboxed'"),
-            "sdk_session_id": ("STRING", "''"),
-            "last_run_at": ("STRING", "''"),
-            "last_processed_date": ("STRING", "''"),
-            "run_count": ("INT64", "0"),
-            "trigger_event": ("STRING", "''"),
-            "trigger_filter": ("STRING", "'{}'"),
-            "memory_mode": ("STRING", "'persistent'"),
-            "template_version": ("STRING", "''"),
-            "user_modified": ("STRING", "''"),
-            "container_slug": ("STRING", "''"),
-        }
-        agent_missing = {c: v for c, v in agent_new.items() if c not in agent_cols}
-        if agent_missing:
-            async with self.graph.write_lock:
-                for col, (typ, default) in agent_missing.items():
-                    await self.graph.execute_cypher(
-                        f"ALTER TABLE Agent ADD {col} {typ} DEFAULT {default}"
-                    )
-                    logger.info(f"Schema migration: added Agent.{col}")
-
-        # ── AgentRun migrations ──
-        try:
-            run_cols = await self.graph.get_table_columns("AgentRun")
-        except Exception as e:
-            logger.warning(f"Schema migration: could not inspect AgentRun columns: {e}")
-            run_cols = {}
-
-        run_new = {
-            "date": ("STRING", "''"),
-            "trigger": ("STRING", "''"),
-            "error": ("STRING", "''"),
-            "container_slug": ("STRING", "''"),
-            "card_id": ("STRING", "''"),
-            "started_at": ("STRING", "''"),
-            "completed_at": ("STRING", "''"),
-            "duration_seconds": ("DOUBLE", "0.0"),
-            "scope": ("STRING", "'{}'"),
-        }
-        run_missing = {c: v for c, v in run_new.items() if c not in run_cols}
-        if run_missing:
-            async with self.graph.write_lock:
-                for col, (typ, default) in run_missing.items():
-                    await self.graph.execute_cypher(
-                        f"ALTER TABLE AgentRun ADD {col} {typ} DEFAULT {default}"
-                    )
-                    logger.info(f"Schema migration: added AgentRun.{col}")
 
     # ── Message writes ─────────────────────────────────────────────────────
 
@@ -994,206 +810,12 @@ class BrainChatStore:
         )
         return human_id, machine_id
 
-    async def seed_builtin_agents(self) -> None:
-        """Seed or update built-in Agents from AGENT_TEMPLATES.
-
-        Version-aware:
-        - New agent → CREATE with template_version, user_modified="false"
-        - Pre-versioned (template_version == "") → stamp version, mark modified
-        - Modified by user → skip, log "update available"
-        - Unmodified + older version → auto-update config fields
-        - Already current → skip
-
-        Also cleans up renamed/retired agents.
-        """
-        now = _now()
-
-        # Rename old agent names → new names (one-time migration)
-        renames = {
-            "daily-reflection": "process-day",
-            "post-process": "process-note",
-        }
-        for old_name, new_name in renames.items():
-            try:
-                rows = await self.graph.execute_cypher(
-                    "MATCH (a:Agent {name: $name}) "
-                    "RETURN a.user_modified AS um",
-                    {"name": old_name},
-                )
-                if rows:
-                    um = (rows[0].get("um") or "").strip()
-                    if um == "true":
-                        logger.info(
-                            f"Agent '{old_name}' user-modified — keeping as-is. "
-                            f"New template '{new_name}' will be seeded separately."
-                        )
-                    else:
-                        # Not customized — rename the node
-                        async with self.graph.write_lock:
-                            await self.graph.execute_cypher(
-                                "MATCH (a:Agent {name: $old}) SET a.name = $new",
-                                {"old": old_name, "new": new_name},
-                            )
-                        logger.info(f"Renamed agent '{old_name}' → '{new_name}'")
-                        # Also update any AgentRun references
-                        try:
-                            async with self.graph.write_lock:
-                                await self.graph.execute_cypher(
-                                    "MATCH (r:AgentRun {agent_name: $old}) "
-                                    "SET r.agent_name = $new",
-                                    {"old": old_name, "new": new_name},
-                                )
-                        except Exception:
-                            pass  # Non-critical
-            except Exception as e:
-                logger.warning(f"Failed to check rename for '{old_name}': {e}")
-
-        for tpl in AGENT_TEMPLATES:
-            name = tpl["name"]
-            tpl_version = tpl.get("template_version", "")
-
-            is_triggered = bool(tpl.get("trigger_event", ""))
-            seed_data = {
-                "name": name,
-                "display_name": tpl.get("display_name", name.replace("-", " ").title()),
-                "description": tpl.get("description", ""),
-                "system_prompt": tpl.get("system_prompt", ""),
-                "tools": json.dumps(tpl.get("tools", [])),
-                "schedule_enabled": "false" if is_triggered else "true",
-                "schedule_time": tpl.get("schedule_time", ""),
-                "enabled": "true",
-                "trust_level": tpl.get("trust_level", "sandboxed"),
-                "trigger_event": tpl.get("trigger_event", ""),
-                "trigger_filter": tpl.get("trigger_filter", "{}"),
-                "memory_mode": tpl.get("memory_mode", "persistent"),
-                "template_version": tpl_version,
-                "user_modified": "false",
-            }
-
-            rows = await self.graph.execute_cypher(
-                "MATCH (a:Agent {name: $name}) "
-                "RETURN a.template_version AS tv, a.user_modified AS um",
-                {"name": name},
-            )
-
-            if not rows:
-                try:
-                    async with self.graph.write_lock:
-                        await self.graph.execute_cypher(
-                            "CREATE (a:Agent {"
-                            "  name: $name,"
-                            "  display_name: $display_name,"
-                            "  description: $description,"
-                            "  system_prompt: $system_prompt,"
-                            "  tools: $tools,"
-                            "  schedule_enabled: $schedule_enabled,"
-                            "  schedule_time: $schedule_time,"
-                            "  enabled: $enabled,"
-                            "  trust_level: $trust_level,"
-                            "  trigger_event: $trigger_event,"
-                            "  trigger_filter: $trigger_filter,"
-                            "  memory_mode: $memory_mode,"
-                            "  template_version: $template_version,"
-                            "  user_modified: $user_modified,"
-                            "  created_at: $now,"
-                            "  updated_at: $now"
-                            "})",
-                            {**seed_data, "now": now},
-                        )
-                    logger.info(f"Seeded built-in Agent '{name}' (v{tpl_version})")
-                except Exception as e:
-                    logger.warning(f"Failed to seed Agent '{name}': {e}")
-                continue
-
-            existing_tv = (rows[0].get("tv") or "").strip()
-            existing_um = (rows[0].get("um") or "").strip()
-
-            if not existing_tv:
-                try:
-                    async with self.graph.write_lock:
-                        await self.graph.execute_cypher(
-                            "MATCH (a:Agent {name: $name}) "
-                            "SET a.template_version = $tv, a.user_modified = 'true'",
-                            {"name": name, "tv": tpl_version},
-                        )
-                    logger.info(
-                        f"Stamped pre-versioned Agent '{name}' "
-                        f"with v{tpl_version}, marked user_modified=true"
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to stamp Agent '{name}': {e}")
-            elif existing_um == "true":
-                if existing_tv < tpl_version:
-                    logger.info(
-                        f"Update available for '{name}' "
-                        f"(v{existing_tv} → v{tpl_version}) but user customized, skipping"
-                    )
-            elif existing_tv < tpl_version:
-                try:
-                    async with self.graph.write_lock:
-                        await self.graph.execute_cypher(
-                            "MATCH (a:Agent {name: $name}) "
-                            "SET a.display_name = $display_name,"
-                            "    a.description = $description,"
-                            "    a.system_prompt = $system_prompt,"
-                            "    a.tools = $tools,"
-                            "    a.schedule_time = $schedule_time,"
-                            "    a.trust_level = $trust_level,"
-                            "    a.trigger_event = $trigger_event,"
-                            "    a.trigger_filter = $trigger_filter,"
-                            "    a.memory_mode = $memory_mode,"
-                            "    a.template_version = $template_version,"
-                            "    a.updated_at = $now",
-                            {**seed_data, "now": now},
-                        )
-                    logger.info(
-                        f"Updated builtin Agent '{name}' "
-                        f"from v{existing_tv} to v{tpl_version}"
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to update Agent '{name}': {e}")
-
-        # Clean up renamed/retired agents
-        # Note: daily-reflection and post-process are handled by rename logic above,
-        # so only delete them if the rename already happened (node doesn't exist)
-        for old_name in ["transcription-cleanup"]:
-            try:
-                rows = await self.graph.execute_cypher(
-                    "MATCH (a:Agent {name: $name}) RETURN a.name",
-                    {"name": old_name},
-                )
-                if rows:
-                    async with self.graph.write_lock:
-                        await self.graph.execute_cypher(
-                            "MATCH (a:Agent {name: $name}) DELETE a",
-                            {"name": old_name},
-                        )
-                    logger.info(f"Removed retired Agent '{old_name}'")
-                    try:
-                        run_rows = await self.graph.execute_cypher(
-                            "MATCH (r:AgentRun {agent_name: $name}) RETURN r.run_id",
-                            {"name": old_name},
-                        )
-                        if run_rows:
-                            async with self.graph.write_lock:
-                                await self.graph.execute_cypher(
-                                    "MATCH (r:AgentRun {agent_name: $name}) DELETE r",
-                                    {"name": old_name},
-                                )
-                            logger.info(
-                                f"Removed {len(run_rows)} orphaned AgentRun(s) for '{old_name}'"
-                            )
-                    except Exception:
-                        pass
-            except Exception:
-                pass
-
     # ── Tool / Trigger seeding ───────────────────────────────────────────────
 
     async def seed_builtin_tools(self) -> None:
         """Seed or update built-in Tools from TOOL_TEMPLATES.
 
-        Version-aware (same pattern as seed_builtin_agents):
+        Version-aware:
         - New tool → CREATE with template_version, user_modified="false"
         - Pre-versioned (template_version == "") → stamp version, mark modified
         - Modified by user → skip, log "update available"
