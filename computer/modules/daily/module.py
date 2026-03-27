@@ -2456,6 +2456,14 @@ class DailyModule:
                 await graph.execute_cypher(
                     "MATCH (a:Agent {name: $name}) DELETE a", {"name": name}
                 )
+            # Clean up orphan Triggers (no remaining INVOKES target)
+            try:
+                async with graph.write_lock:
+                    await graph.execute_cypher(
+                        "MATCH (tr:Trigger) WHERE NOT (tr)-[:INVOKES]->(:Tool) DELETE tr"
+                    )
+            except Exception as e:
+                logger.debug(f"Orphan trigger cleanup (legacy delete): {e}")
             # Reload scheduler so deleted scheduled agents are removed
             try:
                 from parachute.core.scheduler import reload_scheduler
@@ -2471,12 +2479,30 @@ class DailyModule:
         _RESERVED_TRIGGER_NAMES = {t["name"] for t in TRIGGER_TEMPLATES}
         _TIME_RE = re.compile(r"^([01]?\d|2[0-3]):[0-5]\d$")
 
+        async def _find_existing_trigger(graph, tool_name: str, trigger_type: str) -> str | None:
+            """Find an existing Trigger that INVOKES this tool, by type."""
+            try:
+                rows = await graph.execute_cypher(
+                    "MATCH (tr:Trigger {type: $type})-[:INVOKES]->(t:Tool {name: $tool}) "
+                    "RETURN tr.name AS name LIMIT 1",
+                    {"type": trigger_type, "tool": tool_name},
+                )
+                if rows:
+                    return rows[0].get("name")
+            except Exception:
+                pass
+            return None
+
         async def _upsert_inline_trigger(graph, tool_name: str, body: dict) -> None:
             """Create/update a Trigger from inline schedule/event fields in the Tool body.
 
             Flutter sends schedule_enabled, schedule_time, trigger_event, trigger_filter
             as part of the Tool create/update body. This method bridges those fields to
             the Trigger table + INVOKES edge.
+
+            If an existing Trigger already INVOKES this tool (e.g. builtin
+            'nightly-reflection' → 'process-day'), that trigger is updated in place
+            rather than creating a new one.
             """
             has_schedule = "schedule_enabled" in body or "schedule_time" in body
             has_event = "trigger_event" in body
@@ -2486,13 +2512,11 @@ class DailyModule:
             now = datetime.now(timezone.utc).isoformat()
 
             if has_event and body.get("trigger_event"):
-                # Event trigger
-                trigger_name = f"on-{tool_name}"
-                if trigger_name in _RESERVED_TRIGGER_NAMES:
-                    logger.warning(
-                        f"Inline trigger '{trigger_name}' collides with builtin — skipping"
-                    )
-                    return
+                # Event trigger — reuse existing or generate name
+                trigger_name = (
+                    await _find_existing_trigger(graph, tool_name, "event")
+                    or f"on-{tool_name}"
+                )
                 event_filter = body.get("trigger_filter", {})
                 if isinstance(event_filter, dict):
                     event_filter = json.dumps(event_filter)
@@ -2522,13 +2546,11 @@ class DailyModule:
                     logger.warning(f"Inline trigger upsert (event) for '{tool_name}': {e}")
 
             elif has_schedule:
-                # Schedule trigger
-                trigger_name = f"scheduled-{tool_name}"
-                if trigger_name in _RESERVED_TRIGGER_NAMES:
-                    logger.warning(
-                        f"Inline trigger '{trigger_name}' collides with builtin — skipping"
-                    )
-                    return
+                # Schedule trigger — reuse existing or generate name
+                trigger_name = (
+                    await _find_existing_trigger(graph, tool_name, "schedule")
+                    or f"scheduled-{tool_name}"
+                )
                 enabled = body.get("schedule_enabled", True)
                 enabled_str = "true" if enabled else "false"
                 schedule_time = body.get("schedule_time", "03:00")
@@ -3122,22 +3144,9 @@ class DailyModule:
                 container_slug = f"agent-{name}"
 
             parachute_dir = Path(self.home_path) / ".parachute"
-            transcript_path = await asyncio.to_thread(
-                _find_transcript_file, sid, container_slug, parachute_dir
-            )
-
-            if not transcript_path:
-                return {"hasTranscript": False, "sessionId": sid, "totalMessages": 0, "messages": []}
-
-            messages = await asyncio.to_thread(
+            return await asyncio.to_thread(
                 _read_transcript_file, sid, limit, container_slug, parachute_dir
             )
-            return {
-                "hasTranscript": True,
-                "sessionId": sid,
-                "totalMessages": len(messages),
-                "messages": messages[-limit:] if len(messages) > limit else messages,
-            }
 
         # ── Trigger endpoints ─────────────────────────────────────────────
 
