@@ -2912,15 +2912,18 @@ class DailyModule:
             rows = await graph.execute_cypher(
                 "MATCH (t:Trigger) "
                 "OPTIONAL MATCH (t)-[:INVOKES]->(tool:Tool) "
-                "RETURN t, tool.name AS invokes_tool, tool.display_name AS invokes_display_name "
+                "RETURN t.name AS name, t.type AS type, "
+                "t.schedule_time AS schedule_time, t.event AS event, "
+                "t.event_filter AS event_filter, t.scope AS scope, "
+                "t.enabled AS enabled, t.template_version AS template_version, "
+                "t.user_modified AS user_modified, "
+                "t.created_at AS created_at, t.updated_at AS updated_at, "
+                "tool.name AS invokes_tool, tool.display_name AS invokes_display_name "
                 "ORDER BY t.name"
             )
-            # Group: trigger props + invokes info
             triggers = []
             for row in rows:
-                trigger = {k: v for k, v in row.items() if k not in ("invokes_tool", "invokes_display_name")}
-                trigger["invokes_tool"] = row.get("invokes_tool")
-                trigger["invokes_display_name"] = row.get("invokes_display_name")
+                trigger = dict(row)
                 # Parse scope from JSON
                 scope_raw = trigger.get("scope", "{}")
                 try:
@@ -2939,14 +2942,18 @@ class DailyModule:
             rows = await graph.execute_cypher(
                 "MATCH (t:Trigger {name: $name}) "
                 "OPTIONAL MATCH (t)-[:INVOKES]->(tool:Tool) "
-                "RETURN t, tool.name AS invokes_tool",
+                "RETURN t.name AS name, t.type AS type, "
+                "t.schedule_time AS schedule_time, t.event AS event, "
+                "t.event_filter AS event_filter, t.scope AS scope, "
+                "t.enabled AS enabled, t.template_version AS template_version, "
+                "t.user_modified AS user_modified, "
+                "t.created_at AS created_at, t.updated_at AS updated_at, "
+                "tool.name AS invokes_tool",
                 {"name": name},
             )
             if not rows:
                 return JSONResponse(status_code=404, content={"error": f"Trigger '{name}' not found"})
-            result = rows[0]
-            result["invokes_tool"] = result.get("invokes_tool")
-            return result
+            return rows[0]
 
         @router.post("/triggers", status_code=201)
         async def create_trigger(request: Request):
