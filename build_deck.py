@@ -283,7 +283,8 @@ slide_headline(s, "Start free.\nGrow with every user.")
 tiers = [
     ("Free", "Offline journal + on-device transcription. Zero hosting cost.", FG_DIM),
     ("$2/mo", "Cloud sync across devices. Your notes everywhere.", FG_MUTED),
-    ("$10/mo", "Cloud transcription + AI — reflections, synthesis, pattern surfacing", ACCENT),
+    ("$5/mo", "Cloud transcription + cleanup — server-side processing, better accuracy", FG_MUTED),
+    ("$10/mo", "AI reflections, synthesis, and pattern surfacing", ACCENT),
     ("$40/mo", "Hosted Parachute Computer — full agentic platform with bundled AI", FG),
 ]
 
@@ -324,11 +325,11 @@ headers = ["", "2026", "2027", "2028"]
 rows = [
     ["Free + sync users", "5,000", "50,000", "250,000"],
     ["Paid subscribers", "500", "5,000", "25,000"],
-    ["Avg rev / subscriber", "~$10/mo", "~$12/mo", "~$14/mo"],
-    ["MRR (end of year)", "~$5,000", "~$60,000", "~$350,000"],
-    ["ARR (end of year)", "~$60K", "~$720K", "~$4.2M"],
-    ["Team (salaried)", "3", "5-6", "9-10"],
-    ["Operating costs", "~$170K", "~$550K", "~$900K"],
+    ["Avg rev / subscriber", "~$7/mo", "~$9/mo", "~$12/mo"],
+    ["ARR", "~$42K", "~$540K", "~$3.6M"],
+    ["Team costs", "~$150K", "~$400K", "~$800K"],
+    ["Infra + COGS", "~$15K", "~$130K", "~$500K"],
+    ["Total opex", "~$165K", "~$530K", "~$1.3M"],
 ]
 
 col_widths = [Inches(2.8), Inches(1.8), Inches(1.8), Inches(1.8)]
@@ -364,7 +365,7 @@ for r, row_data in enumerate(rows):
             p.font.name = "Calibri"
             p.alignment = PP_ALIGN.CENTER if c > 0 else PP_ALIGN.LEFT
             # Highlight ARR row
-            if r == 4 and c > 0:
+            if r == 3 and c > 0:
                 p.font.color.rgb = ACCENT
                 p.font.bold = True
             elif c == 0:
@@ -387,15 +388,12 @@ section_label(s, "Team & Traction")
 slide_headline(s, "Self-funded.\nBuilt from scratch.")
 
 # What exists
-add_text_box(s, Inches(1.2), Inches(3.5), Inches(5.5), Inches(3.0),
+add_text_box(s, Inches(1.2), Inches(3.5), Inches(5.5), Inches(2.5),
              "What exists today:\n\n"
-             "  ·  Working server, app, and graph-native memory\n"
-             "  ·  Local voice transcription (fully offline)\n"
-             "  ·  Multi-agent system with trust tiers\n"
-             "  ·  Telegram, Discord, Matrix connectors\n"
-             "  ·  Functional pendant prototype\n"
-             "  ·  Beta launching next month\n"
-             "  ·  PBC incorporated in Colorado",
+             "  ·  Working app with local voice transcription + graph-native memory\n"
+             "  ·  Multi-platform: phone, Telegram, Discord, Matrix\n"
+             "  ·  Functional pendant prototype (on stage today)\n"
+             "  ·  Daily beta launching this month · PBC incorporated in Colorado",
              font_size=16, color=FG_MUTED, line_spacing=1.55)
 
 # Team on the right
