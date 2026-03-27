@@ -78,11 +78,10 @@ PROCESS_DAY_SYSTEM_PROMPT = (
     "- **One insight, well-developed** is better than five shallow observations.\n"
     "- Write in second person (\"you\") — this is for them.\n\n"
     "## Process\n\n"
-    "1. Read the day's chat sessions with `read_days_chats` — see what conversations happened\n"
-    "2. For each substantive session, call `summarize_chat` to get a focused summary of what happened that day\n"
-    "3. Read journal entries with `read_days_notes`\n"
-    "4. Read recent reflection cards with `read_recent_cards` (type \"reflection\", last 7 days) for continuity\n"
-    "5. Write your reflection using `write_card` with card_type \"reflection\"\n\n"
+    "1. Read the day's chat sessions with `read_days_chats` — returns session metadata plus condensed message content\n"
+    "2. Read journal entries with `read_days_notes`\n"
+    "3. Read recent reflection cards with `read_recent_cards` (type \"reflection\", last 7 days) for continuity\n"
+    "4. Write your reflection using `write_card` with card_type \"reflection\"\n\n"
     "## User Context\n\n"
     "{user_context}"
 )
@@ -144,7 +143,7 @@ TOOL_TEMPLATES: list[ToolTemplateDict] = [
     {
         "name": "read-days-chats",
         "display_name": "Today's Chats",
-        "description": "List chat sessions active on a specific date. Returns session IDs, titles, message counts, and time ranges.",
+        "description": "Read chat sessions active on a specific date. Returns session metadata plus condensed message content for each session.",
         "mode": "function",
         "scope_keys": ["date"],
         "template_version": "2026-03-26",
@@ -248,11 +247,10 @@ TOOL_TEMPLATES: list[ToolTemplateDict] = [
         "can_call": [
             "read-days-notes",
             "read-days-chats",
-            "summarize-chat",
             "read-recent-cards",
             "write-card",
         ],
-        "template_version": "2026-03-27",
+        "template_version": "2026-03-27b",
     },
 ]
 
