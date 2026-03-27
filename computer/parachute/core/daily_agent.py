@@ -672,13 +672,10 @@ async def _run_direct(
     else:
         _tools, agent_mcp_config = create_daily_agent_tools(home_path, config, graph=graph)
 
-    # Load vault MCPs
-    vault_mcps = await load_user_mcps(home_path)
-
-    # Combine all MCP servers
+    # Daily agents only get their declared CAN_CALL tools — no vault MCPs.
+    # This prevents automated agents from accessing browser, GitHub, etc.
     all_mcp_servers = {
         f"daily_{agent_name}": agent_mcp_config,
-        **vault_mcps,
     }
 
     logger.info(f"Running agent '{agent_name}' directly with MCPs: {list(all_mcp_servers.keys())}")
