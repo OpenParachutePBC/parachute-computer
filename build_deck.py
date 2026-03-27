@@ -112,36 +112,7 @@ def slide_body_start(slide, top=Inches(3.4)):
 
 
 # ═══════════════════════════════════════════════
-# SLIDE 1 — We Shouldn't Have to Choose
-# ═══════════════════════════════════════════════
-s = prs.slides.add_slide(blank_layout)
-set_slide_bg(s)
-
-add_text_box(s, Inches(1.2), Inches(0.8), Inches(4), Inches(0.4),
-             "OPEN PARACHUTE, PBC", font_size=11, color=ACCENT, bold=True)
-
-add_text_box(s, Inches(1.2), Inches(1.8), Inches(10), Inches(2.5),
-             "The most powerful technologies\nin a generation are emerging.\nBalance and choice should be\nbuilt in from the start.",
-             font_size=46, color=FG, font_name="Georgia", line_spacing=1.12)
-
-add_text_box(s, Inches(1.2), Inches(4.8), Inches(8), Inches(1.0),
-             "I want to hike up a mountain, share my ideas as I walk,\n"
-             "and come back down to a working app.\n"
-             "But I also want to hold my nephew. Be outside. Live a full life.\n"
-             "Technology should support both.",
-             font_size=20, color=FG_MUTED, line_spacing=1.5)
-
-add_text_box(s, Inches(1.2), Inches(6.2), Inches(10), Inches(0.5),
-             "MA Ecopsychology · MS Creative Technology & Design (CU ATLAS) · Founding engineer ×2 · Ex-Google · 10+ years full stack",
-             font_size=13, color=FG_DIM)
-
-add_text_box(s, Inches(1.2), Inches(6.7), Inches(6), Inches(0.4),
-             "Aaron Gabriel Neyer  ·  aaron@parachute.computer  ·  Boulder, CO",
-             font_size=12, color=FG_DIM)
-
-
-# ═══════════════════════════════════════════════
-# SLIDE 2 — The Landscape / Market Validation
+# SLIDE 1 — The Landscape
 # ═══════════════════════════════════════════════
 s = prs.slides.add_slide(blank_layout)
 set_slide_bg(s)
@@ -149,53 +120,27 @@ set_slide_bg(s)
 section_label(s, "The Landscape")
 slide_headline(s, "Everyone is building\npersonal AI computers.")
 
-# Body content
 left, top = Inches(1.2), Inches(3.5)
 add_text_box(s, left, top, Inches(10), Inches(1.0),
-             "Over 100 million people already pay $20+/month for AI — including 50M+ ChatGPT Pro subscribers.\n"
-             "OpenClaw — 300K+ stars in 3 months. Claude Cowork. ZoComputer. Perplexity Computer. Manus.",
+             "Over 100 million people already pay $20+/month for AI.\n"
+             "OpenClaw. Claude Cowork. ZoComputer. Perplexity Computer. Manus.",
              font_size=18, color=FG_MUTED, line_spacing=1.5)
 
 # Market stat
-add_text_box(s, Inches(1.2), Inches(5.2), Inches(3), Inches(1.2),
+add_text_box(s, Inches(1.2), Inches(5.0), Inches(3), Inches(1.2),
              "$50B+", font_size=64, color=ACCENT, font_name="Georgia")
-add_text_box(s, Inches(4.5), Inches(5.45), Inches(5), Inches(0.8),
-             "agentic AI market by 2030 · 44% CAGR\nOpenAI alone projects $200B revenue by 2030",
+add_text_box(s, Inches(4.5), Inches(5.25), Inches(5), Inches(0.8),
+             "agentic AI market by 2030 · 44% CAGR",
              font_size=16, color=FG_MUTED, line_spacing=1.4)
 
 # The turn
-add_text_box(s, Inches(1.2), Inches(6.5), Inches(10), Inches(0.6),
-             "The question isn't whether this market exists — it's who they'll trust.",
+add_text_box(s, Inches(1.2), Inches(6.3), Inches(10), Inches(0.6),
+             "But they're building walled gardens — and only for the 5% who are already power users.",
              font_size=22, color=FG, bold=False, font_name="Georgia")
 
 
 # ═══════════════════════════════════════════════
-# SLIDE 3 — Parachute Computer (Trust)
-# ═══════════════════════════════════════════════
-s = prs.slides.add_slide(blank_layout)
-set_slide_bg(s)
-
-section_label(s, "Our Answer")
-slide_headline(s, "Parachute Computer.\nThe personal AI you can trust.")
-
-add_text_box(s, Inches(1.2), Inches(3.5), Inches(10), Inches(1.5),
-             "A full agentic computing platform — open source, local-first, self-hostable.\n"
-             "Your data stays on your device. Use your own AI models.\n"
-             "Knowledge graph that connects your journals, conversations, and thinking.",
-             font_size=20, color=FG_MUTED, line_spacing=1.6)
-
-add_text_box(s, Inches(1.2), Inches(5.5), Inches(10), Inches(1.5),
-             "A lot of people don't want to trust big corporations with their most personal data.\n"
-             "Open source gives them a choice. AGPL-3.0 licensed. Fully transparent.",
-             font_size=18, color=FG_MUTED, line_spacing=1.5)
-
-add_text_box(s, Inches(1.2), Inches(6.5), Inches(10), Inches(0.6),
-             "But most people don't want to self-host a server.",
-             font_size=22, color=FG, font_name="Georgia")
-
-
-# ═══════════════════════════════════════════════
-# SLIDE 4 — The 95% Gap
+# SLIDE 2 — The 95% Gap
 # ═══════════════════════════════════════════════
 s = prs.slides.add_slide(blank_layout)
 set_slide_bg(s)
@@ -216,12 +161,44 @@ add_text_box(s, Inches(1.2), Inches(5.7), Inches(10), Inches(1.0),
 
 
 # ═══════════════════════════════════════════════
-# SLIDE 5 — Parachute Daily (The Bridge)
+# SLIDE 3 — Parachute Computer (Trust + Open Source woven in)
 # ═══════════════════════════════════════════════
 s = prs.slides.add_slide(blank_layout)
 set_slide_bg(s)
 
-section_label(s, "The Solution")
+section_label(s, "Our Answer")
+slide_headline(s, "Parachute Computer.\nThe personal AI you can trust.")
+
+# Slim bullet points
+bullets = [
+    "Open source (AGPL-3.0) · local-first · self-hostable",
+    "Your data stays on your device — portable and exportable",
+    "Knowledge graph connects your journals, conversations, and thinking",
+    "Public Benefit Corporation — legally mandated to serve users",
+]
+
+y = Inches(3.5)
+for b in bullets:
+    add_text_box(s, Inches(1.5), y, Inches(9), Inches(0.4),
+                 "·   " + b, font_size=18, color=FG_MUTED, line_spacing=1.3)
+    y += Inches(0.55)
+
+add_text_box(s, Inches(1.2), Inches(5.8), Inches(10), Inches(0.8),
+             "Software gets cloned in a day.\nTrust and context cannot.",
+             font_size=22, color=FG, font_name="Georgia", line_spacing=1.3)
+
+add_text_box(s, Inches(1.2), Inches(6.6), Inches(10), Inches(0.5),
+             "But most people don't want to self-host a server.",
+             font_size=18, color=FG_MUTED, font_name="Georgia")
+
+
+# ═══════════════════════════════════════════════
+# SLIDE 4 — Parachute Daily (The Bridge)
+# ═══════════════════════════════════════════════
+s = prs.slides.add_slide(blank_layout)
+set_slide_bg(s)
+
+section_label(s, "The Bridge")
 slide_headline(s, "Parachute Daily.\nJust talk.")
 
 add_text_box(s, Inches(1.2), Inches(3.5), Inches(5.5), Inches(2.8),
@@ -238,7 +215,7 @@ add_text_box(s, Inches(1.2), Inches(6.5), Inches(5.5), Inches(0.5),
              "No learning curve. No technical sophistication required.",
              font_size=18, color=FG, line_spacing=1.2)
 
-# Pendant callout on the right — positioned to not overlap left text
+# Pendant callout on the right
 shape = s.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE,
                            Inches(7.8), Inches(3.5), Inches(4.5), Inches(3.0))
 shape.fill.solid()
@@ -295,33 +272,7 @@ for num, text in steps:
 
 
 # ═══════════════════════════════════════════════
-# SLIDE 6 — Trust as Foundation
-# ═══════════════════════════════════════════════
-s = prs.slides.add_slide(blank_layout)
-set_slide_bg(s)
-
-section_label(s, "Why Us")
-slide_headline(s, "Open source is\nthe trust foundation.")
-
-items = [
-    ("AGPL-3.0 licensed", "Fully transparent. Proprietary forks must share changes."),
-    ("Local-first", "Your data on your device. Portable. Exportable. Yours."),
-    ("Public Benefit Corporation", "Legal mandate to serve users, not just shareholders."),
-    ("Software is no longer a moat", "Ideas get cloned in a day. Trust and context cannot."),
-    ("Community as growth engine", "We're building a learning community around AI tools — users who learn together become power users who build for others."),
-]
-
-y = Inches(3.5)
-for title, desc in items:
-    add_text_box(s, Inches(1.2), y, Inches(3.5), Inches(0.35),
-                 title, font_size=18, color=FG, bold=True)
-    add_text_box(s, Inches(5.0), y, Inches(7), Inches(0.35),
-                 desc, font_size=16, color=FG_MUTED)
-    y += Inches(0.65)
-
-
-# ═══════════════════════════════════════════════
-# SLIDE 7 — Business Model
+# SLIDE 6 — Business Model / Pricing
 # ═══════════════════════════════════════════════
 s = prs.slides.add_slide(blank_layout)
 set_slide_bg(s)
@@ -360,49 +311,7 @@ add_text_box(s, Inches(1.2), Inches(6.3), Inches(10), Inches(0.8),
 
 
 # ═══════════════════════════════════════════════
-# SLIDE 8 — Team + Traction
-# ═══════════════════════════════════════════════
-s = prs.slides.add_slide(blank_layout)
-set_slide_bg(s)
-
-section_label(s, "Team & Traction")
-slide_headline(s, "Bootstrapped.\nZero funding.")
-
-# What exists
-add_text_box(s, Inches(1.2), Inches(3.5), Inches(5.5), Inches(3.0),
-             "What exists today:\n\n"
-             "  ·  Working server, app, and graph-native memory\n"
-             "  ·  Local voice transcription (fully offline)\n"
-             "  ·  Multi-agent system with trust tiers\n"
-             "  ·  Telegram, Discord, Matrix connectors\n"
-             "  ·  Functional pendant prototype\n"
-             "  ·  Beta launching next month\n"
-             "  ·  PBC incorporated in Colorado",
-             font_size=16, color=FG_MUTED, line_spacing=1.55)
-
-# Team on the right
-add_text_box(s, Inches(7.8), Inches(3.3), Inches(4), Inches(0.35),
-             "THE TEAM", font_size=11, color=ACCENT, bold=True)
-
-team = [
-    ("Aaron Gabriel Neyer", "Founder · Product & architecture"),
-    ("Jon Bo", "Daily co-lead · Founding engineer"),
-    ("Lucian Hymer", "Computer co-lead · Founding engineer"),
-    ("Marvin Melzer", "Hardware · Pendant prototype"),
-    ("Neil Yarnal", "Brand & design"),
-]
-
-y = Inches(3.9)
-for name, role in team:
-    add_text_box(s, Inches(7.8), y, Inches(4.5), Inches(0.3),
-                 name, font_size=14, color=FG, bold=True)
-    add_text_box(s, Inches(7.8), y + Inches(0.28), Inches(4.5), Inches(0.3),
-                 role, font_size=12, color=FG_MUTED)
-    y += Inches(0.6)
-
-
-# ═══════════════════════════════════════════════
-# SLIDE 9 — Financial Projections
+# SLIDE 7 — Financial Projections
 # ═══════════════════════════════════════════════
 s = prs.slides.add_slide(blank_layout)
 set_slide_bg(s)
@@ -467,44 +376,90 @@ for r, row_data in enumerate(rows):
         cell.fill.solid()
         cell.fill.fore_color.rgb = WHITE if r % 2 == 0 else BG
 
-add_text_box(s, Inches(1.5), Inches(6.6), Inches(9), Inches(0.5),
-             "Funded to date: $0. Entire product built by founder with no outside funding.",
-             font_size=14, color=FG_DIM)
+
+# ═══════════════════════════════════════════════
+# SLIDE 8 — Bootstrapped + Team
+# ═══════════════════════════════════════════════
+s = prs.slides.add_slide(blank_layout)
+set_slide_bg(s)
+
+section_label(s, "Team & Traction")
+slide_headline(s, "Self-funded.\nBuilt from scratch.")
+
+# What exists
+add_text_box(s, Inches(1.2), Inches(3.5), Inches(5.5), Inches(3.0),
+             "What exists today:\n\n"
+             "  ·  Working server, app, and graph-native memory\n"
+             "  ·  Local voice transcription (fully offline)\n"
+             "  ·  Multi-agent system with trust tiers\n"
+             "  ·  Telegram, Discord, Matrix connectors\n"
+             "  ·  Functional pendant prototype\n"
+             "  ·  Beta launching next month\n"
+             "  ·  PBC incorporated in Colorado",
+             font_size=16, color=FG_MUTED, line_spacing=1.55)
+
+# Team on the right
+add_text_box(s, Inches(7.8), Inches(3.3), Inches(4), Inches(0.35),
+             "THE TEAM", font_size=11, color=ACCENT, bold=True)
+
+team = [
+    ("Aaron Gabriel Neyer", "Founder · Product & architecture"),
+    ("Jon Bo", "Daily co-lead · Founding engineer"),
+    ("Lucian Hymer", "Computer co-lead · Founding engineer"),
+    ("Marvin Melzer", "Hardware · Pendant prototype"),
+    ("Neil Yarnal", "Brand & design"),
+]
+
+y = Inches(3.9)
+for name, role in team:
+    add_text_box(s, Inches(7.8), y, Inches(4.5), Inches(0.3),
+                 name, font_size=14, color=FG, bold=True)
+    add_text_box(s, Inches(7.8), y + Inches(0.28), Inches(4.5), Inches(0.3),
+                 role, font_size=12, color=FG_MUTED)
+    y += Inches(0.6)
+
+# Founder bio at bottom
+add_text_box(s, Inches(1.2), Inches(6.5), Inches(10), Inches(0.5),
+             "MA Ecopsychology · MS Creative Technology & Design (CU ATLAS) · Founding engineer ×2 · Ex-Google · 10+ years full stack",
+             font_size=13, color=FG_DIM)
 
 
 # ═══════════════════════════════════════════════
-# SLIDE 10 — The Ask + Close
+# SLIDE 9 — The Ask
 # ═══════════════════════════════════════════════
 s = prs.slides.add_slide(blank_layout)
 set_slide_bg(s)
 
 section_label(s, "The Ask")
-slide_headline(s, "$300K to reach revenue.\nThen scale.")
+slide_headline(s, "Raising $300K to hire\nthe core team.")
 
-# Ask details
+# Simpler ask details
 ask_items = [
     ("Instrument", "SAFE (YC standard)"),
-    ("Valuation cap", "$5,000,000"),
-    ("Giving away", "< 10%"),
-    ("Use of funds", "Core team full-time through 2026 → production launch June"),
+    ("Use of funds", "Core team full-time through 2026"),
+    ("Goal", "Production launch by June · revenue immediately"),
 ]
 
 y = Inches(3.5)
 for label, val in ask_items:
     add_text_box(s, Inches(1.2), y, Inches(2.5), Inches(0.4),
                  label, font_size=14, color=FG_DIM)
-    add_text_box(s, Inches(3.8), y, Inches(5), Inches(0.4),
+    add_text_box(s, Inches(3.8), y, Inches(7), Inches(0.4),
                  val, font_size=20, color=FG, font_name="Georgia")
     y += Inches(0.55)
 
 # Closing line
-add_text_box(s, Inches(1.2), Inches(5.8), Inches(10), Inches(1.2),
+add_text_box(s, Inches(1.2), Inches(5.5), Inches(10), Inches(1.2),
              "Open source. Local-first.\nBalance and choice — from the foundation.",
              font_size=28, color=FG, font_name="Georgia", line_spacing=1.3)
 
-add_text_box(s, Inches(1.2), Inches(6.6), Inches(10), Inches(0.5),
-             "parachute.computer  ·  github.com/OpenParachutePBC  ·  aaron@parachute.computer",
+add_text_box(s, Inches(1.2), Inches(6.5), Inches(10), Inches(0.5),
+             "Aaron Gabriel Neyer  ·  aaron@parachute.computer  ·  Boulder, CO",
              font_size=13, color=FG_DIM)
+
+add_text_box(s, Inches(1.2), Inches(6.9), Inches(10), Inches(0.4),
+             "parachute.computer  ·  github.com/OpenParachutePBC",
+             font_size=12, color=FG_DIM)
 
 
 # ── Save ──

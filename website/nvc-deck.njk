@@ -86,37 +86,6 @@ permalink: /nvc/deck/
         .slide-body p:last-child { margin-bottom: 0; }
         .slide-body strong { color: var(--fg); font-weight: 500; }
 
-        /* ── Opening slide ── */
-        .slide-opening .eyebrow {
-            font-family: var(--mono);
-            font-size: 0.7rem;
-            letter-spacing: 0.1em;
-            text-transform: uppercase;
-            color: var(--fg-dim);
-            margin-bottom: 2rem;
-        }
-        .slide-opening h1 {
-            font-family: var(--serif);
-            font-size: clamp(2.2rem, 4.5vw, 3.4rem);
-            font-weight: 400;
-            letter-spacing: -0.02em;
-            line-height: 1.15;
-            color: var(--fg);
-            margin-bottom: 2.5rem;
-            max-width: 700px;
-        }
-        .slide-opening .subtitle {
-            font-size: 1.2rem;
-            color: var(--fg-muted);
-            line-height: 1.65;
-            max-width: 600px;
-            margin-bottom: 2rem;
-        }
-        .slide-opening .contact {
-            font-size: 0.85rem;
-            color: var(--fg-dim);
-        }
-
         /* ── Stat row ── */
         .stat-row {
             display: flex;
@@ -126,7 +95,7 @@ permalink: /nvc/deck/
             border-radius: 10px;
             overflow: hidden;
             background: #fff;
-            max-width: 600px;
+            max-width: 500px;
         }
         .stat {
             flex: 1;
@@ -187,33 +156,25 @@ permalink: /nvc/deck/
             width: 1.5rem;
         }
 
-        /* ── Item list (trust slide, etc) ── */
-        .item-list {
-            display: flex;
-            flex-direction: column;
-            gap: 0;
-            margin: 1rem 0;
-            max-width: 700px;
+        /* ── Bullet list ── */
+        .bullet-list {
+            list-style: none;
+            padding: 0;
+            margin: 0.5rem 0;
+            max-width: 650px;
         }
-        .item-row {
-            display: flex;
-            gap: 1.5rem;
-            padding: 1rem 0;
-            border-bottom: 1px solid var(--border);
-            align-items: baseline;
-        }
-        .item-row:first-child { border-top: 1px solid var(--border); }
-        .item-title {
-            font-weight: 500;
-            color: var(--fg);
-            font-size: 1rem;
-            min-width: 220px;
-            flex-shrink: 0;
-        }
-        .item-desc {
-            font-size: 0.95rem;
+        .bullet-list li {
+            font-size: 1.1rem;
             color: var(--fg-muted);
-            line-height: 1.5;
+            padding: 0.5rem 0 0.5rem 1.5rem;
+            position: relative;
+        }
+        .bullet-list li::before {
+            content: "·";
+            position: absolute;
+            left: 0.25rem;
+            color: var(--accent);
+            font-weight: bold;
         }
 
         /* ── Tier table ── */
@@ -365,28 +326,17 @@ permalink: /nvc/deck/
             .stat-row { flex-direction: column; }
             .stat { border-right: none; border-bottom: 1px solid var(--border); }
             .stat:last-child { border-bottom: none; }
-            .item-row { flex-direction: column; gap: 0.25rem; }
-            .item-title { min-width: unset; }
         }
     </style>
 </head>
 <body>
 
-    <!-- SLIDE 1: We Shouldn't Have to Choose -->
-    <section class="slide slide-opening">
-        <div class="eyebrow">Open Parachute, PBC</div>
-        <h1>The most powerful technologies in a generation are emerging. Balance and choice should be built in from the start.</h1>
-        <p class="subtitle">I want to hike up a mountain, share my ideas as I walk, and come back down to a working app. But I also want to hold my nephew. Be outside. Live a full life. Technology should support both.</p>
-        <p style="font-size: 0.85rem; color: var(--fg-dim); margin-top: 1.5rem;">MA Ecopsychology &middot; MS Creative Technology & Design (CU ATLAS) &middot; Founding engineer &times;2 &middot; Ex-Google &middot; 10+ years full stack</p>
-        <div class="contact" style="margin-top: 0.75rem;">Aaron Gabriel Neyer &middot; aaron@parachute.computer &middot; Boulder, CO</div>
-    </section>
-
-    <!-- SLIDE 2: The Landscape -->
+    <!-- SLIDE 1: The Landscape -->
     <section class="slide">
         <div class="slide-label">The Landscape</div>
         <h2 class="slide-headline">Everyone is building<br>personal AI computers.</h2>
         <div class="slide-body">
-            <p>Over 100 million people already pay $20+/month for AI &mdash; including 50M+ ChatGPT Pro subscribers. OpenClaw &mdash; 300K+ stars in 3 months. Claude Cowork. ZoComputer. Perplexity Computer. Manus.</p>
+            <p>Over 100 million people already pay $20+/month for AI. OpenClaw. Claude Cowork. ZoComputer. Perplexity Computer. Manus.</p>
         </div>
         <div class="stat-row">
             <div class="stat">
@@ -397,28 +347,13 @@ permalink: /nvc/deck/
                 <div class="stat-num">44%</div>
                 <div class="stat-label">CAGR</div>
             </div>
-            <div class="stat">
-                <div class="stat-num">$200B</div>
-                <div class="stat-label">OpenAI projected revenue by 2030</div>
-            </div>
         </div>
         <div class="slide-body">
-            <p style="margin-top: 1rem; font-family: var(--serif); font-size: 1.3rem; color: var(--fg);">The question isn't whether this market exists &mdash; it's who they'll trust.</p>
+            <p style="margin-top: 1rem; font-family: var(--serif); font-size: 1.3rem; color: var(--fg);">But they're building walled gardens &mdash; and only for the 5% who are already power users.</p>
         </div>
     </section>
 
-    <!-- SLIDE 3: Parachute Computer -->
-    <section class="slide">
-        <div class="slide-label">Our Answer</div>
-        <h2 class="slide-headline">Parachute Computer.<br>The personal AI you can trust.</h2>
-        <div class="slide-body">
-            <p>A full agentic computing platform &mdash; open source, local-first, self-hostable. Your data stays on your device. Use your own AI models. Knowledge graph that connects your journals, conversations, and thinking.</p>
-            <p>A lot of people don't want to trust big corporations with their most personal data. Open source gives them a choice. AGPL-3.0 licensed. Fully transparent.</p>
-            <p style="font-family: var(--serif); font-size: 1.3rem; color: var(--fg); margin-top: 1rem;">But most people don't want to self-host a server.</p>
-        </div>
-    </section>
-
-    <!-- SLIDE 4: The 95% Gap -->
+    <!-- SLIDE 2: The 95% Gap -->
     <section class="slide">
         <div class="slide-label">The Opportunity</div>
         <h2 class="slide-headline">The other 95% just want<br>something that works.</h2>
@@ -432,9 +367,25 @@ permalink: /nvc/deck/
         </div>
     </section>
 
-    <!-- SLIDE 5: Parachute Daily -->
+    <!-- SLIDE 3: Parachute Computer -->
     <section class="slide">
-        <div class="slide-label">The Solution</div>
+        <div class="slide-label">Our Answer</div>
+        <h2 class="slide-headline">Parachute Computer.<br>The personal AI you can trust.</h2>
+        <ul class="bullet-list">
+            <li>Open source (AGPL-3.0) &middot; local-first &middot; self-hostable</li>
+            <li>Your data stays on your device &mdash; portable and exportable</li>
+            <li>Knowledge graph connects your journals, conversations, and thinking</li>
+            <li>Public Benefit Corporation &mdash; legally mandated to serve users</li>
+        </ul>
+        <div class="slide-body" style="margin-top: 1.5rem;">
+            <p style="font-family: var(--serif); font-size: 1.3rem; color: var(--fg);">Software gets cloned in a day. Trust and context cannot.</p>
+            <p style="font-family: var(--serif); font-size: 1.1rem; color: var(--fg-muted); margin-top: 0.5rem;">But most people don't want to self-host a server.</p>
+        </div>
+    </section>
+
+    <!-- SLIDE 4: Parachute Daily -->
+    <section class="slide">
+        <div class="slide-label">The Bridge</div>
         <h2 class="slide-headline">Parachute Daily.<br>Just talk.</h2>
         <div class="slide-body">
             <p>A voice-first journal. Speak into a wearable pendant or your phone &mdash; on a walk, in the car, wherever thinking happens.</p>
@@ -464,35 +415,7 @@ permalink: /nvc/deck/
         </div>
     </section>
 
-    <!-- SLIDE 6: Trust as Foundation -->
-    <section class="slide">
-        <div class="slide-label">Why Us</div>
-        <h2 class="slide-headline">Open source is<br>the trust foundation.</h2>
-        <div class="item-list">
-            <div class="item-row">
-                <div class="item-title">AGPL-3.0 licensed</div>
-                <div class="item-desc">Fully transparent. Proprietary forks must share changes.</div>
-            </div>
-            <div class="item-row">
-                <div class="item-title">Local-first</div>
-                <div class="item-desc">Your data on your device. Portable. Exportable. Yours.</div>
-            </div>
-            <div class="item-row">
-                <div class="item-title">Public Benefit Corporation</div>
-                <div class="item-desc">Legal mandate to serve users, not just shareholders.</div>
-            </div>
-            <div class="item-row">
-                <div class="item-title">Software is no longer a moat</div>
-                <div class="item-desc">Ideas get cloned in a day. Trust and context cannot.</div>
-            </div>
-            <div class="item-row">
-                <div class="item-title">Community as growth engine</div>
-                <div class="item-desc">We're building a learning community around AI tools &mdash; users who learn together become power users who build for others.</div>
-            </div>
-        </div>
-    </section>
-
-    <!-- SLIDE 7: Business Model -->
+    <!-- SLIDE 6: Business Model -->
     <section class="slide">
         <div class="slide-label">Business Model</div>
         <h2 class="slide-headline">Start free.<br>Grow with every user.</h2>
@@ -519,37 +442,7 @@ permalink: /nvc/deck/
         </div>
     </section>
 
-    <!-- SLIDE 8: Team + Traction -->
-    <section class="slide">
-        <div class="slide-label">Team & Traction</div>
-        <h2 class="slide-headline">Bootstrapped.<br>Zero funding.</h2>
-        <div class="slide-body" style="display: flex; gap: 4rem; flex-wrap: wrap;">
-            <div>
-                <p><strong>What exists today:</strong></p>
-                <ul style="list-style: none; padding: 0; margin-top: 0.5rem;">
-                    <li style="border: none; padding: 0.3rem 0 0.3rem 1.5rem;">&middot;&ensp;Working server, app, and graph-native memory</li>
-                    <li style="border: none; padding: 0.3rem 0 0.3rem 1.5rem;">&middot;&ensp;Local voice transcription (fully offline)</li>
-                    <li style="border: none; padding: 0.3rem 0 0.3rem 1.5rem;">&middot;&ensp;Multi-agent system with trust tiers</li>
-                    <li style="border: none; padding: 0.3rem 0 0.3rem 1.5rem;">&middot;&ensp;Telegram, Discord, Matrix connectors</li>
-                    <li style="border: none; padding: 0.3rem 0 0.3rem 1.5rem;">&middot;&ensp;Functional pendant prototype</li>
-                    <li style="border: none; padding: 0.3rem 0 0.3rem 1.5rem;">&middot;&ensp;Beta launching next month</li>
-                    <li style="border: none; padding: 0.3rem 0 0.3rem 1.5rem;">&middot;&ensp;PBC incorporated in Colorado</li>
-                </ul>
-            </div>
-            <div>
-                <p><strong>The team:</strong></p>
-                <div class="people" style="font-size: 1rem; line-height: 2; margin-top: 0.5rem;">
-                    <em>Aaron Gabriel Neyer</em> &mdash; Founder, product &amp; architecture<br>
-                    <em>Jon Bo</em> &mdash; Daily co-lead, founding engineer<br>
-                    <em>Lucian Hymer</em> &mdash; Computer co-lead, founding engineer<br>
-                    <em>Marvin Melzer</em> &mdash; Hardware, pendant prototype<br>
-                    <em>Neil Yarnal</em> &mdash; Brand &amp; design
-                </div>
-            </div>
-        </div>
-    </section>
-
-    <!-- SLIDE 9: Financial Projections -->
+    <!-- SLIDE 7: Financial Projections -->
     <section class="slide">
         <div class="slide-label">Financial Projections</div>
         <h2 class="slide-headline">Profitable by year three.</h2>
@@ -571,7 +464,7 @@ permalink: /nvc/deck/
                         <td>250,000</td>
                     </tr>
                     <tr>
-                        <td>Paid subscribers ($2-20/mo)</td>
+                        <td>Paid subscribers</td>
                         <td>500</td>
                         <td>5,000</td>
                         <td>25,000</td>
@@ -609,26 +502,53 @@ permalink: /nvc/deck/
                 </tbody>
             </table>
         </div>
-        <div class="slide-body">
-            <p style="font-size: 0.95rem;">Funded to date: $0. Entire product built by founder with no outside funding.</p>
-        </div>
     </section>
 
-    <!-- SLIDE 10: The Ask -->
+    <!-- SLIDE 8: Bootstrapped + Team -->
+    <section class="slide">
+        <div class="slide-label">Team & Traction</div>
+        <h2 class="slide-headline">Self-funded.<br>Built from scratch.</h2>
+        <div class="slide-body" style="display: flex; gap: 4rem; flex-wrap: wrap;">
+            <div>
+                <p><strong>What exists today:</strong></p>
+                <ul style="list-style: none; padding: 0; margin-top: 0.5rem;">
+                    <li style="border: none; padding: 0.3rem 0 0.3rem 1.5rem;">&middot;&ensp;Working server, app, and graph-native memory</li>
+                    <li style="border: none; padding: 0.3rem 0 0.3rem 1.5rem;">&middot;&ensp;Local voice transcription (fully offline)</li>
+                    <li style="border: none; padding: 0.3rem 0 0.3rem 1.5rem;">&middot;&ensp;Multi-agent system with trust tiers</li>
+                    <li style="border: none; padding: 0.3rem 0 0.3rem 1.5rem;">&middot;&ensp;Telegram, Discord, Matrix connectors</li>
+                    <li style="border: none; padding: 0.3rem 0 0.3rem 1.5rem;">&middot;&ensp;Functional pendant prototype</li>
+                    <li style="border: none; padding: 0.3rem 0 0.3rem 1.5rem;">&middot;&ensp;Beta launching next month</li>
+                    <li style="border: none; padding: 0.3rem 0 0.3rem 1.5rem;">&middot;&ensp;PBC incorporated in Colorado</li>
+                </ul>
+            </div>
+            <div>
+                <p><strong>The team:</strong></p>
+                <div class="people" style="font-size: 1rem; line-height: 2; margin-top: 0.5rem;">
+                    <em>Aaron Gabriel Neyer</em> &mdash; Founder, product &amp; architecture<br>
+                    <em>Jon Bo</em> &mdash; Daily co-lead, founding engineer<br>
+                    <em>Lucian Hymer</em> &mdash; Computer co-lead, founding engineer<br>
+                    <em>Marvin Melzer</em> &mdash; Hardware, pendant prototype<br>
+                    <em>Neil Yarnal</em> &mdash; Brand &amp; design
+                </div>
+            </div>
+        </div>
+        <p style="font-size: 0.85rem; color: var(--fg-dim); margin-top: 2rem;">MA Ecopsychology &middot; MS Creative Technology & Design (CU ATLAS) &middot; Founding engineer &times;2 &middot; Ex-Google &middot; 10+ years full stack</p>
+    </section>
+
+    <!-- SLIDE 9: The Ask -->
     <section class="slide">
         <div class="slide-label">The Ask</div>
-        <h2 class="slide-headline">$300K to reach revenue.<br>Then scale.</h2>
+        <h2 class="slide-headline">Raising $300K to hire<br>the core team.</h2>
         <div class="ask-box">
             <div class="ask-row"><span class="lbl">Instrument</span><span class="val">SAFE (YC standard)</span></div>
-            <div class="ask-row"><span class="lbl">Valuation cap</span><span class="val">$5,000,000</span></div>
-            <div class="ask-row"><span class="lbl">Giving away</span><span class="val">&lt; 10%</span></div>
-            <div class="ask-row"><span class="lbl">Use of funds</span><span class="val">Core team full-time &rarr; launch June 2026</span></div>
+            <div class="ask-row"><span class="lbl">Use of funds</span><span class="val">Core team full-time through 2026</span></div>
+            <div class="ask-row"><span class="lbl">Goal</span><span class="val">Production launch by June &middot; revenue immediately</span></div>
         </div>
         <p class="close-quote">Open source. Local-first.<br>Balance and choice &mdash; from the foundation.</p>
         <div class="close-links">
+            Aaron Gabriel Neyer &middot; aaron@parachute.computer &middot; Boulder, CO<br>
             <a href="https://parachute.computer">parachute.computer</a> &middot;
-            <a href="https://github.com/OpenParachutePBC">github.com/OpenParachutePBC</a> &middot;
-            aaron@parachute.computer
+            <a href="https://github.com/OpenParachutePBC">github.com/OpenParachutePBC</a>
         </div>
     </section>
 
