@@ -288,11 +288,7 @@ async def _create_tool_run(
     except Exception as e:
         logger.warning(f"Failed to create ToolRun for '{tool_name}': {e}")
 
-    # Also write AgentRun for backward compat during transition
-    await _create_agent_run(
-        graph, run_id, tool_name, display_name, date, trigger_name,
-        container_slug, entry_id, started_at, scope,
-    )
+    # AgentRun dual-write removed — ToolRun is the sole record
 
 
 async def _complete_tool_run(
@@ -339,8 +335,7 @@ async def _complete_tool_run(
     except Exception as e:
         logger.warning(f"Failed to complete ToolRun {run_id}: {e}")
 
-    # Also complete AgentRun for backward compat
-    await _complete_agent_run(graph, run_id, status, session_id, card_id, error, started_at)
+    # AgentRun dual-write removed — ToolRun is the sole record
 
 
 class DailyAgentConfig:
@@ -495,10 +490,11 @@ async def discover_daily_agents(home_path: Path, graph=None) -> list[DailyAgentC
         logger.warning("discover_daily_agents: graph unavailable, returning empty")
         return []
     try:
-        # Try Trigger→Tool graph first
+        # Try Trigger→Tool graph first (only agent/transform mode tools are runnable)
         rows = await g.execute_cypher(
             "MATCH (trigger:Trigger {type: 'schedule', enabled: 'true'})"
             "-[:INVOKES]->(tool:Tool {enabled: 'true'}) "
+            "WHERE tool.mode = 'agent' OR tool.mode = 'transform' "
             "RETURN tool, trigger ORDER BY tool.name"
         )
         if rows:

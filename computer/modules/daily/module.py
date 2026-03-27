@@ -1772,19 +1772,14 @@ class DailyModule:
                 return JSONResponse(status_code=503, content={"error": "BrainDB not available"})
 
             try:
-                # Query ToolRun first (primary), fall back to AgentRun
-                seen_run_ids: set[str] = set()
                 activity = []
-
-                tool_rows = await graph.execute_cypher(
+                rows = await graph.execute_cypher(
                     "MATCH (r:ToolRun) "
                     "WHERE r.entry_id = $entry_id "
                     "RETURN r ORDER BY r.started_at DESC",
                     {"entry_id": entry_id},
                 )
-                for row in tool_rows:
-                    run_id = row.get("run_id", "")
-                    seen_run_ids.add(run_id)
+                for row in rows:
                     tool_name = row.get("tool_name", "")
                     display_name = (
                         row.get("display_name")
@@ -1795,30 +1790,6 @@ class DailyModule:
                         "display_name": display_name,
                         "status": row.get("status", ""),
                         "ran_at": row.get("started_at", ""),
-                        "session_id": row.get("session_id", ""),
-                    })
-
-                # AgentRun fallback for runs that predate ToolRun dual-write
-                agent_rows = await graph.execute_cypher(
-                    "MATCH (r:AgentRun) "
-                    "WHERE r.entry_id = $entry_id "
-                    "RETURN r ORDER BY r.ran_at DESC",
-                    {"entry_id": entry_id},
-                )
-                for row in agent_rows:
-                    run_id = row.get("run_id", "")
-                    if run_id in seen_run_ids:
-                        continue  # Already captured from ToolRun
-                    agent_name = row.get("agent_name", "")
-                    display_name = (
-                        row.get("display_name")
-                        or agent_name.replace("-", " ").title()
-                    )
-                    activity.append({
-                        "agent_name": agent_name,
-                        "display_name": display_name,
-                        "status": row.get("status", ""),
-                        "ran_at": row.get("ran_at", ""),
                         "session_id": row.get("session_id", ""),
                     })
 
@@ -2105,14 +2076,14 @@ class DailyModule:
 
         @router.get("/agents/{agent_name}/runs/latest")
         async def get_agent_latest_run(agent_name: str):
-            """Get the most recent run for an agent (used by Flutter to show failure state)."""
+            """Get the most recent run for an agent. Reads from ToolRun."""
             graph = self._get_graph()
             if graph is None:
                 return JSONResponse(status_code=503, content={"error": "BrainDB not available"})
             try:
                 rows = await graph.execute_cypher(
-                    "MATCH (r:AgentRun) "
-                    "WHERE r.agent_name = $name "
+                    "MATCH (r:ToolRun) "
+                    "WHERE r.tool_name = $name "
                     "RETURN r ORDER BY r.started_at DESC",
                     {"name": agent_name},
                 )
@@ -2503,6 +2474,47 @@ class DailyModule:
                 logger.warning(f"Daily: scheduler reload after delete failed: {e}")
             return Response(status_code=204)
 
+        # ── Helper: validate and create CAN_CALL edges ─────────────────────
+
+        async def _set_can_call_edges(
+            graph, parent_name: str, child_names: list[str]
+        ) -> list[str]:
+            """Validate target tools exist, clear old edges, create new ones.
+
+            Returns list of child names that were NOT found (for error reporting).
+            """
+            # Validate all targets exist first
+            missing = []
+            for child_name in child_names:
+                rows = await graph.execute_cypher(
+                    "MATCH (t:Tool {name: $name}) RETURN t.name",
+                    {"name": child_name},
+                )
+                if not rows:
+                    missing.append(child_name)
+
+            # Clear existing edges
+            async with graph.write_lock:
+                await graph.execute_cypher(
+                    "MATCH (t:Tool {name: $name})-[r:CAN_CALL]->() DELETE r",
+                    {"name": parent_name},
+                )
+
+            # Create edges only for valid targets
+            valid = [n for n in child_names if n not in missing]
+            for child_name in valid:
+                try:
+                    async with graph.write_lock:
+                        await graph.execute_cypher(
+                            "MATCH (parent:Tool {name: $parent}), "
+                            "(child:Tool {name: $child}) "
+                            "CREATE (parent)-[:CAN_CALL]->(child)",
+                            {"parent": parent_name, "child": child_name},
+                        )
+                except Exception as e:
+                    logger.debug(f"CAN_CALL {parent_name} → {child_name}: {e}")
+            return missing
+
         # ── Helper: inline trigger upsert from Flutter ────────────────────
 
         # Builtin trigger names that must not be overwritten by inline upserts
@@ -2815,25 +2827,10 @@ class DailyModule:
                 )
             # Handle can_call edges
             can_call = body.get("can_call", [])
+            missing_tools: list[str] = []
             if isinstance(can_call, list) and can_call:
-                # Clear existing CAN_CALL edges, then recreate
                 try:
-                    async with graph.write_lock:
-                        await graph.execute_cypher(
-                            "MATCH (t:Tool {name: $name})-[r:CAN_CALL]->() DELETE r",
-                            {"name": name},
-                        )
-                    for child_name in can_call:
-                        try:
-                            async with graph.write_lock:
-                                await graph.execute_cypher(
-                                    "MATCH (parent:Tool {name: $parent}), "
-                                    "(child:Tool {name: $child}) "
-                                    "CREATE (parent)-[:CAN_CALL]->(child)",
-                                    {"parent": name, "child": child_name},
-                                )
-                        except Exception as e:
-                            logger.debug(f"CAN_CALL {name} → {child_name}: {e}")
+                    missing_tools = await _set_can_call_edges(graph, name, can_call)
                 except Exception as e:
                     logger.warning(f"Error managing CAN_CALL edges: {e}")
             # Handle inline trigger fields from Flutter (schedule/event)
@@ -2843,7 +2840,10 @@ class DailyModule:
             result = await graph.execute_cypher(
                 "MATCH (t:Tool {name: $name}) RETURN t", {"name": name}
             )
-            return result[0] if result else {"name": name}
+            response = result[0] if result else {"name": name}
+            if missing_tools:
+                response["_warnings"] = [f"can_call target not found: {n}" for n in missing_tools]
+            return response
 
         @router.put("/tools/{name}")
         async def update_tool(name: str, request: Request):
@@ -2890,28 +2890,14 @@ class DailyModule:
                     )
 
             # Handle can_call if provided
+            missing_tools: list[str] = []
             if "can_call" in body:
                 can_call = body["can_call"]
-                try:
-                    async with graph.write_lock:
-                        await graph.execute_cypher(
-                            "MATCH (t:Tool {name: $name})-[r:CAN_CALL]->() DELETE r",
-                            {"name": name},
-                        )
-                    if isinstance(can_call, list):
-                        for child_name in can_call:
-                            try:
-                                async with graph.write_lock:
-                                    await graph.execute_cypher(
-                                        "MATCH (parent:Tool {name: $parent}), "
-                                        "(child:Tool {name: $child}) "
-                                        "CREATE (parent)-[:CAN_CALL]->(child)",
-                                        {"parent": name, "child": child_name},
-                                    )
-                            except Exception as e:
-                                logger.debug(f"CAN_CALL {name} → {child_name}: {e}")
-                except Exception as e:
-                    logger.warning(f"Error managing CAN_CALL edges: {e}")
+                if isinstance(can_call, list):
+                    try:
+                        missing_tools = await _set_can_call_edges(graph, name, can_call)
+                    except Exception as e:
+                        logger.warning(f"Error managing CAN_CALL edges: {e}")
 
             # Handle inline trigger fields from Flutter (schedule/event)
             await _upsert_inline_trigger(graph, name, body)
@@ -2919,7 +2905,10 @@ class DailyModule:
             result = await graph.execute_cypher(
                 "MATCH (t:Tool {name: $name}) RETURN t", {"name": name}
             )
-            return result[0] if result else {"name": name}
+            response = result[0] if result else {"name": name}
+            if missing_tools:
+                response["_warnings"] = [f"can_call target not found: {n}" for n in missing_tools]
+            return response
 
         @router.delete("/tools/{name}", status_code=204)
         async def delete_tool(name: str):
@@ -2978,21 +2967,12 @@ class DailyModule:
             )
             if not rows:
                 return JSONResponse(status_code=404, content={"error": "not found"})
-            # Clear latest ToolRun session_id so next run starts fresh
+            # Clear all ToolRun session_ids so next run starts fresh
             try:
                 async with graph.write_lock:
                     await graph.execute_cypher(
                         "MATCH (r:ToolRun {tool_name: $name}) "
                         "SET r.session_id = ''",
-                        {"name": name},
-                    )
-            except Exception:
-                pass
-            # Clear Agent node session (backward compat)
-            try:
-                async with graph.write_lock:
-                    await graph.execute_cypher(
-                        "MATCH (a:Agent {name: $name}) SET a.sdk_session_id = ''",
                         {"name": name},
                     )
             except Exception:
@@ -3020,7 +3000,7 @@ class DailyModule:
                 return JSONResponse(status_code=404, content={"error": "not found"})
 
             # Reset tool fields from template
-            can_call = json.dumps(tpl.get("can_call", []))
+            can_call_names = tpl.get("can_call", [])
             async with graph.write_lock:
                 await graph.execute_cypher(
                     "MATCH (t:Tool {name: $name}) "
@@ -3038,44 +3018,29 @@ class DailyModule:
                         "display_name": tpl.get("display_name", name.replace("-", " ").title()),
                         "description": tpl.get("description", ""),
                         "system_prompt": tpl.get("system_prompt", ""),
-                        "can_call": can_call,
+                        "can_call": json.dumps(can_call_names),
                         "trust_level": tpl.get("trust_level", "sandboxed"),
                         "memory_mode": tpl.get("memory_mode", "persistent"),
                         "template_version": tpl.get("template_version", ""),
                         "now": now,
                     },
                 )
-
-            # Also reset associated Agent node for backward compat
-            agent_tpl = next((a for a in AGENT_TEMPLATES if a["name"] == name), None)
-            if agent_tpl:
+                # Rebuild CAN_CALL edges from template
+                await graph.execute_cypher(
+                    "MATCH (t:Tool {name: $name})-[r:CAN_CALL]->() DELETE r",
+                    {"name": name},
+                )
+            for child_name in can_call_names:
                 try:
                     async with graph.write_lock:
                         await graph.execute_cypher(
-                            "MATCH (a:Agent {name: $name}) "
-                            "SET a.display_name = $display_name,"
-                            "    a.description = $description,"
-                            "    a.system_prompt = $system_prompt,"
-                            "    a.tools = $tools,"
-                            "    a.trust_level = $trust_level,"
-                            "    a.memory_mode = $memory_mode,"
-                            "    a.template_version = $template_version,"
-                            "    a.user_modified = 'false',"
-                            "    a.updated_at = $now",
-                            {
-                                "name": name,
-                                "display_name": agent_tpl.get("display_name", ""),
-                                "description": agent_tpl.get("description", ""),
-                                "system_prompt": agent_tpl.get("system_prompt", ""),
-                                "tools": json.dumps(agent_tpl.get("tools", [])),
-                                "trust_level": agent_tpl.get("trust_level", "sandboxed"),
-                                "memory_mode": agent_tpl.get("memory_mode", "persistent"),
-                                "template_version": agent_tpl.get("template_version", ""),
-                                "now": now,
-                            },
+                            "MATCH (parent:Tool {name: $parent}), "
+                            "(child:Tool {name: $child}) "
+                            "CREATE (parent)-[:CAN_CALL]->(child)",
+                            {"parent": name, "child": child_name},
                         )
                 except Exception as e:
-                    logger.debug(f"Agent reset-to-template backward compat: {e}")
+                    logger.debug(f"CAN_CALL {name} → {child_name} on reset: {e}")
 
             # Re-fetch
             result = await graph.execute_cypher(
@@ -3127,21 +3092,12 @@ class DailyModule:
 
         @router.get("/tools/{name}/runs/latest")
         async def get_tool_latest_run(name: str):
-            """Get the most recent ToolRun for a tool. Falls back to AgentRun."""
+            """Get the most recent ToolRun for a tool."""
             graph = self._get_graph()
             if graph is None:
                 return JSONResponse(status_code=503, content={"error": "BrainDB not available"})
-            # Try ToolRun first
             rows = await graph.execute_cypher(
                 "MATCH (r:ToolRun) WHERE r.tool_name = $name "
-                "RETURN r ORDER BY r.started_at DESC",
-                {"name": name},
-            )
-            if rows:
-                return rows[0]
-            # Fall back to AgentRun (transition period)
-            rows = await graph.execute_cypher(
-                "MATCH (r:AgentRun) WHERE r.agent_name = $name "
                 "RETURN r ORDER BY r.started_at DESC",
                 {"name": name},
             )
@@ -3156,24 +3112,16 @@ class DailyModule:
             if graph is None:
                 return JSONResponse(status_code=503, content={"error": "BrainDB not available"})
 
-            # Try Tool node first for container_slug and trust_level
+            # Get Tool node for container_slug and trust_level
             rows = await graph.execute_cypher(
                 "MATCH (t:Tool {name: $name}) "
                 "RETURN t.container_slug AS container_slug, t.trust_level AS trust_level",
                 {"name": name},
             )
             if not rows:
-                # Fall back to Agent node (transition period)
-                rows = await graph.execute_cypher(
-                    "MATCH (a:Agent {name: $name}) "
-                    "RETURN a.sdk_session_id AS sid, "
-                    "a.container_slug AS container_slug, a.trust_level AS trust_level",
-                    {"name": name},
-                )
-            if not rows:
                 return JSONResponse(status_code=404, content={"error": f"Tool '{name}' not found"})
 
-            # Get latest session_id from ToolRun, fall back to AgentRun, then Agent node
+            # Get latest session_id from ToolRun
             sid = None
             run_rows = await graph.execute_cypher(
                 "MATCH (r:ToolRun {tool_name: $name}) WHERE r.session_id IS NOT NULL "
@@ -3183,24 +3131,6 @@ class DailyModule:
             )
             if run_rows:
                 sid = run_rows[0].get("sid")
-            if not sid:
-                # Fall back to AgentRun
-                run_rows = await graph.execute_cypher(
-                    "MATCH (r:AgentRun {agent_name: $name}) WHERE r.session_id IS NOT NULL "
-                    "AND r.session_id <> '' RETURN r.session_id AS sid "
-                    "ORDER BY r.started_at DESC LIMIT 1",
-                    {"name": name},
-                )
-                if run_rows:
-                    sid = run_rows[0].get("sid")
-            if not sid:
-                # Fall back to Agent.sdk_session_id
-                agent_rows = await graph.execute_cypher(
-                    "MATCH (a:Agent {name: $name}) RETURN a.sdk_session_id AS sid",
-                    {"name": name},
-                )
-                if agent_rows:
-                    sid = (agent_rows[0].get("sid") or "").strip()
 
             if not sid:
                 return {"hasTranscript": False, "sessionId": None, "totalMessages": 0, "messages": []}
