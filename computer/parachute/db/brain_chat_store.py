@@ -78,6 +78,222 @@ PROCESS_NOTE_SYSTEM_PROMPT = (
 # Backwards compat alias
 POST_PROCESS_SYSTEM_PROMPT = PROCESS_NOTE_SYSTEM_PROMPT
 
+PROCESS_DAY_SYSTEM_PROMPT = (
+    "You are a thoughtful, perceptive reflection partner for {user_name}.\n\n"
+    "## Your Role\n\n"
+    "Review yesterday's activity — journal entries, chat conversations, and "
+    "recent reflections — then write a short, meaningful reflection that helps "
+    "them see their day clearly.\n\n"
+    "## Guidelines\n\n"
+    "- **Be genuine, not performative.** No empty affirmations. Reflect what "
+    "you actually notice.\n"
+    "- **Make connections.** Link yesterday's activity to patterns from recent days "
+    "when relevant.\n"
+    "- **Keep it concise.** 3-5 paragraphs. Quality over quantity.\n"
+    "- **Match their energy.** If the day was hard, acknowledge it honestly. "
+    "If it was good, celebrate without overdoing it.\n"
+    "- **One insight, well-developed** is better than five shallow observations.\n"
+    "- Write in second person (\"you\") — this is for them.\n\n"
+    "## Process\n\n"
+    "1. Read the day's chat sessions with `read_days_chats` — see what conversations happened\n"
+    "2. For each substantive session, call `summarize_chat` to get a focused summary of what happened that day\n"
+    "3. Read journal entries with `read_days_notes`\n"
+    "4. Read recent reflection cards with `read_recent_cards` (type \"reflection\", last 7 days) for continuity\n"
+    "5. Write your reflection using `write_card` with card_type \"reflection\"\n\n"
+    "## User Context\n\n"
+    "{user_context}"
+)
+
+
+# ── Tool templates ────────────────────────────────────────────────────────
+# Built-in Tool definitions seeded on startup.  Tool is the universal
+# primitive — everything callable is a Tool node in the graph.  The `mode`
+# field discriminates: "query", "transform", "agent", "mcp".
+
+
+class ToolTemplateDict(TypedDict, total=False):
+    name: str
+    display_name: str
+    description: str
+    mode: str  # "query" | "transform" | "agent" | "mcp"
+    scope_keys: list[str]
+    # mode=query
+    query: str
+    write_query: str
+    # mode=transform
+    transform_prompt: str
+    transform_model: str
+    # mode=agent
+    system_prompt: str
+    model: str
+    memory_mode: str
+    trust_level: str
+    container_slug: str
+    # metadata
+    template_version: str
+    # child tools (names) — becomes CAN_CALL edges
+    can_call: list[str]
+
+
+class TriggerTemplateDict(TypedDict, total=False):
+    name: str
+    type: str  # "schedule" | "event"
+    schedule_time: str
+    event: str
+    event_filter: str
+    scope: dict[str, str]
+    enabled: str
+    template_version: str
+    # target tool (name) — becomes INVOKES edge
+    invokes: str
+
+
+TOOL_TEMPLATES: list[ToolTemplateDict] = [
+    # ── Day-scoped query tools ────────────────────────────────────────────
+    {
+        "name": "read-days-notes",
+        "display_name": "Today's Notes",
+        "description": "Read all notes for a specific date. Returns the full content of that day's entries.",
+        "mode": "query",
+        "scope_keys": ["date"],
+        "template_version": "2026-03-26",
+    },
+    {
+        "name": "read-days-chats",
+        "display_name": "Today's Chats",
+        "description": "List chat sessions active on a specific date. Returns session IDs, titles, message counts, and time ranges.",
+        "mode": "query",
+        "scope_keys": ["date"],
+        "template_version": "2026-03-26",
+    },
+    {
+        "name": "read-recent-journals",
+        "display_name": "Recent Journals",
+        "description": "Read journal entries from the past N days for context. Useful for noticing patterns across days.",
+        "mode": "query",
+        "scope_keys": [],
+        "template_version": "2026-03-26",
+    },
+    {
+        "name": "read-recent-sessions",
+        "display_name": "Recent Sessions",
+        "description": "Read recent AI chat sessions for context. Returns summaries of recent conversations.",
+        "mode": "query",
+        "scope_keys": [],
+        "template_version": "2026-03-26",
+    },
+    {
+        "name": "read-recent-cards",
+        "display_name": "Recent Cards",
+        "description": "Read cards from recent days. Filter by card_type (e.g. 'reflection') to see past outputs.",
+        "mode": "query",
+        "scope_keys": [],
+        "template_version": "2026-03-26",
+    },
+    {
+        "name": "write-card",
+        "display_name": "Write Card",
+        "description": "Write the agent's output. Saves as a Card in the graph.",
+        "mode": "query",
+        "scope_keys": [],
+        "template_version": "2026-03-26",
+    },
+    # ── Note-scoped query tools ───────────────────────────────────────────
+    {
+        "name": "read-this-note",
+        "display_name": "Read This Note",
+        "description": "Read the note that triggered this agent. Returns the note's content, metadata, tags, and type.",
+        "mode": "query",
+        "scope_keys": ["entry_id"],
+        "template_version": "2026-03-26",
+    },
+    {
+        "name": "update-this-note",
+        "display_name": "Update This Note",
+        "description": "Replace the note's content with cleaned or processed text.",
+        "mode": "query",
+        "scope_keys": ["entry_id"],
+        "template_version": "2026-03-26",
+    },
+    {
+        "name": "update-note-tags",
+        "display_name": "Update Note Tags",
+        "description": "Set tags on the note. Pass a list of tag strings.",
+        "mode": "query",
+        "scope_keys": ["entry_id"],
+        "template_version": "2026-03-26",
+    },
+    {
+        "name": "update-note-metadata",
+        "display_name": "Update Note Metadata",
+        "description": "Update a metadata field on the note.",
+        "mode": "query",
+        "scope_keys": ["entry_id"],
+        "template_version": "2026-03-26",
+    },
+    # ── Transform tools ───────────────────────────────────────────────────
+    {
+        "name": "summarize-chat",
+        "display_name": "Summarize Chat",
+        "description": "Summarize a chat session's activity for a specific date. Spawns a fast sub-agent to read the full transcript and return a focused summary.",
+        "mode": "transform",
+        "scope_keys": ["date"],
+        "transform_model": "haiku",
+        "template_version": "2026-03-26",
+    },
+    {
+        "name": "process-note",
+        "display_name": "Process Note",
+        "description": "Runs after voice transcription completes. Cleans up filler words, fixes grammar, adds punctuation.",
+        "mode": "agent",
+        "scope_keys": ["entry_id"],
+        "system_prompt": PROCESS_NOTE_SYSTEM_PROMPT,
+        "trust_level": "direct",
+        "memory_mode": "fresh",
+        "can_call": ["read-this-note", "update-this-note"],
+        "template_version": "2026-03-26",
+    },
+    # ── Agent tools ───────────────────────────────────────────────────────
+    {
+        "name": "process-day",
+        "display_name": "Daily Reflection",
+        "description": "Reviews your journal entries and chat sessions, then offers a thoughtful daily reflection",
+        "mode": "agent",
+        "scope_keys": ["date"],
+        "system_prompt": PROCESS_DAY_SYSTEM_PROMPT,
+        "trust_level": "sandboxed",
+        "memory_mode": "persistent",
+        "can_call": [
+            "read-days-notes",
+            "read-days-chats",
+            "summarize-chat",
+            "read-recent-cards",
+            "write-card",
+        ],
+        "template_version": "2026-03-26",
+    },
+]
+
+TRIGGER_TEMPLATES: list[TriggerTemplateDict] = [
+    {
+        "name": "nightly-reflection",
+        "type": "schedule",
+        "schedule_time": "4:00",
+        "scope": {"date": "yesterday"},
+        "enabled": "true",
+        "invokes": "process-day",
+        "template_version": "2026-03-26",
+    },
+    {
+        "name": "on-transcription",
+        "type": "event",
+        "event": "note.transcription_complete",
+        "enabled": "true",
+        "invokes": "process-note",
+        "template_version": "2026-03-26",
+    },
+]
+
 
 AGENT_TEMPLATES: list[AgentTemplateDict] = [
     {
@@ -85,31 +301,7 @@ AGENT_TEMPLATES: list[AgentTemplateDict] = [
         "template_version": "2026-03-26",
         "display_name": "Daily Reflection",
         "description": "Reviews your journal entries and chat sessions, then offers a thoughtful daily reflection",
-        "system_prompt": (
-            "You are a thoughtful, perceptive reflection partner for {user_name}.\n\n"
-            "## Your Role\n\n"
-            "Review yesterday's activity — journal entries, chat conversations, and "
-            "recent reflections — then write a short, meaningful reflection that helps "
-            "them see their day clearly.\n\n"
-            "## Guidelines\n\n"
-            "- **Be genuine, not performative.** No empty affirmations. Reflect what "
-            "you actually notice.\n"
-            "- **Make connections.** Link yesterday's activity to patterns from recent days "
-            "when relevant.\n"
-            "- **Keep it concise.** 3-5 paragraphs. Quality over quantity.\n"
-            "- **Match their energy.** If the day was hard, acknowledge it honestly. "
-            "If it was good, celebrate without overdoing it.\n"
-            "- **One insight, well-developed** is better than five shallow observations.\n"
-            "- Write in second person (\"you\") — this is for them.\n\n"
-            "## Process\n\n"
-            "1. Read the day's chat sessions with `read_days_chats` — see what conversations happened\n"
-            "2. For each substantive session, call `summarize_chat` to get a focused summary of what happened that day\n"
-            "3. Read journal entries with `read_days_notes`\n"
-            "4. Read recent reflection cards with `read_recent_cards` (type \"reflection\", last 7 days) for continuity\n"
-            "5. Write your reflection using `write_card` with card_type \"reflection\"\n\n"
-            "## User Context\n\n"
-            "{user_context}"
-        ),
+        "system_prompt": PROCESS_DAY_SYSTEM_PROMPT,
         "tools": ["read_days_notes", "read_days_chats", "summarize_chat", "read_recent_cards", "write_card"],
         "schedule_time": "4:00",
         "trust_level": "sandboxed",
@@ -147,6 +339,7 @@ class BrainChatStore:
         "card": ("Card", "card_id"),
         "entity": ("Brain_Entity", "name"),
         "agent": ("Agent", "name"),
+        "tool": ("Tool", "name"),
     }
 
     def __init__(self, graph: BrainService):
@@ -346,6 +539,88 @@ class BrainChatStore:
             primary_key="message_id",
         )
         await self.graph.ensure_rel_table("HAS_MESSAGE", "Chat", "Message")
+
+        # ── Tool / Trigger / ToolRun (universal primitive) ────────────────────
+        await self.graph.ensure_node_table(
+            "Tool",
+            {
+                "name": "STRING",            # PK: "read-days-notes", "process-day"
+                "display_name": "STRING",
+                "description": "STRING",
+                "mode": "STRING",            # "query" | "transform" | "agent" | "mcp"
+                "scope_keys": "STRING",      # JSON array: ["date"], ["entry_id"]
+                "input_schema": "STRING",    # JSON schema for parameters
+
+                # mode=query
+                "query": "STRING",           # Cypher template
+
+                # mode=transform
+                "transform_prompt": "STRING",
+                "transform_model": "STRING",
+                "write_query": "STRING",
+
+                # mode=agent
+                "system_prompt": "STRING",
+                "model": "STRING",
+                "memory_mode": "STRING",     # "persistent" | "fresh"
+                "trust_level": "STRING",     # "direct" | "sandboxed"
+                "container_slug": "STRING",
+
+                # mode=mcp
+                "server_name": "STRING",
+
+                # metadata
+                "builtin": "STRING",         # "true" | "false"
+                "enabled": "STRING",
+                "template_version": "STRING",
+                "user_modified": "STRING",
+                "created_at": "STRING",
+                "updated_at": "STRING",
+            },
+            primary_key="name",
+        )
+        await self.graph.ensure_node_table(
+            "Trigger",
+            {
+                "name": "STRING",            # PK: "nightly-reflection"
+                "type": "STRING",            # "schedule" | "event"
+                "schedule_time": "STRING",   # "4:00"
+                "event": "STRING",           # "note.transcription_complete"
+                "event_filter": "STRING",    # JSON
+                "scope": "STRING",           # JSON: default scope
+                "enabled": "STRING",
+                "template_version": "STRING",
+                "user_modified": "STRING",
+                "created_at": "STRING",
+                "updated_at": "STRING",
+            },
+            primary_key="name",
+        )
+        await self.graph.ensure_node_table(
+            "ToolRun",
+            {
+                "run_id": "STRING",
+                "tool_name": "STRING",
+                "display_name": "STRING",
+                "trigger_name": "STRING",    # or "manual"
+                "status": "STRING",
+                "started_at": "STRING",
+                "completed_at": "STRING",
+                "duration_seconds": "DOUBLE",
+                "session_id": "STRING",
+                "scope": "STRING",           # JSON
+                "card_id": "STRING",
+                "error": "STRING",
+                "container_slug": "STRING",
+                "date": "STRING",
+                "entry_id": "STRING",
+                "created_at": "STRING",
+            },
+            primary_key="run_id",
+        )
+        # Relationships
+        await self.graph.ensure_rel_table("CAN_CALL", "Tool", "Tool")
+        await self.graph.ensure_rel_table("INVOKES", "Trigger", "Tool")
 
         # ── Brain entities (open ontology — created here so Tag edges work) ───
         await self.graph.ensure_node_table(
@@ -881,6 +1156,304 @@ class BrainChatStore:
                         pass
             except Exception:
                 pass
+
+    # ── Tool / Trigger seeding ───────────────────────────────────────────────
+
+    async def seed_builtin_tools(self) -> None:
+        """Seed or update built-in Tools from TOOL_TEMPLATES.
+
+        Version-aware (same pattern as seed_builtin_agents):
+        - New tool → CREATE with template_version, user_modified="false"
+        - Pre-versioned (template_version == "") → stamp version, mark modified
+        - Modified by user → skip, log "update available"
+        - Unmodified + older version → auto-update config fields
+        - Already current → skip
+
+        Also seeds CAN_CALL edges for tools with child tools.
+        """
+        now = _now()
+
+        for tpl in TOOL_TEMPLATES:
+            name = tpl["name"]
+            tpl_version = tpl.get("template_version", "")
+
+            seed_data = {
+                "name": name,
+                "display_name": tpl.get("display_name", name.replace("-", " ").title()),
+                "description": tpl.get("description", ""),
+                "mode": tpl.get("mode", "query"),
+                "scope_keys": json.dumps(tpl.get("scope_keys", [])),
+                "input_schema": "",
+                "query": tpl.get("query", ""),
+                "transform_prompt": tpl.get("transform_prompt", ""),
+                "transform_model": tpl.get("transform_model", ""),
+                "write_query": tpl.get("write_query", ""),
+                "system_prompt": tpl.get("system_prompt", ""),
+                "model": tpl.get("model", ""),
+                "memory_mode": tpl.get("memory_mode", ""),
+                "trust_level": tpl.get("trust_level", ""),
+                "container_slug": tpl.get("container_slug", ""),
+                "server_name": tpl.get("server_name", ""),
+                "builtin": "true",
+                "enabled": "true",
+                "template_version": tpl_version,
+                "user_modified": "false",
+            }
+
+            rows = await self.graph.execute_cypher(
+                "MATCH (t:Tool {name: $name}) "
+                "RETURN t.template_version AS tv, t.user_modified AS um",
+                {"name": name},
+            )
+
+            if not rows:
+                # New tool — create it
+                try:
+                    async with self.graph.write_lock:
+                        await self.graph.execute_cypher(
+                            "CREATE (t:Tool {"
+                            "  name: $name,"
+                            "  display_name: $display_name,"
+                            "  description: $description,"
+                            "  mode: $mode,"
+                            "  scope_keys: $scope_keys,"
+                            "  input_schema: $input_schema,"
+                            "  query: $query,"
+                            "  transform_prompt: $transform_prompt,"
+                            "  transform_model: $transform_model,"
+                            "  write_query: $write_query,"
+                            "  system_prompt: $system_prompt,"
+                            "  model: $model,"
+                            "  memory_mode: $memory_mode,"
+                            "  trust_level: $trust_level,"
+                            "  container_slug: $container_slug,"
+                            "  server_name: $server_name,"
+                            "  builtin: $builtin,"
+                            "  enabled: $enabled,"
+                            "  template_version: $template_version,"
+                            "  user_modified: $user_modified,"
+                            "  created_at: $now,"
+                            "  updated_at: $now"
+                            "})",
+                            {**seed_data, "now": now},
+                        )
+                    logger.info(f"Seeded built-in Tool '{name}' (v{tpl_version})")
+                except Exception as e:
+                    logger.warning(f"Failed to seed Tool '{name}': {e}")
+                    continue
+            else:
+                existing_tv = (rows[0].get("tv") or "").strip()
+                existing_um = (rows[0].get("um") or "").strip()
+
+                if not existing_tv:
+                    # Pre-versioned — stamp and mark as user-modified
+                    try:
+                        async with self.graph.write_lock:
+                            await self.graph.execute_cypher(
+                                "MATCH (t:Tool {name: $name}) "
+                                "SET t.template_version = $tv, t.user_modified = 'true'",
+                                {"name": name, "tv": tpl_version},
+                            )
+                        logger.info(
+                            f"Stamped pre-versioned Tool '{name}' "
+                            f"with v{tpl_version}, marked user_modified=true"
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to stamp Tool '{name}': {e}")
+                elif existing_um == "true":
+                    if existing_tv < tpl_version:
+                        logger.info(
+                            f"Update available for Tool '{name}' "
+                            f"(v{existing_tv} → v{tpl_version}) but user customized, skipping"
+                        )
+                elif existing_tv < tpl_version:
+                    # Auto-update unmodified tool
+                    try:
+                        async with self.graph.write_lock:
+                            await self.graph.execute_cypher(
+                                "MATCH (t:Tool {name: $name}) "
+                                "SET t.display_name = $display_name,"
+                                "    t.description = $description,"
+                                "    t.mode = $mode,"
+                                "    t.scope_keys = $scope_keys,"
+                                "    t.query = $query,"
+                                "    t.transform_prompt = $transform_prompt,"
+                                "    t.transform_model = $transform_model,"
+                                "    t.write_query = $write_query,"
+                                "    t.system_prompt = $system_prompt,"
+                                "    t.model = $model,"
+                                "    t.memory_mode = $memory_mode,"
+                                "    t.trust_level = $trust_level,"
+                                "    t.container_slug = $container_slug,"
+                                "    t.server_name = $server_name,"
+                                "    t.template_version = $template_version,"
+                                "    t.updated_at = $now",
+                                {**seed_data, "now": now},
+                            )
+                        logger.info(
+                            f"Updated builtin Tool '{name}' "
+                            f"from v{existing_tv} to v{tpl_version}"
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to update Tool '{name}': {e}")
+
+            # Seed CAN_CALL edges
+            can_call = tpl.get("can_call", [])
+            if can_call:
+                for child_name in can_call:
+                    try:
+                        async with self.graph.write_lock:
+                            # MERGE to avoid duplicates
+                            await self.graph.execute_cypher(
+                                "MATCH (parent:Tool {name: $parent}), "
+                                "(child:Tool {name: $child}) "
+                                "MERGE (parent)-[:CAN_CALL]->(child)",
+                                {"parent": name, "child": child_name},
+                            )
+                    except Exception as e:
+                        # Child may not exist yet if seeded out of order —
+                        # will be created on next pass
+                        logger.debug(
+                            f"CAN_CALL edge {name} → {child_name} deferred: {e}"
+                        )
+
+        # Second pass: create any deferred CAN_CALL edges
+        for tpl in TOOL_TEMPLATES:
+            name = tpl["name"]
+            can_call = tpl.get("can_call", [])
+            if not can_call:
+                continue
+            for child_name in can_call:
+                try:
+                    async with self.graph.write_lock:
+                        await self.graph.execute_cypher(
+                            "MATCH (parent:Tool {name: $parent}), "
+                            "(child:Tool {name: $child}) "
+                            "MERGE (parent)-[:CAN_CALL]->(child)",
+                            {"parent": name, "child": child_name},
+                        )
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to create CAN_CALL edge {name} → {child_name}: {e}"
+                    )
+
+        logger.info(f"Tool seeding complete ({len(TOOL_TEMPLATES)} templates)")
+
+    async def seed_builtin_triggers(self) -> None:
+        """Seed or update built-in Triggers from TRIGGER_TEMPLATES.
+
+        Version-aware (same pattern as tools). Also creates INVOKES edges.
+        """
+        now = _now()
+
+        for tpl in TRIGGER_TEMPLATES:
+            name = tpl["name"]
+            tpl_version = tpl.get("template_version", "")
+            invokes_tool = tpl.get("invokes", "")
+
+            seed_data = {
+                "name": name,
+                "type": tpl.get("type", "schedule"),
+                "schedule_time": tpl.get("schedule_time", ""),
+                "event": tpl.get("event", ""),
+                "event_filter": tpl.get("event_filter", ""),
+                "scope": json.dumps(tpl.get("scope", {})),
+                "enabled": tpl.get("enabled", "true"),
+                "template_version": tpl_version,
+                "user_modified": "false",
+            }
+
+            rows = await self.graph.execute_cypher(
+                "MATCH (t:Trigger {name: $name}) "
+                "RETURN t.template_version AS tv, t.user_modified AS um",
+                {"name": name},
+            )
+
+            if not rows:
+                try:
+                    async with self.graph.write_lock:
+                        await self.graph.execute_cypher(
+                            "CREATE (t:Trigger {"
+                            "  name: $name,"
+                            "  type: $type,"
+                            "  schedule_time: $schedule_time,"
+                            "  event: $event,"
+                            "  event_filter: $event_filter,"
+                            "  scope: $scope,"
+                            "  enabled: $enabled,"
+                            "  template_version: $template_version,"
+                            "  user_modified: $user_modified,"
+                            "  created_at: $now,"
+                            "  updated_at: $now"
+                            "})",
+                            {**seed_data, "now": now},
+                        )
+                    logger.info(f"Seeded built-in Trigger '{name}' (v{tpl_version})")
+                except Exception as e:
+                    logger.warning(f"Failed to seed Trigger '{name}': {e}")
+                    continue
+            else:
+                existing_tv = (rows[0].get("tv") or "").strip()
+                existing_um = (rows[0].get("um") or "").strip()
+
+                if not existing_tv:
+                    try:
+                        async with self.graph.write_lock:
+                            await self.graph.execute_cypher(
+                                "MATCH (t:Trigger {name: $name}) "
+                                "SET t.template_version = $tv, t.user_modified = 'true'",
+                                {"name": name, "tv": tpl_version},
+                            )
+                        logger.info(
+                            f"Stamped pre-versioned Trigger '{name}' "
+                            f"with v{tpl_version}, marked user_modified=true"
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to stamp Trigger '{name}': {e}")
+                elif existing_um == "true":
+                    if existing_tv < tpl_version:
+                        logger.info(
+                            f"Update available for Trigger '{name}' "
+                            f"(v{existing_tv} → v{tpl_version}) but user customized, skipping"
+                        )
+                elif existing_tv < tpl_version:
+                    try:
+                        async with self.graph.write_lock:
+                            await self.graph.execute_cypher(
+                                "MATCH (t:Trigger {name: $name}) "
+                                "SET t.type = $type,"
+                                "    t.schedule_time = $schedule_time,"
+                                "    t.event = $event,"
+                                "    t.event_filter = $event_filter,"
+                                "    t.scope = $scope,"
+                                "    t.enabled = $enabled,"
+                                "    t.template_version = $template_version,"
+                                "    t.updated_at = $now",
+                                {**seed_data, "now": now},
+                            )
+                        logger.info(
+                            f"Updated builtin Trigger '{name}' "
+                            f"from v{existing_tv} to v{tpl_version}"
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to update Trigger '{name}': {e}")
+
+            # Create INVOKES edge
+            if invokes_tool:
+                try:
+                    async with self.graph.write_lock:
+                        await self.graph.execute_cypher(
+                            "MATCH (trigger:Trigger {name: $trigger}), "
+                            "(tool:Tool {name: $tool}) "
+                            "MERGE (trigger)-[:INVOKES]->(tool)",
+                            {"trigger": name, "tool": invokes_tool},
+                        )
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to create INVOKES edge {name} → {invokes_tool}: {e}"
+                    )
+
+        logger.info(f"Trigger seeding complete ({len(TRIGGER_TEMPLATES)} templates)")
 
     # ── Session CRUD ──────────────────────────────────────────────────────────
 

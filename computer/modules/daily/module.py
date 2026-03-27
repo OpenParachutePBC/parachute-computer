@@ -59,26 +59,68 @@ logger = logging.getLogger(__name__)
 from parachute.db.brain_chat_store import AGENT_TEMPLATES, AgentTemplateDict, POST_PROCESS_SYSTEM_PROMPT
 
 
-def _read_transcript_file(sid: str, limit: int) -> dict:
+def _find_transcript_file(
+    sid: str,
+    container_slug: str = "",
+    parachute_dir: Optional[Path] = None,
+) -> Optional[Path]:
+    """Locate the JSONL transcript for an SDK session.
+
+    Search order:
+    1. Container bind-mount (if ``container_slug`` given) — sandboxed agents
+       write transcripts inside ``{parachute_dir}/sandbox/envs/{slug}/home/``.
+    2. Host ``~/.claude/projects/`` — direct-trust agents and interactive
+       sessions.
+
+    This mirrors ``SessionManager.find_transcript_path`` but is a pure
+    filesystem helper so it can run in ``asyncio.to_thread``.
+    """
+    filename = f"{sid}.jsonl"
+    if parachute_dir is None:
+        parachute_dir = Path.home() / ".parachute"
+
+    # 1. Container bind-mounted JSONL (sandboxed agents)
+    if container_slug:
+        container_projects = (
+            parachute_dir / "sandbox" / "envs" / container_slug / "home"
+            / ".claude" / "projects"
+        )
+        if container_projects.exists():
+            try:
+                for project_dir in container_projects.iterdir():
+                    if project_dir.is_dir():
+                        candidate = project_dir / filename
+                        if candidate.exists():
+                            return candidate
+            except OSError:
+                pass
+
+    # 2. Host-side ~/.claude/projects/
+    home_projects = Path.home() / ".claude" / "projects"
+    if home_projects.exists():
+        try:
+            for project_dir in home_projects.iterdir():
+                if project_dir.is_dir():
+                    candidate = project_dir / filename
+                    if candidate.exists():
+                        return candidate
+        except OSError:
+            pass
+
+    return None
+
+
+def _read_transcript_file(
+    sid: str,
+    limit: int,
+    container_slug: str = "",
+    parachute_dir: Optional[Path] = None,
+) -> dict:
     """Read and parse a Claude SDK JSONL transcript file (sync, for to_thread).
 
     Returns a dict matching the Flutter AgentTranscript shape.
     """
-    session_file = None
-    for projects_dir in [
-        Path.home() / ".claude" / "projects",
-        Path.home() / "Parachute" / ".claude" / "projects",
-    ]:
-        if not projects_dir.exists():
-            continue
-        for project_dir in projects_dir.iterdir():
-            if project_dir.is_dir():
-                candidate = project_dir / f"{sid}.jsonl"
-                if candidate.exists():
-                    session_file = candidate
-                    break
-        if session_file:
-            break
+    session_file = _find_transcript_file(sid, container_slug, parachute_dir)
 
     if not session_file:
         return {"hasTranscript": False, "message": "Transcript file not found."}
@@ -2119,13 +2161,21 @@ class DailyModule:
 
             Returns parsed JSONL events in the shape the Flutter AgentLogScreen
             expects: ``{ hasTranscript, sessionId, totalMessages, messages }``.
+
+            Uses the Agent node's ``container_slug`` and ``trust_level`` to
+            resolve the transcript file location — sandboxed agents write
+            inside their container bind-mount, direct agents write to the
+            host's ``~/.claude/projects/``.
             """
             graph = self._get_graph()
             if graph is None:
                 return {"hasTranscript": False, "message": "BrainDB not available"}
 
             rows = await graph.execute_cypher(
-                "MATCH (a:Agent {name: $name}) RETURN a.sdk_session_id AS sid",
+                "MATCH (a:Agent {name: $name}) "
+                "RETURN a.sdk_session_id AS sid, "
+                "       a.container_slug AS container_slug, "
+                "       a.trust_level AS trust_level",
                 {"name": name},
             )
             if not rows:
@@ -2135,10 +2185,19 @@ class DailyModule:
             if not sid:
                 return {"hasTranscript": False, "message": "This agent hasn't run yet."}
 
+            # Resolve container slug: explicit config, or default for sandboxed agents
+            container_slug = (rows[0].get("container_slug") or "").strip()
+            trust_level = (rows[0].get("trust_level") or "sandboxed").strip()
+            if not container_slug and trust_level == "sandboxed":
+                container_slug = f"agent-{name}"
+
+            parachute_dir = Path(self.home_path) / ".parachute"
+
             # Search for the JSONL transcript file and parse it off the
             # event loop (file I/O is blocking).
             return await asyncio.to_thread(
                 _read_transcript_file, sid, limit,
+                container_slug, parachute_dir,
             )
 
         @router.post("/agents", status_code=201)

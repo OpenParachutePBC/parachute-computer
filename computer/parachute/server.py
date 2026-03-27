@@ -76,6 +76,9 @@ async def lifespan(app: FastAPI):
     session_store = BrainChatStore(brain)
     await session_store.ensure_schema()
     await session_store.seed_builtin_agents()
+    # Order matters: tools must exist before triggers (INVOKES edges need Tool nodes)
+    await session_store.seed_builtin_tools()
+    await session_store.seed_builtin_triggers()
     app.state.brain = brain
     app.state.session_store = session_store
     from parachute.core.interfaces import get_registry
