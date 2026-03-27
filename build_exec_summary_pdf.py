@@ -1,12 +1,16 @@
-"""Generate ES_Parachute.pdf — NVC Executive Summary. Max 3 pages content.
-1.5 line spacing, 12pt font, 1-inch margins per NVC requirements."""
+"""Generate ES_Parachute.pdf — NVC Executive Summary.
+Brand fonts, accent color, proper table styling. Max 3 pages.
+1.5 line spacing, 12pt body, 1-inch margins per NVC requirements."""
 
 from fpdf import FPDF
 
-VERA = '/usr/local/lib/python3.13/site-packages/reportlab/fonts/Vera.ttf'
-VERA_BD = '/usr/local/lib/python3.13/site-packages/reportlab/fonts/VeraBd.ttf'
-VERA_IT = '/usr/local/lib/python3.13/site-packages/reportlab/fonts/VeraIt.ttf'
-VERA_BI = '/usr/local/lib/python3.13/site-packages/reportlab/fonts/VeraBI.ttf'
+FONTS = '/home/sandbox/parachute-computer/fonts'
+ACCENT = (74, 124, 89)      # #4a7c59
+FG = (44, 42, 38)            # #2c2a26
+FG_MUTED = (107, 104, 96)   # #6b6860
+FG_DIM = (154, 150, 144)    # #9a9690
+BG_SOFT = (243, 240, 234)   # #f3f0ea
+BORDER = (228, 224, 216)    # #e4e0d8
 
 
 class ExecSummaryPDF(FPDF):
@@ -15,63 +19,98 @@ class ExecSummaryPDF(FPDF):
         self.set_auto_page_break(auto=True, margin=1.0)
         self.set_margins(1.0, 1.0, 1.0)
         self.lh = 0.24  # ~1.5 spacing at 12pt
-        self.add_font('Vera', '', VERA)
-        self.add_font('Vera', 'B', VERA_BD)
-        self.add_font('Vera', 'I', VERA_IT)
-        self.add_font('Vera', 'BI', VERA_BI)
+
+        # Brand fonts
+        self.add_font('Sans', '', f'{FONTS}/DMSans-Variable.ttf')
+        self.add_font('Sans', 'I', f'{FONTS}/DMSans-Italic-Variable.ttf')
+        # Use DM Sans bold via variable font (fpdf2 handles weight)
+        self.add_font('SansB', '', f'{FONTS}/DMSans-Variable.ttf')
+        self.add_font('Serif', '', f'{FONTS}/InstrumentSerif-Regular.ttf')
+        self.add_font('Serif', 'I', f'{FONTS}/InstrumentSerif-Italic.ttf')
+        # Fallback for bold (Vera)
+        self.add_font('Vera', '', '/usr/local/lib/python3.13/site-packages/reportlab/fonts/Vera.ttf')
+        self.add_font('Vera', 'B', '/usr/local/lib/python3.13/site-packages/reportlab/fonts/VeraBd.ttf')
+
+    def footer(self):
+        if self.page_no() > 1:
+            self.set_y(-0.6)
+            self.set_font('Sans', '', 8)
+            self.set_text_color(*FG_DIM)
+            self.cell(0, 0.2, f'Open Parachute PBC \u2014 Executive Summary', align='L')
+            self.cell(0, 0.2, f'{self.page_no()}', align='R', new_x="LMARGIN")
 
     def heading(self, text):
-        self.ln(0.06)
+        self.ln(0.08)
         self.set_font('Vera', 'B', 12)
-        self.cell(0, 0.24, text, new_x="LMARGIN", new_y="NEXT")
-        self.ln(0.03)
+        self.set_text_color(*ACCENT)
+        self.cell(0, 0.24, text.upper(), new_x="LMARGIN", new_y="NEXT")
+        self.set_text_color(*FG)
+        self.ln(0.04)
 
     def body(self, text, after=0.04):
-        self.set_font('Vera', '', 12)
+        self.set_font('Sans', '', 12)
+        self.set_text_color(*FG_MUTED)
         self.multi_cell(0, self.lh, text)
+        self.set_text_color(*FG)
         self.ln(after)
 
     def bold_body(self, bold, rest, after=0.04):
         self.set_font('Vera', 'B', 12)
+        self.set_text_color(*FG)
         bw = self.get_string_width(bold)
         self.cell(bw, self.lh, bold)
-        self.set_font('Vera', '', 12)
+        self.set_font('Sans', '', 12)
+        self.set_text_color(*FG_MUTED)
         rw = self.w - self.l_margin - self.r_margin - bw
         self.multi_cell(rw, self.lh, rest)
+        self.set_text_color(*FG)
         self.ln(after)
 
     def bullet(self, bold, rest, after=0.04):
         indent = 0.25
-        self.set_font('Vera', '', 12)
+        self.set_font('Sans', '', 12)
+        self.set_text_color(*FG_DIM)
         self.cell(indent, self.lh, '\u2022 ')
         if bold:
             self.set_font('Vera', 'B', 12)
+            self.set_text_color(*FG)
             bw = self.get_string_width(bold)
             self.cell(bw, self.lh, bold)
-            self.set_font('Vera', '', 12)
+        self.set_font('Sans', '', 12)
+        self.set_text_color(*FG_MUTED)
         rw = self.w - self.l_margin - self.r_margin - indent
         self.multi_cell(rw, self.lh, rest)
+        self.set_text_color(*FG)
         self.ln(after)
+
+    def divider(self):
+        self.set_draw_color(*BORDER)
+        self.line(self.l_margin, self.get_y(), self.w - self.r_margin, self.get_y())
+        self.ln(0.08)
 
 
 pdf = ExecSummaryPDF()
 pdf.add_page()
 
-# ── Cover info (doesn't count toward page limit) ──
-pdf.set_font('Vera', 'B', 16)
-pdf.cell(0, 0.3, 'Open Parachute PBC \u2014 Executive Summary', new_x="LMARGIN", new_y="NEXT")
+# ── Title block ──
+pdf.set_font('Serif', '', 22)
+pdf.set_text_color(*FG)
+pdf.cell(0, 0.35, 'Open Parachute PBC', new_x="LMARGIN", new_y="NEXT")
+pdf.set_font('Sans', '', 12)
+pdf.set_text_color(*FG_MUTED)
+pdf.cell(0, 0.28, 'Executive Summary \u2014 CU New Venture Challenge 2026', new_x="LMARGIN", new_y="NEXT")
+pdf.ln(0.12)
+
+# Contact block
+pdf.set_font('Vera', 'B', 10)
+pdf.set_text_color(*FG)
+pdf.cell(0, 0.2, 'Aaron Gabriel Neyer, Founder', new_x="LMARGIN", new_y="NEXT")
+pdf.set_font('Sans', '', 10)
+pdf.set_text_color(*FG_MUTED)
+pdf.cell(0, 0.2, 'aaron@parachute.computer \u2022 Boulder, CO \u2022 parachute.computer', new_x="LMARGIN", new_y="NEXT")
+pdf.cell(0, 0.2, 'Team: Jon Bo (Daily Co-lead), Lucian Hymer (Computer Co-lead), Marvin Melzer (Hardware), Neil Yarnal (Design)', new_x="LMARGIN", new_y="NEXT")
 pdf.ln(0.08)
-pdf.set_font('Vera', '', 10)
-for line in [
-    'Open Parachute PBC (Colorado Public Benefit Corporation)',
-    'Aaron Gabriel Neyer, Founder \u2014 aaron@parachute.computer \u2014 Boulder, CO',
-    'Team: Jon Bo (Daily Co-lead), Lucian Hymer (Computer Co-lead), Marvin Melzer (Hardware), Neil Yarnal (Design)',
-]:
-    pdf.cell(0, 0.2, line, new_x="LMARGIN", new_y="NEXT")
-pdf.ln(0.06)
-pdf.set_draw_color(180, 180, 180)
-pdf.line(1.0, pdf.get_y(), 7.5, pdf.get_y())
-pdf.ln(0.06)
+pdf.divider()
 
 # ═══════ OPPORTUNITY SUMMARY ═══════
 pdf.heading('Opportunity Summary')
@@ -143,7 +182,7 @@ pdf.bullet('Context compounds as the moat. ',
     'genuine accumulated value, not lock-in.')
 
 # ═══════ MARKET & CUSTOMER ANALYSIS ═══════
-pdf.heading('Market and Customer Analysis')
+pdf.heading('Market & Customer Analysis')
 
 pdf.body(
     'Agentic AI market: $50B+ by 2030 at 44% CAGR. Comparables: TwinMind ($5.7M raised, $60M val), '
@@ -161,7 +200,7 @@ pdf.bold_body('Validation: ',
     '300+ community members ready to onboard. 13 builders completed first Learn Vibe Build AI cohort. '
     'Active private beta users providing feedback.')
 
-# ═══════ IP & TEAM (combined to save space) ═══════
+# ═══════ INTELLECTUAL PROPERTY ═══════
 pdf.heading('Intellectual Property')
 
 pdf.body(
@@ -185,8 +224,7 @@ pdf.body('3\u20134 additional builders available for hire, scaling team from 4\u
 # ═══════ FINANCIAL PROJECTIONS ═══════
 pdf.heading('Financial Projections')
 
-pdf.set_font('Vera', '', 10)
-col_w = [2.2, 1.2, 1.2, 1.2]
+# Styled table
 headers = ['', '2026', '2027', '2028']
 data = [
     ['Free + sync users', '5,000', '50,000', '250,000'],
@@ -197,34 +235,54 @@ data = [
     ['Infra + COGS', '~$15K', '~$130K', '~$500K'],
     ['Total opex', '~$165K', '~$530K', '~$1.3M'],
 ]
-rh = 0.2
 
+col_w = [2.3, 1.15, 1.15, 1.15]
+rh = 0.22
+table_w = sum(col_w)
+x_start = pdf.l_margin
+
+# Header row with background
+pdf.set_fill_color(*BG_SOFT)
+pdf.set_draw_color(*BORDER)
 pdf.set_font('Vera', 'B', 10)
+pdf.set_text_color(*FG_DIM)
 for i, h in enumerate(headers):
-    pdf.cell(col_w[i], rh, h, border=1, align='L' if i == 0 else 'C')
+    pdf.cell(col_w[i], rh, h, border=1, align='L' if i == 0 else 'C', fill=True)
 pdf.ln()
 
+# Data rows
 for r, row in enumerate(data):
+    is_highlight = r == 3  # ARR row
+    if is_highlight:
+        pdf.set_fill_color(232, 245, 236)  # light green
+    else:
+        pdf.set_fill_color(255, 255, 255)
+
     for c, val in enumerate(row):
-        if c == 0 or (r == 3 and c > 0):
+        if c == 0:
             pdf.set_font('Vera', 'B', 10)
+            pdf.set_text_color(*FG)
+        elif is_highlight:
+            pdf.set_font('Vera', 'B', 10)
+            pdf.set_text_color(*ACCENT)
         else:
-            pdf.set_font('Vera', '', 10)
-        pdf.cell(col_w[c], rh, val, border=1, align='L' if c == 0 else 'C')
+            pdf.set_font('Sans', '', 10)
+            pdf.set_text_color(*FG_MUTED)
+        pdf.cell(col_w[c], rh, val, border=1, align='L' if c == 0 else 'C', fill=True)
     pdf.ln()
 
 pdf.ln(0.06)
-pdf.set_font('Vera', '', 12)
+pdf.set_text_color(*FG)
 
 pdf.bold_body('Revenue model: ',
     'Free (offline, zero cost), $2/mo (sync), $5/mo (cloud transcription), $10/mo (AI reflections + synthesis), '
     '$40/mo (hosted Computer). Margins improve as model costs decline.',
-    after=0.04)
+    after=0.03)
 
 pdf.bold_body('Path to profitability: ',
     'Year two approaches breakeven (~$540K ARR vs ~$530K opex). Year three clearly profitable '
     '(~$3.6M ARR vs ~$1.3M opex). Self-funded to date: $0 outside investment.',
-    after=0.04)
+    after=0.03)
 
 # ═══════ INVESTMENT ═══════
 pdf.heading('Investment')
@@ -246,7 +304,6 @@ pdf.body(
 pdf_path = '/home/sandbox/parachute-computer/website/nvc/ES_Parachute.pdf'
 pdf.output(pdf_path)
 
-# Check pages
 with open(pdf_path, 'rb') as f:
     content = f.read()
     pages = content.count(b'/Type /Page') - content.count(b'/Type /Pages')
