@@ -243,7 +243,7 @@ TOOL_TEMPLATES: list[ToolTemplateDict] = [
         "mode": "agent",
         "scope_keys": ["date"],
         "system_prompt": PROCESS_DAY_SYSTEM_PROMPT,
-        "trust_level": "sandboxed",
+        "trust_level": "direct",
         "memory_mode": "persistent",
         "can_call": [
             "read-days-notes",
@@ -252,7 +252,7 @@ TOOL_TEMPLATES: list[ToolTemplateDict] = [
             "read-recent-cards",
             "write-card",
         ],
-        "template_version": "2026-03-26",
+        "template_version": "2026-03-27",
     },
 ]
 
