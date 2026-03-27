@@ -231,14 +231,13 @@ TOOL_TEMPLATES: list[ToolTemplateDict] = [
         "scope_keys": ["entry_id"],
         "template_version": "2026-03-26",
     },
-    # ── Transform tools ───────────────────────────────────────────────────
+    # ── Function tools (continued) ──────────────────────────────────────
     {
         "name": "summarize-chat",
         "display_name": "Summarize Chat",
         "description": "Summarize a chat session's activity for a specific date. Spawns a fast sub-agent to read the full transcript and return a focused summary.",
-        "mode": "transform",
+        "mode": "function",
         "scope_keys": ["date"],
-        "transform_model": "haiku",
         "template_version": "2026-03-26",
     },
     {

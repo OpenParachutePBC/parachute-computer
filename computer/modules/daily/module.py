@@ -2773,10 +2773,6 @@ class DailyModule:
                 try:
                     from parachute.core.daily_agent import run_agent
                     home_path = Path(self.home_path)
-                    background_tasks = request.state._state.get("background_tasks")
-                    if background_tasks is None:
-                        from starlette.background import BackgroundTasks
-                        background_tasks = BackgroundTasks()
 
                     async def _run():
                         try:
@@ -2784,7 +2780,9 @@ class DailyModule:
                         except Exception as e:
                             logger.error(f"Manual tool run failed for '{name}': {e}")
 
-                    background_tasks.add(_run)
+                    task = asyncio.create_task(_run())
+                    _background_tasks.add(task)
+                    task.add_done_callback(_background_tasks.discard)
                 except Exception as e:
                     return JSONResponse(status_code=500, content={"error": str(e)})
             else:
@@ -2889,7 +2887,7 @@ class DailyModule:
                 return {"hasTranscript": False, "sessionId": sid, "totalMessages": 0, "messages": []}
 
             messages = await asyncio.to_thread(
-                _read_transcript_file, str(transcript_path), limit, container_slug, parachute_dir
+                _read_transcript_file, sid, limit, container_slug, parachute_dir
             )
             return {
                 "hasTranscript": True,
