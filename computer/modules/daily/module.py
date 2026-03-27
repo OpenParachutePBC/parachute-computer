@@ -2465,6 +2465,94 @@ class DailyModule:
                 logger.warning(f"Daily: scheduler reload after delete failed: {e}")
             return Response(status_code=204)
 
+        # ── Helper: inline trigger upsert from Flutter ────────────────────
+
+        async def _upsert_inline_trigger(graph, tool_name: str, body: dict) -> None:
+            """Create/update a Trigger from inline schedule/event fields in the Tool body.
+
+            Flutter sends schedule_enabled, schedule_time, trigger_event, trigger_filter
+            as part of the Tool create/update body. This method bridges those fields to
+            the Trigger table + INVOKES edge.
+            """
+            has_schedule = "schedule_enabled" in body or "schedule_time" in body
+            has_event = "trigger_event" in body
+            if not has_schedule and not has_event:
+                return
+
+            now = datetime.now(timezone.utc).isoformat()
+
+            if has_event and body.get("trigger_event"):
+                # Event trigger
+                trigger_name = f"on-{tool_name}"
+                event_filter = body.get("trigger_filter", {})
+                if isinstance(event_filter, dict):
+                    event_filter = json.dumps(event_filter)
+                try:
+                    async with graph.write_lock:
+                        await graph.execute_cypher(
+                            "MERGE (tr:Trigger {name: $tname}) "
+                            "SET tr.type = 'event', "
+                            "    tr.event = $event, "
+                            "    tr.event_filter = $filter, "
+                            "    tr.enabled = 'true', "
+                            "    tr.updated_at = $now",
+                            {
+                                "tname": trigger_name,
+                                "event": body["trigger_event"],
+                                "filter": event_filter if isinstance(event_filter, str) else json.dumps(event_filter),
+                                "now": now,
+                            },
+                        )
+                        # Ensure INVOKES edge
+                        await graph.execute_cypher(
+                            "MATCH (tr:Trigger {name: $tname}), (t:Tool {name: $tool}) "
+                            "MERGE (tr)-[:INVOKES]->(t)",
+                            {"tname": trigger_name, "tool": tool_name},
+                        )
+                except Exception as e:
+                    logger.warning(f"Inline trigger upsert (event) for '{tool_name}': {e}")
+
+            elif has_schedule:
+                # Schedule trigger
+                trigger_name = f"scheduled-{tool_name}"
+                enabled = body.get("schedule_enabled", True)
+                enabled_str = "true" if enabled else "false"
+                schedule_time = body.get("schedule_time", "03:00")
+                scope = json.dumps(body.get("scope", {"date": "yesterday"}))
+                try:
+                    async with graph.write_lock:
+                        await graph.execute_cypher(
+                            "MERGE (tr:Trigger {name: $tname}) "
+                            "SET tr.type = 'schedule', "
+                            "    tr.schedule_time = $time, "
+                            "    tr.scope = $scope, "
+                            "    tr.enabled = $enabled, "
+                            "    tr.updated_at = $now",
+                            {
+                                "tname": trigger_name,
+                                "time": schedule_time,
+                                "scope": scope,
+                                "enabled": enabled_str,
+                                "now": now,
+                            },
+                        )
+                        # Ensure INVOKES edge
+                        await graph.execute_cypher(
+                            "MATCH (tr:Trigger {name: $tname}), (t:Tool {name: $tool}) "
+                            "MERGE (tr)-[:INVOKES]->(t)",
+                            {"tname": trigger_name, "tool": tool_name},
+                        )
+                except Exception as e:
+                    logger.warning(f"Inline trigger upsert (schedule) for '{tool_name}': {e}")
+
+            # Reload scheduler so changes take effect
+            try:
+                from parachute.core.scheduler import reload_scheduler
+                home_path = Path(self.home_path)
+                await reload_scheduler(home_path, graph=graph)
+            except Exception as e:
+                logger.warning(f"Scheduler reload after trigger upsert: {e}")
+
         # ── Tool + Trigger endpoints (universal primitive) ─────────────────
 
         @router.get("/tools/templates")
@@ -2645,6 +2733,9 @@ class DailyModule:
                             logger.debug(f"CAN_CALL {name} → {child_name}: {e}")
                 except Exception as e:
                     logger.warning(f"Error managing CAN_CALL edges: {e}")
+            # Handle inline trigger fields from Flutter (schedule/event)
+            await _upsert_inline_trigger(graph, name, body)
+
             # Return the created tool
             result = await graph.execute_cypher(
                 "MATCH (t:Tool {name: $name}) RETURN t", {"name": name}
@@ -2718,6 +2809,9 @@ class DailyModule:
                                 logger.debug(f"CAN_CALL {name} → {child_name}: {e}")
                 except Exception as e:
                     logger.warning(f"Error managing CAN_CALL edges: {e}")
+
+            # Handle inline trigger fields from Flutter (schedule/event)
+            await _upsert_inline_trigger(graph, name, body)
 
             result = await graph.execute_cypher(
                 "MATCH (t:Tool {name: $name}) RETURN t", {"name": name}
