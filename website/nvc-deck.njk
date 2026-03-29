@@ -205,8 +205,6 @@ permalink: /nvc/deck/
         .tier-body { font-size: 0.9rem; color: var(--fg-muted); }
         .tier-body strong { color: var(--fg); font-weight: 500; }
         .tier-highlight { background: var(--accent-soft); }
-        .tier-power { background: var(--bg-soft); }
-        .tier-power .tier-price { color: var(--fg); }
 
         /* ── Pendant callout ── */
         .pendant-callout {
@@ -314,6 +312,55 @@ permalink: /nvc/deck/
         }
         .close-links a:hover { text-decoration: underline; }
 
+        /* ── Architecture diagram ── */
+        .arch-diagram {
+            margin: 1.5rem 0;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            overflow: hidden;
+            background: #fff;
+            max-width: 650px;
+            padding: 2rem 2.5rem;
+        }
+        .arch-row {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            padding: 0.6rem 0;
+        }
+        .arch-label {
+            font-family: var(--mono);
+            font-size: 0.7rem;
+            letter-spacing: 0.04em;
+            color: var(--fg-dim);
+            min-width: 6rem;
+            text-align: right;
+            flex-shrink: 0;
+        }
+        .arch-box {
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 0.5rem 1rem;
+            font-size: 0.85rem;
+            color: var(--fg);
+            background: var(--bg);
+        }
+        .arch-box.accent {
+            border-color: var(--accent);
+            background: var(--accent-soft);
+            color: var(--accent);
+            font-weight: 500;
+        }
+        .arch-arrow {
+            font-family: var(--mono);
+            font-size: 0.7rem;
+            color: var(--fg-dim);
+            text-align: center;
+            padding: 0.3rem 0;
+            margin-left: 6rem;
+            padding-left: 1rem;
+        }
+
         /* ── Mobile ── */
         @media (max-width: 768px) {
             .slide { padding: 3rem 1.5rem; }
@@ -335,18 +382,17 @@ permalink: /nvc/deck/
     <div style="position: fixed; top: 0; left: 0; right: 0; z-index: 100; background: var(--bg); border-bottom: 1px solid var(--border); padding: 0.75rem 2rem; display: flex; align-items: center; justify-content: space-between;">
         <span style="font-family: var(--serif); font-size: 0.95rem; color: var(--fg);">Parachute &mdash; NVC Pitch Deck</span>
         <div style="display: flex; gap: 0.75rem;">
-            <a href="/nvc/Parachute.pptx" download style="padding: 0.35rem 0.75rem; background: var(--accent); color: #fff; border-radius: 5px; text-decoration: none; font-size: 0.75rem; font-weight: 500;">Download PPTX</a>
-            <a href="/nvc/ES_Parachute.pdf" download style="padding: 0.35rem 0.75rem; background: var(--bg-soft); color: var(--fg); border: 1px solid var(--border); border-radius: 5px; text-decoration: none; font-size: 0.75rem; font-weight: 500;">Executive Summary (PDF)</a>
+            <a href="/nvc/ES_Parachute.pdf" download style="padding: 0.35rem 0.75rem; background: var(--accent); color: #fff; border-radius: 5px; text-decoration: none; font-size: 0.75rem; font-weight: 500;">Executive Summary (PDF)</a>
             <a href="/nvc/" style="padding: 0.35rem 0.75rem; background: var(--bg-soft); color: var(--fg); border: 1px solid var(--border); border-radius: 5px; text-decoration: none; font-size: 0.75rem; font-weight: 500;">Full Summary</a>
         </div>
     </div>
 
-    <!-- SLIDE 1: The Landscape -->
+    <!-- SLIDE 1: The Race -->
     <section class="slide" style="padding-top: 6rem;">
         <div class="slide-label">The Landscape</div>
-        <h2 class="slide-headline">Everyone is building<br>personal AI computers.</h2>
+        <h2 class="slide-headline">Everyone is racing to build<br>your AI agent.</h2>
         <div class="slide-body">
-            <p>Over 100 million people already pay $20+/month for AI. OpenClaw. Claude Cowork. ZoComputer. Perplexity Computer. Manus.</p>
+            <p>OpenClaw. Claude Cowork. ZoComputer. Perplexity Computer. Manus. Over 100 million people already pay $20+/month for AI.</p>
         </div>
         <div class="stat-row">
             <div class="stat">
@@ -359,53 +405,74 @@ permalink: /nvc/deck/
             </div>
         </div>
         <div class="slide-body">
-            <p style="margin-top: 1rem; font-family: var(--serif); font-size: 1.3rem; color: var(--fg);">But they're building walled gardens &mdash; and only for the 5% who are already power users.</p>
+            <p style="margin-top: 1rem; font-family: var(--serif); font-size: 1.3rem; color: var(--fg);">Features get cloned in weeks. It&rsquo;s a race to the bottom &mdash; and none of them solve the personal data problem.</p>
         </div>
     </section>
 
-    <!-- SLIDE 2: The 95% Gap -->
+    <!-- SLIDE 2: What's Missing -->
     <section class="slide">
-        <div class="slide-label">The Opportunity</div>
-        <h2 class="slide-headline">The other 95% just want<br>something that works.</h2>
-        <div class="people">
-            The <em>artist</em> who wants to organize creative ideas.<br>
+        <div class="slide-label">The Problem</div>
+        <h2 class="slide-headline">Your AI doesn&rsquo;t <em>know</em> you.</h2>
+        <div class="slide-body">
+            <p>Every agent starts from zero. Your context resets with every session, every tool, every platform. There&rsquo;s no persistent layer where <em>your</em> thinking lives.</p>
+            <p>And for the 95% who aren&rsquo;t power users yet &mdash; the artist, the small business owner, the parent &mdash; there&rsquo;s no entry point at all.</p>
+        </div>
+        <div class="people" style="margin-top: 1.5rem;">
+            The <em>artist</em> organizing creative ideas.<br>
             The <em>small business owner</em> tracking their days.<br>
-            The <em>parent</em> who wants a better way to remember and reflect.<br><br>
+            The <em>parent</em> who wants a better way to remember.<br>
         </div>
         <div class="slide-body">
-            <p style="font-family: var(--serif); font-size: 1.3rem; color: var(--fg); margin-top: 1rem;">They need a system that learns <em>them</em> &mdash; not one that demands they learn it.</p>
+            <p style="font-family: var(--serif); font-size: 1.3rem; color: var(--fg); margin-top: 1.5rem;">They don&rsquo;t need another agent. They need a place for their thinking &mdash; that any agent can use.</p>
         </div>
     </section>
 
-    <!-- SLIDE 3: Parachute Computer -->
+    <!-- SLIDE 3: Parachute Daily -->
     <section class="slide">
         <div class="slide-label">Our Answer</div>
-        <h2 class="slide-headline">Parachute Computer.<br>The personal AI you can trust.</h2>
-        <ul class="bullet-list">
-            <li>Open source (AGPL-3.0) &middot; local-first &middot; self-hostable</li>
-            <li>Your data stays on your device &mdash; portable and exportable</li>
-            <li>Knowledge graph connects your journals, conversations, and thinking</li>
-            <li>Public Benefit Corporation &mdash; legally mandated to serve users</li>
-        </ul>
-        <div class="slide-body" style="margin-top: 1.5rem;">
-            <p style="font-family: var(--serif); font-size: 1.3rem; color: var(--fg);">Software gets cloned in a day. Trust and context cannot.</p>
-            <p style="font-family: var(--serif); font-size: 1.1rem; color: var(--fg-muted); margin-top: 0.5rem;">But most people don't want to self-host a server.</p>
-        </div>
-    </section>
-
-    <!-- SLIDE 4: Parachute Daily -->
-    <section class="slide">
-        <div class="slide-label">The Bridge</div>
         <h2 class="slide-headline">Parachute Daily.<br>Just talk.</h2>
         <div class="slide-body">
             <p>A voice-first journal. Speak into a wearable pendant or your phone &mdash; on a walk, in the car, wherever thinking happens.</p>
-            <p>AI weaves through gently: daily reflections on your entries, pattern recognition over time, weekly synthesis of your thinking.</p>
+            <p>Simple for humans. Native for AI. Your notes become structured data that any agent can work with &mdash; not locked inside one platform.</p>
             <p>No learning curve. No technical sophistication required.</p>
         </div>
         <div class="pendant-callout">
             <div class="label">The Pendant</div>
-            <p>Wearable voice capture device. Go for a walk. Talk. Your thoughts become structured knowledge by the time you're home.</p>
+            <p>Wearable voice capture device. Go for a walk. Talk. Your thoughts become structured knowledge by the time you&rsquo;re home.</p>
             <p style="margin-top: 0.75rem;"><strong style="color: var(--fg);">Working prototype on stage today.</strong></p>
+        </div>
+    </section>
+
+    <!-- SLIDE 4: Agent-Native Architecture -->
+    <section class="slide">
+        <div class="slide-label">Agent-Native</div>
+        <h2 class="slide-headline">Don&rsquo;t compete with agents.<br>Build the tool layer they all need.</h2>
+        <div class="slide-body">
+            <p>Parachute is built on <strong>MCP</strong> (Model Context Protocol) &mdash; the open standard for connecting AI to tools. Your data lives in a graph database organized around three primitives: <strong>Things, Tags, and Tools.</strong></p>
+            <p>Use Claude? Parachute is your MCP. Use ChatGPT? Same. Use OpenClaw? Same. You don&rsquo;t leave anything &mdash; you <em>add</em> Parachute.</p>
+        </div>
+        <div class="arch-diagram">
+            <div class="arch-row">
+                <span class="arch-label">you</span>
+                <span class="arch-box">Parachute Daily</span>
+                <span class="arch-box">Web &middot; Pendant &middot; Phone</span>
+            </div>
+            <div class="arch-arrow">&darr;</div>
+            <div class="arch-row">
+                <span class="arch-label">data</span>
+                <span class="arch-box accent">Parachute Server &mdash; Things &middot; Tags &middot; Tools</span>
+            </div>
+            <div class="arch-arrow">&darr; MCP</div>
+            <div class="arch-row">
+                <span class="arch-label">agents</span>
+                <span class="arch-box">Claude</span>
+                <span class="arch-box">ChatGPT</span>
+                <span class="arch-box">OpenClaw</span>
+                <span class="arch-box">Parachute Agent</span>
+            </div>
+        </div>
+        <div class="slide-body">
+            <p style="font-size: 0.95rem;">And for people who don&rsquo;t have an AI yet &mdash; <strong>Parachute Agent</strong> will be their first. The on-ramp to AI that already knows them.</p>
         </div>
     </section>
 
@@ -414,14 +481,17 @@ permalink: /nvc/deck/
         <div class="slide-label">The Insight</div>
         <h2 class="slide-headline">Context compounds.</h2>
         <div class="slide-body">
-            <p>Every day you use Parachute, your AI gets meaningfully better. No competitor can shortcut months of accumulated personal context.</p>
+            <p>Every note, every voice entry, every tag builds a richer personal data layer. That context works across every AI tool you use &mdash; and no one can replicate it.</p>
         </div>
         <div class="flywheel">
-            <div class="fw-step"><span class="fw-num">01</span> Start journaling in Daily</div>
+            <div class="fw-step"><span class="fw-num">01</span> Capture thoughts in Daily</div>
             <div class="fw-step"><span class="fw-num">02</span> Build months of personal context</div>
-            <div class="fw-step"><span class="fw-num">03</span> Upgrade to Parachute Computer</div>
-            <div class="fw-step"><span class="fw-num">04</span> Brain ingests your history instantly</div>
-            <div class="fw-step final"><span class="fw-num">&rarr;</span> System already knows you</div>
+            <div class="fw-step"><span class="fw-num">03</span> Connect any AI via MCP</div>
+            <div class="fw-step"><span class="fw-num">04</span> AI already knows you</div>
+            <div class="fw-step final"><span class="fw-num">&rarr;</span> Switching cost through genuine value</div>
+        </div>
+        <div class="slide-body">
+            <p style="margin-top: 1rem; font-size: 0.95rem;">Open source (AGPL-3.0). Local-first. Public Benefit Corporation. Your data is yours &mdash; portable, exportable, self-hostable. The trust required for people to share their deepest thinking.</p>
         </div>
     </section>
 
@@ -436,7 +506,7 @@ permalink: /nvc/deck/
             </div>
             <div class="tier-row">
                 <div class="tier-price">$2<span>/mo</span></div>
-                <div class="tier-body"><strong>Cloud sync</strong> &mdash; your notes across all devices</div>
+                <div class="tier-body"><strong>Cloud sync + MCP access</strong> &mdash; your notes across all devices, available to any AI agent</div>
             </div>
             <div class="tier-row">
                 <div class="tier-price">$5<span>/mo</span></div>
@@ -444,15 +514,11 @@ permalink: /nvc/deck/
             </div>
             <div class="tier-row tier-highlight">
                 <div class="tier-price">$10<span>/mo</span></div>
-                <div class="tier-body"><strong>AI reflections, synthesis, and pattern surfacing</strong> &mdash; the sweet spot.</div>
-            </div>
-            <div class="tier-row tier-power">
-                <div class="tier-price">$40<span>/mo</span></div>
-                <div class="tier-body"><strong>Hosted Computer</strong> &mdash; full agentic platform with bundled AI inference</div>
+                <div class="tier-body"><strong>AI reflections, vector search, and synthesis</strong> &mdash; your AI truly knows you.</div>
             </div>
         </div>
         <div class="slide-body">
-            <p style="font-size: 0.95rem;">Free tier has zero hosting cost &mdash; no subsidizing free users. AI at $10/mo uses cost-efficient models. Margins are real and improve as model costs drop.</p>
+            <p style="font-size: 0.95rem;">Free tier has zero hosting cost &mdash; no subsidizing free users. You&rsquo;re not asking anyone to switch AI tools. You&rsquo;re adding value wherever they already are.</p>
         </div>
     </section>
 
@@ -472,7 +538,7 @@ permalink: /nvc/deck/
                 </thead>
                 <tbody>
                     <tr>
-                        <td>Free + sync users</td>
+                        <td>Free users</td>
                         <td>5,000</td>
                         <td>50,000</td>
                         <td>250,000</td>
@@ -484,16 +550,16 @@ permalink: /nvc/deck/
                         <td>25,000</td>
                     </tr>
                     <tr>
-                        <td>Avg rev / paid subscriber</td>
-                        <td>~$7/mo</td>
-                        <td>~$9/mo</td>
-                        <td>~$12/mo</td>
+                        <td>Avg rev / subscriber</td>
+                        <td>~$5/mo</td>
+                        <td>~$6/mo</td>
+                        <td>~$8/mo</td>
                     </tr>
                     <tr>
                         <td>ARR</td>
-                        <td>~$42K</td>
-                        <td class="highlight">~$540K</td>
-                        <td class="highlight">~$3.6M</td>
+                        <td>~$30K</td>
+                        <td class="highlight">~$360K</td>
+                        <td class="highlight">~$2.4M</td>
                     </tr>
                     <tr>
                         <td>Team costs</td>
@@ -503,22 +569,25 @@ permalink: /nvc/deck/
                     </tr>
                     <tr>
                         <td>Infra + COGS</td>
-                        <td>~$15K</td>
-                        <td>~$130K</td>
-                        <td>~$500K</td>
+                        <td>~$10K</td>
+                        <td>~$80K</td>
+                        <td>~$300K</td>
                     </tr>
                     <tr>
                         <td>Total opex</td>
-                        <td>~$165K</td>
-                        <td>~$530K</td>
-                        <td>~$1.3M</td>
+                        <td>~$160K</td>
+                        <td>~$480K</td>
+                        <td>~$1.1M</td>
                     </tr>
                 </tbody>
             </table>
         </div>
+        <div class="slide-body">
+            <p style="font-size: 0.95rem;">Lower COGS than full agentic platforms &mdash; transcription and embeddings cost far less than heavy AI inference. Margins improve as model costs drop. Larger addressable market: anyone using <em>any</em> AI tool.</p>
+        </div>
     </section>
 
-    <!-- SLIDE 8: Bootstrapped + Team -->
+    <!-- SLIDE 8: Team & Traction -->
     <section class="slide">
         <div class="slide-label">Team & Traction</div>
         <h2 class="slide-headline">Self-funded.<br>Built from scratch.</h2>
@@ -526,8 +595,8 @@ permalink: /nvc/deck/
             <div>
                 <p><strong>What exists today:</strong></p>
                 <ul style="list-style: none; padding: 0; margin-top: 0.5rem;">
-                    <li style="border: none; padding: 0.3rem 0 0.3rem 1.5rem;">&middot;&ensp;Working app with local voice transcription + graph-native memory</li>
-                    <li style="border: none; padding: 0.3rem 0 0.3rem 1.5rem;">&middot;&ensp;Multi-platform: phone, Telegram, Discord, Matrix</li>
+                    <li style="border: none; padding: 0.3rem 0 0.3rem 1.5rem;">&middot;&ensp;Working app with local voice transcription + graph-native storage</li>
+                    <li style="border: none; padding: 0.3rem 0 0.3rem 1.5rem;">&middot;&ensp;MCP server with Things, Tags, Tools architecture</li>
                     <li style="border: none; padding: 0.3rem 0 0.3rem 1.5rem;">&middot;&ensp;Functional pendant prototype (on stage today)</li>
                     <li style="border: none; padding: 0.3rem 0 0.3rem 1.5rem;">&middot;&ensp;Daily beta launching this month &middot; PBC incorporated in Colorado</li>
                 </ul>
@@ -537,7 +606,7 @@ permalink: /nvc/deck/
                 <div class="people" style="font-size: 1rem; line-height: 2; margin-top: 0.5rem;">
                     <em>Aaron Gabriel Neyer</em> &mdash; Founder, product &amp; architecture<br>
                     <em>Jon Bo</em> &mdash; Daily co-lead, founding engineer<br>
-                    <em>Lucian Hymer</em> &mdash; Computer co-lead, founding engineer<br>
+                    <em>Lucian Hymer</em> &mdash; Server co-lead, founding engineer<br>
                     <em>Marvin Melzer</em> &mdash; Hardware, pendant prototype<br>
                     <em>Neil Yarnal</em> &mdash; Brand &amp; design
                 </div>
@@ -549,13 +618,13 @@ permalink: /nvc/deck/
     <!-- SLIDE 9: The Ask -->
     <section class="slide">
         <div class="slide-label">The Ask</div>
-        <h2 class="slide-headline">Raising $300K to hire<br>the core team.</h2>
+        <h2 class="slide-headline">Raising $300K to launch<br>the personal data layer.</h2>
         <div class="ask-box">
             <div class="ask-row"><span class="lbl">Instrument</span><span class="val">SAFE (YC standard)</span></div>
             <div class="ask-row"><span class="lbl">Use of funds</span><span class="val">Core team full-time through 2026</span></div>
             <div class="ask-row"><span class="lbl">Goal</span><span class="val">Production launch by June &middot; revenue immediately</span></div>
         </div>
-        <p class="close-quote">Open source. Local-first.<br>Balance and choice &mdash; from the foundation.</p>
+        <p class="close-quote">Don&rsquo;t compete with agents.<br>Build what they all need.</p>
         <div class="close-links">
             Aaron Gabriel Neyer &middot; aaron@parachute.computer &middot; Boulder, CO<br>
             <a href="https://parachute.computer">parachute.computer</a> &middot;
