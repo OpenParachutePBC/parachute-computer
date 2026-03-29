@@ -30,7 +30,7 @@ export interface Note {
 
 export interface Card {
   card_id: string;
-  agent_name: string;
+  tool_name: string;
   card_type: string;
   display_name: string;
   content: string;
@@ -40,33 +40,62 @@ export interface Card {
   read_at: string | null;
 }
 
-export interface AgentConfig {
+export interface ToolConfig {
   name: string;
   display_name: string;
   description: string;
   system_prompt: string;
-  tools: string; // JSON array
-  schedule_enabled: string;
-  schedule_time: string;
+  callable_tools: string; // JSON array of tool name strings (kebab-case)
+  scope_keys: string; // JSON array of required scope keys
   enabled: string;
-  trigger_event: string;
+  builtin: string;
+  template_version: string;
+  user_modified: string;
   created_at: string;
   updated_at: string | null;
 }
 
-export interface AgentRun {
+export interface TriggerConfig {
+  name: string;
+  type: string; // "schedule" | "event"
+  tool_name: string;
+  schedule_time: string;
+  event: string;
+  event_filter: string; // JSON
+  scope: string; // JSON
+  enabled: string;
+  builtin: string;
+  template_version: string;
+  user_modified: string;
+  created_at: string;
+  updated_at: string | null;
+}
+
+export interface ToolRun {
   run_id: string;
-  agent_name: string;
+  tool_name: string;
   display_name: string;
+  trigger_name: string;
   entry_id: string | null;
   date: string;
-  trigger: string;
   status: string;
   error: string | null;
   card_id: string | null;
+  scope: string; // JSON
   started_at: string;
   completed_at: string | null;
   duration_seconds: number | null;
+}
+
+export interface Tag {
+  name: string;
+  created_at: string;
+}
+
+export interface NoteTag {
+  entry_id: string;
+  tag_name: string;
+  tagged_at: string;
 }
 
 // --- API shapes ---
@@ -77,6 +106,7 @@ export interface EntryResponse {
   content: string;
   snippet: string;
   metadata: Record<string, unknown>;
+  tags?: string[];
 }
 
 // --- Auth ---

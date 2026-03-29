@@ -49,7 +49,7 @@ api.all("/*", async (c) => {
   const vault = getVault(c.env, c.get("userId"));
   const url = new URL(c.req.url);
 
-  // Strip /api prefix — the DO routes on /entries, /cards, /agents, etc.
+  // Strip /api prefix — the DO routes on /entries, /cards, /tools, /triggers, /tags, etc.
   const doPath = url.pathname.replace(/^\/api/, "");
   const doUrl = `http://do${doPath}${url.search}`;
 
