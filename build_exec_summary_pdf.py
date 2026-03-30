@@ -1,4 +1,4 @@
-"""Generate ES_Parachute.pdf — NVC Executive Summary.
+"""Generate ES_Parachute.pdf — NVC Executive Summary (pivoted narrative).
 Brand fonts, accent color, proper table styling. Max 3 pages.
 1.5 line spacing, 12pt body, 1-inch margins per NVC requirements."""
 
@@ -18,16 +18,14 @@ class ExecSummaryPDF(FPDF):
         super().__init__('P', 'in', 'Letter')
         self.set_auto_page_break(auto=True, margin=1.0)
         self.set_margins(1.0, 1.0, 1.0)
-        self.lh = 0.24  # ~1.5 spacing at 12pt
+        self.lh = 0.22  # tighter to fit 3 pages
 
         # Brand fonts
         self.add_font('Sans', '', f'{FONTS}/DMSans-Variable.ttf')
         self.add_font('Sans', 'I', f'{FONTS}/DMSans-Italic-Variable.ttf')
-        # Use DM Sans bold via variable font (fpdf2 handles weight)
-        self.add_font('SansB', '', f'{FONTS}/DMSans-Variable.ttf')
         self.add_font('Serif', '', f'{FONTS}/InstrumentSerif-Regular.ttf')
         self.add_font('Serif', 'I', f'{FONTS}/InstrumentSerif-Italic.ttf')
-        # Fallback for bold (Vera)
+        # Vera for bold
         self.add_font('Vera', '', '/usr/local/lib/python3.13/site-packages/reportlab/fonts/Vera.ttf')
         self.add_font('Vera', 'B', '/usr/local/lib/python3.13/site-packages/reportlab/fonts/VeraBd.ttf')
 
@@ -36,16 +34,16 @@ class ExecSummaryPDF(FPDF):
             self.set_y(-0.6)
             self.set_font('Sans', '', 8)
             self.set_text_color(*FG_DIM)
-            self.cell(0, 0.2, f'Open Parachute PBC \u2014 Executive Summary', align='L')
+            self.cell(0, 0.2, 'Open Parachute PBC \u2014 Executive Summary', align='L')
             self.cell(0, 0.2, f'{self.page_no()}', align='R', new_x="LMARGIN")
 
     def heading(self, text):
-        self.ln(0.08)
-        self.set_font('Vera', 'B', 12)
+        self.ln(0.06)
+        self.set_font('Vera', 'B', 11)
         self.set_text_color(*ACCENT)
-        self.cell(0, 0.24, text.upper(), new_x="LMARGIN", new_y="NEXT")
+        self.cell(0, 0.22, text.upper(), new_x="LMARGIN", new_y="NEXT")
         self.set_text_color(*FG)
-        self.ln(0.04)
+        self.ln(0.02)
 
     def body(self, text, after=0.04):
         self.set_font('Sans', '', 12)
@@ -108,7 +106,7 @@ pdf.cell(0, 0.2, 'Aaron Gabriel Neyer, Founder', new_x="LMARGIN", new_y="NEXT")
 pdf.set_font('Sans', '', 10)
 pdf.set_text_color(*FG_MUTED)
 pdf.cell(0, 0.2, 'aaron@parachute.computer \u2022 Boulder, CO \u2022 parachute.computer', new_x="LMARGIN", new_y="NEXT")
-pdf.cell(0, 0.2, 'Team: Jon Bo (Daily Co-lead), Lucian Hymer (Computer Co-lead), Marvin Melzer (Hardware), Neil Yarnal (Design)', new_x="LMARGIN", new_y="NEXT")
+pdf.cell(0, 0.2, 'Team: Jon Bo (Daily Co-lead), Lucian Hymer (Server Co-lead), Marvin Melzer (Hardware), Neil Yarnal (Design)', new_x="LMARGIN", new_y="NEXT")
 pdf.ln(0.08)
 pdf.divider()
 
@@ -116,18 +114,17 @@ pdf.divider()
 pdf.heading('Opportunity Summary')
 
 pdf.body(
-    'Personal agentic computing is the defining shift in how people interact with technology. '
-    'Over 100 million people already pay $20+/month for AI. Tools like OpenClaw (300K+ GitHub stars in three months), '
-    'Claude Cowork, ZoComputer, and Manus validate massive demand. The agentic AI market is projected to exceed '
-    '$50B by 2030 at a 44% CAGR.'
+    'Over 100 million people pay $20+/month for AI. The agentic AI market is projected to exceed '
+    '$50B by 2030 at a 44% CAGR. But features get cloned in weeks \u2014 it\'s a race to the bottom. '
+    'And every platform\'s memory is shallow: basically one big text file. No structured knowledge about '
+    'your projects, people, or patterns. And there\'s a deeper problem: how does your thinking get into the '
+    'system? You can talk to your AI, but there\'s no good way to think for yourself and have that become context.'
 )
 
 pdf.body(
-    'But nearly every player is building for the power user \u2014 roughly 5% of the addressable market. '
-    'The other 95% \u2014 artists, small business owners, everyday people \u2014 have no accessible entry point. '
-    'Parachute bridges that gap with two products: Parachute Daily, a voice-first journaling app that gently '
-    'introduces AI, and Parachute Computer, a full open-source agentic platform. Daily builds the context '
-    'that makes Computer powerful, creating a compounding moat no competitor can shortcut.'
+    'Parachute solves both. Parachute Daily is a voice-first journal that makes it effortless to capture '
+    'your thinking. Under the hood, notes live in a graph database any AI can access via MCP (Model Context '
+    'Protocol). You don\'t switch AI tools \u2014 you add Parachute, and whatever AI you use gets better.'
 )
 
 # ═══════ PRODUCT OR SERVICE ═══════
@@ -135,78 +132,74 @@ pdf.heading('Product or Service')
 
 pdf.bold_body(
     'Parachute Daily ',
-    'is a voice-first journal. Speak into a wearable pendant or phone \u2014 on a walk, in the car, wherever '
-    'thinking happens. Entries are transcribed (offline via on-device models), organized, and enhanced with '
-    'AI reflections, pattern recognition, and weekly synthesis. Free offline; cloud transcription at $5/mo, '
-    'AI features at $10/mo.'
+    'is the first product. Users speak into a wearable pendant or phone \u2014 on a walk, in the car, '
+    'wherever thinking happens. Entries are transcribed (offline via on-device models), organized, and '
+    'structured. Free offline; cloud sync + MCP at $2/mo, cloud transcription at $5/mo, '
+    'AI reflections + vector search at $10/mo.'
 )
 
 pdf.bold_body(
-    'Parachute Computer ',
-    'is a full agentic computing platform with a knowledge graph (Brain) connecting journals, conversations, '
-    'and structured data. Multi-agent teams, trust-tiered execution, and connectors to Telegram, Discord, '
-    'and Matrix. Hosted at $40/mo or fully self-hosted for free.'
+    'Under the hood: ',
+    'a graph database organized around three primitives \u2014 Things, Tags, and Tools. '
+    'Because the system speaks MCP, any AI can read, search, and create structure: people nodes, '
+    'project nodes, linked contact info. Your notes become a living knowledge graph.'
 )
 
-pdf.body(
-    'The critical insight: context compounds. Every journal entry builds a richer knowledge graph. After months '
-    'of Daily use, a user\'s system already understands how they think. When they upgrade to Computer, their '
-    'brain comes with them. No competitor can replicate months of accumulated personal context.'
+pdf.bold_body(
+    'The Pendant: ',
+    'wearable voice capture. Press a button, talk, thoughts transcribed and structured by the time '
+    'you\'re home. Working prototype with custom enclosure.'
 )
 
 pdf.bold_body(
     'Current state: ',
-    'Working Python/FastAPI server, Flutter app (macOS, Android, web), graph-native memory, local voice '
-    'transcription (Sherpa-ONNX), multi-agent system, three bot connectors. Functional pendant prototype. '
-    'Daily beta launching this month; production launch targeted June 2026. PBC incorporated in Colorado.'
+    'Python/FastAPI server, Flutter app, graph-native storage, local transcription (Sherpa-ONNX), '
+    'MCP server. Pendant prototype. Beta launching this month; production launch June 2026. PBC incorporated.'
 )
 
 # ═══════ COMPETITIVE DIFFERENTIATION ═══════
 pdf.heading('Competitive Differentiation')
 
 pdf.body(
-    'Key players: OpenClaw, TwinMind ($5.7M at $60M val), Mem.ai ($28.6M raised), ZoComputer, Perplexity Computer, Manus. '
-    'Parachute differentiates on three axes:'
+    'Rather than joining the race to build another agent, Parachute is the layer underneath all of them:'
 )
 
-pdf.bullet('The bridge to the 95%. ',
-    'Competitors target power users. Daily gives everyday people a voice-first entry point requiring zero '
-    'technical sophistication \u2014 just talk.')
+pdf.bullet('Agent-native, not agent-competitive. ',
+    'Works with whatever AI you already use via MCP. Every AI user is a potential customer, '
+    'not just people willing to migrate.')
+
+pdf.bullet('Capture over conversation. ',
+    'Tools that help us think for ourselves \u2014 not just think with AI \u2014 produce the quality '
+    'of thinking that makes AI most useful.')
+
+pdf.bullet('Deep memory, not shallow. ',
+    'A real graph database queryable across months and years, not a flat text file of preferences.')
 
 pdf.bullet('Open source as trust. ',
-    'Fully open source (AGPL-3.0) and local-first \u2014 data on user\'s device, portable, exportable. '
-    'Public Benefit Corporation: legally mandated to serve users, not just shareholders.')
-
-pdf.bullet('Context compounds as the moat. ',
-    'Software gets cloned in a day. Compounding personal context cannot. Switching cost grows through '
-    'genuine accumulated value, not lock-in.')
+    'AGPL-3.0, local-first, data on your device. Public Benefit Corporation. '
+    'The trust required for people to share their deepest thinking.', after=0.02)
 
 # ═══════ MARKET & CUSTOMER ANALYSIS ═══════
 pdf.heading('Market & Customer Analysis')
 
 pdf.body(
-    'Agentic AI market: $50B+ by 2030 at 44% CAGR. Comparables: TwinMind ($5.7M raised, $60M val), '
-    'Obsidian (~$25M ARR), Day One (~$4.8M ARR), Mem.ai ($28.6M raised). Two customer segments, one funnel:'
+    'Every AI user is a potential customer \u2014 100M+ people paying $20+/mo and growing. Plus everyone '
+    'who wants a great journal. Comparables: TwinMind ($5.7M at $60M val), Obsidian (~$25M ARR), '
+    'Day One (~$4.8M ARR), Mem.ai ($28.6M raised). Two segments: AI users ($2/mo sync + MCP is a '
+    'no-brainer) and non-AI users (voice-first journal, pendant, AI-light features as on-ramp).'
 )
 
-pdf.bullet('Daily users (mass market): ',
-    'Entry at free, cloud transcription at $5/mo, AI features at $10/mo. The 95% who want AI to help but '
-    'don\'t know where to start.')
-
-pdf.bullet('Computer users (power users): ',
-    '$40/mo hosted or free self-hosted. Builders who create tools and workflows benefiting the ecosystem.')
-
 pdf.bold_body('Validation: ',
-    '300+ community members ready to onboard. 13 builders completed first Learn Vibe Build AI cohort. '
-    'Active private beta users providing feedback.')
+    '300+ community members ready to onboard. 13 builders completed first Learn Vibe Build cohort. '
+    'Active private beta users providing feedback.', after=0.02)
 
 # ═══════ INTELLECTUAL PROPERTY ═══════
 pdf.heading('Intellectual Property')
 
 pdf.body(
-    'Open source under AGPL-3.0 \u2014 anyone running a modified version as a service must share changes, '
-    'protecting against proprietary forks. Defensible advantages: compounding user context, knowledge graph '
-    'architecture, community ecosystem, and trust earned by building in the open.', after=0.02
+    'AGPL-3.0 \u2014 anyone running a modified version as a service must share changes. '
+    'Defensible advantages: compounding user context, graph architecture, MCP layer, '
+    'community ecosystem, and trust earned by building in the open.', after=0.02
 )
 
 # ═══════ MANAGEMENT TEAM ═══════
@@ -216,7 +209,7 @@ pdf.bullet('Aaron Gabriel Neyer (Founder) \u2014 ',
     'MA Ecopsychology, MS Creative Technology & Design (CU ATLAS). Founding engineer at two startups. '
     'Former Google. 10+ years full stack. Boulder Human Relations Commission Chair.')
 pdf.bullet('Jon Bo \u2014 ', 'Daily co-lead. Founding engineer at multiple startups.')
-pdf.bullet('Lucian Hymer \u2014 ', 'Computer co-lead. Founding engineer at multiple startups.')
+pdf.bullet('Lucian Hymer \u2014 ', 'Server co-lead. Founding engineer at multiple startups.')
 pdf.bullet('Marvin Melzer \u2014 ', 'Hardware lead. Pendant prototype.')
 pdf.bullet('Neil Yarnal \u2014 ', 'Brand and design.')
 pdf.body('3\u20134 additional builders available for hire, scaling team from 4\u20135 to 9\u201310.', after=0.02)
@@ -227,21 +220,19 @@ pdf.heading('Financial Projections')
 # Styled table
 headers = ['', '2026', '2027', '2028']
 data = [
-    ['Free + sync users', '5,000', '50,000', '250,000'],
-    ['Paid subscribers ($2\u201340/mo)', '500', '5,000', '25,000'],
-    ['Avg rev / subscriber', '~$7/mo', '~$9/mo', '~$12/mo'],
-    ['ARR', '~$42K', '~$540K', '~$3.6M'],
+    ['Free users', '5,000', '75,000', '500,000'],
+    ['Paid subscribers ($2\u201310/mo)', '500', '8,000', '50,000'],
+    ['Avg rev / subscriber', '~$5/mo', '~$5/mo', '~$5/mo'],
+    ['ARR', '~$30K', '~$480K', '~$3M'],
     ['Team costs', '~$150K', '~$400K', '~$800K'],
-    ['Infra + COGS', '~$15K', '~$130K', '~$500K'],
-    ['Total opex', '~$165K', '~$530K', '~$1.3M'],
+    ['Infra + COGS', '~$10K', '~$100K', '~$400K'],
+    ['Total opex', '~$160K', '~$500K', '~$1.2M'],
 ]
 
 col_w = [2.3, 1.15, 1.15, 1.15]
 rh = 0.22
-table_w = sum(col_w)
-x_start = pdf.l_margin
 
-# Header row with background
+# Header row
 pdf.set_fill_color(*BG_SOFT)
 pdf.set_draw_color(*BORDER)
 pdf.set_font('Vera', 'B', 10)
@@ -254,7 +245,7 @@ pdf.ln()
 for r, row in enumerate(data):
     is_highlight = r == 3  # ARR row
     if is_highlight:
-        pdf.set_fill_color(232, 245, 236)  # light green
+        pdf.set_fill_color(232, 245, 236)
     else:
         pdf.set_fill_color(255, 255, 255)
 
@@ -275,13 +266,10 @@ pdf.ln(0.06)
 pdf.set_text_color(*FG)
 
 pdf.bold_body('Revenue model: ',
-    'Free (offline, zero cost), $2/mo (sync), $5/mo (cloud transcription), $10/mo (AI reflections + synthesis), '
-    '$40/mo (hosted Computer). Margins improve as model costs decline.',
-    after=0.03)
-
-pdf.bold_body('Path to profitability: ',
-    'Year two approaches breakeven (~$540K ARR vs ~$530K opex). Year three clearly profitable '
-    '(~$3.6M ARR vs ~$1.3M opex). Self-funded to date: $0 outside investment.',
+    'Free (offline, zero cost), $2/mo (sync + MCP), $5/mo (transcription), $10/mo (AI + vector search). '
+    '100M+ AI users are all potential customers. Lower COGS \u2014 transcription and embeddings, '
+    'not heavy inference. Year two approaches breakeven; year three clearly profitable. '
+    'Self-funded to date: $0 outside investment.',
     after=0.03)
 
 # ═══════ INVESTMENT ═══════
@@ -297,7 +285,7 @@ pdf.bold_body('Use of funds: ',
     'Goal: revenue immediately upon launch, growth to raise subsequent round by early 2027.')
 
 pdf.body(
-    'NVC prize funds ($50,000) would accelerate timeline \u2014 faster team ramp-up and broader beta distribution.'
+    'NVC prize funds would accelerate timeline \u2014 faster team ramp-up and broader beta distribution.'
 )
 
 # ── Save ──
