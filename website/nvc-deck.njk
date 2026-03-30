@@ -404,25 +404,20 @@ permalink: /nvc/deck/
             </div>
         </div>
         <div class="slide-body">
-            <p style="margin-top: 1rem; font-family: var(--serif); font-size: 1.3rem; color: var(--fg);">Features get cloned in weeks. It&rsquo;s a race to the bottom &mdash; and none of them solve the personal data problem.</p>
+            <p style="margin-top: 1rem; font-family: var(--serif); font-size: 1.3rem; color: var(--fg);">Features get cloned in weeks. It&rsquo;s a race to the bottom. So we stopped trying to win it.</p>
         </div>
     </section>
 
-    <!-- SLIDE 2: What's Missing -->
+    <!-- SLIDE 2: The Problem -->
     <section class="slide">
         <div class="slide-label">The Problem</div>
-        <h2 class="slide-headline">Your AI doesn&rsquo;t <em>know</em> you.</h2>
+        <h2 class="slide-headline">Memory is shallow.<br>Capture is broken.</h2>
         <div class="slide-body">
-            <p>Every agent starts from zero. Your context resets with every session, every tool, every platform. There&rsquo;s no persistent layer where <em>your</em> thinking lives.</p>
-            <p>And for the 95% who aren&rsquo;t power users yet &mdash; the artist, the small business owner, the parent &mdash; there&rsquo;s no entry point at all.</p>
-        </div>
-        <div class="people" style="margin-top: 1.5rem;">
-            The <em>artist</em> organizing creative ideas.<br>
-            The <em>small business owner</em> tracking their days.<br>
-            The <em>parent</em> who wants a better way to remember.<br>
+            <p>These platforms all have memory now &mdash; but it&rsquo;s shallow. Basically one big text file. It remembers your name, not six months of your thinking. There&rsquo;s no structured knowledge about your projects, your people, your patterns over time.</p>
+            <p>And there&rsquo;s a deeper problem upstream: <em>how</em> your thinking gets into the system. You can talk to your AI, but that&rsquo;s a conversation &mdash; the AI is always in the middle. There&rsquo;s no good way to just think for yourself, out loud, and have that become context.</p>
         </div>
         <div class="slide-body">
-            <p style="font-family: var(--serif); font-size: 1.3rem; color: var(--fg); margin-top: 1.5rem;">They don&rsquo;t need another agent. They need a place for their thinking &mdash; that any agent can use.</p>
+            <p style="font-family: var(--serif); font-size: 1.3rem; color: var(--fg); margin-top: 1.5rem;">Tools that help us think for ourselves &mdash; not just think <em>with</em> AI &mdash; produce the quality of thinking that makes AI most useful.</p>
         </div>
     </section>
 
@@ -448,7 +443,8 @@ permalink: /nvc/deck/
         <h2 class="slide-headline">Don&rsquo;t compete with agents.<br>Build the tool layer they all need.</h2>
         <div class="slide-body">
             <p>Parachute is built on <strong>MCP</strong> (Model Context Protocol) &mdash; the open standard for connecting AI to tools. Your data lives in a graph database organized around three primitives: <strong>Things, Tags, and Tools.</strong></p>
-            <p>Use Claude? Parachute is your MCP. Use ChatGPT? Same. Use OpenClaw? Same. You don&rsquo;t leave anything &mdash; you <em>add</em> Parachute.</p>
+            <p>Whatever AI you already use, Parachute makes it better. Connect your Parachute, and your AI can read your journals, search your notes, understand your context. You don&rsquo;t switch anything &mdash; you <em>add</em> Parachute.</p>
+            <p>And because it&rsquo;s a graph database, your AI can do more than just read &mdash; it can <strong>create structure</strong>. It can scan your journals and generate people nodes, project nodes, link them, pull in contact info. Your notes become a living knowledge graph.</p>
         </div>
         <div class="arch-diagram">
             <div class="arch-row">
@@ -467,11 +463,11 @@ permalink: /nvc/deck/
                 <span class="arch-box">Claude</span>
                 <span class="arch-box">ChatGPT</span>
                 <span class="arch-box">OpenClaw</span>
-                <span class="arch-box">Parachute Agent</span>
+                <span class="arch-box">Any AI</span>
             </div>
         </div>
         <div class="slide-body">
-            <p style="font-size: 0.95rem;">And for people who don&rsquo;t have an AI yet &mdash; <strong>Parachute Agent</strong> will be their first. The on-ramp to AI that already knows them.</p>
+            <p style="font-size: 0.95rem; font-family: var(--serif); color: var(--fg);">We&rsquo;re not trying to build the most intelligent tool. We&rsquo;re building the most important tool for intelligent systems to use.</p>
         </div>
     </section>
 
@@ -480,7 +476,7 @@ permalink: /nvc/deck/
         <div class="slide-label">The Insight</div>
         <h2 class="slide-headline">Context compounds.</h2>
         <div class="slide-body">
-            <p>Every note, every voice entry, every tag builds a richer personal data layer. That context works across every AI tool you use &mdash; and no one can replicate it.</p>
+            <p>Every note, every voice entry builds a richer personal data layer &mdash; not a flat text file, but a real graph of your thinking that can be queried across months and years. That context is portable, it&rsquo;s yours, and no competitor can replicate it.</p>
         </div>
         <div class="flywheel">
             <div class="fw-step"><span class="fw-num">01</span> Capture thoughts in Daily</div>
@@ -539,26 +535,26 @@ permalink: /nvc/deck/
                     <tr>
                         <td>Free users</td>
                         <td>5,000</td>
-                        <td>50,000</td>
-                        <td>250,000</td>
+                        <td>75,000</td>
+                        <td>500,000</td>
                     </tr>
                     <tr>
                         <td>Paid subscribers</td>
                         <td>500</td>
-                        <td>5,000</td>
-                        <td>25,000</td>
+                        <td>8,000</td>
+                        <td>50,000</td>
                     </tr>
                     <tr>
                         <td>Avg rev / subscriber</td>
                         <td>~$5/mo</td>
-                        <td>~$6/mo</td>
-                        <td>~$8/mo</td>
+                        <td>~$5/mo</td>
+                        <td>~$5/mo</td>
                     </tr>
                     <tr>
                         <td>ARR</td>
                         <td>~$30K</td>
-                        <td class="highlight">~$360K</td>
-                        <td class="highlight">~$2.4M</td>
+                        <td class="highlight">~$480K</td>
+                        <td class="highlight">~$3M</td>
                     </tr>
                     <tr>
                         <td>Team costs</td>
@@ -569,20 +565,20 @@ permalink: /nvc/deck/
                     <tr>
                         <td>Infra + COGS</td>
                         <td>~$10K</td>
-                        <td>~$80K</td>
-                        <td>~$300K</td>
+                        <td>~$100K</td>
+                        <td>~$400K</td>
                     </tr>
                     <tr>
                         <td>Total opex</td>
                         <td>~$160K</td>
-                        <td>~$480K</td>
-                        <td>~$1.1M</td>
+                        <td>~$500K</td>
+                        <td>~$1.2M</td>
                     </tr>
                 </tbody>
             </table>
         </div>
         <div class="slide-body">
-            <p style="font-size: 0.95rem;">Lower COGS than full agentic platforms &mdash; transcription and embeddings cost far less than heavy AI inference. Margins improve as model costs drop. Larger addressable market: anyone using <em>any</em> AI tool.</p>
+            <p style="font-size: 0.95rem;">100M+ people pay $20+/mo for AI &mdash; every one is a potential customer. Plus all the people who aren&rsquo;t using AI yet but want a great journaling app. Lower COGS than agentic platforms. Conservative projections given the scale of the opportunity.</p>
         </div>
     </section>
 
