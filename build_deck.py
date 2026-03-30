@@ -448,6 +448,7 @@ items = [
     "MCP server with Things, Tags, Tools architecture",
     "Functional pendant prototype (on stage today)",
     "Daily beta launching this month \u00b7 PBC incorporated in Colorado",
+    "Learn Vibe Build AI school (Cohort 0 complete, Cohort 1 launching) \u2014 organic growth channel",
 ]
 
 y = Inches(3.6)
@@ -486,7 +487,7 @@ for name, role in team:
     y += Inches(0.5)
 
 add_text_box(s, Inches(1.2), Inches(6.5), Inches(10), Inches(0.5),
-             "MA Ecopsychology \u00b7 MS Creative Technology & Design (CU ATLAS) \u00b7 Founding engineer \u00d72 \u00b7 Ex-Google \u00b7 10+ years full stack",
+             "MA Ecopsychology \u00b7 MS Creative Technology & Design (CU ATLAS, graduating May 2026) \u00b7 Founding engineer \u00d72 \u00b7 Ex-Google \u00b7 10+ years full stack",
              font_size=12, color=FG_DIM)
 
 
@@ -496,7 +497,7 @@ add_text_box(s, Inches(1.2), Inches(6.5), Inches(10), Inches(0.5),
 s = new_slide()
 
 section_label(s, "The Ask")
-slide_headline(s, "Raising $300K to launch\nthe personal data layer.")
+slide_headline(s, "Raising $300K to launch\nthe memory layer.")
 
 # Ask card
 shape = s.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE,
@@ -522,11 +523,11 @@ for label, val in ask_items:
 
 # Closing
 add_text_box(s, Inches(1.2), Inches(5.8), Inches(10), Inches(1.0),
-             "Don\u2019t compete with agents.\nBuild what they all need.",
+             "A memory layer for humans and AI\nto think and remember together.",
              font_size=28, color=FG, font_name=FONT_SERIF, line_spacing=1.3)
 
 add_text_box(s, Inches(1.2), Inches(6.7), Inches(10), Inches(0.4),
-             "Aaron Gabriel Neyer  \u00b7  aaron@parachute.computer  \u00b7  Boulder, CO",
+             "Aaron Gabriel Neyer  \u00b7  aaron@parachute.computer  \u00b7  (513) 593-1721  \u00b7  Boulder, CO",
              font_size=12, color=FG_DIM)
 
 
