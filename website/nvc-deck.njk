@@ -312,52 +312,76 @@ permalink: /nvc/deck/
         }
         .close-links a:hover { text-decoration: underline; }
 
-        /* ── Architecture diagram ── */
+        /* ── Architecture diagram (hub-and-spoke) ── */
         .arch-diagram {
             margin: 1rem 0;
             border: 1px solid var(--border);
             border-radius: 10px;
             overflow: hidden;
             background: #fff;
-            max-width: 650px;
-            padding: 1.25rem 2rem;
-        }
-        .arch-row {
+            max-width: 700px;
+            padding: 1.5rem 2rem;
             display: flex;
             align-items: center;
-            gap: 1rem;
+            gap: 0;
         }
-        .arch-label {
+        .arch-spoke {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            flex: 1;
+        }
+        .arch-spoke-label {
             font-family: var(--mono);
-            font-size: 0.7rem;
-            letter-spacing: 0.04em;
+            font-size: 0.6rem;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
             color: var(--fg-dim);
-            min-width: 6rem;
-            text-align: right;
-            flex-shrink: 0;
+            margin-bottom: 0.25rem;
         }
+        .arch-spoke.right { align-items: flex-end; }
+        .arch-spoke.right .arch-spoke-label { text-align: right; }
         .arch-box {
             border: 1px solid var(--border);
             border-radius: 6px;
-            padding: 0.5rem 1rem;
-            font-size: 0.85rem;
+            padding: 0.4rem 0.9rem;
+            font-size: 0.8rem;
             color: var(--fg);
             background: var(--bg);
+            white-space: nowrap;
         }
-        .arch-box.accent {
-            border-color: var(--accent);
+        .arch-hub {
+            border: 2px solid var(--accent);
             background: var(--accent-soft);
             color: var(--accent);
             font-weight: 500;
-        }
-        .arch-arrow {
-            font-family: var(--mono);
-            font-size: 0.7rem;
-            color: var(--fg-dim);
+            border-radius: 10px;
+            padding: 1rem 1.25rem;
             text-align: center;
-            padding: 0.15rem 0;
-            margin-left: 6rem;
-            padding-left: 1rem;
+            font-size: 0.85rem;
+            line-height: 1.5;
+            flex-shrink: 0;
+            margin: 0 0.25rem;
+        }
+        .arch-hub strong {
+            display: block;
+            font-size: 0.95rem;
+        }
+        .arch-connector {
+            font-family: var(--mono);
+            font-size: 0.75rem;
+            color: var(--fg-dim);
+            padding: 0 0.5rem;
+            flex-shrink: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 0.15rem;
+        }
+        .arch-connector .conn-label {
+            font-size: 0.55rem;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
         }
 
         /* ── Mobile ── */
@@ -452,23 +476,26 @@ permalink: /nvc/deck/
             <p>Whatever AI you already use, Parachute makes it better. You don&rsquo;t switch anything &mdash; you <em>add</em> Parachute.</p>
         </div>
         <div class="arch-diagram">
-            <div class="arch-row">
-                <span class="arch-label">you</span>
+            <div class="arch-spoke">
+                <div class="arch-spoke-label">you interface with</div>
                 <span class="arch-box">Parachute Daily</span>
-                <span class="arch-box">Web &middot; Pendant &middot; Phone</span>
+                <span class="arch-box">Pendant</span>
+                <span class="arch-box">Phone &middot; Web</span>
             </div>
-            <div class="arch-arrow">&darr;</div>
-            <div class="arch-row">
-                <span class="arch-label">data</span>
-                <span class="arch-box accent">Parachute Server &mdash; Things &middot; Tags &middot; Tools</span>
+            <div class="arch-connector">&harr;</div>
+            <div class="arch-hub">
+                <strong>Parachute Server</strong>
+                Things &middot; Tags &middot; Tools
             </div>
-            <div class="arch-arrow">&darr; MCP</div>
-            <div class="arch-row">
-                <span class="arch-label">agents</span>
+            <div class="arch-connector">
+                &harr;
+                <span class="conn-label">MCP</span>
+            </div>
+            <div class="arch-spoke right">
+                <div class="arch-spoke-label">you also use</div>
                 <span class="arch-box">Claude</span>
                 <span class="arch-box">ChatGPT</span>
-                <span class="arch-box">OpenClaw</span>
-                <span class="arch-box">Any AI</span>
+                <span class="arch-box">Any AI agent</span>
             </div>
         </div>
     </section>
