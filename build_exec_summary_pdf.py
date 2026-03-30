@@ -73,18 +73,17 @@ class ExecSummaryPDF(FPDF):
 
     def bullet(self, bold, rest, after=0.04):
         indent = 0.25
-        self.set_font('Sans', '', 12)
-        self.set_text_color(*FG_DIM)
-        self.cell(indent, LINE_H, '\u2022 ')
-        if bold:
-            self.set_font('Vera', 'B', 12)
-            self.set_text_color(*FG)
-            bw = self.get_string_width(bold)
-            self.cell(bw, LINE_H, bold)
+        self.set_x(self.l_margin)
         self.set_font('Sans', '', 12)
         self.set_text_color(*FG_MUTED)
         rw = self.w - self.l_margin - self.r_margin - indent
-        self.multi_cell(rw, LINE_H, rest)
+        text = f'\u2022  {bold}{rest}' if bold else f'\u2022  {rest}'
+        # Use left margin + indent for wrapped lines
+        old_margin = self.l_margin
+        self.set_left_margin(self.l_margin + indent)
+        self.set_x(self.l_margin)
+        self.multi_cell(rw, LINE_H, text)
+        self.set_left_margin(old_margin)
         self.set_text_color(*FG)
         self.ln(after)
 
@@ -158,124 +157,89 @@ pdf.divider()
 pdf.heading('Opportunity Summary')
 
 pdf.body(
-    'Over 100 million people pay $20+/month for AI tools like Claude, ChatGPT, and emerging '
-    'agentic platforms. The agentic AI market is projected to exceed $50B by 2030 at a 44% CAGR. '
-    'But every platform\'s memory is shallow \u2014 basically one big text file. It remembers your '
-    'name, not six months of your thinking. There\'s no structured knowledge about your projects, '
-    'people, or patterns over time.'
+    'Over 100 million people pay $20+/month for AI. The agentic AI market will exceed $50B by 2030 '
+    '(44% CAGR). But every platform\'s memory is shallow \u2014 one big text file. It remembers your '
+    'name, not six months of your thinking. And there\'s no good way to think for yourself and have '
+    'that become context \u2014 you can talk to AI, but it\'s always a conversation with AI in the middle.'
 )
 
 pdf.body(
-    'There\'s also an upstream problem: how your thinking gets into the system. You can talk to '
-    'your AI, but that\'s a conversation \u2014 the AI is always in the middle. There\'s no good way '
-    'to think for yourself, capture that thinking naturally, and have it become context that '
-    'makes your AI better.'
-)
-
-pdf.body(
-    'Parachute solves both. Parachute Daily is a voice-first journaling app that captures your '
-    'thinking naturally. Under the hood, notes live in a graph database that any AI can access '
-    'via MCP (Model Context Protocol). You don\'t switch AI tools \u2014 you add Parachute, and '
-    'whatever AI you already use gets dramatically better.'
+    'Parachute solves both. Parachute Daily is a voice-first journal that captures your thinking '
+    'naturally. Notes live in a graph database any AI can access via MCP (Model Context Protocol). '
+    'You don\'t switch AI tools \u2014 you add Parachute, and whatever AI you use gets better.'
 )
 
 pdf.heading('Product or Service')
 
 pdf.bold_body(
-    'Parachute Daily ',
-    'is the first product. Users speak into a wearable pendant or their phone. Entries are '
-    'transcribed (offline-capable via on-device models), organized, and structured in a graph '
-    'database built on three primitives: Things, Tags, and Tools. A journal entry is a Thing. '
-    'A person mentioned across entries becomes a Thing. A project is a Thing with linked tasks '
-    'and notes. The graph grows organically from natural thinking.'
-)
-
-pdf.body(
-    'Because the system speaks MCP, any AI agent can read, search, and create structure in the '
-    'graph \u2014 scanning journals to generate people nodes, project nodes, pull in contact info. '
-    'Your notes become a living knowledge graph that compounds over time.'
+    'Parachute Daily: ',
+    'Users speak into a wearable pendant or phone. Entries are transcribed (offline via on-device '
+    'models), organized, and structured in a graph database built on three primitives: Things, Tags, '
+    'and Tools. Because the system speaks MCP, any AI can read, search, and create structure \u2014 '
+    'generating people nodes, project nodes, linking contact info. Notes become a living knowledge graph.'
 )
 
 pdf.bold_body(
     'The Pendant: ',
-    'a wearable voice capture device \u2014 press a button, talk, and your thoughts are '
-    'transcribed and structured. Working prototype with custom enclosure.'
+    'Wearable voice capture \u2014 press a button, talk, thoughts transcribed and structured. Working prototype.'
 )
 
 pdf.bold_body(
     'Current state: ',
-    'Python/FastAPI server, Flutter app (macOS, Android, web), graph-native storage, local '
-    'voice transcription via Sherpa-ONNX, MCP server. Daily beta launching April 2026, '
-    'production launch June 2026. OpenParachute PBC incorporated.'
+    'Python/FastAPI server, Flutter app (macOS, Android, web), graph-native storage, local transcription '
+    '(Sherpa-ONNX), MCP server. Beta launching April 2026, production June 2026. PBC incorporated.',
+    after=0.04
 )
-
-# ═══════════════════════════════════════════
-# PAGE 2 of 3
-# ═══════════════════════════════════════════
 
 pdf.heading('Competitive Differentiation')
 
 pdf.body(
-    'The personal AI space is crowded (TwinMind, Mem.ai, Granola, Day One, plus agent platforms '
-    'like Manus and ZoComputer). Rather than competing, Parachute is the layer underneath:'
+    'Rather than joining the race to build another AI agent (TwinMind, Mem.ai, Manus, ZoComputer), '
+    'Parachute is the layer underneath all of them:', after=0.04
 )
 
-pdf.bullet('Agent-native, not agent-competitive. ',
-    'Works with whatever AI you already use via MCP. Every AI user is a potential customer.')
-
-pdf.bullet('Capture over conversation. ',
-    'Tools for thinking for yourself, not just with AI. Independent thinking is what makes AI most useful.')
-
-pdf.bullet('Deep memory. ',
-    'A real graph database queryable across months and years, not a flat text file of preferences.')
-
-pdf.bullet('Open source (AGPL-3.0), local-first, PBC. ',
-    'The trust required for people to share their deepest thinking.')
-
-pdf.bullet('Context compounds. ',
-    'Months of accumulated personal context cannot be cloned. The switching cost is genuine value.',
-    after=0.06)
+pdf.bullet('Agent-native \u2014 ',
+    'Works with whatever AI you use via MCP. Every AI user is a potential customer.', after=0.02)
+pdf.bullet('Capture over conversation \u2014 ',
+    'Think for yourself first, bring AI in when ready. Independent thinking makes AI most useful.', after=0.02)
+pdf.bullet('Deep memory \u2014 ',
+    'A graph database queryable across months, not a flat text file.', after=0.02)
+pdf.bullet('Open source (AGPL-3.0), local-first, PBC \u2014 ',
+    'Trust required for people to share their deepest thinking.', after=0.02)
+pdf.bullet('Context compounds \u2014 ',
+    'Accumulated personal context can\'t be cloned. Switching cost is genuine value.',
+    after=0.04)
 
 pdf.heading('Market & Customer Analysis')
 
 pdf.body(
-    'Because Parachute complements rather than competes, every AI subscriber is a potential '
-    'customer \u2014 100M+ people and growing. Adjacent comparables: TwinMind ($5.7M raised at '
-    '$60M valuation), Obsidian (~$25M ARR), Day One (~$4.8M ARR), Mem.ai ($28.6M raised).'
-)
-
-pdf.body(
-    'Two target segments: (1) AI users who want better context \u2014 $2/month for sync + MCP '
-    'is a no-brainer add to an existing subscription; (2) Non-AI users who want a great '
-    'journal \u2014 voice-first capture with a wearable that gradually opens the AI ecosystem.'
+    'Every AI subscriber is a potential customer \u2014 100M+ and growing. Comparables: TwinMind '
+    '($5.7M at $60M val), Obsidian (~$25M ARR), Day One (~$4.8M ARR), Mem.ai ($28.6M raised). '
+    'Two segments: (1) AI users wanting better context ($2/mo sync + MCP); (2) non-AI users wanting '
+    'a great voice journal that gradually opens the AI ecosystem.'
 )
 
 pdf.bold_body('Validation: ',
-    '300+ community members in our Boulder ecosystem ready to onboard. 13 builders completed '
-    'our first Learn Vibe Build AI learning cohort. Active users in private beta.')
+    '300+ community members ready to onboard. 13 builders in first Learn Vibe Build cohort. '
+    'Active private beta users.', after=0.04)
 
 pdf.heading('Intellectual Property')
 
 pdf.body(
-    'Open source under AGPL-3.0 \u2014 a copyleft license that prevents proprietary forks while '
-    'keeping the codebase transparent. Defensible advantages: compounding user context, graph '
-    'database architecture, MCP integration layer, community trust.'
+    'AGPL-3.0 \u2014 copyleft license preventing proprietary forks. Defensible advantages: '
+    'compounding user context, graph architecture, MCP integration, community trust.', after=0.04
 )
-
-# ═══════════════════════════════════════════
-# PAGE 3 of 3
-# ═══════════════════════════════════════════
 
 pdf.heading('Management Team')
 
 pdf.bullet('Aaron Gabriel Neyer (Founder) \u2014 ',
-    'MA Ecopsychology, MS Creative Technology & Design (CU ATLAS). Founding engineer at two '
-    'startups. Former Google. 10+ years full-stack. Boulder Human Relations Commission Chair.')
-pdf.bullet('Jon Bo \u2014 ', 'Daily co-lead. Founding engineer at multiple startups.')
-pdf.bullet('Lucian Hymer \u2014 ', 'Server co-lead. Founding engineer at multiple startups.')
-pdf.bullet('Marvin Melzer \u2014 ', 'Hardware lead. Pendant prototype.')
+    'MS Creative Technology (CU ATLAS). Founding engineer at two startups. Former Google. '
+    '10+ years full-stack. Boulder Human Relations Commission Chair.', after=0.02)
+pdf.bullet('Jon Bo \u2014 ', 'Daily co-lead. Founding engineer at multiple startups.', after=0.02)
+pdf.bullet('Lucian Hymer \u2014 ', 'Server co-lead. Founding engineer at multiple startups.', after=0.02)
+pdf.bullet('Marvin Melzer \u2014 ', 'Hardware lead. Pendant prototype.', after=0.02)
 pdf.bullet('Neil Yarnal \u2014 ', 'Brand and design.', after=0.02)
-pdf.body('3\u20134 additional builders available for hire, scaling team from 5 to 9\u201310.')
+pdf.body('3\u20134 additional builders available, scaling team from 5 to 9\u201310.', after=0.04)
 
 pdf.heading('Financial Projections')
 
@@ -318,28 +282,25 @@ for r, row in enumerate(data):
         pdf.cell(col_w[c], rh, val, border=1, align='L' if c == 0 else 'C', fill=True)
     pdf.ln()
 
-pdf.ln(0.06)
+pdf.ln(0.04)
 pdf.set_text_color(*FG)
 
 pdf.bold_body('Revenue model: ',
-    'Free (offline, zero cost), $2/mo (sync + MCP), $5/mo (transcription), $10/mo (AI + vector '
-    'search). COGS are low \u2014 transcription and embeddings, not heavy inference. '
-    'Profitable by year three. Self-funded to date: $0 outside investment.')
+    'Free (offline, $0 cost), $2/mo (sync + MCP), $5/mo (transcription), $10/mo (AI + vector search). '
+    'Low COGS \u2014 transcription/embeddings, not heavy inference. Profitable by year three. '
+    'Self-funded to date.', after=0.04)
 
 pdf.heading('Investment')
 
 pdf.body(
-    'Raising $300,000 via SAFE note (YC standard) at $5M valuation cap. Early-believer '
-    'terms \u2014 TwinMind raised at $60M with 30K users; we are raising pre-launch.'
+    'Raising $300,000 via SAFE (YC standard) at $5M cap. Early-believer terms \u2014 TwinMind raised '
+    'at $60M with 30K users; we are raising pre-launch. Use of funds: core team full-time through '
+    '2026, infrastructure, production launch June 2026. Revenue on launch, growth to raise next '
+    'round by early 2027.', after=0.04
 )
 
-pdf.bold_body('Use of funds: ',
-    'Core team (founder + two co-leads) full-time through 2026, infrastructure, production '
-    'launch by June 2026. Revenue on launch, growth to raise a subsequent round by early 2027.')
-
 pdf.bold_body('NVC prize funds ($50,000): ',
-    'Accelerate team ramp-up, broader beta distribution, and earlier path to growth metrics '
-    'for our next raise.')
+    'Accelerate team ramp-up, broader beta distribution, earlier path to growth metrics.')
 
 # ═══════════════════════════════════════════
 # APPENDIX — Detailed Financial Information
