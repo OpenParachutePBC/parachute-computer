@@ -216,63 +216,67 @@ s = new_slide()
 section_label(s, "Agent-Native")
 slide_headline(s, "Don\u2019t compete with agents.\nBuild the tool layer they all need.")
 
-add_text_box(s, Inches(1.2), Inches(3.5), Inches(5.5), Inches(1.5),
-             "Your data lives in a graph database organized around\n"
-             "three primitives: Things, Tags, and Tools.\n\n"
-             "The whole system speaks MCP \u2014 the open standard\n"
-             "for connecting AI to tools.",
-             font_size=18, color=FG_MUTED, line_spacing=1.5)
+# Left column — text (keep within 5.5in to avoid diagram)
+add_text_box(s, Inches(1.2), Inches(3.5), Inches(5.2), Inches(1.2),
+             "Your data lives in a graph database organized\n"
+             "around three primitives: Things, Tags, and Tools.\n"
+             "The system speaks MCP \u2014 the open standard for\n"
+             "connecting AI to tools.",
+             font_size=16, color=FG_MUTED, line_spacing=1.45)
 
-add_text_box(s, Inches(1.2), Inches(5.3), Inches(5.5), Inches(1.0),
+add_text_box(s, Inches(1.2), Inches(4.9), Inches(5.2), Inches(0.9),
              "Your AI can read, search, and create structure.\n"
-             "People nodes. Project nodes. A living knowledge graph.",
-             font_size=16, color=FG_MUTED, line_spacing=1.5)
+             "People nodes. Project nodes.\n"
+             "A living knowledge graph.",
+             font_size=15, color=FG_MUTED, line_spacing=1.45)
 
-# Architecture diagram on the right
+# Right column — architecture diagram
+diag_left = Inches(7.0)
+diag_width = Inches(5.5)
 shape = s.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE,
-                           Inches(7.5), Inches(3.0), Inches(5), Inches(4.0))
+                           diag_left, Inches(3.0), diag_width, Inches(3.8))
 shape.fill.solid()
 shape.fill.fore_color.rgb = WHITE
 shape.line.color.rgb = BORDER
 shape.line.width = Pt(1)
 
-add_text_box(s, Inches(7.9), Inches(3.2), Inches(4), Inches(0.3),
+dl = Inches(7.4)  # text left within diagram
+add_text_box(s, dl, Inches(3.2), Inches(4.5), Inches(0.3),
              "YOU", font_size=10, color=FG_DIM, bold=True, font_name=FONT_MONO)
-add_text_box(s, Inches(7.9), Inches(3.5), Inches(4), Inches(0.4),
+add_text_box(s, dl, Inches(3.5), Inches(4.5), Inches(0.4),
              "Parachute Daily  \u00b7  Pendant  \u00b7  Phone", font_size=14, color=FG)
 
-add_text_box(s, Inches(9.5), Inches(3.95), Inches(1), Inches(0.3),
+add_text_box(s, Inches(9.2), Inches(3.9), Inches(1), Inches(0.3),
              "\u2193", font_size=14, color=FG_DIM, font_name=FONT_MONO,
              alignment=PP_ALIGN.CENTER)
 
-add_text_box(s, Inches(7.9), Inches(4.3), Inches(4), Inches(0.3),
+add_text_box(s, dl, Inches(4.2), Inches(4.5), Inches(0.3),
              "DATA", font_size=10, color=ACCENT, bold=True, font_name=FONT_MONO)
 
 # Accent box for server
 inner = s.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE,
-                           Inches(7.8), Inches(4.55), Inches(4.4), Inches(0.55))
+                           Inches(7.3), Inches(4.45), Inches(4.8), Inches(0.5))
 inner.fill.solid()
 inner.fill.fore_color.rgb = RGBColor(0xE8, 0xF5, 0xEC)
 inner.line.color.rgb = ACCENT
 inner.line.width = Pt(1)
-add_text_box(s, Inches(8.0), Inches(4.6), Inches(4), Inches(0.4),
+add_text_box(s, Inches(7.5), Inches(4.5), Inches(4.5), Inches(0.4),
              "Parachute Server \u2014 Things \u00b7 Tags \u00b7 Tools",
              font_size=13, color=ACCENT, bold=True)
 
-add_text_box(s, Inches(9.2), Inches(5.15), Inches(1.5), Inches(0.3),
+add_text_box(s, Inches(9.0), Inches(5.0), Inches(1.5), Inches(0.3),
              "\u2193 MCP", font_size=10, color=FG_DIM, font_name=FONT_MONO,
              alignment=PP_ALIGN.CENTER)
 
-add_text_box(s, Inches(7.9), Inches(5.5), Inches(4), Inches(0.3),
+add_text_box(s, dl, Inches(5.3), Inches(4.5), Inches(0.3),
              "AGENTS", font_size=10, color=FG_DIM, bold=True, font_name=FONT_MONO)
-add_text_box(s, Inches(7.9), Inches(5.8), Inches(4), Inches(0.4),
+add_text_box(s, dl, Inches(5.6), Inches(4.5), Inches(0.4),
              "Claude  \u00b7  ChatGPT  \u00b7  OpenClaw  \u00b7  Any AI", font_size=14, color=FG)
 
-# Thesis line
-add_text_box(s, Inches(1.2), Inches(6.3), Inches(10), Inches(0.6),
-             "We\u2019re not trying to build the most intelligent tool.\n"
-             "We\u2019re building the most important tool for intelligent systems to use.",
-             font_size=20, color=FG, font_name=FONT_SERIF, line_spacing=1.3)
+# Thesis line — bottom, full width
+add_text_box(s, Inches(1.2), Inches(6.3), Inches(11), Inches(0.6),
+             "We\u2019re not trying to build the most intelligent tool. We\u2019re building the most important tool for intelligent systems to use.",
+             font_size=18, color=FG, font_name=FONT_SERIF, line_spacing=1.2)
 
 
 # ═══════════════════════════════════════════════
@@ -454,10 +458,10 @@ items = [
 y = Inches(3.6)
 for item in items:
     add_text_box(s, Inches(1.3), y + Inches(0.02), Inches(0.3), Inches(0.3),
-                 "\u2022", font_size=14, color=ACCENT)
-    add_text_box(s, Inches(1.7), y, Inches(5), Inches(0.4),
-                 item, font_size=15, color=FG_MUTED, line_spacing=1.3)
-    y += Inches(0.5)
+                 "\u2022", font_size=12, color=ACCENT)
+    add_text_box(s, Inches(1.7), y, Inches(5), Inches(0.35),
+                 item, font_size=13, color=FG_MUTED, line_spacing=1.2)
+    y += Inches(0.42)
 
 # Team card
 shape = s.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE,
