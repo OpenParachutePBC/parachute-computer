@@ -1,27 +1,45 @@
 """Build NVC pitch deck by screenshotting the web version of each slide.
 Produces pixel-perfect PPTX that matches the web styling exactly."""
 
+import http.server
 import os
 import tempfile
+import threading
 from pathlib import Path
 from playwright.sync_api import sync_playwright
 from pptx import Presentation
 from pptx.util import Inches
 
 SITE_DIR = Path(__file__).parent / "website" / "_site"
-DECK_URL = f"file://{SITE_DIR}/nvc/deck/index.html"
+PORT = 8765
+DECK_URL = f"http://localhost:{PORT}/nvc/deck/"
 SLIDE_WIDTH = Inches(13.333)
 SLIDE_HEIGHT = Inches(7.5)
-VIEWPORT_W = 1920
-VIEWPORT_H = 1080
+VIEWPORT_W = 1280
+VIEWPORT_H = 720
+DEVICE_SCALE = 2  # 2x for crisp output (2560x1440 actual pixels)
+
+
+def _start_server():
+    """Start a local HTTP server serving the _site directory."""
+    handler = http.server.SimpleHTTPRequestHandler
+    server = http.server.HTTPServer(("localhost", PORT), handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server
 
 
 def screenshot_slides(output_dir: str) -> list[str]:
     """Open the deck page and screenshot each .slide section."""
+    os.chdir(SITE_DIR)
+    server = _start_server()
     paths = []
     with sync_playwright() as p:
         browser = p.chromium.launch()
-        page = browser.new_page(viewport={"width": VIEWPORT_W, "height": VIEWPORT_H})
+        page = browser.new_page(
+            viewport={"width": VIEWPORT_W, "height": VIEWPORT_H},
+            device_scale_factor=DEVICE_SCALE,
+        )
         page.goto(DECK_URL, wait_until="networkidle")
 
         # Hide the fixed download bar so it doesn't overlay slides
@@ -63,6 +81,7 @@ def screenshot_slides(output_dir: str) -> list[str]:
             print(f"  Captured slide {i+1}")
 
         browser.close()
+    server.shutdown()
     return paths
 
 
