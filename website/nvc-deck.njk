@@ -319,17 +319,17 @@ permalink: /nvc/deck/
             border-radius: 10px;
             overflow: hidden;
             background: #fff;
-            max-width: 700px;
+            max-width: 650px;
             padding: 1.5rem 2rem;
             display: flex;
             align-items: center;
+            justify-content: center;
             gap: 0;
         }
         .arch-spoke {
             display: flex;
             flex-direction: column;
             gap: 0.5rem;
-            flex: 1;
         }
         .arch-spoke-label {
             font-family: var(--mono);
@@ -477,10 +477,9 @@ permalink: /nvc/deck/
         </div>
         <div class="arch-diagram">
             <div class="arch-spoke">
-                <div class="arch-spoke-label">you interface with</div>
-                <span class="arch-box">Parachute Daily</span>
-                <span class="arch-box">Pendant</span>
-                <span class="arch-box">Phone &middot; Web</span>
+                <div class="arch-spoke-label">your tools</div>
+                <span class="arch-box">Parachute Daily <span style="color: var(--fg-dim); font-size: 0.7rem;">&ensp;phone &middot; web</span></span>
+                <span class="arch-box">Parachute Pendant</span>
             </div>
             <div class="arch-connector">&harr;</div>
             <div class="arch-hub">
@@ -492,7 +491,7 @@ permalink: /nvc/deck/
                 <span class="conn-label">MCP</span>
             </div>
             <div class="arch-spoke right">
-                <div class="arch-spoke-label">you also use</div>
+                <div class="arch-spoke-label">your AI</div>
                 <span class="arch-box">Claude</span>
                 <span class="arch-box">ChatGPT</span>
                 <span class="arch-box">Any AI agent</span>
