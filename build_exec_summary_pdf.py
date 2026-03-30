@@ -110,7 +110,7 @@ pdf.ln(0.15)
 
 pdf.set_font('Sans', '', 14)
 pdf.set_text_color(*FG_MUTED)
-pdf.cell(0, 0.3, 'The personal data layer for every AI', align='C', new_x="LMARGIN", new_y="NEXT")
+pdf.cell(0, 0.3, 'Human-native. Agent-native. One memory layer.', align='C', new_x="LMARGIN", new_y="NEXT")
 pdf.ln(0.6)
 
 pdf.set_draw_color(*ACCENT)
@@ -128,7 +128,7 @@ cover_lines = [
     'Colorado Public Benefit Corporation',
     '',
     'Aaron Gabriel Neyer, Founder',
-    'aaron@parachute.computer \u2022 (720) 616-7550',
+    'aaron@parachute.computer \u2022 (513) 593-1721',
     'Boulder, Colorado',
     '',
     'Team: Jon Bo, Lucian Hymer, Marvin Melzer, Neil Yarnal',
@@ -149,7 +149,7 @@ pdf.set_text_color(*FG)
 pdf.cell(0, 0.2, 'Open Parachute, PBC \u2014 Colorado Public Benefit Corporation', new_x="LMARGIN", new_y="NEXT")
 pdf.set_font('Sans', '', 10)
 pdf.set_text_color(*FG_MUTED)
-pdf.cell(0, 0.2, 'Aaron Gabriel Neyer, Founder \u2014 aaron@parachute.computer \u2014 (720) 616-7550 \u2014 Boulder, CO', new_x="LMARGIN", new_y="NEXT")
+pdf.cell(0, 0.2, 'Aaron Gabriel Neyer, Founder \u2014 aaron@parachute.computer \u2014 (513) 593-1721 \u2014 Boulder, CO', new_x="LMARGIN", new_y="NEXT")
 pdf.cell(0, 0.2, 'Team: Jon Bo (Daily Co-lead), Lucian Hymer (Server Co-lead), Marvin Melzer (Hardware), Neil Yarnal (Design)', new_x="LMARGIN", new_y="NEXT")
 pdf.ln(0.06)
 pdf.divider()
@@ -220,7 +220,9 @@ pdf.body(
 )
 
 pdf.bold_body('Validation: ',
-    '300+ community members ready to onboard. 13 builders in first Learn Vibe Build cohort. '
+    '300+ community members ready to onboard. We also run Learn Vibe Build, an AI learning school '
+    'that teaches people to build with these tools \u2014 a direct organic growth channel where every '
+    'participant becomes a Parachute user. Cohort 0 complete, Cohort 1 launching April 2026. '
     'Active private beta users.', after=0.04)
 
 pdf.heading('Intellectual Property')
@@ -233,8 +235,8 @@ pdf.body(
 pdf.heading('Management Team')
 
 pdf.bullet('Aaron Gabriel Neyer (Founder) \u2014 ',
-    'MS Creative Technology (CU ATLAS). Founding engineer at two startups. Former Google. '
-    '10+ years full-stack. Boulder Human Relations Commission Chair.', after=0.02)
+    'MA Ecopsychology, MS Creative Technology & Design (CU ATLAS, graduating May 2026). '
+    'Founding engineer at two startups. Former Google. 10+ years full-stack.', after=0.02)
 pdf.bullet('Jon Bo \u2014 ', 'Daily co-lead. Founding engineer at multiple startups.', after=0.02)
 pdf.bullet('Lucian Hymer \u2014 ', 'Server co-lead. Founding engineer at multiple startups.', after=0.02)
 pdf.bullet('Marvin Melzer \u2014 ', 'Hardware lead. Pendant prototype.', after=0.02)
