@@ -8,471 +8,208 @@ permalink: /nvc/
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Parachute — NVC Executive Summary</title>
     <meta name="robots" content="noindex">
-    <meta name="description" content="Open Parachute PBC — New Venture Challenge Executive Summary">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;1,9..40,400&family=JetBrains+Mono:wght@400&display=swap">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&display=swap">
     <style>
         :root {
-            --bg:           #faf8f4;
-            --bg-soft:      #f3f0ea;
-            --fg:           #2c2a26;
-            --fg-muted:     #6b6860;
-            --fg-dim:       #9a9690;
-            --accent:       #4a7c59;
-            --accent-soft:  rgba(74, 124, 89, 0.08);
-            --accent-light: #6a9b77;
-            --border:       #e4e0d8;
-            --serif: 'Instrument Serif', Georgia, serif;
-            --sans:  'DM Sans', system-ui, sans-serif;
-            --mono:  'JetBrains Mono', monospace;
-            --content-width: 760px;
+            --fg:       #1a1a1a;
+            --fg-muted: #555;
+            --accent:   #4a7c59;
+            --border:   #ddd;
         }
 
         *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
-        html { scroll-behavior: smooth; }
 
         body {
-            background: var(--bg);
-            font-family: var(--sans);
+            font-family: 'DM Sans', system-ui, sans-serif;
+            font-size: 12pt;
+            line-height: 1.5;
             color: var(--fg);
-            -webkit-font-smoothing: antialiased;
-            line-height: 1.6;
-        }
-
-        /* ── Page header ── */
-        .page-header {
-            padding: 2.5rem 3rem;
-            display: flex;
-            align-items: baseline;
-            justify-content: space-between;
-            border-bottom: 1px solid var(--border);
-            position: sticky;
-            top: 0;
-            background: var(--bg);
-            z-index: 100;
-        }
-        .page-header-logo {
-            font-family: var(--serif);
-            font-size: 1.1rem;
-            color: var(--fg);
-            letter-spacing: 0.01em;
-        }
-        .page-header-meta {
-            font-family: var(--mono);
-            font-size: 0.65rem;
-            color: var(--fg-dim);
-            letter-spacing: 0.1em;
-            text-transform: uppercase;
-        }
-
-        /* ── Content wrapper ── */
-        .content {
-            max-width: var(--content-width);
+            max-width: 7.5in;
             margin: 0 auto;
-            padding: 0 2rem;
+            padding: 1in;
         }
 
-        /* ── Opening ── */
-        .opening {
-            padding: 6rem 0 5rem;
-            border-bottom: 1px solid var(--border);
+        h1 {
+            font-size: 18pt;
+            font-weight: 600;
+            margin-bottom: 0.25rem;
+            line-height: 1.2;
         }
-        .opening-eyebrow {
-            font-family: var(--mono);
-            font-size: 0.7rem;
-            letter-spacing: 0.1em;
-            text-transform: uppercase;
-            color: var(--fg-dim);
-            margin-bottom: 2rem;
-        }
-        .opening h1 {
-            font-family: var(--serif);
-            font-size: clamp(2.5rem, 6vw, 4rem);
-            font-weight: 400;
-            letter-spacing: -0.025em;
-            line-height: 1.05;
-            color: var(--fg);
-            margin-bottom: 2rem;
-        }
-        .opening h1 em {
-            font-style: italic;
+
+        .subtitle {
+            font-size: 12pt;
             color: var(--fg-muted);
+            margin-bottom: 0.75rem;
         }
-        .opening-contact {
-            font-size: 0.85rem;
+
+        .contact {
+            font-size: 10pt;
             color: var(--fg-muted);
-            line-height: 1.7;
-        }
-        .opening-contact strong { color: var(--fg); font-weight: 500; }
-
-        /* ── Sections ── */
-        .section {
-            padding: 4rem 0 3.5rem;
-            border-bottom: 1px solid var(--border);
-        }
-        .section:last-child {
-            border-bottom: none;
-            padding-bottom: 6rem;
-        }
-
-        .section-label {
-            font-size: 0.65rem;
-            letter-spacing: 0.14em;
-            text-transform: uppercase;
-            color: var(--accent);
-            font-weight: 500;
-            margin-bottom: 1.25rem;
-            font-family: var(--sans);
-        }
-
-        .section-headline {
-            font-family: var(--serif);
-            font-size: clamp(1.8rem, 4vw, 2.5rem);
-            font-weight: 400;
-            letter-spacing: -0.02em;
-            line-height: 1.12;
-            color: var(--fg);
             margin-bottom: 1.5rem;
-        }
-
-        .section-body {
-            color: var(--fg-muted);
-        }
-        .section-body p {
-            font-size: 1rem;
-            line-height: 1.75;
-            margin-bottom: 1rem;
-            max-width: 660px;
-        }
-        .section-body p:last-child { margin-bottom: 0; }
-        .section-body strong { color: var(--fg); font-weight: 500; }
-
-        /* ── Lists ── */
-        .section-body ul {
-            list-style: none;
-            margin-top: 0.5rem;
-            margin-bottom: 1rem;
-        }
-        .section-body li {
-            padding: 0.55rem 0 0.55rem 1.5rem;
-            position: relative;
-            font-size: 0.95rem;
             line-height: 1.6;
-            color: var(--fg-muted);
-            border-bottom: 1px solid var(--border);
         }
-        .section-body li:first-child { border-top: 1px solid var(--border); }
-        .section-body li::before {
-            content: "›";
-            position: absolute;
-            left: 0.25rem;
-            color: var(--accent-light);
-        }
-        .section-body li strong { color: var(--fg); font-weight: 500; }
 
-        /* ── Financial table ── */
-        .fin-table {
-            margin: 1rem 0;
-            border: 1px solid var(--border);
-            border-radius: 10px;
-            overflow: hidden;
-            background: #fff;
-            width: 100%;
+        h2 {
+            font-size: 13pt;
+            font-weight: 600;
+            color: var(--accent);
+            margin-top: 1.25rem;
+            margin-bottom: 0.35rem;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
         }
-        .fin-table table {
+
+        p {
+            margin-bottom: 0.5rem;
+        }
+
+        strong { font-weight: 600; }
+
+        ul {
+            margin: 0.25rem 0 0.5rem 1.25rem;
+        }
+        li {
+            margin-bottom: 0.15rem;
+        }
+
+        table {
             width: 100%;
             border-collapse: collapse;
+            margin: 0.5rem 0;
+            font-size: 11pt;
         }
-        .fin-table th {
-            font-size: 0.75rem;
-            letter-spacing: 0.06em;
-            text-transform: uppercase;
-            color: var(--fg-dim);
-            font-weight: 500;
+        th {
             text-align: left;
-            padding: 0.85rem 1.25rem;
-            border-bottom: 1px solid var(--border);
-            background: var(--bg-soft);
-        }
-        .fin-table td {
-            font-size: 0.9rem;
+            font-weight: 600;
+            font-size: 10pt;
+            padding: 0.3rem 0.5rem;
+            border-bottom: 2px solid var(--border);
             color: var(--fg-muted);
-            padding: 0.75rem 1.25rem;
-            border-bottom: 1px solid var(--border);
         }
-        .fin-table tr:last-child td { border-bottom: none; }
-        .fin-table td:first-child {
-            font-weight: 500;
-            color: var(--fg);
-            font-size: 0.85rem;
+        td {
+            padding: 0.25rem 0.5rem;
+            border-bottom: 1px solid #eee;
         }
-        .fin-table td.highlight {
-            color: var(--accent);
-            font-weight: 500;
+        td:first-child { font-weight: 500; }
+
+        .team-list {
+            margin: 0.25rem 0 0.5rem 0;
+            list-style: none;
+            padding: 0;
+        }
+        .team-list li {
+            margin-bottom: 0.2rem;
+            padding: 0;
         }
 
-        /* ── Team grid ── */
-        .team-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 0;
-            margin-top: 0.5rem;
+        .downloads {
+            margin-top: 1.5rem;
+            padding-top: 0.75rem;
+            border-top: 1px solid var(--border);
+            display: flex;
+            gap: 0.75rem;
+            flex-wrap: wrap;
+        }
+        .downloads a {
+            display: inline-block;
+            padding: 0.4rem 0.85rem;
+            background: var(--accent);
+            color: #fff;
+            border-radius: 5px;
+            text-decoration: none;
+            font-size: 10pt;
+            font-weight: 500;
+        }
+        .downloads a.secondary {
+            background: #f5f5f5;
+            color: var(--fg);
             border: 1px solid var(--border);
-            border-radius: 10px;
-            overflow: hidden;
-            background: #fff;
         }
-        .member {
-            padding: 1.25rem 1.5rem;
-            border-bottom: 1px solid var(--border);
-            border-right: 1px solid var(--border);
-        }
-        .member:nth-child(2n) { border-right: none; }
-        .member:nth-last-child(-n+2) { border-bottom: none; }
-        .member:last-child:nth-child(odd) {
-            border-right: none;
-            grid-column: span 2;
-        }
-        .member strong {
-            display: block;
-            color: var(--fg);
-            font-weight: 500;
-            font-size: 0.9rem;
-            margin-bottom: 0.25rem;
-        }
-        .member span { font-size: 0.825rem; color: var(--fg-muted); line-height: 1.45; }
 
-        /* ── Callout ── */
-        .callout {
-            background: var(--accent-soft);
-            border: 1px solid rgba(74,124,89,0.15);
-            border-radius: 8px;
-            padding: 1rem 1.25rem;
-            font-size: 0.875rem;
-            color: var(--fg-muted);
-            line-height: 1.6;
-            margin-top: 0.75rem;
-        }
-        .callout strong { color: var(--fg); font-weight: 500; }
-
-        /* ── Mobile ── */
-        @media (max-width: 640px) {
-            .page-header { padding: 1.5rem; }
-            .content { padding: 0 1.25rem; }
-            .opening { padding: 4rem 0 3rem; }
-            .section { padding: 3rem 0 2.5rem; }
-            .team-grid { grid-template-columns: 1fr; }
-            .member { border-right: none; }
-            .member:last-child:nth-child(odd) { grid-column: span 1; }
+        @media print {
+            body { padding: 0; }
         }
     </style>
 </head>
 <body>
 
-<header class="page-header">
-    <span class="page-header-logo">Parachute</span>
-    <span class="page-header-meta">Executive Summary · NVC 2026</span>
-</header>
+<h1>Parachute</h1>
+<div class="subtitle">The personal data layer for every AI</div>
+<div class="contact">
+    <strong>Open Parachute, PBC</strong> — Colorado Public Benefit Corporation<br>
+    Aaron Gabriel Neyer, Founder — aaron@parachute.computer — (720) 616-7550 — Boulder, CO<br>
+    Team: Jon Bo (Daily Co-lead), Lucian Hymer (Server Co-lead), Marvin Melzer (Hardware), Neil Yarnal (Brand & Design)
+</div>
 
-<div class="content">
+<h2>Opportunity Summary</h2>
+<p>Over 100 million people pay $20+/month for AI tools like Claude, ChatGPT, and emerging agentic platforms. The agentic AI market is projected to exceed $50B by 2030 at a 44% CAGR. But every platform's memory is shallow — basically one big text file. It remembers your name, not six months of your thinking. There's no structured knowledge about your projects, people, or patterns over time.</p>
+<p>There's also an upstream problem: <em>how</em> your thinking gets into the system. You can talk to your AI, but that's a conversation — the AI is always in the middle. There's no good way to think for yourself, capture that thinking naturally, and have it become context that makes your AI better.</p>
+<p>Parachute solves both. <strong>Parachute Daily</strong> is a voice-first journaling app that captures your thinking naturally. Under the hood, notes live in a graph database that any AI can access via MCP (Model Context Protocol). You don't switch AI tools — you add Parachute, and whatever AI you already use gets dramatically better.</p>
 
-    <!-- Opening -->
-    <div class="opening">
-        <div class="opening-eyebrow">Open Parachute, PBC — Colorado Public Benefit Corporation</div>
-        <h1>The personal data layer<br>for <em>every AI.</em></h1>
-        <div class="opening-contact">
-            <strong>Aaron Gabriel Neyer</strong> — Founder<br>
-            aaron@parachute.computer · Boulder, CO<br><br>
-            <strong>Team:</strong> Jon Bo (Daily Co-lead), Lucian Hymer (Server Co-lead), Marvin Melzer (Hardware), Neil Yarnal (Brand & Design)
-        </div>
-        <div style="margin-top: 1.5rem; display: flex; gap: 1rem; flex-wrap: wrap;">
-            <a href="/nvc/ES_Parachute.pdf" download style="display: inline-block; padding: 0.5rem 1rem; background: var(--accent); color: #fff; border-radius: 6px; text-decoration: none; font-size: 0.85rem; font-weight: 500;">Download Executive Summary (PDF)</a>
-            <a href="/nvc/Parachute.pptx" download style="display: inline-block; padding: 0.5rem 1rem; background: var(--accent); color: #fff; border-radius: 6px; text-decoration: none; font-size: 0.85rem; font-weight: 500;">Download Pitch Deck (PPTX)</a>
-            <a href="/nvc/deck/" style="display: inline-block; padding: 0.5rem 1rem; background: var(--bg-soft); color: var(--fg); border: 1px solid var(--border); border-radius: 6px; text-decoration: none; font-size: 0.85rem; font-weight: 500;">View Deck Online</a>
-        </div>
-    </div>
+<h2>Product or Service</h2>
+<p><strong>Parachute Daily</strong> is the first product. Users speak into a wearable pendant or their phone. Entries are transcribed (offline-capable via on-device models), organized, and structured in a graph database built on three primitives: <strong>Things, Tags, and Tools</strong>. A journal entry is a Thing. A person mentioned across entries becomes a Thing. A project is a Thing with linked tasks and notes. The graph grows organically from natural thinking.</p>
+<p>Because the system speaks MCP, any AI agent can read, search, and create structure in the graph — scanning journals to generate people nodes, project nodes, pull in contact info. Your notes become a living knowledge graph that compounds over time.</p>
+<p><strong>The Pendant</strong> is a wearable voice capture device — press a button, talk, and your thoughts are transcribed and structured. Working prototype with custom enclosure.</p>
+<p><strong>Current state:</strong> Python/FastAPI server, Flutter app (macOS, Android, web), graph-native storage, local voice transcription via Sherpa-ONNX, MCP server. Daily beta launching April 2026, production launch June 2026. OpenParachute PBC incorporated.</p>
 
-    <!-- Opportunity Summary -->
-    <section class="section">
-        <div class="section-label">Opportunity Summary</div>
-        <h2 class="section-headline">Everyone is racing to build AI agents.<br>No one is building the personal data layer they all need.</h2>
-        <div class="section-body">
-            <p>Personal agentic computing is the defining shift in how people interact with technology. OpenClaw, Claude Cowork, ZoComputer, Perplexity Computer, Manus — over 100 million people already pay $20+/month for AI. The agentic AI market is projected to exceed <strong>$50B by 2030</strong> at a 44% CAGR.</p>
-            <p>But features get cloned in weeks. It's a race to the bottom backed by billions of dollars. And despite all this investment, every platform's memory is shallow — basically one big text file. It remembers your name, not six months of your thinking. There's no structured knowledge about your projects, your people, your patterns over time.</p>
-            <p>There's a deeper problem upstream: <em>how</em> your thinking gets into the system. You can talk to your AI, but that's a conversation — the AI is always in the middle. There's no good way to think for yourself, capture that thinking naturally, and have it become context that makes your AI better. Tools that help us think for ourselves — not just think <em>with</em> AI — produce the quality of thinking that makes AI most useful.</p>
-            <p>Parachute solves both problems. <strong>Parachute Daily</strong> is a voice-first journaling app that makes it effortless to capture your thinking — on a walk, in the car, wherever it happens. Under the hood, those notes live in a graph database that any AI can access via MCP (Model Context Protocol). You don't switch AI tools. You add Parachute — and whatever AI you already use gets dramatically better.</p>
-        </div>
-    </section>
+<h2>Competitive Differentiation</h2>
+<p>The personal AI space is crowded (TwinMind, Mem.ai, Granola, Day One, plus agent platforms like Manus and ZoComputer). Rather than competing, Parachute is the layer <em>underneath</em>:</p>
+<ul>
+    <li><strong>Agent-native, not agent-competitive</strong> — works with whatever AI you already use via MCP. Every AI user is a potential customer.</li>
+    <li><strong>Capture over conversation</strong> — tools for thinking for yourself, not just with AI. Independent thinking is what makes AI most useful.</li>
+    <li><strong>Deep memory</strong> — a real graph database queryable across months and years, not a flat text file of preferences.</li>
+    <li><strong>Open source (AGPL-3.0), local-first, PBC</strong> — the trust required for people to share their deepest thinking.</li>
+    <li><strong>Context compounds</strong> — months of accumulated personal context cannot be cloned. The switching cost is genuine value.</li>
+</ul>
 
-    <!-- Product or Service -->
-    <section class="section">
-        <div class="section-label">Product or Service</div>
-        <h2 class="section-headline">Simple for humans.<br>Native for AI.</h2>
-        <div class="section-body">
-            <p><strong>Parachute Daily</strong> is the first product. Users speak into a wearable pendant or their phone. Entries are transcribed (offline-capable via on-device models), organized, and structured. It works fully offline as a simple journal for free; cloud sync and MCP access unlock at $2/month, cloud transcription at $5/month, and AI features (reflections, vector search, synthesis) at $10/month.</p>
-            <p><strong>Under the hood</strong>, notes live in a graph database organized around three primitives: <strong>Things, Tags, and Tools</strong>. This architecture is deliberately simple but powerful. A journal entry is a Thing tagged as "daily note." A person mentioned in your journals can be a Thing tagged as "person" with linked contact info. A project is a Thing with linked tasks and notes. The graph grows organically from your natural thinking.</p>
-            <p>Because the system speaks MCP, any AI agent can read, search, and even create structure in your graph. Your AI can scan journals and generate people nodes, project nodes, link them together, pull in contact info. Your notes become a <strong>living knowledge graph</strong> — and the more structure it has, the more powerful your AI becomes, regardless of which AI you choose.</p>
-            <p><strong>The Pendant</strong> is a wearable voice capture device. Press a button, talk, and by the time you're home your thoughts are transcribed and structured. Working prototype built with custom Parachute enclosure.</p>
-            <p><strong>Current state:</strong> Working Python/FastAPI server, Flutter app (macOS, Android, web), graph-native storage, local voice transcription via Sherpa-ONNX, MCP server. Functional pendant prototype. Daily beta launching this month, with production launch targeted for June 2026. OpenParachute PBC incorporated in Colorado.</p>
-        </div>
-    </section>
+<h2>Market & Customer Analysis</h2>
+<p>Because Parachute complements rather than competes, every AI subscriber is a potential customer — 100M+ people and growing. Adjacent comparables: TwinMind ($5.7M raised at $60M valuation), Obsidian (~$25M ARR), Day One (~$4.8M ARR), Mem.ai ($28.6M raised).</p>
+<p>Two target segments: (1) <strong>AI users who want better context</strong> — $2/month for sync + MCP is a no-brainer add to an existing AI subscription; (2) <strong>Non-AI users who want a great journal</strong> — voice-first capture with a wearable that gradually opens the AI ecosystem.</p>
+<p><strong>Validation:</strong> 300+ community members in our Boulder ecosystem ready to onboard. 13 builders completed our first Learn Vibe Build AI learning cohort. Active users in private beta providing feedback.</p>
 
-    <!-- Competitive Differentiation -->
-    <section class="section">
-        <div class="section-label">Competitive Differentiation</div>
-        <h2 class="section-headline">Don't compete with agents.<br>Build the tool layer they all need.</h2>
-        <div class="section-body">
-            <p>The personal AI space is crowded — OpenClaw, TwinMind, Mem.ai, ZoComputer, Perplexity Computer, Manus. Rather than joining the race to build another agent, Parachute differentiates by being the layer <em>underneath</em> all of them:</p>
-            <ul>
-                <li><strong>Agent-native, not agent-competitive</strong> — Parachute works with whatever AI you already use via MCP. You don't switch — you add. This means every AI user is a potential customer, not just people willing to migrate.</li>
-                <li><strong>Capture over conversation</strong> — Talking to your AI is a conversation. Parachute helps you think for yourself — capture your own thinking naturally, then bring AI in when you're ready. That independent thinking is what makes AI most useful.</li>
-                <li><strong>Deep memory, not shallow</strong> — Not a flat text file of preferences. A real graph database that can be queried across months and years, with structured knowledge about your people, projects, and patterns.</li>
-                <li><strong>Open source as trust</strong> — AGPL-3.0, local-first, data on your device. Public Benefit Corporation. The trust required for people to share their deepest thinking with a system.</li>
-                <li><strong>Context compounds as the moat</strong> — Software gets cloned in a day. Months of accumulated personal context cannot. The switching cost is genuine value, not lock-in.</li>
-            </ul>
-        </div>
-    </section>
+<h2>Intellectual Property</h2>
+<p>Open source under <strong>AGPL-3.0</strong> — a copyleft license that prevents proprietary forks while keeping the codebase transparent. Defensible advantages: compounding user context, graph database architecture, MCP integration layer, community trust. Open source builds the trust necessary for people to share personal thinking with a system.</p>
 
-    <!-- Market and Customer Analysis -->
-    <section class="section">
-        <div class="section-label">Market & Customer Analysis</div>
-        <h2 class="section-headline">Every AI user is a potential customer.</h2>
-        <div class="section-body">
-            <p>The agentic AI market is projected to exceed $50B by 2030 at a 44% CAGR. Over 100 million people already pay $20+/month for AI — and that number is growing rapidly. Because Parachute complements rather than competes with these tools, <strong>every one of those users is a potential customer</strong>.</p>
-            <p>Adjacent comparables: TwinMind ($5.7M raised at $60M valuation), Obsidian (~$25M ARR as a note-taking tool), Day One (~$4.8M ARR as a journaling app), Mem.ai ($28.6M raised for AI-powered knowledge management).</p>
-            <p>We target two overlapping segments:</p>
-            <ul>
-                <li><strong>AI users who want better context</strong> — People already paying for Claude, ChatGPT, or other AI tools who want their AI to actually know them. $2/month for sync + MCP access is a no-brainer addition to their existing AI subscription.</li>
-                <li><strong>Non-AI users who want a great journal</strong> — People who aren't using AI yet but want a simple, voice-first way to capture their thinking. Daily gives them AI-light features that gradually open up the ecosystem. The pendant makes capture effortless.</li>
-            </ul>
-            <p><strong>Validation:</strong> 300+ community members in our Boulder ecosystem ready to onboard. 13 builders completed our first Learn Vibe Build AI learning cohort. Active users in private beta providing ongoing feedback.</p>
-        </div>
-    </section>
+<h2>Management Team</h2>
+<ul class="team-list">
+    <li><strong>Aaron Gabriel Neyer, Founder</strong> — Product vision and system architecture. MA Ecopsychology, MS Creative Technology & Design (CU Boulder ATLAS). Founding engineer at two startups. Former Google. 10+ years full-stack. Boulder Human Relations Commission Chair.</li>
+    <li><strong>Jon Bo, Daily Co-lead</strong> — Founding engineer at multiple startups. Leading product direction for Parachute Daily.</li>
+    <li><strong>Lucian Hymer, Server Co-lead</strong> — Founding engineer at multiple startups. Leading graph database and MCP server architecture.</li>
+    <li><strong>Marvin Melzer, Hardware</strong> — Developing the wearable pendant. Experienced hardware designer and engineer.</li>
+    <li><strong>Neil Yarnal, Brand & Design</strong> — Visual identity and product design.</li>
+</ul>
+<p>3-4 additional experienced builders available for hire as funding increases, scaling from 5 to 9-10.</p>
 
-    <!-- IP -->
-    <section class="section">
-        <div class="section-label">Intellectual Property</div>
-        <h2 class="section-headline">Open source is the strategy.</h2>
-        <div class="section-body">
-            <p>Parachute is open source under the <strong>AGPL-3.0 license</strong> — a copyleft license that requires anyone who runs a modified version as a hosted service to share their changes. This protects against proprietary forks while keeping the codebase fully transparent.</p>
-            <p>Our defensible advantages are the compounding user context (which lives with each user and grows over time), the graph database architecture (Things, Tags, Tools), the MCP integration layer, the community ecosystem, and the trust earned by building in the open. Open source is a competitive advantage: it builds the trust necessary for people to share their most personal thinking with a system.</p>
-        </div>
-    </section>
+<h2>Financial Projections</h2>
+<table>
+    <thead>
+        <tr><th></th><th>2026</th><th>2027</th><th>2028</th><th>2029</th><th>2030</th></tr>
+    </thead>
+    <tbody>
+        <tr><td>Free users</td><td>5,000</td><td>75,000</td><td>500,000</td><td>1,500,000</td><td>4,000,000</td></tr>
+        <tr><td>Paid subscribers</td><td>500</td><td>8,000</td><td>50,000</td><td>200,000</td><td>600,000</td></tr>
+        <tr><td>Avg rev / subscriber</td><td>~$5/mo</td><td>~$5/mo</td><td>~$5/mo</td><td>~$5/mo</td><td>~$6/mo</td></tr>
+        <tr><td>Revenue (ARR)</td><td>$30K</td><td>$480K</td><td>$3M</td><td>$12M</td><td>$43M</td></tr>
+        <tr><td>Total opex</td><td>$160K</td><td>$500K</td><td>$1.2M</td><td>$4M</td><td>$12M</td></tr>
+        <tr><td>Net profit (loss)</td><td>($130K)</td><td>($20K)</td><td>$1.8M</td><td>$8M</td><td>$31M</td></tr>
+        <tr><td>Cash position</td><td>$170K</td><td>$150K</td><td>$1.95M</td><td>$9.95M</td><td>$41M</td></tr>
+    </tbody>
+</table>
+<p><strong>Revenue model:</strong> Free (offline journal, zero hosting cost), $2/mo (sync + MCP access), $5/mo (cloud transcription), $10/mo (AI reflections, vector search, synthesis). COGS are low — transcription and embeddings cost a fraction of heavy AI inference.</p>
+<p><strong>Funding to date:</strong> $0. The entire product has been built by the founder with no outside funding.</p>
 
-    <!-- Team -->
-    <section class="section">
-        <div class="section-label">Management Team</div>
-        <h2 class="section-headline">Small, capable, committed.</h2>
-        <div class="section-body">
-            <div class="team-grid">
-                <div class="member">
-                    <strong>Aaron Gabriel Neyer</strong>
-                    <span>Founder — product vision and system architecture. MA Ecopsychology, MS Creative Technology & Design (CU Boulder ATLAS). Founding engineer at two startups. Former Google. 10+ years full stack development. Boulder Human Relations Commission Chair.</span>
-                </div>
-                <div class="member">
-                    <strong>Jon Bo</strong>
-                    <span>Daily co-lead — founding engineer at multiple startups. Leading product direction for Parachute Daily.</span>
-                </div>
-                <div class="member">
-                    <strong>Lucian Hymer</strong>
-                    <span>Server co-lead — founding engineer at multiple startups. Leading architecture for the graph database and MCP server.</span>
-                </div>
-                <div class="member">
-                    <strong>Marvin Melzer</strong>
-                    <span>Hardware lead — developing the wearable pendant prototype. Experienced hardware designer and engineer.</span>
-                </div>
-                <div class="member">
-                    <strong>Neil Yarnal</strong>
-                    <span>Brand and design — gives Parachute its visual identity.</span>
-                </div>
-            </div>
-            <p style="margin-top: 1rem;">An additional 3-4 experienced builders are available for hire as funding increases, enabling the team to scale from a core of 4-5 to 9-10.</p>
-        </div>
-    </section>
+<h2>Investment</h2>
+<p>Raising <strong>$300,000</strong> via SAFE note (YC standard) at a <strong>$5M valuation cap</strong>. Deliberately priced as early-believer terms — TwinMind raised at $60M with 30K users; we are raising pre-launch.</p>
+<p><strong>Use of funds:</strong> Bring core team (founder + two co-leads) full-time through 2026, fund infrastructure, and execute production launch by June 2026. Goal is revenue on launch with sufficient growth to raise a subsequent round by early 2027.</p>
+<p><strong>NVC prize funds ($50,000)</strong> would accelerate team ramp-up, broader beta distribution, and an earlier path to growth metrics for the next raise.</p>
 
-    <!-- Financial Projections -->
-    <section class="section">
-        <div class="section-label">Financial Projections</div>
-        <h2 class="section-headline">Profitable by year three.</h2>
-        <div class="section-body">
-            <div class="fin-table">
-                <table>
-                    <thead>
-                        <tr>
-                            <th></th>
-                            <th>2026</th>
-                            <th>2027</th>
-                            <th>2028</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <tr>
-                            <td>Free users</td>
-                            <td>5,000</td>
-                            <td>75,000</td>
-                            <td>500,000</td>
-                        </tr>
-                        <tr>
-                            <td>Paid subscribers ($2–10/mo)</td>
-                            <td>500</td>
-                            <td>8,000</td>
-                            <td>50,000</td>
-                        </tr>
-                        <tr>
-                            <td>Avg revenue / paid subscriber</td>
-                            <td>~$5/mo</td>
-                            <td>~$5/mo</td>
-                            <td>~$5/mo</td>
-                        </tr>
-                        <tr>
-                            <td>ARR</td>
-                            <td>~$30K</td>
-                            <td class="highlight">~$480K</td>
-                            <td class="highlight">~$3M</td>
-                        </tr>
-                        <tr>
-                            <td>Team costs</td>
-                            <td>~$150K</td>
-                            <td>~$400K</td>
-                            <td>~$800K</td>
-                        </tr>
-                        <tr>
-                            <td>Infra + COGS</td>
-                            <td>~$10K</td>
-                            <td>~$100K</td>
-                            <td>~$400K</td>
-                        </tr>
-                        <tr>
-                            <td>Total opex</td>
-                            <td>~$160K</td>
-                            <td>~$500K</td>
-                            <td>~$1.2M</td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
-            <p><strong>Revenue model:</strong> Tiered subscriptions — Free (offline journal, zero hosting cost), $2/mo (cloud sync + MCP access), $5/mo (cloud transcription + cleanup), $10/mo (AI reflections, vector search, synthesis). Because Parachute complements rather than competes with AI subscriptions, the addressable market is every AI user — over 100 million people and growing rapidly — plus everyone who wants a great journaling app regardless of AI usage.</p>
-            <p><strong>Why COGS are low:</strong> Transcription and embeddings cost a fraction of heavy AI inference. We're not running full agentic workloads — we're storing and serving structured data via MCP. As model costs continue to decline, margins improve further.</p>
-            <p><strong>Path to profitability:</strong> Year two approaches breakeven (~$480K ARR vs ~$500K total opex). Year three is clearly profitable (~$3M ARR vs ~$1.2M total opex). These projections are conservative given the scale of the addressable market.</p>
-            <p><strong>Funding to date:</strong> $0. The entire product has been built by the founder with no outside funding.</p>
-        </div>
-    </section>
-
-    <!-- Investment -->
-    <section class="section">
-        <div class="section-label">Investment</div>
-        <h2 class="section-headline">Raising $300K to launch<br>the personal data layer.</h2>
-        <div class="section-body">
-            <p>Raising <strong>$300,000</strong> via a SAFE note (YC standard) at a <strong>$5,000,000 valuation cap</strong>. This is deliberately priced as early-believer terms — TwinMind raised at a $60M valuation with 30,000 users; we are raising before public launch.</p>
-            <p><strong>Use of funds:</strong> Bring the core team (founder + two co-leads) full-time through 2026, fund infrastructure and hosting costs, and execute a polished production launch by June 2026. The goal is revenue immediately upon launch, with sufficient growth to raise a subsequent round by early 2027 at a significantly higher valuation, scaling the team from 4-5 to 9-10.</p>
-            <div class="callout">
-                <strong>NVC prize funds</strong> would accelerate this timeline — enabling faster team ramp-up, broader beta distribution, and an earlier path to the growth metrics needed for our next raise.
-            </div>
-        </div>
-    </section>
-
-</div><!-- /content -->
+<div class="downloads">
+    <a href="/nvc/ES_Parachute.pdf" download>Download PDF</a>
+    <a href="/nvc/Parachute.pptx" download>Download PPTX</a>
+    <a href="/nvc/deck/" class="secondary">View Pitch Deck</a>
+</div>
 
 </body>
 </html>
