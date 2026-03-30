@@ -314,13 +314,13 @@ permalink: /nvc/deck/
 
         /* ── Architecture diagram ── */
         .arch-diagram {
-            margin: 1.5rem 0;
+            margin: 1rem 0;
             border: 1px solid var(--border);
             border-radius: 10px;
             overflow: hidden;
             background: #fff;
             max-width: 650px;
-            padding: 2rem 2.5rem;
+            padding: 1.25rem 2rem;
         }
         .arch-row {
             display: flex;
@@ -355,7 +355,7 @@ permalink: /nvc/deck/
             font-size: 0.7rem;
             color: var(--fg-dim);
             text-align: center;
-            padding: 0.3rem 0;
+            padding: 0.15rem 0;
             margin-left: 6rem;
             padding-left: 1rem;
         }
@@ -413,12 +413,13 @@ permalink: /nvc/deck/
     <section class="slide">
         <div class="slide-label">The Problem</div>
         <h2 class="slide-headline">Memory is shallow.<br>Capture is broken.</h2>
+        <ul class="bullet-list">
+            <li>AI memory today = <strong>one flat text file</strong></li>
+            <li>No structure &mdash; projects, people, patterns lost</li>
+            <li>No way to think for yourself and have it become context</li>
+        </ul>
         <div class="slide-body">
-            <p>These platforms all have memory now &mdash; but it&rsquo;s shallow. Basically one big text file. It remembers your name, not six months of your thinking. There&rsquo;s no structured knowledge about your projects, your people, your patterns over time.</p>
-            <p>And there&rsquo;s a deeper problem upstream: <em>how</em> your thinking gets into the system. You can talk to your AI, but that&rsquo;s a conversation &mdash; the AI is always in the middle. There&rsquo;s no good way to just think for yourself, out loud, and have that become context.</p>
-        </div>
-        <div class="slide-body">
-            <p style="font-family: var(--serif); font-size: 1.3rem; color: var(--fg); margin-top: 1.5rem;">Tools that help us think for ourselves &mdash; not just think <em>with</em> AI &mdash; produce the quality of thinking that makes AI most useful.</p>
+            <p style="font-family: var(--serif); font-size: 1.3rem; color: var(--fg); margin-top: 2rem;">Think for ourselves first. <em>Then</em> think with AI.</p>
         </div>
     </section>
 
@@ -447,11 +448,11 @@ permalink: /nvc/deck/
     <section class="slide">
         <div class="slide-label">Agent-Native</div>
         <h2 class="slide-headline">Don&rsquo;t compete with agents.<br>Build the tool layer they all need.</h2>
-        <div class="slide-body">
-            <p>Parachute is built on <strong>MCP</strong> (Model Context Protocol) &mdash; the open standard for connecting AI to tools. Your data lives in a graph database organized around three primitives: <strong>Things, Tags, and Tools.</strong></p>
-            <p>Whatever AI you already use, Parachute makes it better. Connect your Parachute, and your AI can read your journals, search your notes, understand your context. You don&rsquo;t switch anything &mdash; you <em>add</em> Parachute.</p>
-            <p>And because it&rsquo;s a graph database, your AI can do more than just read &mdash; it can <strong>create structure</strong>. It can scan your journals and generate people nodes, project nodes, link them, pull in contact info. Your notes become a living knowledge graph.</p>
-        </div>
+        <ul class="bullet-list">
+            <li>Built on <strong>MCP</strong> &mdash; the open standard for AI &harr; tools</li>
+            <li>Graph DB: <strong>Things, Tags, and Tools</strong></li>
+            <li>You don&rsquo;t switch &mdash; you <em>add</em> Parachute</li>
+        </ul>
         <div class="arch-diagram">
             <div class="arch-row">
                 <span class="arch-label">you</span>
@@ -472,9 +473,6 @@ permalink: /nvc/deck/
                 <span class="arch-box">Any AI</span>
             </div>
         </div>
-        <div class="slide-body">
-            <p style="font-size: 0.95rem; font-family: var(--serif); color: var(--fg);">We&rsquo;re not trying to build the most intelligent tool. We&rsquo;re building the most important tool for intelligent systems to use.</p>
-        </div>
     </section>
 
     <!-- SLIDE 5: Context Compounds -->
@@ -482,7 +480,7 @@ permalink: /nvc/deck/
         <div class="slide-label">The Insight</div>
         <h2 class="slide-headline">Context compounds.</h2>
         <div class="slide-body">
-            <p>Every note, every voice entry builds a richer personal data layer &mdash; not a flat text file, but a real graph of your thinking that can be queried across months and years. That context is portable, it&rsquo;s yours, and no competitor can replicate it.</p>
+            <p>Every entry builds a queryable graph of your thinking &mdash; portable, yours, and impossible for competitors to replicate.</p>
         </div>
         <div class="flywheel">
             <div class="fw-step"><span class="fw-num">01</span> Capture thoughts in Daily</div>
@@ -492,7 +490,7 @@ permalink: /nvc/deck/
             <div class="fw-step final"><span class="fw-num">&rarr;</span> Switching cost through genuine value</div>
         </div>
         <div class="slide-body">
-            <p style="margin-top: 1rem; font-size: 0.95rem;">Open source (AGPL-3.0). Local-first. Public Benefit Corporation. Your data is yours &mdash; portable, exportable, self-hostable. The trust required for people to share their deepest thinking.</p>
+            <p style="margin-top: 1rem; font-size: 0.95rem;">Open source &middot; Local-first &middot; Public Benefit Corporation. Your data is portable, exportable, self-hostable.</p>
         </div>
     </section>
 
@@ -503,23 +501,23 @@ permalink: /nvc/deck/
         <div class="tier-table">
             <div class="tier-row">
                 <div class="tier-price">Free</div>
-                <div class="tier-body"><strong>Offline journal</strong> &mdash; on-device transcription, no sync. Zero hosting cost.</div>
+                <div class="tier-body"><strong>Offline journal</strong> &mdash; zero hosting cost</div>
             </div>
             <div class="tier-row">
                 <div class="tier-price">$2<span>/mo</span></div>
-                <div class="tier-body"><strong>Cloud sync + MCP access</strong> &mdash; your notes across all devices, available to any AI agent</div>
+                <div class="tier-body"><strong>Cloud sync + MCP</strong> &mdash; notes on all devices, any AI</div>
             </div>
             <div class="tier-row">
                 <div class="tier-price">$5<span>/mo</span></div>
-                <div class="tier-body"><strong>Cloud transcription + cleanup</strong> &mdash; server-side processing, better accuracy</div>
+                <div class="tier-body"><strong>Cloud transcription</strong> &mdash; better accuracy</div>
             </div>
             <div class="tier-row tier-highlight">
                 <div class="tier-price">$10<span>/mo</span></div>
-                <div class="tier-body"><strong>AI reflections, vector search, and synthesis</strong> &mdash; your AI truly knows you.</div>
+                <div class="tier-body"><strong>AI reflections + synthesis</strong> &mdash; your AI truly knows you</div>
             </div>
         </div>
         <div class="slide-body">
-            <p style="font-size: 0.95rem;">Free tier has zero hosting cost &mdash; no subsidizing free users. You&rsquo;re not asking anyone to switch AI tools. You&rsquo;re adding value wherever they already are.</p>
+            <p style="font-size: 0.9rem;">Free tier = zero hosting cost. No one switches AI &mdash; Parachute adds value wherever they are.</p>
         </div>
     </section>
 
@@ -551,28 +549,10 @@ permalink: /nvc/deck/
                         <td>50,000</td>
                     </tr>
                     <tr>
-                        <td>Avg rev / subscriber</td>
-                        <td>~$5/mo</td>
-                        <td>~$5/mo</td>
-                        <td>~$5/mo</td>
-                    </tr>
-                    <tr>
                         <td>ARR</td>
                         <td>~$30K</td>
                         <td class="highlight">~$480K</td>
                         <td class="highlight">~$3M</td>
-                    </tr>
-                    <tr>
-                        <td>Team costs</td>
-                        <td>~$150K</td>
-                        <td>~$400K</td>
-                        <td>~$800K</td>
-                    </tr>
-                    <tr>
-                        <td>Infra + COGS</td>
-                        <td>~$10K</td>
-                        <td>~$100K</td>
-                        <td>~$400K</td>
                     </tr>
                     <tr>
                         <td>Total opex</td>
@@ -584,7 +564,7 @@ permalink: /nvc/deck/
             </table>
         </div>
         <div class="slide-body">
-            <p style="font-size: 0.95rem;">100M+ people pay $20+/mo for AI &mdash; every one is a potential customer. Plus all the people who aren&rsquo;t using AI yet but want a great journaling app. Lower COGS than agentic platforms. Conservative projections given the scale of the opportunity.</p>
+            <p style="font-size: 0.9rem;">100M+ people pay $20+/mo for AI. Lower COGS than agentic platforms. Conservative projections.</p>
         </div>
     </section>
 
@@ -592,29 +572,18 @@ permalink: /nvc/deck/
     <section class="slide">
         <div class="slide-label">Team & Traction</div>
         <h2 class="slide-headline">Self-funded.<br>Built from scratch.</h2>
-        <div class="slide-body" style="display: flex; gap: 4rem; flex-wrap: wrap;">
-            <div>
-                <p><strong>What exists today:</strong></p>
-                <ul style="list-style: none; padding: 0; margin-top: 0.5rem;">
-                    <li style="border: none; padding: 0.3rem 0 0.3rem 1.5rem;">&middot;&ensp;Working app with local voice transcription + graph-native storage</li>
-                    <li style="border: none; padding: 0.3rem 0 0.3rem 1.5rem;">&middot;&ensp;MCP server with Things, Tags, Tools architecture</li>
-                    <li style="border: none; padding: 0.3rem 0 0.3rem 1.5rem;">&middot;&ensp;Functional pendant prototype (on stage today)</li>
-                    <li style="border: none; padding: 0.3rem 0 0.3rem 1.5rem;">&middot;&ensp;Daily beta launching this month &middot; PBC incorporated in Colorado</li>
-                    <li style="border: none; padding: 0.3rem 0 0.3rem 1.5rem;">&middot;&ensp;Learn Vibe Build AI school (Cohort 0 complete, Cohort 1 launching) &mdash; direct organic growth channel</li>
-                </ul>
-            </div>
-            <div>
-                <p><strong>The team:</strong></p>
-                <div class="people" style="font-size: 1rem; line-height: 2; margin-top: 0.5rem;">
-                    <em>Aaron Gabriel Neyer</em> &mdash; Founder, product &amp; architecture<br>
-                    <em>Jon Bo</em> &mdash; Daily co-lead, founding engineer<br>
-                    <em>Lucian Hymer</em> &mdash; Server co-lead, founding engineer<br>
-                    <em>Marvin Melzer</em> &mdash; Hardware, pendant prototype<br>
-                    <em>Neil Yarnal</em> &mdash; Brand &amp; design
-                </div>
-            </div>
+        <ul class="bullet-list">
+            <li>Working app &mdash; voice transcription + graph storage</li>
+            <li>MCP server &mdash; Things, Tags, Tools</li>
+            <li>Pendant prototype on stage today</li>
+            <li>Daily beta launching this month</li>
+            <li>Learn Vibe Build &mdash; AI school, growth channel</li>
+        </ul>
+        <div style="margin-top: 2rem;">
+            <p style="font-family: var(--serif); font-size: 1.15rem; color: var(--fg);">Aaron Neyer &middot; Jon Bo &middot; Lucian Hymer &middot; Marvin Melzer &middot; Neil Yarnal</p>
+            <p style="font-size: 0.9rem; color: var(--fg-muted); margin-top: 0.5rem;">Startup, software, hardware, design &amp; product &mdash; an unusually balanced founding team.</p>
+            <p style="font-size: 0.8rem; color: var(--fg-dim); margin-top: 0.4rem;">CU ATLAS &middot; Ex-Google &middot; 10+ years full stack &middot; PBC in Colorado</p>
         </div>
-        <p style="font-size: 0.85rem; color: var(--fg-dim); margin-top: 2rem;">MA Ecopsychology &middot; MS Creative Technology &amp; Design (CU ATLAS, graduating May 2026) &middot; Founding engineer &times;2 &middot; Ex-Google &middot; 10+ years full stack</p>
     </section>
 
     <!-- SLIDE 9: The Ask -->
