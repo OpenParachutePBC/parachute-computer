@@ -110,7 +110,7 @@ pdf.ln(0.15)
 
 pdf.set_font('Sans', '', 14)
 pdf.set_text_color(*FG_MUTED)
-pdf.cell(0, 0.3, 'An intuitive interface for humans and AI to think together.', align='C', new_x="LMARGIN", new_y="NEXT")
+pdf.cell(0, 0.3, 'A memory layer for humans and AI to think and remember together.', align='C', new_x="LMARGIN", new_y="NEXT")
 pdf.ln(0.6)
 
 pdf.set_draw_color(*ACCENT)
