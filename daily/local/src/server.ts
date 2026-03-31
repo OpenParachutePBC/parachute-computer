@@ -6,7 +6,7 @@ import { createStore } from "./db.js";
 import path from "node:path";
 import os from "node:os";
 
-const PORT = parseInt(process.env.PORT ?? "3333", 10);
+const PORT = parseInt(process.env.PORT ?? "3334", 10);
 const DB_PATH = process.env.PARACHUTE_DB ?? path.join(os.homedir(), ".parachute", "daily.db");
 const ASSETS_DIR = process.env.PARACHUTE_ASSETS ?? path.join(os.homedir(), ".parachute", "daily", "assets");
 

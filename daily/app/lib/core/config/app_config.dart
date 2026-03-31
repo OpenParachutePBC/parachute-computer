@@ -5,8 +5,8 @@ import 'package:flutter/foundation.dart';
 class AppConfig {
   /// Default server URL used as fallback throughout the app.
   /// All provider fallbacks should reference this constant instead of
-  /// hardcoding 'http://localhost:3333'.
-  static const String defaultServerUrl = 'http://localhost:3333';
+  /// hardcoding 'http://localhost:3334'.
+  static const String defaultServerUrl = 'http://localhost:3334';
 
   /// Get the server base URL based on environment and platform.
   ///
@@ -25,7 +25,7 @@ class AppConfig {
     if (kDebugMode) {
       if (Platform.isAndroid) {
         // Android emulator uses 10.0.2.2 to reach host machine
-        return 'http://10.0.2.2:3333';
+        return 'http://10.0.2.2:3334';
       } else if (Platform.isIOS) {
         // iOS simulator can use localhost
         return defaultServerUrl;
