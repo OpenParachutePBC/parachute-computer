@@ -5,7 +5,7 @@ import '../services/credential_service.dart';
 
 /// Provider for the CredentialService instance.
 final credentialServiceProvider = Provider<CredentialService>((ref) {
-  final baseUrl = ref.watch(serverUrlProvider).valueOrNull ?? 'http://localhost:3334';
+  final baseUrl = ref.watch(serverUrlProvider).valueOrNull ?? 'http://localhost:1940';
   final apiKey = ref.watch(apiKeyProvider).valueOrNull;
   return CredentialService(baseUrl: baseUrl, apiKey: apiKey);
 });

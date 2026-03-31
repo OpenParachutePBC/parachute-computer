@@ -5,8 +5,8 @@
   "type": "module",
   "main": "src/server.ts",
   "scripts": {
-    "dev": "node --watch --experimental-specifier-resolution=node src/server.ts",
-    "start": "node src/server.ts",
+    "dev": "tsx watch src/server.ts",
+    "start": "tsx src/server.ts",
     "test": "node --experimental-vm-modules node_modules/.bin/vitest run",
     "test:watch": "node --experimental-vm-modules node_modules/.bin/vitest"
   },
