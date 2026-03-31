@@ -11,11 +11,8 @@ import 'package:parachute/core/providers/backend_health_provider.dart'
 import 'package:parachute/core/providers/connectivity_provider.dart'
     show isServerAvailableProvider, serverReachableOverrideProvider;
 import 'package:parachute/core/services/graph_api_service.dart';
-import '../models/daily_agent_models.dart'
-    show AgentTemplate, DailyAgentInfo;
 import '../models/journal_entry.dart';
 import '../models/journal_day.dart';
-import '../models/agent_card.dart';
 import '../services/daily_api_service.dart';
 import '../services/journal_local_cache.dart';
 import '../services/pending_entry_queue.dart';
@@ -126,6 +123,8 @@ class _TodayJournalNotifier extends AutoDisposeAsyncNotifier<JournalDay> {
         Future(() async {
           try {
             final api = ref.read(dailyApiServiceProvider);
+            // Register required tags/tools on (re)connect
+            await api.registerApp();
             final queue = await ref.read(pendingQueueProvider.future);
             await queue.flush(api);
             // Also flush pending deletes/edits that queued while offline.
@@ -290,78 +289,6 @@ List<JournalEntry> _pendingForDate(PendingEntryQueue queue, String dateStr) =>
     queue.entries
         .where((e) => _formatDateForApi(e.createdAt) == dateStr)
         .toList();
-
-// Chat Log providers removed in v2 — chat feature deleted
-
-// ============================================================================
-// Card Providers (graph-backed)
-// ============================================================================
-
-/// Fetch all Card nodes for a date from the server.
-///
-/// Family parameter: YYYY-MM-DD date string.
-/// Returns empty list if offline or server unavailable.
-final cardsProvider = FutureProvider.autoDispose
-    .family<List<AgentCard>, String>((ref, dateStr) async {
-      ref.watch(journalRefreshTriggerProvider);
-
-      // Check connectivity before API call — avoid timeout if offline
-      final isAvailable = ref.watch(isServerAvailableProvider);
-      if (!isAvailable) {
-        return [];
-      }
-
-      final api = ref.watch(dailyApiServiceProvider);
-      return api.fetchCards(dateStr);
-    });
-
-/// Fetch all unread Card nodes (cross-date, 7-day window).
-///
-/// Used for the "Unread from past days" section on today's journal page
-/// and the unread badge on the Daily nav tab.
-final unreadCardsProvider =
-    FutureProvider<List<AgentCard>>((ref) async {
-      ref.watch(journalRefreshTriggerProvider);
-
-      final isAvailable = ref.watch(isServerAvailableProvider);
-      if (!isAvailable) return [];
-
-      final api = ref.watch(dailyApiServiceProvider);
-      return api.fetchUnreadCards();
-    });
-
-/// Fetch registered Agent (agent definition) nodes from the server.
-///
-/// Used by [AgentTriggerCard] to enumerate agents without local file reads.
-final agentsProvider = FutureProvider.autoDispose<List<DailyAgentInfo>>((
-  ref,
-) async {
-  ref.watch(journalRefreshTriggerProvider);
-
-  // Check connectivity before API call — avoid timeout if offline
-  final isAvailable = ref.watch(isServerAvailableProvider);
-  if (!isAvailable) {
-    return [];
-  }
-
-  final api = ref.watch(dailyApiServiceProvider);
-  return api.fetchAgents();
-});
-
-/// Fetch starter Agent templates for onboarding.
-///
-/// Used by the empty state in [AgentManagementScreen] to offer one-tap creation.
-final agentTemplatesProvider =
-    FutureProvider.autoDispose<List<AgentTemplate>>((ref) async {
-      // Check connectivity before API call — avoid timeout if offline
-      final isAvailable = ref.watch(isServerAvailableProvider);
-      if (!isAvailable) {
-        return [];
-      }
-
-      final api = ref.watch(dailyApiServiceProvider);
-      return api.fetchTemplates();
-    });
 
 // ============================================================================
 // Sync Status Providers

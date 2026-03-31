@@ -2,12 +2,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
-import 'package:parachute/core/models/thing.dart';
 import '../models/entry_metadata.dart' show TranscriptionStatus;
 import '../models/journal_entry.dart';
-import '../models/agent_card.dart';
-import '../models/daily_agent_models.dart'
-    show DailyAgentInfo, AgentRunResult, AgentRunInfo, AgentTemplate, AgentActivity, AgentTranscript, MemoryMode, parseTriggerFilter;
 
 /// Raw search result from the server API.
 ///
@@ -361,260 +357,61 @@ class DailyApiService {
   }
 
   // ===========================================================================
-  // Import — not yet supported in v2
+  // Registration — ensure required tags/tools exist on server
   // ===========================================================================
 
-  Future<Map<String, dynamic>?> getImportStatus() async {
-    debugPrint('[DailyApiService] getImportStatus: not yet supported in v2');
-    return null;
-  }
-
-  Future<Map<String, dynamic>?> flexibleImport({
-    required String sourceDir,
-    required String format,
-    bool dryRun = false,
-    String? dateFrom,
-    String? dateTo,
-  }) async {
-    debugPrint('[DailyApiService] flexibleImport: not yet supported in v2');
-    return null;
-  }
-
-  Future<Map<String, dynamic>?> triggerImport() async {
-    debugPrint('[DailyApiService] triggerImport: not yet supported in v2');
-    return null;
-  }
-
-  // ===========================================================================
-  // Cards (Agent Outputs) — backed by Things with "card" tag
-  // ===========================================================================
-
-  /// Fetch all Card Things for a specific date (YYYY-MM-DD).
-  Future<List<AgentCard>> fetchCards(String date) async {
-    final uri = Uri.parse('$baseUrl/api/things').replace(
-      queryParameters: {'tag': 'card', 'date': date},
-    );
-    debugPrint('[DailyApiService] GET $uri');
-    try {
-      final response = await _client
-          .get(uri, headers: _headers)
-          .timeout(_timeout);
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        debugPrint('[DailyApiService] fetchCards ${response.statusCode}');
-        return [];
-      }
-      final data = jsonDecode(response.body) as List<dynamic>;
-      return data
-          .map((j) => _thingToCard(j as Map<String, dynamic>))
-          .toList();
-    } catch (e) {
-      debugPrint('[DailyApiService] fetchCards error: $e');
-      return [];
-    }
-  }
-
-  /// Fetch all unread Card Things within a 7-day window.
+  /// Register the app's required tags and tools with the server.
   ///
-  /// The v2 server doesn't have a dedicated unread endpoint — we fetch recent
-  /// cards and filter client-side.
-  Future<List<AgentCard>> fetchUnreadCards() async {
-    // Fetch cards from the last 7 days
-    final now = DateTime.now();
-    final results = <AgentCard>[];
-    for (int i = 0; i < 7; i++) {
-      final date = now.subtract(Duration(days: i));
-      final dateStr = _dateStr(date);
-      final cards = await fetchCards(dateStr);
-      results.addAll(cards.where((c) => c.isUnread));
-    }
-    return results;
-  }
-
-  /// Mark a card as read by updating its card tag field.
-  Future<bool> markCardRead(String cardId) async {
-    final uri = Uri.parse('$baseUrl/api/things/$cardId');
-    debugPrint('[DailyApiService] PATCH $uri (mark read)');
+  /// Called on connect to ensure the server has the daily-note and card
+  /// tag definitions and any builtin tools the app expects.
+  Future<bool> registerApp() async {
+    final uri = Uri.parse('$baseUrl/api/register');
+    debugPrint('[DailyApiService] POST $uri');
     try {
-      final now = DateTime.now().toUtc().toIso8601String();
-      final response = await _client.patch(
+      final response = await _client.post(
         uri,
         headers: _headers,
         body: jsonEncode({
-          'tags': {'card': {'read_at': now}},
+          'app': 'parachute-daily',
+          'tags': [
+            {
+              'name': 'daily-note',
+              'display_name': 'Daily Note',
+              'description': 'A journal entry — text, voice, or handwriting',
+              'schema': [
+                {'name': 'entry_type', 'type': 'select', 'options': ['text', 'voice', 'handwriting'], 'default': 'text'},
+                {'name': 'audio_url', 'type': 'text', 'description': 'URL or path to audio file'},
+                {'name': 'duration_seconds', 'type': 'number'},
+                {'name': 'transcription_status', 'type': 'select', 'options': ['pending', 'processing', 'complete', 'failed']},
+                {'name': 'cleanup_status', 'type': 'select', 'options': ['pending', 'processing', 'complete', 'failed']},
+                {'name': 'date', 'type': 'date', 'description': 'Journal date (YYYY-MM-DD)'},
+              ],
+            },
+            {
+              'name': 'card',
+              'display_name': 'Card',
+              'description': 'An AI-generated output — reflection, summary, briefing',
+              'schema': [
+                {'name': 'card_type', 'type': 'select', 'options': ['reflection', 'summary', 'briefing', 'default']},
+                {'name': 'read_at', 'type': 'datetime', 'description': 'When the user read this card'},
+                {'name': 'date', 'type': 'date', 'description': 'Date this card covers'},
+              ],
+            },
+          ],
         }),
       ).timeout(_timeout);
-      return response.statusCode >= 200 && response.statusCode < 300;
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        onReachabilityChanged?.call(true);
+        debugPrint('[DailyApiService] App registered successfully');
+        return true;
+      }
+      debugPrint('[DailyApiService] registerApp ${response.statusCode}');
+      return false;
     } catch (e) {
-      debugPrint('[DailyApiService] markCardRead error: $e');
+      debugPrint('[DailyApiService] registerApp error: $e');
+      onReachabilityChanged?.call(false);
       return false;
     }
-  }
-
-  // ===========================================================================
-  // Agents / Tools — backed by the tools table
-  // ===========================================================================
-
-  /// Fetch all agents (tools published by daily).
-  Future<List<DailyAgentInfo>> fetchAgents() async {
-    final uri = Uri.parse('$baseUrl/api/tools').replace(
-      queryParameters: {'published_by': 'parachute-daily'},
-    );
-    debugPrint('[DailyApiService] GET $uri');
-    try {
-      final response = await _client
-          .get(uri, headers: _headers)
-          .timeout(_timeout);
-
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        debugPrint('[DailyApiService] fetchAgents ${response.statusCode}');
-        return [];
-      }
-
-      final data = jsonDecode(response.body) as List<dynamic>;
-      return data
-          .map((j) => _toolToAgentInfo(j as Map<String, dynamic>))
-          .toList();
-    } catch (e) {
-      debugPrint('[DailyApiService] fetchAgents error: $e');
-      return [];
-    }
-  }
-
-  /// Fetch the latest run for a tool/agent.
-  Future<AgentRunInfo?> fetchLatestAgentRun(String agentName) async {
-    // Not yet supported in v2
-    return null;
-  }
-
-  /// Fetch starter Agent templates for onboarding.
-  ///
-  /// In v2, templates don't exist as a server concept yet.
-  /// Return empty list — agent management is deferred.
-  Future<List<AgentTemplate>> fetchTemplates() async {
-    return [];
-  }
-
-  /// Create a new Tool on the server.
-  Future<Map<String, dynamic>?> createAgent(Map<String, dynamic> body) async {
-    final uri = Uri.parse('$baseUrl/api/tools');
-    debugPrint('[DailyApiService] POST $uri');
-    try {
-      final response = await _client
-          .post(uri, headers: _headers, body: jsonEncode(body))
-          .timeout(_timeout);
-      if (response.statusCode == 201 ||
-          (response.statusCode >= 200 && response.statusCode < 300)) {
-        return jsonDecode(response.body) as Map<String, dynamic>;
-      }
-      debugPrint('[DailyApiService] createAgent ${response.statusCode}');
-      return null;
-    } catch (e) {
-      debugPrint('[DailyApiService] createAgent error: $e');
-      return null;
-    }
-  }
-
-  /// Delete a Tool. Returns true on success.
-  Future<bool> deleteAgent(String name) async {
-    // v2 tools route doesn't have DELETE yet — stub
-    debugPrint('[DailyApiService] deleteAgent: not yet supported in v2');
-    return false;
-  }
-
-  /// Trigger a tool run via the execute endpoint.
-  Future<AgentRunResult> triggerAgentRun(
-    String agentName, {
-    String? date,
-  }) async {
-    final uri = Uri.parse('$baseUrl/api/tools/$agentName/execute');
-    debugPrint('[DailyApiService] POST $uri');
-    try {
-      final scope = <String, dynamic>{};
-      if (date != null) scope['date'] = date;
-      final response = await _client
-          .post(uri, headers: _headers, body: jsonEncode(scope))
-          .timeout(_timeout);
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        return const AgentRunResult(success: true, status: 'started');
-      }
-      debugPrint('[DailyApiService] triggerAgentRun ${response.statusCode}');
-      return AgentRunResult(
-        success: false,
-        status: 'error',
-        error: 'Server returned ${response.statusCode}',
-      );
-    } catch (e) {
-      debugPrint('[DailyApiService] triggerAgentRun error: $e');
-      return AgentRunResult(
-        success: false,
-        status: 'error',
-        error: e.toString(),
-      );
-    }
-  }
-
-  /// Update fields on an existing Tool.
-  Future<bool> updateAgent(String name, Map<String, dynamic> fields) async {
-    // v2 tools route doesn't have PATCH yet — stub
-    debugPrint('[DailyApiService] updateAgent: not yet fully supported in v2');
-    return false;
-  }
-
-  /// Reset an Agent's session.
-  Future<bool> resetAgent(String name) async {
-    debugPrint('[DailyApiService] resetAgent: not yet supported in v2');
-    return false;
-  }
-
-  /// Reset a builtin agent to its latest template defaults.
-  Future<bool> resetAgentToTemplate(String name) async {
-    debugPrint('[DailyApiService] resetAgentToTemplate: not yet supported in v2');
-    return false;
-  }
-
-  /// Reload the server scheduler configuration.
-  Future<bool> reloadScheduler() async {
-    debugPrint('[DailyApiService] reloadScheduler: not yet supported in v2');
-    return false;
-  }
-
-  /// Trigger a Tool on a specific entry.
-  Future<Map<String, dynamic>?> triggerAgentOnEntry(
-    String agentName,
-    String entryId,
-  ) async {
-    final uri = Uri.parse('$baseUrl/api/tools/$agentName/execute');
-    debugPrint('[DailyApiService] POST $uri (entry_id=$entryId)');
-    try {
-      final response = await _client
-          .post(uri, headers: _headers, body: jsonEncode({'entry_id': entryId}))
-          .timeout(_timeout);
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        return jsonDecode(response.body) as Map<String, dynamic>;
-      }
-      debugPrint('[DailyApiService] triggerAgentOnEntry ${response.statusCode}');
-      return null;
-    } catch (e) {
-      debugPrint('[DailyApiService] triggerAgentOnEntry error: $e');
-      return null;
-    }
-  }
-
-  /// Fetch Agent activity for a specific entry.
-  ///
-  /// Not yet supported in v2 — returns empty list.
-  Future<List<AgentActivity>> fetchAgentActivity(String entryId) async {
-    return [];
-  }
-
-  /// Fetch the conversation transcript for an agent's most recent session.
-  ///
-  /// Not yet supported in v2.
-  Future<AgentTranscript?> getAgentTranscript(
-    String agentName, {
-    int limit = 50,
-  }) async {
-    return const AgentTranscript(message: 'Transcripts not yet available in v2.');
   }
 
   void dispose() => _client.close();
@@ -658,40 +455,6 @@ class DailyApiService {
       isPendingTranscription:
           transcriptionStatus == TranscriptionStatus.processing,
       serverTranscriptionStatus: transcriptionStatus,
-    );
-  }
-
-  /// Convert a Thing JSON (tagged "card") to an [AgentCard].
-  static AgentCard _thingToCard(Map<String, dynamic> json) {
-    final tags = json['tags'] as List<dynamic>? ?? [];
-    Map<String, dynamic> cardFields = {};
-    for (final tag in tags) {
-      final tagMap = tag as Map<String, dynamic>;
-      if (tagMap['tagName'] == 'card') {
-        cardFields = (tagMap['fieldValues'] as Map<String, dynamic>?) ?? {};
-        break;
-      }
-    }
-
-    return AgentCard(
-      cardId: json['id'] as String? ?? '',
-      agentName: json['createdBy'] as String? ?? '',
-      displayName: json['createdBy'] as String? ?? '',
-      cardType: cardFields['card_type'] as String? ?? 'default',
-      content: json['content'] as String? ?? '',
-      status: 'done',
-      generatedAt: json['createdAt'] as String?,
-      date: cardFields['date'] as String? ?? '',
-      readAt: cardFields['read_at'] as String?,
-    );
-  }
-
-  /// Convert a Tool JSON to a [DailyAgentInfo].
-  static DailyAgentInfo _toolToAgentInfo(Map<String, dynamic> json) {
-    return DailyAgentInfo(
-      name: json['name'] as String? ?? '',
-      displayName: json['displayName'] as String? ?? json['display_name'] as String? ?? json['name'] as String? ?? '',
-      description: json['description'] as String? ?? '',
     );
   }
 

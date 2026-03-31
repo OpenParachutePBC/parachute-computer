@@ -192,9 +192,6 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
     DateTime selectedDate,
     bool isToday,
   ) {
-    // Watch agent cards for the selected date
-    final agentCardsAsync = ref.watch(cardsProvider(_formatDateStr(selectedDate)));
-
     // Handle scroll to bottom after new entry is added
     if (_shouldScrollToBottom) {
       _shouldScrollToBottom = false;
@@ -203,13 +200,7 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
       });
     }
 
-    // Check if we have any content at all
-    final hasJournalEntries = journal.entries.isNotEmpty;
-    final agentCards = agentCardsAsync.valueOrNull ?? [];
-    final hasAgentOutputs = agentCards.isNotEmpty;
-    final hasAnyContent = hasJournalEntries || hasAgentOutputs;
-
-    if (!hasAnyContent) {
+    if (journal.entries.isEmpty) {
       // Wrap empty state in RefreshIndicator with scrollable child
       // so pull-to-refresh works even when there are no entries
       return RefreshIndicator(

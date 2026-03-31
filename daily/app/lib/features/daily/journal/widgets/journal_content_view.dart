@@ -5,8 +5,6 @@ import '../models/journal_day.dart';
 import '../models/journal_entry.dart';
 import '../providers/journal_providers.dart';
 import '../providers/journal_screen_state_provider.dart';
-import 'cards_empty_state.dart';
-import 'journal_agent_outputs_section.dart';
 import 'journal_entry_row.dart';
 
 /// Main content view showing journal entries, agent outputs, and chat log
@@ -40,14 +38,6 @@ class JournalContentView extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    // Watch agent cards for the selected date
-    final agentCardsAsync = ref.watch(cardsProvider(_dateStr(selectedDate)));
-
-    // Check if we have any content at all
-    final hasJournalEntries = journal.entries.isNotEmpty;
-    final agentCards = agentCardsAsync.valueOrNull ?? [];
-    final hasAgentOutputs = agentCards.isNotEmpty;
-
     return RefreshIndicator(
       onRefresh: onRefresh,
       color: BrandColors.forest,
@@ -55,53 +45,6 @@ class JournalContentView extends ConsumerWidget {
         controller: scrollController,
         cacheExtent: 500, // Cache more entries for smoother scrolling
         slivers: [
-          // Agent Outputs (reflections, content ideas, etc.)
-          // These are shown at the top, each in their own expandable header
-          if (hasAgentOutputs)
-            SliverToBoxAdapter(
-              child: JournalAgentOutputsSection(
-                cards: agentCards,
-                showFloatedUnread: isToday,
-                currentDate: _dateStr(selectedDate),
-              ),
-            )
-          else if (isToday)
-            const SliverToBoxAdapter(
-              child: CardsEmptyState(),
-            ),
-
-          // Journal section header (if there are entries)
-          if (hasJournalEntries && hasAgentOutputs)
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.book_outlined,
-                      size: 18,
-                      color: BrandColors.forest,
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      'Journal',
-                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                            color: isDark ? BrandColors.driftwood : BrandColors.charcoal,
-                            fontWeight: FontWeight.w600,
-                          ),
-                    ),
-                    const Spacer(),
-                    Text(
-                      '${journal.entries.length} entr${journal.entries.length == 1 ? 'y' : 'ies'}',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: BrandColors.driftwood,
-                          ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-
           // Journal entries
           SliverPadding(
             padding: const EdgeInsets.symmetric(vertical: 8),
