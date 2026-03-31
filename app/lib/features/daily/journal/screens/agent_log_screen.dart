@@ -60,7 +60,7 @@ class _AgentLogScreenState extends ConsumerState<AgentLogScreen> {
     });
 
     try {
-      final service = ref.read(computerServiceProvider);
+      final service = ref.read(dailyApiServiceProvider);
       final AgentTranscript? transcript;
 
       if (widget.agentName != null) {

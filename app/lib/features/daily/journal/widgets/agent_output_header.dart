@@ -542,9 +542,12 @@ class _AgentOutputHeaderState extends State<AgentOutputHeader>
               ),
             ),
             const SizedBox(height: 20),
-            InlineAudioPlayer(
-              audioPath: audioPath,
-              title: title,
+            // Audio player placeholder — InlineAudioPlayer was in chat feature
+            Text(
+              'Audio: $title',
+              style: TextStyle(
+                color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
+              ),
             ),
             const SizedBox(height: 20),
           ],

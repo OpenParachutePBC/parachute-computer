@@ -272,29 +272,7 @@ List<JournalEntry> _pendingForDate(PendingEntryQueue queue, String dateStr) =>
         .where((e) => _formatDateForApi(e.createdAt) == dateStr)
         .toList();
 
-// ============================================================================
-// Chat Log Providers
-// ============================================================================
-
-/// Async provider for ChatLogService
-final chatLogServiceFutureProvider = FutureProvider.autoDispose<ChatLogService>(
-  (ref) async {
-    final fileSystemService = ref.watch(fileSystemServiceProvider);
-    await fileSystemService.initialize();
-    return ChatLogService.create(fileSystemService: fileSystemService);
-  },
-);
-
-/// Provider for the selected date's chat log
-final selectedChatLogProvider = FutureProvider.autoDispose<ChatLog?>((
-  ref,
-) async {
-  final date = ref.watch(selectedJournalDateProvider);
-  ref.watch(journalRefreshTriggerProvider);
-
-  final chatLogService = await ref.watch(chatLogServiceFutureProvider.future);
-  return chatLogService.loadChatLog(date);
-});
+// Chat Log providers removed in v2 — chat feature deleted
 
 // ============================================================================
 // Card Providers (graph-backed)

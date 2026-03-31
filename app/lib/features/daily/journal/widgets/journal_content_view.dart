@@ -40,15 +40,13 @@ class JournalContentView extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    // Watch agent cards and chat log for the selected date
+    // Watch agent cards for the selected date
     final agentCardsAsync = ref.watch(cardsProvider(_dateStr(selectedDate)));
-    final chatLogAsync = ref.watch(selectedChatLogProvider);
 
     // Check if we have any content at all
     final hasJournalEntries = journal.entries.isNotEmpty;
     final agentCards = agentCardsAsync.valueOrNull ?? [];
     final hasAgentOutputs = agentCards.isNotEmpty;
-    final hasChatLog = chatLogAsync.valueOrNull?.hasContent ?? false;
 
     return RefreshIndicator(
       onRefresh: onRefresh,
@@ -72,17 +70,8 @@ class JournalContentView extends ConsumerWidget {
               child: CardsEmptyState(),
             ),
 
-          // AI Conversations (if available) - collapsible section at top
-          if (hasChatLog)
-            SliverToBoxAdapter(
-              child: CollapsibleChatLogSection(
-                chatLog: chatLogAsync.value!,
-                initiallyExpanded: false,
-              ),
-            ),
-
           // Journal section header (if there are entries)
-          if (hasJournalEntries && (hasAgentOutputs || hasChatLog))
+          if (hasJournalEntries && hasAgentOutputs)
             SliverToBoxAdapter(
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
