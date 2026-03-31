@@ -7,7 +7,6 @@ import '../providers/journal_providers.dart';
 import '../providers/journal_screen_state_provider.dart';
 import 'cards_empty_state.dart';
 import 'journal_agent_outputs_section.dart';
-import 'collapsible_chat_log_section.dart';
 import 'journal_entry_row.dart';
 
 /// Main content view showing journal entries, agent outputs, and chat log

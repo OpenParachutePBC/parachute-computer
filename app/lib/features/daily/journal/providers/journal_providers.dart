@@ -12,11 +12,9 @@ import 'package:parachute/core/providers/connectivity_provider.dart'
     show isServerAvailableProvider, serverReachableOverrideProvider;
 import '../models/daily_agent_models.dart'
     show AgentTemplate, DailyAgentInfo;
-import '../models/chat_log.dart';
 import '../models/journal_entry.dart';
 import '../models/journal_day.dart';
 import '../models/agent_card.dart';
-import '../services/chat_log_service.dart';
 import '../services/daily_api_service.dart';
 import '../services/journal_local_cache.dart';
 import '../services/pending_entry_queue.dart';

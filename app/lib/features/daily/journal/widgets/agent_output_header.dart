@@ -6,7 +6,6 @@ import 'package:parachute/core/theme/design_tokens.dart';
 import '../models/agent_card.dart';
 import '../utils/agent_theme.dart';
 import '../screens/agent_log_screen.dart';
-import '../../../chat/widgets/inline_audio_player.dart';
 
 /// Expandable header showing output from a daily agent
 ///
