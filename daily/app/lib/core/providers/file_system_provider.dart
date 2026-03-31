@@ -20,20 +20,9 @@ final dailyFileSystemServiceProvider = Provider<FileSystemService>((ref) {
   return ref.watch(fileSystemServiceFamilyProvider(ModuleType.daily));
 });
 
-/// Provider for Chat module file system service
-final chatFileSystemServiceProvider = Provider<FileSystemService>((ref) {
-  return ref.watch(fileSystemServiceFamilyProvider(ModuleType.chat));
-});
-
 /// FutureProvider for Daily root path
 final dailyRootPathProvider = FutureProvider<String>((ref) async {
   final service = ref.watch(dailyFileSystemServiceProvider);
-  return service.getRootPath();
-});
-
-/// FutureProvider for Chat root path
-final chatRootPathProvider = FutureProvider<String>((ref) async {
-  final service = ref.watch(chatFileSystemServiceProvider);
   return service.getRootPath();
 });
 
@@ -54,16 +43,3 @@ final dailyReflectionsPathProvider = FutureProvider<String>((ref) async {
   final service = ref.watch(dailyFileSystemServiceProvider);
   return service.getFolderPath('reflections');
 });
-
-/// FutureProvider for Chat sessions path
-final chatSessionsPathProvider = FutureProvider<String>((ref) async {
-  final service = ref.watch(chatFileSystemServiceProvider);
-  return service.getFolderPath('sessions');
-});
-
-/// FutureProvider for Chat contexts path
-final chatContextsPathProvider = FutureProvider<String>((ref) async {
-  final service = ref.watch(chatFileSystemServiceProvider);
-  return service.getFolderPath('contexts');
-});
-

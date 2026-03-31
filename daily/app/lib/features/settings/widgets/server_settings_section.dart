@@ -64,8 +64,8 @@ class _ServerSettingsSectionState extends ConsumerState<ServerSettingsSection> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(url.isEmpty
-                ? 'Server URL cleared - Daily only mode'
-                : 'Server URL saved - Chat & Vault enabled'),
+                ? 'Server URL cleared - offline mode'
+                : 'Server URL saved'),
             backgroundColor: BrandColors.success,
           ),
         );
@@ -181,8 +181,8 @@ class _ServerSettingsSectionState extends ConsumerState<ServerSettingsSection> {
         ),
         SizedBox(height: Spacing.sm),
         Text(
-          'Connect to Parachute Computer to enable AI Chat and Vault features. '
-          'Leave empty for offline Daily-only mode.',
+          'Connect to the Parachute Daily server for sync and search. '
+          'Leave empty for offline mode.',
           style: TextStyle(
             fontSize: TypographyTokens.bodySmall,
             color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,

@@ -1,0 +1,8 @@
+{
+    "name": "Parachute Daily",
+    "short_name": "Daily",
+    "start_url": ".",
+    "display": "standalone",
+    "background_color": "#FAFAF5",
+    "theme_color": "#40695B"
+}

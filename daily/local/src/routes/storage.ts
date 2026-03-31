@@ -7,31 +7,52 @@ import { Readable } from "node:stream";
 export function storageRoutes(assetsDir: string): Hono {
   const app = new Hono();
 
+  // Allowed upload extensions
+  const ALLOWED_EXTENSIONS = new Set([
+    ".wav", ".mp3", ".m4a", ".ogg", ".webm",
+    ".png", ".jpg", ".jpeg", ".gif", ".webp",
+  ]);
+
   // POST /upload — Upload a file
   app.post("/upload", async (c) => {
-    const formData = await c.req.formData();
-    const file = formData.get("file") as File | null;
-    if (!file) return c.json({ error: "file is required" }, 400);
+    try {
+      const formData = await c.req.formData();
+      const file = formData.get("file") as File | null;
+      if (!file) return c.json({ error: "file is required" }, 400);
 
-    // Organize by date
-    const date = new Date().toISOString().split("T")[0];
-    const dir = path.join(assetsDir, date);
-    fs.mkdirSync(dir, { recursive: true });
+      const ext = path.extname(file.name).toLowerCase();
+      if (!ALLOWED_EXTENSIONS.has(ext)) {
+        return c.json({ error: `File type ${ext} not allowed` }, 400);
+      }
 
-    // Write file
-    const filename = `${Date.now()}-${file.name}`;
-    const filePath = path.join(dir, filename);
-    const buffer = Buffer.from(await file.arrayBuffer());
-    fs.writeFileSync(filePath, buffer);
+      // Organize by date
+      const date = new Date().toISOString().split("T")[0];
+      const dir = path.join(assetsDir, date);
+      fs.mkdirSync(dir, { recursive: true });
 
-    const relativePath = `${date}/${filename}`;
-    return c.json({ path: relativePath, size: buffer.length }, 201);
+      // Write file
+      const filename = `${Date.now()}-${file.name}`;
+      const filePath = path.join(dir, filename);
+      const buffer = Buffer.from(await file.arrayBuffer());
+      fs.writeFileSync(filePath, buffer);
+
+      const relativePath = `${date}/${filename}`;
+      return c.json({ path: relativePath, size: buffer.length }, 201);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Upload failed";
+      return c.json({ error: message }, 500);
+    }
   });
 
   // GET /:date/:file — Serve a stored file
   app.get("/:date/:file", (c) => {
     const reqPath = `${c.req.param("date")}/${c.req.param("file")}`;
-    const filePath = path.join(assetsDir, reqPath);
+    const filePath = path.normalize(path.join(assetsDir, reqPath));
+
+    // Prevent path traversal outside assets directory
+    if (!filePath.startsWith(assetsDir)) {
+      return c.json({ error: "Invalid path" }, 403);
+    }
 
     if (!fs.existsSync(filePath)) {
       return c.json({ error: "Not found" }, 404);

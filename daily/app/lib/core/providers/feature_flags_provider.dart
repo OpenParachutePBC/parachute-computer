@@ -12,13 +12,7 @@ final omiEnabledProvider = FutureProvider<bool>((ref) async {
   return service.isOmiEnabled();
 });
 
-/// Provider for AI Chat enabled state
-final aiChatEnabledProvider = FutureProvider<bool>((ref) async {
-  final service = ref.watch(featureFlagsServiceProvider);
-  return service.isAiChatEnabled();
-});
-
-/// Provider for AI server URL
+/// Provider for server URL
 ///
 /// Base implementation: returns configured URL from FeatureFlagsService.
 /// Consuming apps can override this provider to add platform-specific

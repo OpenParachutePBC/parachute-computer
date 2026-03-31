@@ -25,19 +25,9 @@ final pendingDeepLinkProvider = StateProvider<DeepLinkTarget?>((ref) => null);
 /// Represents a parsed deep link target.
 ///
 /// Deep links follow the pattern:
-/// - `parachute://daily` - Open Daily tab
+/// - `parachute://daily` - Open Daily
 /// - `parachute://daily/2025-01-19` - Open specific date
 /// - `parachute://daily/entry/para:abc123` - Jump to specific entry
-/// - `parachute://chat` - Open Chat tab
-/// - `parachute://chat/{session_id}` - Open specific session
-/// - `parachute://chat/{session_id}?message=5` - Open session at message index
-/// - `parachute://chat/new` - Start new chat
-/// - `parachute://chat/new?context=projects/parachute` - New chat with context folder
-/// - `parachute://chat/new?prompt=Help%20me&send=true` - New chat with auto-send prompt
-/// - `parachute://chat/new?agentType=orchestrator` - New chat with specific agent type
-/// - `parachute://chat/{session_id}?prompt=...&send=true` - Send message to existing session
-/// - `parachute://vault` - Open Vault tab
-/// - `parachute://vault/projects/parachute` - Open specific path
 /// - `parachute://settings` - Open settings
 /// - `parachute://action/skill-name` - Invoke a skill
 class DeepLinkTarget {
@@ -66,14 +56,6 @@ class DeepLinkTarget {
   /// Whether this is an action (not just navigation)
   bool get isAction => action != null;
 
-  /// Get session ID from chat paths
-  String? get sessionId {
-    if (tab == 'chat' && path != null && path != 'new') {
-      return path;
-    }
-    return null;
-  }
-
   /// Get date from daily paths (e.g., "2025-01-19")
   String? get date {
     if (tab == 'daily' && path != null && !path!.startsWith('entry/')) {
@@ -89,34 +71,6 @@ class DeepLinkTarget {
     }
     return null;
   }
-
-  /// Get message index for scrolling to specific message in chat
-  int? get messageIndex {
-    final msg = params['message'];
-    return msg != null ? int.tryParse(msg) : null;
-  }
-
-  /// Get initial prompt for new chats (pre-fills input)
-  String? get prompt => params['prompt'];
-
-  /// Get context folder for new chats (relative to vault)
-  String? get context => params['context'];
-
-  /// Get agent type for new chats (e.g., 'orchestrator', 'vault-agent')
-  String? get agentType => params['agentType'];
-
-  /// Whether to send the prompt immediately (default: false)
-  ///
-  /// SECURITY NOTE: Auto-send from deep links could be exploited to send
-  /// messages without user confirmation. Handlers SHOULD implement additional
-  /// confirmation UI when autoSend=true from external sources.
-  bool get autoSend => params['send'] == 'true';
-
-  /// Whether this is a "new chat" deep link
-  bool get isNewChat => tab == 'chat' && action == 'new';
-
-  /// Whether this targets an existing session with a message to send
-  bool get isSendToSession => tab == 'chat' && sessionId != null && prompt != null && autoSend;
 
   @override
   String toString() =>
@@ -307,58 +261,6 @@ class DeepLinkService {
     }
     return buffer.toString();
   }
-
-  /// Build a deep link for a specific chat session.
-  static String chatSessionUrl(String sessionId, {int? messageIndex}) =>
-      buildUrl(
-        tab: 'chat',
-        path: sessionId,
-        params: {
-          if (messageIndex != null) 'message': messageIndex.toString(),
-        },
-      );
-
-  /// Build a deep link for a new chat with optional context and prompt.
-  ///
-  /// - [prompt]: Pre-fills the input field
-  /// - [context]: Context folder relative to vault (e.g., "projects/parachute")
-  /// - [agentType]: Agent type for the session (e.g., "orchestrator", "vault-agent")
-  /// - [autoSend]: If true, sends the prompt immediately (default: false)
-  static String newChatUrl({
-    String? prompt,
-    String? context,
-    String? agentType,
-    bool autoSend = false,
-  }) =>
-      buildUrl(
-        tab: 'chat',
-        path: 'new',
-        params: {
-          if (prompt != null) 'prompt': prompt,
-          if (context != null) 'context': context,
-          if (agentType != null) 'agentType': agentType,
-          if (autoSend) 'send': 'true',
-        },
-      );
-
-  /// Build a deep link to send a message to an existing session.
-  ///
-  /// - [sessionId]: The session to send to
-  /// - [prompt]: The message to send
-  /// - [autoSend]: If true (default), sends immediately; if false, pre-fills input
-  static String sendToSessionUrl(
-    String sessionId, {
-    required String prompt,
-    bool autoSend = true,
-  }) =>
-      buildUrl(
-        tab: 'chat',
-        path: sessionId,
-        params: {
-          'prompt': prompt,
-          if (autoSend) 'send': 'true',
-        },
-      );
 
   /// Build a deep link for a specific journal date.
   static String dailyDateUrl(DateTime date) {

@@ -5,26 +5,21 @@ import '../config/app_config.dart';
 ///
 /// Controls which advanced features are enabled:
 /// - Omi device integration (off by default)
-/// - AI Chat server (off by default)
-/// - Future: Pebble, Apple Watch, Android Watch
+/// - Server URL configuration
 class FeatureFlagsService {
   static final FeatureFlagsService _instance = FeatureFlagsService._internal();
   factory FeatureFlagsService() => _instance;
   FeatureFlagsService._internal();
 
   static const String _omiEnabledKey = 'feature_omi_enabled';
-  static const String _aiChatEnabledKey = 'feature_ai_chat_enabled';
   static const String _aiServerUrlKey = 'feature_ai_server_url';
 
   // Default values
   static const bool _defaultOmiEnabled = false;
-  static const bool _defaultAiChatEnabled =
-      false; // Off by default - power users can enable in settings
   static const String _defaultAiServerUrl = AppConfig.defaultServerUrl;
 
   // Cache for quick access
   bool? _omiEnabled;
-  bool? _aiChatEnabled;
   String? _aiServerUrl;
 
   /// Check if Omi device integration is enabled
@@ -43,23 +38,7 @@ class FeatureFlagsService {
     _omiEnabled = enabled;
   }
 
-  /// Check if AI Chat is enabled
-  Future<bool> isAiChatEnabled() async {
-    if (_aiChatEnabled != null) return _aiChatEnabled!;
-
-    final prefs = await SharedPreferences.getInstance();
-    _aiChatEnabled = prefs.getBool(_aiChatEnabledKey) ?? _defaultAiChatEnabled;
-    return _aiChatEnabled!;
-  }
-
-  /// Set AI Chat enabled state
-  Future<void> setAiChatEnabled(bool enabled) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_aiChatEnabledKey, enabled);
-    _aiChatEnabled = enabled;
-  }
-
-  /// Get AI server URL
+  /// Get server URL
   Future<String> getAiServerUrl() async {
     if (_aiServerUrl != null) return _aiServerUrl!;
 
@@ -68,7 +47,7 @@ class FeatureFlagsService {
     return _aiServerUrl!;
   }
 
-  /// Set AI server URL
+  /// Set server URL
   Future<void> setAiServerUrl(String url) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_aiServerUrlKey, url);
@@ -78,7 +57,6 @@ class FeatureFlagsService {
   /// Clear all cached values (call when settings change)
   void clearCache() {
     _omiEnabled = null;
-    _aiChatEnabled = null;
     _aiServerUrl = null;
   }
 
@@ -86,7 +64,6 @@ class FeatureFlagsService {
   Future<void> resetToDefaults() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_omiEnabledKey, _defaultOmiEnabled);
-    await prefs.setBool(_aiChatEnabledKey, _defaultAiChatEnabled);
     await prefs.setString(_aiServerUrlKey, _defaultAiServerUrl);
     clearCache();
   }
