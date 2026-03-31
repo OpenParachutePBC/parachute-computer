@@ -78,6 +78,13 @@ class PendingEntryQueue extends ChangeNotifier {
     );
   }
 
+  /// Remove a pending entry by localId (e.g. after successful server POST).
+  Future<void> remove(String localId) async {
+    _items.removeWhere((item) => item.localId == localId);
+    await _save();
+    notifyListeners();
+  }
+
   bool _isFlushing = false;
 
   /// Attempt to upload all queued entries in order.

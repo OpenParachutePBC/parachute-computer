@@ -413,39 +413,95 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
   }
 
   Future<void> _addTextEntry(String text) async {
-    // Gate on connectivity — skip API call entirely when offline
-    final isAvailable = ref.read(isServerAvailableProvider);
-    if (!isAvailable) {
-      debugPrint('[JournalScreen] Offline — queueing text entry directly');
-      await _appendEntryToCache(null, content: text);
-      return;
-    }
-    debugPrint('[JournalScreen] Adding text entry via API...');
-    final api = ref.read(dailyApiServiceProvider);
-    final entry = await api.createEntry(content: text);
-    await _appendEntryToCache(entry, content: text);
-    if (entry == null) {
-      debugPrint('[JournalScreen] API failed — text entry queued');
-    }
+    await _addEntryWithSafeQueue(content: text);
   }
 
   Future<void> _addComposeEntry(String title, String content) async {
-    // Prepend title as markdown heading if present
     final fullContent = title.isNotEmpty ? '# $title\n\n$content' : content;
-    // Gate on connectivity — skip API call entirely when offline
+    await _addEntryWithSafeQueue(content: fullContent);
+  }
+
+  /// Create an entry with guaranteed data preservation.
+  ///
+  /// Saves to the pending queue FIRST so content is never lost, then
+  /// attempts the server POST. On success, removes from queue and
+  /// replaces the pending entry with the server's authoritative version.
+  Future<void> _addEntryWithSafeQueue({
+    required String content,
+    JournalEntryType type = JournalEntryType.text,
+    String? audioPath,
+    String? imagePath,
+    int? durationSeconds,
+  }) async {
+    // Step 1: Always save to pending queue first — content is now safe
+    final queue = await ref.read(pendingQueueProvider.future);
+    final localId = 'pending-${DateTime.now().millisecondsSinceEpoch}';
+    final pending = await queue.enqueue(
+      localId: localId,
+      content: content,
+      type: _entryTypeString(type),
+      audioPath: audioPath,
+      imagePath: imagePath,
+      durationSeconds: durationSeconds,
+    );
+    if (!mounted) return;
+
+    // Show immediately in UI as pending
+    final date = ref.read(selectedJournalDateProvider);
+    setState(() {
+      _cachedJournal = (_cachedJournal ?? JournalDay.empty(date)).addEntry(pending);
+      _shouldScrollToBottom = true;
+    });
+
+    // Step 2: Try server POST (only if online)
     final isAvailable = ref.read(isServerAvailableProvider);
     if (!isAvailable) {
-      debugPrint('[JournalScreen] Offline — queueing composed entry directly');
-      await _appendEntryToCache(null, content: fullContent);
+      debugPrint('[JournalScreen] Offline — entry safe in queue ($localId)');
+      if (!mounted) return;
+      ref.invalidate(selectedJournalProvider);
+      ref.read(journalRefreshTriggerProvider.notifier).state++;
       return;
     }
-    debugPrint('[JournalScreen] Adding composed entry via API...');
+
+    debugPrint('[JournalScreen] Posting entry to server...');
     final api = ref.read(dailyApiServiceProvider);
-    final entry = await api.createEntry(content: fullContent);
-    await _appendEntryToCache(entry, content: fullContent);
-    if (entry == null) {
-      debugPrint('[JournalScreen] API failed — composed entry queued');
+    final entry = await api.createEntry(
+      content: content,
+      metadata: {
+        if (type != JournalEntryType.text) 'type': _entryTypeString(type),
+        if (audioPath != null) 'audio_path': audioPath,
+        if (imagePath != null) 'image_path': imagePath,
+        if (durationSeconds != null) 'duration_seconds': durationSeconds,
+      },
+    );
+
+    if (entry != null) {
+      // Success — remove from pending queue and replace with server entry
+      await queue.remove(localId);
+      if (!mounted) return;
+
+      // Write server entry to local cache
+      final cache = await ref.read(journalLocalCacheProvider.future);
+      final dateStr = '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+      final existing = cache.getEntries(dateStr);
+      if (!existing.any((e) => e.id == entry.id)) {
+        cache.putEntries(dateStr, [...existing, entry]);
+      }
+
+      // Replace pending entry in UI with server version
+      setState(() {
+        _cachedJournal = _cachedJournal
+            ?.removeEntry(localId)
+            .addEntry(entry);
+      });
+      debugPrint('[JournalScreen] Entry created: ${entry.id}');
+    } else {
+      debugPrint('[JournalScreen] Server POST failed — entry safe in queue ($localId)');
     }
+
+    if (!mounted) return;
+    ref.invalidate(selectedJournalProvider);
+    ref.read(journalRefreshTriggerProvider.notifier).state++;
   }
 
   Future<void> _addVoiceEntry(String transcript, String localAudioPath, int duration) async {
