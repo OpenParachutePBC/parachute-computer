@@ -10,6 +10,7 @@ import 'package:parachute/core/providers/backend_health_provider.dart'
     show periodicServerHealthProvider;
 import 'package:parachute/core/providers/connectivity_provider.dart'
     show isServerAvailableProvider, serverReachableOverrideProvider;
+import 'package:parachute/core/services/graph_api_service.dart';
 import '../models/daily_agent_models.dart'
     show AgentTemplate, DailyAgentInfo;
 import '../models/journal_entry.dart';
@@ -41,6 +42,24 @@ final dailyApiServiceProvider = Provider<DailyApiService>((ref) {
   );
   ref.onDispose(service.dispose);
   return service;
+});
+
+/// Provider for GraphApiService — v2 graph API client.
+///
+/// Used by DailyApiService internally for all server communication.
+final graphApiServiceProvider = Provider<GraphApiService>((ref) {
+  final urlAsync = ref.watch(aiServerUrlProvider);
+  final baseUrl = urlAsync.valueOrNull ?? AppConfig.defaultServerUrl;
+  final apiKeyAsync = ref.watch(apiKeyProvider);
+  final apiKey = apiKeyAsync.valueOrNull;
+
+  return GraphApiService(
+    baseUrl: baseUrl,
+    apiKey: apiKey,
+    onReachabilityChanged: (reachable) {
+      ref.read(serverReachableOverrideProvider.notifier).state = reachable;
+    },
+  );
 });
 
 /// Provider for the local SQLite cache — offline fallback for journal entries.

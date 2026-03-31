@@ -1,16 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
+import '../models/daily_agent_models.dart' show DailyAgentInfo, AgentTemplate;
 
 /// Placeholder for tool editing — will be rebuilt for v2 declarative tools.
 class AgentEditScreen extends ConsumerWidget {
-  final String? agentName;
-  final bool isNew;
+  final DailyAgentInfo? agent;
+  final AgentTemplate? template;
 
   const AgentEditScreen({
     super.key,
-    this.agentName,
-    this.isNew = false,
+    this.agent,
+    this.template,
   });
 
   @override
@@ -20,7 +21,7 @@ class AgentEditScreen extends ConsumerWidget {
     return Scaffold(
       appBar: AppBar(
         title: Text(
-          isNew ? 'New Tool' : (agentName ?? 'Edit Tool'),
+          agent != null ? 'Edit ${agent!.displayName}' : (template != null ? 'New from ${template!.displayName}' : 'New Tool'),
           style: TextStyle(
             color: isDark ? BrandColors.nightText : BrandColors.charcoal,
           ),

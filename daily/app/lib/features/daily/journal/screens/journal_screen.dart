@@ -1293,15 +1293,6 @@ ref.read(journalScreenStateProvider.notifier).completeTranscription(entry.id);
                   _copyEntryContent(entry);
                 },
               ),
-            if (entry.content.isNotEmpty)
-              ListTile(
-                leading: Icon(Icons.chat_bubble_outline, color: BrandColors.turquoise),
-                title: const Text('Send to Chat'),
-                onTap: () {
-                  Navigator.pop(context);
-                  SendToChatSheet.show(context, content: entry.content, title: entry.title);
-                },
-              ),
             ListTile(
               leading: const Icon(Icons.edit_outlined),
               title: const Text('Edit'),
