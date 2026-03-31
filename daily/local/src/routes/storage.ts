@@ -28,9 +28,9 @@ export function storageRoutes(assetsDir: string): Hono {
     return c.json({ path: relativePath, size: buffer.length }, 201);
   });
 
-  // GET /*path — Serve a stored file
-  app.get("/*", (c) => {
-    const reqPath = c.req.path.replace(/^\//, "");
+  // GET /:date/:file — Serve a stored file
+  app.get("/:date/:file", (c) => {
+    const reqPath = `${c.req.param("date")}/${c.req.param("file")}`;
     const filePath = path.join(assetsDir, reqPath);
 
     if (!fs.existsSync(filePath)) {

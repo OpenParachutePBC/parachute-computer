@@ -23,15 +23,16 @@ class JournalHelpers {
   /// For legacy relative paths (before migration), returns a best-effort URL.
   static String getAudioUrl(String audioPath, String serverBaseUrl) {
     if (audioPath.startsWith('/')) {
+      // Absolute path — extract relative portion after assets directory
       const assetsMarker = '/daily/assets/';
       final idx = audioPath.indexOf(assetsMarker);
       if (idx != -1) {
         final rel = audioPath.substring(idx + assetsMarker.length);
-        return '$serverBaseUrl/api/daily/assets/$rel';
+        return '$serverBaseUrl/api/storage/$rel';
       }
     }
-    // Legacy relative path — pass through as-is
-    return '$serverBaseUrl/api/daily/assets/$audioPath';
+    // Relative path (e.g. "2026-03-27/filename.wav")
+    return '$serverBaseUrl/api/storage/$audioPath';
   }
 
   /// Format duration in seconds to human-readable string
