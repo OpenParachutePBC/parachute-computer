@@ -7,6 +7,7 @@ import '../providers/journal_providers.dart';
 import '../providers/journal_screen_state_provider.dart';
 import 'cards_empty_state.dart';
 import 'journal_agent_outputs_section.dart';
+import 'collapsible_chat_log_section.dart';
 import 'journal_entry_row.dart';
 
 /// Main content view showing journal entries, agent outputs, and chat log
@@ -40,13 +41,15 @@ class JournalContentView extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    // Watch agent cards for the selected date
+    // Watch agent cards and chat log for the selected date
     final agentCardsAsync = ref.watch(cardsProvider(_dateStr(selectedDate)));
+    final chatLogAsync = ref.watch(selectedChatLogProvider);
 
     // Check if we have any content at all
     final hasJournalEntries = journal.entries.isNotEmpty;
     final agentCards = agentCardsAsync.valueOrNull ?? [];
     final hasAgentOutputs = agentCards.isNotEmpty;
+    final hasChatLog = chatLogAsync.valueOrNull?.hasContent ?? false;
 
     return RefreshIndicator(
       onRefresh: onRefresh,
@@ -70,8 +73,17 @@ class JournalContentView extends ConsumerWidget {
               child: CardsEmptyState(),
             ),
 
+          // AI Conversations (if available) - collapsible section at top
+          if (hasChatLog)
+            SliverToBoxAdapter(
+              child: CollapsibleChatLogSection(
+                chatLog: chatLogAsync.value!,
+                initiallyExpanded: false,
+              ),
+            ),
+
           // Journal section header (if there are entries)
-          if (hasJournalEntries && hasAgentOutputs)
+          if (hasJournalEntries && (hasAgentOutputs || hasChatLog))
             SliverToBoxAdapter(
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),

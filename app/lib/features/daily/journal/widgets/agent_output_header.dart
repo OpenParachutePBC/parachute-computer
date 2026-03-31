@@ -6,6 +6,7 @@ import 'package:parachute/core/theme/design_tokens.dart';
 import '../models/agent_card.dart';
 import '../utils/agent_theme.dart';
 import '../screens/agent_log_screen.dart';
+import '../../../chat/widgets/inline_audio_player.dart';
 
 /// Expandable header showing output from a daily agent
 ///
@@ -542,12 +543,9 @@ class _AgentOutputHeaderState extends State<AgentOutputHeader>
               ),
             ),
             const SizedBox(height: 20),
-            // Audio player placeholder — InlineAudioPlayer was in chat feature
-            Text(
-              'Audio: $title',
-              style: TextStyle(
-                color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
-              ),
+            InlineAudioPlayer(
+              audioPath: audioPath,
+              title: title,
             ),
             const SizedBox(height: 20),
           ],

@@ -10,11 +10,13 @@ import 'package:parachute/core/providers/backend_health_provider.dart'
     show periodicServerHealthProvider;
 import 'package:parachute/core/providers/connectivity_provider.dart'
     show isServerAvailableProvider, serverReachableOverrideProvider;
-import '../models/daily_agent_models.dart'
+import 'package:parachute/core/services/computer_service.dart'
     show AgentTemplate, DailyAgentInfo;
+import '../models/chat_log.dart';
 import '../models/journal_entry.dart';
 import '../models/journal_day.dart';
 import '../models/agent_card.dart';
+import '../services/chat_log_service.dart';
 import '../services/daily_api_service.dart';
 import '../services/journal_local_cache.dart';
 import '../services/pending_entry_queue.dart';
@@ -272,7 +274,29 @@ List<JournalEntry> _pendingForDate(PendingEntryQueue queue, String dateStr) =>
         .where((e) => _formatDateForApi(e.createdAt) == dateStr)
         .toList();
 
-// Chat Log providers removed in v2 — chat feature deleted
+// ============================================================================
+// Chat Log Providers
+// ============================================================================
+
+/// Async provider for ChatLogService
+final chatLogServiceFutureProvider = FutureProvider.autoDispose<ChatLogService>(
+  (ref) async {
+    final fileSystemService = ref.watch(fileSystemServiceProvider);
+    await fileSystemService.initialize();
+    return ChatLogService.create(fileSystemService: fileSystemService);
+  },
+);
+
+/// Provider for the selected date's chat log
+final selectedChatLogProvider = FutureProvider.autoDispose<ChatLog?>((
+  ref,
+) async {
+  final date = ref.watch(selectedJournalDateProvider);
+  ref.watch(journalRefreshTriggerProvider);
+
+  final chatLogService = await ref.watch(chatLogServiceFutureProvider.future);
+  return chatLogService.loadChatLog(date);
+});
 
 // ============================================================================
 // Card Providers (graph-backed)

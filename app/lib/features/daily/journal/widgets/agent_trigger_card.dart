@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
-import 'package:parachute/core/providers/connectivity_provider.dart';
-import '../models/daily_agent_models.dart';
+import 'package:parachute/core/providers/computer_provider.dart';
+import 'package:parachute/core/services/computer_service.dart';
 import '../providers/journal_providers.dart';
 import '../utils/agent_theme.dart';
 
@@ -65,7 +65,7 @@ class _AgentTriggerCardState extends ConsumerState<AgentTriggerCard> {
     final isDark = theme.brightness == Brightness.dark;
 
     // Watch server connectivity
-    final isConnected = ref.watch(isServerAvailableProvider);
+    final serverConnected = ref.watch(serverConnectedProvider);
     final triggerState = ref.watch(agentTriggerStateProvider(widget.agent.name));
 
     // Choose icon and color based on agent type
@@ -87,42 +87,51 @@ class _AgentTriggerCardState extends ConsumerState<AgentTriggerCard> {
               : BrandColors.stone.withValues(alpha: 0.3),
         ),
       ),
-      child: !isConnected
-          ? _buildDisconnectedState(context, isDark, icon, color)
-          : _isTriggering
-              ? _buildLoadingState(context, isDark, icon, color)
-              : triggerState.when(
-                  data: (result) {
-                    if (result == null) {
-                      return FutureBuilder<AgentRunInfo?>(
-                        future: _latestRunFuture,
-                        builder: (context, snapshot) {
-                          if (snapshot.hasData && snapshot.data != null) {
-                            final latestRun = snapshot.data!;
-                            if (latestRun.isFailed) {
-                              return _buildScheduledFailureState(
-                                context, latestRun, isDark, icon, color,
-                              );
-                            }
-                          }
-                          return _buildReadyState(context, isDark, icon, color);
-                        },
-                      );
+      child: serverConnected.when(
+        data: (connected) {
+          if (!connected) {
+            return _buildDisconnectedState(context, isDark, icon, color);
+          }
+          if (_isTriggering) {
+            return _buildLoadingState(context, isDark, icon, color);
+          }
+          return triggerState.when(
+            data: (result) {
+              if (result == null) {
+                // No interactive trigger result — check for recent scheduled failures
+                return FutureBuilder<AgentRunInfo?>(
+                  future: _latestRunFuture,
+                  builder: (context, snapshot) {
+                    if (snapshot.hasData && snapshot.data != null) {
+                      final latestRun = snapshot.data!;
+                      if (latestRun.isFailed) {
+                        return _buildScheduledFailureState(
+                          context, latestRun, isDark, icon, color,
+                        );
+                      }
                     }
-                    if (result.success) {
-                      return _buildSuccessState(context, result, isDark, icon, color);
-                    }
-                    return _buildErrorState(context, result, isDark, icon, color);
+                    return _buildReadyState(context, isDark, icon, color);
                   },
-                  loading: () => _buildLoadingState(context, isDark, icon, color),
-                  error: (e, _) => _buildErrorState(
-                    context,
-                    AgentRunResult(success: false, status: 'error', error: e.toString()),
-                    isDark,
-                    icon,
-                    color,
-                  ),
-                ),
+                );
+              }
+              if (result.success) {
+                return _buildSuccessState(context, result, isDark, icon, color);
+              }
+              return _buildErrorState(context, result, isDark, icon, color);
+            },
+            loading: () => _buildLoadingState(context, isDark, icon, color),
+            error: (e, _) => _buildErrorState(
+              context,
+              AgentRunResult(success: false, status: 'error', error: e.toString()),
+              isDark,
+              icon,
+              color,
+            ),
+          );
+        },
+        loading: () => _buildCheckingState(context, isDark),
+        error: (e, _) => _buildDisconnectedState(context, isDark, icon, color),
+      ),
     );
   }
 

@@ -3,6 +3,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/core/providers/app_state_provider.dart';
+import 'package:parachute/features/chat/providers/chat_providers.dart';
+import 'package:parachute/features/chat/services/chat_service.dart';
 
 /// Provider for fetching API keys from the server
 final apiKeysProvider = FutureProvider<ApiKeysResponse?>((ref) async {

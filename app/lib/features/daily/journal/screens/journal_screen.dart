@@ -24,6 +24,7 @@ import '../widgets/journal_content_view.dart';
 import '../widgets/journal_empty_state.dart';
 import '../widgets/journal_input_bar.dart';
 import '../widgets/mini_audio_player.dart';
+import '../widgets/send_to_chat_sheet.dart';
 import '../widgets/pending_sync_banner.dart';
 import 'entry_detail_screen.dart';
 import '../../recorder/widgets/playback_controls.dart';
@@ -192,8 +193,9 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
     DateTime selectedDate,
     bool isToday,
   ) {
-    // Watch agent cards for the selected date
+    // Watch agent cards and chat log for the selected date
     final agentCardsAsync = ref.watch(cardsProvider(_formatDateStr(selectedDate)));
+    final chatLogAsync = ref.watch(selectedChatLogProvider);
 
     // Handle scroll to bottom after new entry is added
     if (_shouldScrollToBottom) {
@@ -207,7 +209,8 @@ class _JournalScreenState extends ConsumerState<JournalScreen> with WidgetsBindi
     final hasJournalEntries = journal.entries.isNotEmpty;
     final agentCards = agentCardsAsync.valueOrNull ?? [];
     final hasAgentOutputs = agentCards.isNotEmpty;
-    final hasAnyContent = hasJournalEntries || hasAgentOutputs;
+    final hasChatLog = chatLogAsync.valueOrNull?.hasContent ?? false;
+    final hasAnyContent = hasJournalEntries || hasAgentOutputs || hasChatLog;
 
     if (!hasAnyContent) {
       // Wrap empty state in RefreshIndicator with scrollable child

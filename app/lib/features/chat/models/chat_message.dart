@@ -1,0 +1,360 @@
+/// A parsed question from an AskUserQuestion tool call.
+///
+/// Typed view over the raw [Map<String, dynamic>] stored in [UserQuestionData].
+class UserQuestion {
+  final String question;
+  final String header;
+  final List<QuestionOption> options;
+  final bool multiSelect;
+
+  const UserQuestion({
+    required this.question,
+    required this.header,
+    required this.options,
+    this.multiSelect = false,
+  });
+
+  factory UserQuestion.fromJson(Map<String, dynamic> json) {
+    final optionsList = (json['options'] as List<dynamic>?) ?? [];
+    return UserQuestion(
+      question: json['question'] as String? ?? '',
+      header: json['header'] as String? ?? '',
+      options: optionsList
+          .map((o) => QuestionOption.fromJson(o as Map<String, dynamic>))
+          .toList(),
+      multiSelect: json['multiSelect'] as bool? ?? false,
+    );
+  }
+}
+
+/// A single option for an [UserQuestion].
+class QuestionOption {
+  final String label;
+  final String description;
+
+  const QuestionOption({
+    required this.label,
+    required this.description,
+  });
+
+  factory QuestionOption.fromJson(Map<String, dynamic> json) {
+    return QuestionOption(
+      label: json['label'] as String? ?? '',
+      description: json['description'] as String? ?? '',
+    );
+  }
+}
+
+/// Role of the message sender
+enum MessageRole { user, assistant }
+
+/// Type of content within a message
+enum ContentType { text, toolUse, thinking, warning, userQuestion }
+
+/// Status of a user question (from AskUserQuestion tool)
+enum UserQuestionStatus { pending, answered, timeout }
+
+/// Data for an AskUserQuestion tool call persisted in message content
+class UserQuestionData {
+  final String toolUseId;
+  final List<Map<String, dynamic>> questions;
+  final Map<String, dynamic>? answers; // null = pending, {} = timeout, {...} = answered
+  final UserQuestionStatus status;
+
+  const UserQuestionData({
+    required this.toolUseId,
+    required this.questions,
+    this.answers,
+    this.status = UserQuestionStatus.pending,
+  });
+
+}
+
+/// A tool call made by the assistant
+class ToolCall {
+  final String id;
+  final String name;
+  final Map<String, dynamic> input;
+
+  /// The result of the tool execution (populated after tool_result event)
+  final String? result;
+
+  /// Whether the tool execution resulted in an error
+  final bool isError;
+
+  const ToolCall({
+    required this.id,
+    required this.name,
+    required this.input,
+    this.result,
+    this.isError = false,
+  });
+
+  factory ToolCall.fromJson(Map<String, dynamic> json) {
+    return ToolCall(
+      id: json['id'] as String? ?? '',
+      name: json['name'] as String? ?? '',
+      input: json['input'] as Map<String, dynamic>? ?? {},
+      result: json['result'] as String?,
+      isError: json['isError'] as bool? ?? false,
+    );
+  }
+
+  /// Create a copy with the result attached
+  ToolCall withResult(String resultContent, {bool isError = false}) {
+    return ToolCall(
+      id: id,
+      name: name,
+      input: input,
+      result: resultContent,
+      isError: isError,
+    );
+  }
+
+  /// Summarize the tool input for display
+  String get summary {
+    final toolName = name.toLowerCase();
+
+    // File operations - show filename
+    if (toolName == 'read' || toolName.contains('read')) {
+      return input['file_path'] as String? ??
+          input['path'] as String? ??
+          '';
+    }
+
+    // Bash commands - show truncated command
+    if (toolName == 'bash' || toolName.contains('bash')) {
+      final cmd = input['command'] as String? ?? '';
+      return cmd.length > 50 ? '${cmd.substring(0, 47)}...' : cmd;
+    }
+
+    // Search operations - show pattern
+    if (toolName == 'glob' || toolName.contains('glob')) {
+      return input['pattern'] as String? ?? '';
+    }
+
+    if (toolName == 'grep' || toolName.contains('grep')) {
+      return input['pattern'] as String? ?? '';
+    }
+
+    // Write/Edit - show file path
+    if (toolName == 'write' || toolName == 'edit') {
+      return input['file_path'] as String? ?? '';
+    }
+
+    // Default - try common field names
+    return input['file_path'] as String? ??
+        input['path'] as String? ??
+        input['pattern'] as String? ??
+        input['query'] as String? ??
+        '';
+  }
+}
+
+/// A piece of content within a message (text or tool use)
+class MessageContent {
+  final ContentType type;
+  final String? text;
+  final ToolCall? toolCall;
+  final UserQuestionData? userQuestionData;
+
+  const MessageContent({
+    required this.type,
+    this.text,
+    this.toolCall,
+    this.userQuestionData,
+  });
+
+  factory MessageContent.text(String text) {
+    return MessageContent(type: ContentType.text, text: text);
+  }
+
+  factory MessageContent.toolUse(ToolCall toolCall) {
+    return MessageContent(type: ContentType.toolUse, toolCall: toolCall);
+  }
+
+  factory MessageContent.thinking(String text) {
+    return MessageContent(type: ContentType.thinking, text: text);
+  }
+
+  factory MessageContent.warning(String text) {
+    return MessageContent(type: ContentType.warning, text: text);
+  }
+
+  factory MessageContent.userQuestion(UserQuestionData data) {
+    return MessageContent(type: ContentType.userQuestion, userQuestionData: data);
+  }
+}
+
+/// A chat message with ordered content (text and tool calls interleaved)
+class ChatMessage {
+  /// Internal message ID (used for streaming, UI state, etc.)
+  final String id;
+
+  /// Persistent para:uuid identifier (stored in markdown)
+  /// Format: 12-char alphanumeric, e.g., "abc123def456"
+  /// Null for messages that haven't been persisted yet
+  final String? paraId;
+
+  final String sessionId;
+  final MessageRole role;
+  final List<MessageContent> content;
+  final DateTime timestamp;
+  final bool isStreaming;
+
+  /// Whether this message is a compact summary (auto-generated by Claude SDK)
+  /// Compact summaries should be displayed collapsed by default
+  final bool isCompactSummary;
+
+  const ChatMessage({
+    required this.id,
+    this.paraId,
+    required this.sessionId,
+    required this.role,
+    required this.content,
+    required this.timestamp,
+    this.isStreaming = false,
+    this.isCompactSummary = false,
+  });
+
+  /// Get the full text content (concatenated)
+  String get textContent {
+    return content
+        .where((c) => c.type == ContentType.text)
+        .map((c) => c.text ?? '')
+        .join('');
+  }
+
+  /// Get all tool calls
+  List<ToolCall> get toolCalls {
+    return content
+        .where((c) => c.type == ContentType.toolUse)
+        .map((c) => c.toolCall!)
+        .toList();
+  }
+
+  factory ChatMessage.fromJson(Map<String, dynamic> json) {
+    final role = json['role'] == 'user' ? MessageRole.user : MessageRole.assistant;
+
+    // Parse content - could be string or structured list of blocks
+    List<MessageContent> content = [];
+    if (json['content'] is String) {
+      content = [MessageContent.text(json['content'] as String)];
+    } else if (json['content'] is List) {
+      // Server merges tool_result into tool_use (with result/isError fields),
+      // so we only need a single pass here.
+      for (final c in json['content'] as List) {
+        if (c is String) {
+          content.add(MessageContent.text(c));
+        } else if (c is Map<String, dynamic>) {
+          final blockType = c['type'] as String? ?? '';
+          if (blockType == 'tool_use') {
+            content.add(MessageContent.toolUse(ToolCall.fromJson(c)));
+          } else if (blockType == 'thinking') {
+            final text = c['text'] as String? ?? '';
+            if (text.isNotEmpty) {
+              content.add(MessageContent.thinking(text));
+            }
+          } else if (blockType == 'text') {
+            content.add(MessageContent.text(c['text'] as String? ?? ''));
+          }
+          // Unknown block types: skip silently
+        }
+        // Non-string, non-map entries: skip silently
+      }
+    }
+
+    return ChatMessage(
+      id: json['id'] as String? ?? DateTime.now().millisecondsSinceEpoch.toString(),
+      paraId: json['paraId'] as String?,
+      sessionId: json['sessionId'] as String? ?? '',
+      role: role,
+      content: content,
+      timestamp: json['timestamp'] != null
+          ? DateTime.parse(json['timestamp'] as String)
+          : DateTime.now(),
+      isStreaming: json['isStreaming'] as bool? ?? false,
+      isCompactSummary: json['isCompactSummary'] as bool? ?? false,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    if (paraId != null) 'paraId': paraId,
+    'sessionId': sessionId,
+    'role': role == MessageRole.user ? 'user' : 'assistant',
+    'content': textContent,
+    'timestamp': timestamp.toIso8601String(),
+  };
+
+  ChatMessage copyWith({
+    String? id,
+    String? paraId,
+    String? sessionId,
+    MessageRole? role,
+    List<MessageContent>? content,
+    DateTime? timestamp,
+    bool? isStreaming,
+    bool? isCompactSummary,
+  }) {
+    return ChatMessage(
+      id: id ?? this.id,
+      paraId: paraId ?? this.paraId,
+      sessionId: sessionId ?? this.sessionId,
+      role: role ?? this.role,
+      content: content ?? this.content,
+      timestamp: timestamp ?? this.timestamp,
+      isStreaming: isStreaming ?? this.isStreaming,
+      isCompactSummary: isCompactSummary ?? this.isCompactSummary,
+    );
+  }
+
+  /// Create a user message
+  factory ChatMessage.user({
+    required String sessionId,
+    required String text,
+    String? paraId,
+  }) {
+    return ChatMessage(
+      id: DateTime.now().millisecondsSinceEpoch.toString(),
+      paraId: paraId,
+      sessionId: sessionId,
+      role: MessageRole.user,
+      content: [MessageContent.text(text)],
+      timestamp: DateTime.now(),
+    );
+  }
+
+  /// Create a placeholder assistant message for streaming
+  factory ChatMessage.assistantPlaceholder({
+    required String sessionId,
+  }) {
+    return ChatMessage(
+      id: 'streaming-${DateTime.now().millisecondsSinceEpoch}',
+      paraId: null, // Will be assigned when persisted
+      sessionId: sessionId,
+      role: MessageRole.assistant,
+      content: [],
+      timestamp: DateTime.now(),
+      isStreaming: true,
+    );
+  }
+
+  /// Create a message from parsed markdown (with para ID)
+  factory ChatMessage.fromMarkdown({
+    required String sessionId,
+    required MessageRole role,
+    required String text,
+    required DateTime timestamp,
+    String? paraId,
+  }) {
+    return ChatMessage(
+      id: paraId ?? DateTime.now().millisecondsSinceEpoch.toString(),
+      paraId: paraId,
+      sessionId: sessionId,
+      role: role,
+      content: [MessageContent.text(text)],
+      timestamp: timestamp,
+    );
+  }
+}

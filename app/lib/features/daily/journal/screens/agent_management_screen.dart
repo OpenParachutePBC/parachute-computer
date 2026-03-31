@@ -6,7 +6,7 @@ import '../utils/agent_theme.dart';
 import '../widgets/agent_detail_sheet.dart';
 import 'agent_log_screen.dart';
 import 'agent_edit_screen.dart';
-import '../models/daily_agent_models.dart'
+import 'package:parachute/core/services/computer_service.dart'
     show AgentTemplate, DailyAgentInfo;
 
 /// Full-screen Agent management — browse, enable/disable, and configure agents.

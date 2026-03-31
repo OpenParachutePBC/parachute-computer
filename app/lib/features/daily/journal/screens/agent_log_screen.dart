@@ -1,8 +1,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../models/daily_agent_models.dart';
-import '../providers/journal_providers.dart' show dailyApiServiceProvider;
+import 'package:parachute/core/services/computer_service.dart';
+import 'package:parachute/core/providers/computer_provider.dart';
 
 /// Screen showing a daily agent's conversation transcript.
 ///
@@ -60,7 +60,7 @@ class _AgentLogScreenState extends ConsumerState<AgentLogScreen> {
     });
 
     try {
-      final service = ref.read(dailyApiServiceProvider);
+      final service = ref.read(computerServiceProvider);
       final AgentTranscript? transcript;
 
       if (widget.agentName != null) {

@@ -5,7 +5,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
-// computer_service.dart removed in v2 — no longer needed
+import '../services/computer_service.dart';
 
 /// App flavor set at compile time via --dart-define=FLAVOR=daily|client|computer
 /// Defaults to 'client' if not specified
@@ -105,14 +105,20 @@ final customBasePathProvider = AsyncNotifierProvider<CustomBasePathNotifier, Str
 // App Mode
 // ============================================================================
 
-/// App mode — daily-only in v2
+/// App mode determines which features are available
 enum AppMode {
+  /// Daily only - no server configured, works offline
   dailyOnly,
+
+  /// Full mode - server configured, all features available
+  full,
 }
 
-/// Available tabs — daily only in v2
+/// Available tabs in the app
 enum AppTab {
+  chat,
   daily,
+  brain,
 }
 
 /// Notifier for server URL with persistence
@@ -168,25 +174,36 @@ final appModeProvider = Provider<AppMode>((ref) {
     return AppMode.dailyOnly;
   }
 
-  return AppMode.dailyOnly;
+  // Full flavor checks server configuration
+  final serverUrlAsync = ref.watch(serverUrlProvider);
+
+  return serverUrlAsync.when(
+    data: (url) => url != null && url.isNotEmpty ? AppMode.full : AppMode.dailyOnly,
+    loading: () => AppMode.dailyOnly,
+    error: (_, _) => AppMode.dailyOnly,
+  );
 });
 
-/// List of visible tabs — daily only in v2
+/// List of visible tabs based on app mode
 final visibleTabsProvider = Provider<List<AppTab>>((ref) {
-  return [AppTab.daily];
+  final mode = ref.watch(appModeProvider);
+
+  return switch (mode) {
+    AppMode.dailyOnly => [AppTab.daily],
+    AppMode.full => [AppTab.chat, AppTab.daily, AppTab.brain],
+  };
 });
 
-/// Current tab index
-final currentTabIndexProvider = StateProvider<int>((ref) => 0);
+/// Current tab index (persists across rebuilds)
+final currentTabIndexProvider = StateProvider<int>((ref) {
+  final visibleTabs = ref.watch(visibleTabsProvider);
+  // Default to Daily (center tab)
+  return visibleTabs.indexOf(AppTab.daily).clamp(0, visibleTabs.length - 1);
+});
 
 /// Check if server is configured
 final isServerConfiguredProvider = Provider<bool>((ref) {
-  final serverUrlAsync = ref.watch(serverUrlProvider);
-  return serverUrlAsync.when(
-    data: (url) => url != null && url.isNotEmpty,
-    loading: () => false,
-    error: (_, _) => false,
-  );
+  return ref.watch(appModeProvider) == AppMode.full;
 });
 
 /// Notifier for API key with persistence via flutter_secure_storage.
@@ -317,7 +334,15 @@ class VaultPathNotifier extends AsyncNotifier<String?> {
   }
 
   Future<String?> _fetchServerVaultPath() async {
-    // Vault path is no longer fetched from server in v2
+    try {
+      final service = ComputerService();
+      final serverVaultPath = await service.getServerVaultPath();
+      if (serverVaultPath != null && serverVaultPath.isNotEmpty) {
+        return serverVaultPath;
+      }
+    } catch (e) {
+      debugPrint('[VaultPathNotifier] Error fetching server vault path: $e');
+    }
     return null;
   }
 

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
-import '../models/daily_agent_models.dart'
+import 'package:parachute/core/services/computer_service.dart'
     show DailyAgentInfo, MemoryMode;
 import '../providers/journal_providers.dart';
 import '../utils/agent_theme.dart';
