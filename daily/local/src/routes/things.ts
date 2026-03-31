@@ -1,7 +1,9 @@
 import { Hono } from "hono";
 import type { SqliteStore } from "@parachute/core";
 
-export function thingRoutes(store: SqliteStore): Hono {
+export type ThingCreatedHook = (thing: any) => void;
+
+export function thingRoutes(store: SqliteStore, onCreated?: ThingCreatedHook): Hono {
   const app = new Hono();
 
   // GET / — Query things
@@ -49,6 +51,11 @@ export function thingRoutes(store: SqliteStore): Hono {
       tags: tagInputs,
       createdBy: body.created_by,
     });
+
+    // Fire post-creation hook (non-blocking)
+    if (onCreated) {
+      try { onCreated(thing); } catch (_) { /* don't fail the response */ }
+    }
 
     return c.json(thing, 201);
   });

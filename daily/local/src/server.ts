@@ -51,8 +51,37 @@ app.route("/api/auth", authRoutes());
 // Transcription route
 app.route("/api/transcribe", transcribeRoutes(store, transcription, ASSETS_DIR));
 
-// Mount graph API routes
-const routes = createRoutes(store, ASSETS_DIR);
+// Mount graph API routes with auto-transcription hook
+const routes = createRoutes(store, ASSETS_DIR, (thing) => {
+  // Auto-transcribe voice entries when created with processing status
+  const noteTag = (thing.tags ?? []).find((t: any) => t.tagName === "daily-note");
+  if (!noteTag) return;
+  const fields = noteTag.fieldValues ?? {};
+  if (fields.transcription_status !== "processing") return;
+  if (!fields.audio_url) return;
+
+  // Fire-and-forget transcription
+  const audioPath = path.isAbsolute(fields.audio_url)
+    ? fields.audio_url
+    : path.join(ASSETS_DIR, fields.audio_url);
+
+  transcription.isAvailable().then((ok) => {
+    if (!ok) return;
+    console.log(`[auto-transcribe] Starting for ${thing.id}`);
+    transcription.transcribe(audioPath).then((result) => {
+      store.updateThing(thing.id, {
+        content: result.text,
+        tags: [{ name: "daily-note", fields: { transcription_status: "transcribed" } }],
+      });
+      console.log(`[auto-transcribe] Done for ${thing.id} (${result.backend})`);
+    }).catch((err) => {
+      console.error(`[auto-transcribe] Failed for ${thing.id}: ${err.message}`);
+      store.updateThing(thing.id, {
+        tags: [{ name: "daily-note", fields: { transcription_status: "failed" } }],
+      });
+    });
+  });
+});
 app.route("/api", routes);
 
 serve({ fetch: app.fetch, port: PORT }, async (info) => {
