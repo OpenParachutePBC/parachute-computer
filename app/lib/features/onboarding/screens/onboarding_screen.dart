@@ -4,7 +4,6 @@ import 'package:parachute/core/theme/design_tokens.dart';
 import 'package:parachute/core/providers/app_state_provider.dart';
 import 'package:parachute/core/providers/file_system_provider.dart';
 import 'package:parachute/core/providers/server_providers.dart';
-import 'package:parachute/features/settings/widgets/computer_setup_wizard.dart';
 import '../widgets/server_connection_step.dart';
 
 // Import flavor detection

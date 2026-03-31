@@ -1,8 +1,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:parachute/core/services/computer_service.dart';
-import 'package:parachute/core/providers/computer_provider.dart';
+import '../models/daily_agent_models.dart';
+import '../providers/journal_providers.dart' show dailyApiServiceProvider;
 
 /// Screen showing a daily agent's conversation transcript.
 ///

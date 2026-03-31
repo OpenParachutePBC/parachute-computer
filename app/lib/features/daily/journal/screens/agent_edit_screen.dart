@@ -2,10 +2,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:parachute/core/theme/design_tokens.dart';
-import 'package:parachute/core/services/computer_service.dart'
+import '../models/daily_agent_models.dart'
     show AgentTemplate, DailyAgentInfo, MemoryMode;
-import 'package:parachute/features/chat/models/container_env.dart';
-import 'package:parachute/features/chat/providers/container_providers.dart';
 import '../providers/journal_providers.dart';
 import '../utils/time_helpers.dart';
 

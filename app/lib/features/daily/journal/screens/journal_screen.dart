@@ -24,7 +24,6 @@ import '../widgets/journal_content_view.dart';
 import '../widgets/journal_empty_state.dart';
 import '../widgets/journal_input_bar.dart';
 import '../widgets/mini_audio_player.dart';
-import '../widgets/send_to_chat_sheet.dart';
 import '../widgets/pending_sync_banner.dart';
 import 'entry_detail_screen.dart';
 import '../../recorder/widgets/playback_controls.dart';

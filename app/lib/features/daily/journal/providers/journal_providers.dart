@@ -10,7 +10,7 @@ import 'package:parachute/core/providers/backend_health_provider.dart'
     show periodicServerHealthProvider;
 import 'package:parachute/core/providers/connectivity_provider.dart'
     show isServerAvailableProvider, serverReachableOverrideProvider;
-import 'package:parachute/core/services/computer_service.dart'
+import '../models/daily_agent_models.dart'
     show AgentTemplate, DailyAgentInfo;
 import '../models/chat_log.dart';
 import '../models/journal_entry.dart';

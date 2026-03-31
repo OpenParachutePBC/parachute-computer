@@ -11,10 +11,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:marionette_flutter/marionette_flutter.dart';
 
 import 'core/theme/app_theme.dart';
-import 'core/theme/design_tokens.dart';
 import 'core/providers/app_state_provider.dart';
-import 'core/providers/app_events_provider.dart';
-import 'core/providers/server_providers.dart';
 import 'core/providers/sync_provider.dart';
 import 'core/providers/core_service_providers.dart';
 import 'core/services/deep_link_service.dart';
@@ -24,16 +21,9 @@ import 'core/services/model_download_service.dart';
 import 'core/widgets/model_download_banner.dart';
 import 'features/daily/home/screens/home_screen.dart';
 import 'features/daily/recorder/providers/omi_providers.dart';
-import 'features/chat/screens/chat_shell.dart';
-import 'features/chat/screens/chat_screen.dart';
-import 'features/chat/providers/agent_completion_provider.dart';
-import 'features/chat/providers/chat_providers.dart';
-import 'features/chat/widgets/message_bubble.dart' show currentlyRenderingMarkdown, markMarkdownAsFailed;
 import 'features/daily/journal/providers/journal_providers.dart';
-import 'features/brain/screens/brain_home_screen.dart';
 import 'features/settings/screens/settings_screen.dart';
 import 'features/onboarding/screens/onboarding_screen.dart';
-import 'features/vault/screens/remote_files_screen.dart' show remoteCurrentPathProvider;
 
 void main() async {
   if (kDebugMode) {
@@ -42,69 +32,14 @@ void main() async {
     WidgetsFlutterBinding.ensureInitialized();
   }
 
-  // Create provider container for early initialization
   final container = ProviderContainer();
 
-  // Run one-time SharedPreferences migrations
   await FileSystemService.runMigrations();
-
-  // Initialize global services (logging, etc.)
   await initializeGlobalServices(container);
 
-  logger.info('Main', 'Starting Parachute app...');
+  logger.info('Main', 'Starting Parachute Daily...');
 
-  // Initialize background services
   await _initializeServices();
-
-  // Set up global error handling
-  FlutterError.onError = (FlutterErrorDetails details) {
-    final errorString = details.toString().toLowerCase();
-
-    // Suppress known macOS Flutter bug: duplicate KeyDownEvent without KeyUpEvent
-    // https://github.com/flutter/flutter/issues/139437
-    if (errorString.contains('keydownevent') &&
-        errorString.contains('physical key is already pressed')) {
-      return;
-    }
-
-    // Catch flutter_markdown builder errors and trigger fallback to plain text
-    if (errorString.contains('_inlines') ||
-        errorString.contains('flutter_markdown') ||
-        (errorString.contains('builder.dart') && errorString.contains('assertion'))) {
-      final currentMarkdown = currentlyRenderingMarkdown;
-      if (currentMarkdown != null) {
-        markMarkdownAsFailed(currentMarkdown.hashCode);
-        return; // Don't present - handled by error boundary
-      }
-    }
-
-    FlutterError.presentError(details);
-    logger.captureException(
-      details.exception,
-      stackTrace: details.stack,
-      tag: 'FlutterError',
-      extras: {
-        'library': details.library ?? 'unknown',
-        'context': details.context?.toString() ?? 'unknown',
-      },
-    );
-  };
-
-  PlatformDispatcher.instance.onError = (error, stack) {
-    logger.captureException(error, stackTrace: stack, tag: 'PlatformDispatcher');
-    return true;
-  };
-
-  // Initialize bundled server on desktop platforms
-  // Computer flavor manages the server separately (Docker containers)
-  if (Platform.isMacOS || Platform.isLinux || Platform.isWindows) {
-    if (isComputerFlavor) {
-      debugPrint('[Parachute] Computer flavor - server managed externally');
-    } else {
-      debugPrint('[Parachute] Checking for bundled server...');
-      await initializeBundledServer(container);
-    }
-  }
 
   // Initialize deep link service
   final deepLinkService = container.read(deepLinkServiceProvider);
@@ -143,25 +78,16 @@ Future<void> _initializeServices() async {
     debugPrint('[Parachute] Failed to initialize FlutterGemma: $e');
   }
 
-  // Initialize transcription service in background (don't await)
+  // Initialize transcription model download in background
   _initializeTranscription();
 }
 
-/// Initialize transcription model download in background
-///
-/// On Android, this downloads the Sherpa-ONNX Parakeet model (~465MB)
-/// The download continues in the background and the app remains usable.
 void _initializeTranscription() async {
-  // Only needed on Android - iOS/macOS use FluidAudio which handles its own models
   if (!Platform.isAndroid) return;
-
   try {
     final downloadService = ModelDownloadService();
     await downloadService.initialize();
-
     if (downloadService.currentState.isReady) return;
-
-    // Start download in background - don't await
     downloadService.startDownload().catchError((e) {
       debugPrint('[Parachute] Transcription model download failed: $e');
     });
@@ -176,7 +102,7 @@ class ParachuteApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: isDailyOnlyFlavor ? 'Parachute Daily' : 'Parachute',
+      title: 'Parachute Daily',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.lightTheme,
       darkTheme: AppTheme.darkTheme,
@@ -190,7 +116,7 @@ class ParachuteApp extends StatelessWidget {
   }
 }
 
-/// Main shell - handles onboarding and tab navigation
+/// Main shell - handles onboarding then shows the daily journal
 class MainShell extends ConsumerStatefulWidget {
   const MainShell({super.key});
 
@@ -208,266 +134,42 @@ class _MainShellState extends ConsumerState<MainShell> {
         if (!isComplete) {
           return const OnboardingScreen();
         }
-        return const _TabShell();
+        return const _DailyShell();
       },
       loading: () => const Scaffold(
         body: Center(child: CircularProgressIndicator()),
       ),
-      error: (_, __) => const _TabShell(), // On error, just show the app
+      error: (_, __) => const _DailyShell(),
     );
   }
 }
 
-/// Tab navigation shell - Daily center, Chat/Vault conditional
-class _TabShell extends ConsumerStatefulWidget {
-  const _TabShell();
+/// Daily-only shell — no tabs, just the journal
+class _DailyShell extends ConsumerStatefulWidget {
+  const _DailyShell();
 
   @override
-  ConsumerState<_TabShell> createState() => _TabShellState();
+  ConsumerState<_DailyShell> createState() => _DailyShellState();
 }
 
-class _TabShellState extends ConsumerState<_TabShell> with WidgetsBindingObserver {
-  // Navigation architecture: intentionally NOT using go_router or Navigator 2.0.
-  //
-  // Each tab owns an independent Navigator with its own GlobalKey, wrapped in
-  // an IndexedStack so tabs preserve state when switching. This gives us:
-  //   - Per-tab back stacks (pressing back pops within the tab, not globally)
-  //   - State preservation (switching tabs doesn't rebuild)
-  //   - Deep link support via DeepLinkService (parachute:// scheme)
-  //   - Dynamic tab visibility based on AppMode (daily-only vs full)
-  //
-  // go_router was evaluated and removed — it adds complexity without benefit
-  // for this tab-based architecture where each tab is a self-contained flow.
-  final GlobalKey<NavigatorState> _chatNavigatorKey = GlobalKey<NavigatorState>();
-  final GlobalKey<NavigatorState> _dailyNavigatorKey = GlobalKey<NavigatorState>();
-  final GlobalKey<NavigatorState> _brainNavigatorKey = GlobalKey<NavigatorState>();
-
+class _DailyShellState extends ConsumerState<_DailyShell> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    // Eagerly initialize providers that need to start early
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       // Sync provider - ready when journal entries are created
       ref.read(syncProvider.notifier);
 
       // Omi services - Bluetooth for connection, Capture for recording
-      // Only on mobile platforms where BLE is supported
       if (Platform.isAndroid || Platform.isIOS) {
         ref.read(omiBluetoothServiceProvider);
-        // Read capture service after a delay to avoid circular dependency
-        // The capture service sets up its own connection listener
         Future.delayed(const Duration(milliseconds: 100), () {
           ref.read(omiCaptureServiceProvider);
         });
       }
-
     });
-  }
-
-  Widget _buildChatTabIcon(bool isDark, bool selected) {
-    final pendingCount = ref.watch(pendingPairingCountProvider).valueOrNull ?? 0;
-    final unreadCount = ref.watch(agentCompletionProvider).unreadSessionIds.length;
-    final badgeCount = pendingCount + unreadCount;
-    final icon = Icon(
-      selected ? Icons.chat_bubble : Icons.chat_bubble_outline,
-      color: selected
-          ? (isDark ? BrandColors.nightTurquoise : BrandColors.turquoise)
-          : (isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood),
-    );
-    if (badgeCount > 0) {
-      return Badge(
-        label: Text('$badgeCount'),
-        child: icon,
-      );
-    }
-    return icon;
-  }
-
-  Widget _buildDailyTabIcon(bool isDark, bool selected) {
-    final unreadCount = ref.watch(unreadCardsProvider).valueOrNull?.length ?? 0;
-    final icon = Icon(
-      selected ? Icons.today : Icons.today_outlined,
-      color: selected
-          ? (isDark ? BrandColors.nightForest : BrandColors.forest)
-          : (isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood),
-    );
-    if (unreadCount > 0) {
-      return Badge(
-        label: Text('$unreadCount'),
-        child: icon,
-      );
-    }
-    return icon;
-  }
-
-  /// Handle a pending chat prompt by navigating to ChatScreen
-  void _handlePendingChatPrompt(PendingChatPrompt prompt) {
-    // Security: Only log message preview (first 50 chars) to avoid leaking sensitive content
-    debugPrint('[TabShell] Handling pending chat prompt: session=${prompt.sessionId}, agentType=${prompt.agentType}, agentPath=${prompt.agentPath}, message preview=${prompt.message.substring(0, prompt.message.length.clamp(0, 50))}${prompt.message.length > 50 ? "..." : ""}');
-
-    // Clear the pending prompt immediately to prevent re-triggering
-    ref.read(pendingChatPromptProvider.notifier).state = null;
-
-    // Switch to chat tab
-    final visibleTabs = ref.read(visibleTabsProvider);
-    final chatTabIndex = visibleTabs.indexOf(AppTab.chat);
-    debugPrint('[TabShell] Chat tab index: $chatTabIndex, visible tabs: $visibleTabs');
-    if (chatTabIndex >= 0) {
-      ref.read(currentTabIndexProvider.notifier).state = chatTabIndex;
-    }
-
-    // Set up the session
-    if (prompt.sessionId != null) {
-      // Existing session
-      debugPrint('[TabShell] Switching to existing session: ${prompt.sessionId}');
-      ref.read(switchSessionProvider)(prompt.sessionId!);
-    } else {
-      // New chat
-      debugPrint('[TabShell] Starting new chat');
-      ref.read(newChatProvider)();
-    }
-
-    // Navigate to ChatScreen with the message pre-filled
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      debugPrint('[TabShell] Post-frame callback - pushing ChatScreen');
-      debugPrint('[TabShell] _chatNavigatorKey.currentState: ${_chatNavigatorKey.currentState}');
-
-      // Pop to root first to avoid stacking multiple ChatScreens
-      _chatNavigatorKey.currentState?.popUntil((route) => route.isFirst);
-
-      // Then push the new ChatScreen
-      final pushed = _chatNavigatorKey.currentState?.push(
-        MaterialPageRoute(
-          builder: (context) => ChatScreen(
-            initialMessage: prompt.message,
-            agentType: prompt.agentType,
-            agentPath: prompt.agentPath,
-          ),
-        ),
-      );
-      debugPrint('[TabShell] Push result: $pushed');
-    });
-  }
-
-  /// Handle a deep link target by navigating appropriately
-  void _handleDeepLink(DeepLinkTarget target) {
-    debugPrint('[TabShell] Handling deep link: $target');
-
-    final visibleTabs = ref.read(visibleTabsProvider);
-
-    // Handle tab navigation
-    if (target.tab != null) {
-      final tabIndex = switch (target.tab) {
-        'chat' => visibleTabs.indexOf(AppTab.chat),
-        'daily' => visibleTabs.indexOf(AppTab.daily),
-        'brain' => visibleTabs.indexOf(AppTab.brain),
-        'settings' => -1, // Settings is a route, not a tab
-        _ => -1,
-      };
-
-      if (target.tab == 'settings') {
-        // Navigate to settings screen
-        Navigator.of(context).pushNamed('/settings');
-        return;
-      }
-
-      if (tabIndex >= 0) {
-        ref.read(currentTabIndexProvider.notifier).state = tabIndex;
-
-        // Handle additional navigation within the tab
-        if (target.tab == 'chat') {
-          _handleChatDeepLink(target);
-        } else if (target.tab == 'daily') {
-          _handleDailyDeepLink(target);
-        } else if (target.tab == 'vault') {
-          _handleVaultDeepLink(target);
-        }
-      }
-    }
-  }
-
-  /// Handle chat-specific deep links
-  void _handleChatDeepLink(DeepLinkTarget target) {
-    if (target.isNewChat) {
-      debugPrint('[TabShell] New chat deep link - prompt: ${target.prompt}, context: ${target.context}, autoSend: ${target.autoSend}');
-
-      // Start a new chat
-      ref.read(newChatProvider)();
-
-      // Navigate to ChatScreen with the deep link parameters
-      // Use Navigator from the chat tab's context (via global key)
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        _chatNavigatorKey.currentState?.push(
-          MaterialPageRoute(
-            builder: (context) => ChatScreen(
-              initialMessage: target.prompt,
-              autoRun: target.autoSend,
-              autoRunMessage: target.autoSend ? target.prompt : null,
-              agentType: target.agentType,
-            ),
-          ),
-        );
-      });
-    } else if (target.sessionId != null) {
-      // Security: Only log prompt presence/length, not content
-      debugPrint('[TabShell] Open session deep link - session: ${target.sessionId}, message: ${target.messageIndex}, hasPrompt: ${target.prompt != null}, autoSend: ${target.autoSend}');
-
-      // Switch to the session
-      ref.read(switchSessionProvider)(target.sessionId!);
-
-      // Navigate to ChatScreen with optional message to send
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        _chatNavigatorKey.currentState?.push(
-          MaterialPageRoute(
-            builder: (context) => ChatScreen(
-              initialMessage: target.prompt,
-              autoRun: target.autoSend,
-              autoRunMessage: target.autoSend ? target.prompt : null,
-            ),
-          ),
-        );
-      });
-
-      // Store message index for scrolling (ChatScreen can read this)
-      if (target.messageIndex != null) {
-        ref.read(pendingDeepLinkProvider.notifier).state = target;
-      }
-    }
-  }
-
-  /// Handle daily-specific deep links
-  void _handleDailyDeepLink(DeepLinkTarget target) {
-    if (target.date != null) {
-      debugPrint('[TabShell] Daily date deep link: ${target.date}');
-
-      // Parse the date string (format: YYYY-MM-DD)
-      final parts = target.date!.split('-');
-      if (parts.length == 3) {
-        final year = int.tryParse(parts[0]);
-        final month = int.tryParse(parts[1]);
-        final day = int.tryParse(parts[2]);
-
-        if (year != null && month != null && day != null) {
-          final date = DateTime(year, month, day);
-          ref.read(selectedJournalDateProvider.notifier).state = date;
-        }
-      }
-    } else if (target.entryId != null) {
-      debugPrint('[TabShell] Daily entry deep link: ${target.entryId}');
-      // Store for the journal screen to handle scrolling to specific entry
-      ref.read(pendingDeepLinkProvider.notifier).state = target;
-    }
-  }
-
-  /// Handle vault-specific deep links
-  void _handleVaultDeepLink(DeepLinkTarget target) {
-    if (target.path != null) {
-      debugPrint('[TabShell] Vault path deep link: ${target.path}');
-
-      // Set the remote file browser path
-      ref.read(remoteCurrentPathProvider.notifier).state = target.path!;
-    }
   }
 
   @override
@@ -478,9 +180,6 @@ class _TabShellState extends ConsumerState<_TabShell> with WidgetsBindingObserve
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // Track lifecycle for agent completion notifications
-    ref.read(appLifecycleProvider.notifier).state = state;
-
     // Handle sync lifecycle
     final syncAvailable = ref.read(syncAvailableProvider);
     if (syncAvailable) {
@@ -505,14 +204,8 @@ class _TabShellState extends ConsumerState<_TabShell> with WidgetsBindingObserve
         _attemptOmiAutoReconnect();
       }
     }
-
-    // Clean up background streams when app is detached/terminated
-    if (state == AppLifecycleState.detached) {
-      ref.read(backgroundStreamManagerProvider).cancelAll();
-    }
   }
 
-  /// Attempt to auto-reconnect to last paired Omi device
   Future<void> _attemptOmiAutoReconnect() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -539,201 +232,33 @@ class _TabShellState extends ConsumerState<_TabShell> with WidgetsBindingObserve
 
   @override
   Widget build(BuildContext context) {
-    // Listen for pending chat prompts (legacy support)
-    // This MUST be in build() for ref.listen to work properly
-    ref.listen<PendingChatPrompt?>(pendingChatPromptProvider, (previous, next) {
-      debugPrint('[TabShell] pendingChatPromptProvider changed: previous=$previous, next=$next');
-      if (next != null) {
-        _handlePendingChatPrompt(next);
-      }
-    });
-
-    // Listen for send to chat events (cross-feature communication)
-    ref.listen(sendToChatEventProvider, (previous, next) {
-      debugPrint('[TabShell] sendToChatEventProvider changed: previous=$previous, next=$next');
-      if (next != null) {
-        // Convert SendToChatEvent to PendingChatPrompt format
-        final prompt = PendingChatPrompt(
-          message: next.formattedMessage,
-          sessionId: next.sessionId,
-          agentType: next.agentType,
-          agentPath: next.agentPath,
-        );
-        _handlePendingChatPrompt(prompt);
-        // Clear the event
-        ref.read(sendToChatEventProvider.notifier).state = null;
-      }
-    });
-
-    // Listen for deep links (must be in build() for ref.listen)
+    // Listen for deep links
     ref.listen<AsyncValue<DeepLinkTarget>>(deepLinkStreamProvider, (previous, next) {
       next.whenData((target) {
-        _handleDeepLink(target);
+        if (target.tab == 'settings') {
+          Navigator.of(context).pushNamed('/settings');
+        } else if (target.tab == 'daily' && target.date != null) {
+          final parts = target.date!.split('-');
+          if (parts.length == 3) {
+            final year = int.tryParse(parts[0]);
+            final month = int.tryParse(parts[1]);
+            final day = int.tryParse(parts[2]);
+            if (year != null && month != null && day != null) {
+              ref.read(selectedJournalDateProvider.notifier).state =
+                  DateTime(year, month, day);
+            }
+          }
+        }
       });
     });
-
-    // Listen for agent completion events to show toast
-    ref.listen<AgentCompletionState>(agentCompletionProvider, (previous, next) {
-      if (next.latestEvent != null &&
-          next.latestEvent != previous?.latestEvent) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('${next.latestEvent!.title} \u2014 finished'),
-            duration: const Duration(seconds: 3),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-      }
-    });
-
-    // Listen for agent question events to show toast (skip if viewing that session)
-    ref.listen<AgentQuestionEvent?>(agentQuestionProvider, (previous, next) {
-      if (next != null && next != previous) {
-        final activeViewSessionId = ref.read(activeViewSessionIdProvider);
-        if (next.sessionId == activeViewSessionId) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('${next.title} \u2014 has a question'),
-            duration: const Duration(seconds: 5),
-            behavior: SnackBarBehavior.floating,
-            action: SnackBarAction(
-              label: 'View',
-              onPressed: () {
-                // Switch to chat tab and navigate to the session
-                final visibleTabs = ref.read(visibleTabsProvider);
-                final chatIndex = visibleTabs.indexOf(AppTab.chat);
-                if (chatIndex >= 0) {
-                  ref.read(currentTabIndexProvider.notifier).state = chatIndex;
-                }
-              },
-            ),
-          ),
-        );
-      }
-    });
-
-    final appMode = ref.watch(appModeProvider);
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-
-    // Determine visible tabs based on app mode
-    final showAllTabs = appMode == AppMode.full;
-
-    // Current tab index
-    final currentIndex = ref.watch(currentTabIndexProvider);
-
-    // Build navigation destinations based on mode
-    final destinations = <NavigationDestination>[
-      if (showAllTabs)
-        NavigationDestination(
-          icon: _buildChatTabIcon(isDark, false),
-          selectedIcon: _buildChatTabIcon(isDark, true),
-          label: 'Chat',
-        ),
-      NavigationDestination(
-        icon: _buildDailyTabIcon(isDark, false),
-        selectedIcon: _buildDailyTabIcon(isDark, true),
-        label: 'Daily',
-      ),
-      if (showAllTabs)
-        NavigationDestination(
-          icon: Icon(
-            Icons.psychology_outlined,
-            color: isDark ? BrandColors.nightTextSecondary : BrandColors.driftwood,
-          ),
-          selectedIcon: Icon(
-            Icons.psychology,
-            color: isDark ? BrandColors.nightTurquoise : BrandColors.turquoise,
-          ),
-          label: 'Brain',
-        ),
-    ];
-
-    // Clamp index to valid range when tabs change
-    final safeIndex = currentIndex.clamp(0, destinations.length - 1);
-
-    // Map visual index to actual tab for IndexedStack
-    // In full mode: [Chat, Daily, Brain] -> indices 0, 1, 2
-    // In daily-only mode: [Daily] -> visual index 0 maps to actual index 1
-    final actualIndex = showAllTabs ? safeIndex : 1;
-
-    // Only show navigation bar if there are multiple tabs
-    final showNavBar = destinations.length > 1;
 
     return Scaffold(
       body: Column(
         children: [
-          // Model download progress banner (only shows during download on Android)
           const ModelDownloadBanner(),
-          // Main content - always create all navigators to avoid GlobalKey issues
-          Expanded(
-            child: IndexedStack(
-              index: actualIndex,
-              children: [
-                // Chat tab (index 0) - hidden when not in full mode
-                Navigator(
-                  key: _chatNavigatorKey,
-                  onGenerateRoute: (settings) {
-                    return MaterialPageRoute(
-                      builder: (context) => const ChatShell(),
-                      settings: settings,
-                    );
-                  },
-                ),
-                // Daily tab (index 1) - always visible
-                Navigator(
-                  key: _dailyNavigatorKey,
-                  onGenerateRoute: (settings) {
-                    return MaterialPageRoute(
-                      builder: (context) => const HomeScreen(),
-                      settings: settings,
-                    );
-                  },
-                ),
-                // Brain tab (index 2) - hidden when not in full mode
-                Navigator(
-                  key: _brainNavigatorKey,
-                  onGenerateRoute: (settings) {
-                    return MaterialPageRoute(
-                      builder: (context) => const BrainHomeScreen(),
-                      settings: settings,
-                    );
-                  },
-                ),
-              ],
-            ),
-          ),
+          const Expanded(child: HomeScreen()),
         ],
       ),
-      bottomNavigationBar: showNavBar
-          ? Builder(builder: (context) {
-              // Account for hardware keyboard IME suggestion bar on Android.
-              // The IME bar is typically 48-56dp; a full software keyboard is 250+dp.
-              // Only add padding for IME-bar-sized insets to avoid double-compensation
-              // when a full software keyboard is open (Scaffold handles that via
-              // resizeToAvoidBottomInset).
-              final viewInsetsBottom = MediaQuery.viewInsetsOf(context).bottom;
-              final imeBarPadding = viewInsetsBottom > 0 && viewInsetsBottom < 100
-                  ? viewInsetsBottom
-                  : 0.0;
-              return Padding(
-                padding: EdgeInsets.only(bottom: imeBarPadding),
-                child: NavigationBar(
-                selectedIndex: safeIndex,
-                onDestinationSelected: (index) {
-                  // Map visual index back to actual tab index
-                  final newActualIndex = showAllTabs ? index : 1;
-                  ref.read(currentTabIndexProvider.notifier).state = newActualIndex;
-                },
-                backgroundColor: isDark ? BrandColors.nightSurfaceElevated : BrandColors.softWhite,
-                indicatorColor: isDark
-                    ? BrandColors.nightTurquoise.withValues(alpha: 0.2)
-                    : BrandColors.turquoise.withValues(alpha: 0.2),
-                destinations: destinations,
-              ),
-            );
-          })
-          : null,
     );
   }
 }

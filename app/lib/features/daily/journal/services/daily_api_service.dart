@@ -5,7 +5,7 @@ import 'package:http/http.dart' as http;
 import '../models/entry_metadata.dart' show TranscriptionStatus;
 import '../models/journal_entry.dart';
 import '../models/agent_card.dart';
-import 'package:parachute/core/services/computer_service.dart'
+import '../models/daily_agent_models.dart'
     show DailyAgentInfo, AgentRunResult, AgentRunInfo, AgentTemplate, AgentActivity, MemoryMode, parseTriggerFilter;
 
 /// Raw search result from the server API.

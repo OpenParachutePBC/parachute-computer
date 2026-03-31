@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../core/providers/supervisor_providers.dart';
 import '../../../core/theme/design_tokens.dart';
 
 /// Model picker with 3-option selector (Opus/Sonnet/Haiku) and 1M context toggle.
